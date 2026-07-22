@@ -1,0 +1,84 @@
+import { WEEKS } from "../data/games";
+import { conferencesForDivision } from "../data/teams";
+
+export const NAV: any[] = [
+  {
+    key: "teampages",
+    label: "Team Pages",
+    drill: true,
+  },
+  {
+    key: "confpreviews",
+    label: "Conference Previews",
+    subs: conferencesForDivision("FBS").map((c) => ({ key: c, label: c })),
+  },
+  {
+    key: "tools",
+    label: "Tools",
+    subs: [
+      { key: "matchup", label: "Hypothetical Matchup", pageType: "matchup" },
+      { key: "scheduleswap", label: "Schedule Swap", pageType: "scheduleswap" },
+      { key: "resumecompare", label: "Resume Comparison", pageType: "resumecompare" },
+      { key: "playoff24", label: "24 Team Playoff (FCS Style)", pageType: "playoff24" },
+    ],
+  },
+  {
+    key: "ratings",
+    label: "Weekly Power Ratings",
+    subs: [
+      { key: "preseason", label: "Preseason" },
+      ...WEEKS,
+      { key: "live", label: "Live", pageType: "home" },
+      { key: "weeklyprogression", label: "Weekly Progression" },
+    ],
+  },
+  {
+    key: "futures",
+    label: "Futures",
+    futures: true,
+    items: [
+      {
+        key: "wintotals",
+        label: "Win Totals",
+        expandable: true,
+        subs: [...WEEKS, { key: "live", label: "Live" }],
+      },
+      {
+        key: "confwinodds",
+        label: "Conference Win Odds",
+      },
+      {
+        key: "confwintotals",
+        label: "Conference Win Totals",
+      },
+      {
+        key: "playoff",
+        label: "To Make Playoff",
+      },
+      {
+        key: "natty",
+        label: "Natty",
+      },
+    ],
+  },
+  {
+    key: "matchups",
+    label: "Weekly Matchups",
+    subs: [...WEEKS, { key: "all", label: "All" }],
+  },
+  {
+    key: "resume",
+    label: "Resume Ratings",
+    subs: [...WEEKS, { key: "live", label: "Live" }, { key: "weeklyprogression", label: "Weekly Progression" }],
+  },
+  {
+    key: "sos",
+    label: "Strength of Schedule",
+    subs: [...WEEKS, { key: "live", label: "Live" }, { key: "weeklyprogression", label: "Weekly Progression" }],
+  },
+  {
+    key: "bracket",
+    label: "FBS Playoff Bracket",
+    subs: [...WEEKS, { key: "live", label: "Live" }],
+  },
+];
