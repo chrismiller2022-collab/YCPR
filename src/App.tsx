@@ -1,5 +1,5 @@
 import "./styles/global.css";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import HomePage from "./pages/HomePage";
 import TeamPage from "./pages/TeamPage";
 import MatchupPage from "./pages/MatchupPage";
@@ -14,9 +14,13 @@ import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
 import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
 import ConferencePreviewPage from "./pages/ConferencePreviewPage";
 import BracketPage from "./pages/BracketPage";
+import FCSBracketPage from "./pages/FCSBracketPage";
+import FCSRatingsPage from "./pages/FCSRatingsPage";
 import Playoff24Page from "./pages/Playoff24Page";
+import WeekReportPage from "./pages/WeekReportPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
+import AdminPage from "./pages/AdminPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -47,6 +51,25 @@ export default function App() {
   };
 
   const handleHome = () => setPage({ type: "home" });
+
+  useEffect(() => {
+    if (window.location.hash === "#admin") {
+      setPage({ type: "admin" });
+    }
+  }, []);
+
+  if (page.type === "admin") {
+    return (
+      <div className="page">
+        <AdminPage
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -172,6 +195,78 @@ export default function App() {
         />
       )}
 
+      {page.type === "sub" && page.catKey === "fcsbracket" && (
+        <FCSBracketPage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcsratings" &&
+        page.subKey === "live" && (
+          <FCSRatingsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcsratings" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="power"
+            defaultDivision="FCS"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" && page.catKey === "fcsconfpreviews" && (
+        <ConferencePreviewPage
+          conference={page.subKey}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcswintotals" &&
+        page.subKey === "live" && (
+          <LiveWinTotalsPage
+            defaultDivision="FCS"
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcssos" &&
+        page.subKey === "live" && (
+          <StrengthOfSchedulePage
+            forceDivision="FCS"
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcssos" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="sor"
+            defaultDivision="FCS"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
       {page.type === "sub" &&
         !(page.catKey === "matchups") &&
         !(page.catKey === "wintotals" && page.subKey === "live") &&
@@ -181,6 +276,13 @@ export default function App() {
           (page.catKey === "ratings" || page.catKey === "resume" || page.catKey === "sos")) &&
         !(page.catKey === "confpreviews") &&
         !(page.catKey === "bracket") &&
+        !(page.catKey === "fcsbracket") &&
+        !(page.catKey === "fcsratings" && page.subKey === "live") &&
+        !(page.catKey === "fcsconfpreviews") &&
+        !(page.catKey === "fcswintotals" && page.subKey === "live") &&
+        !(page.catKey === "fcssos" && page.subKey === "live") &&
+        !(page.subKey === "weeklyprogression" &&
+          (page.catKey === "fcsratings" || page.catKey === "fcssos")) &&
         !(
           page.catKey === "futures" &&
           (page.subKey === "confwinodds" || page.subKey === "confwintotals")
@@ -213,6 +315,8 @@ export default function App() {
           onHome={handleHome}
         />
       )}
+
+      {page.type === "weekreport" && <WeekReportPage onHome={handleHome} />}
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
+import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { CONFERENCES, TEAMS } from "../data/teams";
+import { useWeeklyChange } from "../lib/api/weeklyStats";
 
-function ResumeRatingsRow({ team, onNavigateTeam, onNavigateConference }: any) {
+function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }: any) {
   const r = RESUME_BY_TEAM[team.team];
   return (
     <tr>
@@ -27,6 +29,7 @@ function ResumeRatingsRow({ team, onNavigateTeam, onNavigateConference }: any) {
       </td>
       <td className="wintotals-total-cell">{r ? r.rank : "–"}</td>
       <td className="wintotals-total-cell">{r ? r.rating.toFixed(2) : "–"}</td>
+      <ChangeCell change={change} />
     </tr>
   );
 }
@@ -38,6 +41,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("resumeRank");
   const [sortDir, setSortDir] = useState("asc");
+  const { byTeam: changeByTeam } = useWeeklyChange("resume_rating");
 
   const rows = useMemo(() => {
     let list = TEAMS.filter((t) => RESUME_BY_TEAM[t.team])
@@ -135,15 +139,22 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
                 <SortHeader label="Power Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
                 <SortHeader label="Resume Ranking" sortKey="resumeRank" active={sortKey === "resumeRank"} dir={sortDir} onClick={handleSort} align="right" />
                 <SortHeader label="Resume Rating" sortKey="resumeRating" active={sortKey === "resumeRating"} dir={sortDir} onClick={handleSort} align="right" />
+                <th className="th th-right">Change from Last Week</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
-                <ResumeRatingsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
+                <ResumeRatingsRow
+                  key={t.team}
+                  team={t}
+                  change={changeByTeam[t.team]?.change ?? null}
+                  onNavigateTeam={onNavigateTeam}
+                  onNavigateConference={onNavigateConference}
+                />
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="empty">
+                  <td colSpan={6} className="empty">
                     No teams match that search.
                   </td>
                 </tr>

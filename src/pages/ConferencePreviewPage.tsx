@@ -41,12 +41,13 @@ function ConferencePreviewRow({ team, maxPct, onNavigateTeam }: any) {
 
 export default function ConferencePreviewPage({ conference, onNavigateTeam, onHome }: any) {
   const rows = useMemo(() => {
-    const list = TEAMS.filter(
-      (t) => t.conf === conference && CONF_FUTURES_BY_TEAM[t.team]
-    );
+    const list = TEAMS.filter((t) => t.conf === conference);
     return [...list].sort((a, b) => {
-      const pa = CONF_FUTURES_BY_TEAM[a.team]?.confWinPct ?? 0;
-      const pb = CONF_FUTURES_BY_TEAM[b.team]?.confWinPct ?? 0;
+      const pa = CONF_FUTURES_BY_TEAM[a.team]?.confWinPct;
+      const pb = CONF_FUTURES_BY_TEAM[b.team]?.confWinPct;
+      if (pa == null && pb == null) return a.rating - b.rating;
+      if (pa == null) return 1;
+      if (pb == null) return -1;
       return pb - pa;
     });
   }, [conference]);

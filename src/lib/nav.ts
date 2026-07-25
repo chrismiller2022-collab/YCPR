@@ -20,6 +20,7 @@ export const NAV: any[] = [
       { key: "scheduleswap", label: "Schedule Swap", pageType: "scheduleswap" },
       { key: "resumecompare", label: "Resume Comparison", pageType: "resumecompare" },
       { key: "playoff24", label: "24 Team Playoff (FCS Style)", pageType: "playoff24" },
+      { key: "weekreport", label: "Week Report (PDF)", pageType: "weekreport" },
     ],
   },
   {
@@ -80,5 +81,60 @@ export const NAV: any[] = [
     key: "bracket",
     label: "FBS Playoff Bracket",
     subs: [...WEEKS, { key: "live", label: "Live" }],
+  },
+  {
+    key: "fcs",
+    label: "FCS",
+    futures: true,
+    items: [
+      {
+        key: "fcsbracket",
+        label: "FCS Playoff Bracket",
+        expandable: true,
+        subs: [...WEEKS, { key: "live", label: "Live" }],
+      },
+      {
+        key: "fcsratings",
+        label: "FCS Power Ratings",
+        expandable: true,
+        subs: [
+          { key: "preseason", label: "Preseason" },
+          ...WEEKS,
+          { key: "live", label: "Live" },
+          { key: "weeklyprogression", label: "Weekly Progression" },
+        ],
+      },
+      {
+        key: "fcsconfpreviews",
+        label: "FCS Conference Previews",
+        expandable: true,
+        subs: conferencesForDivision("FCS").map((c) => ({ key: c, label: c })),
+      },
+      {
+        key: "fcswintotals",
+        label: "FCS Win Totals",
+        expandable: true,
+        subs: [...WEEKS, { key: "live", label: "Live" }],
+      },
+      {
+        key: "fcssos",
+        label: "FCS SOS/SOR",
+        expandable: true,
+        subs: [
+          ...WEEKS,
+          { key: "live", label: "Live" },
+          { key: "weeklyprogression", label: "Weekly Progression" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "modelresults",
+    label: "Model Results",
+    subs: [
+      { key: "2024", label: "2024" },
+      { key: "2025", label: "2025" },
+      { key: "2026", label: "2026" },
+    ],
   },
 ];

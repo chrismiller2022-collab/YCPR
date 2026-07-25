@@ -221,16 +221,19 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const weekNum = isAll ? null : parseInt(subKey.replace("week", ""), 10);
 
   const [query, setQuery] = useState("");
-  const [division, setDivision] = useState("All");
+  const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
 
   const matchesFilters = (g) => {
     const home = TEAMS_BY_NAME[g.home];
     const away = TEAMS_BY_NAME[g.away];
-    if (division !== "All") {
-      const homeMatches = home && home.div === division;
-      const awayMatches = away && away.div === division;
-      if (!homeMatches && !awayMatches) return false;
+    if (matchupType !== "All") {
+      if (!home || !away) return false;
+      if (matchupType === "FBSvFBS" && !(home.div === "FBS" && away.div === "FBS"))
+        return false;
+      if (matchupType === "FCSvFCS" && !(home.div === "FCS" && away.div === "FCS"))
+        return false;
+      if (matchupType === "Cross" && home.div === away.div) return false;
     }
     if (query.trim()) {
       const q = query.trim().toLowerCase();
@@ -246,7 +249,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const filteredGames = useMemo(() => {
     let list = isAll ? GAMES : GAMES.filter((g) => g.week === weekNum);
     return list.filter(matchesFilters);
-  }, [isAll, weekNum, division, query]);
+  }, [isAll, weekNum, matchupType, query]);
 
   const groupedByWeek = useMemo(() => {
     if (!isAll) return null;
@@ -287,12 +290,13 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         />
         <select
           className="filter"
-          value={division}
-          onChange={(e) => setDivision(e.target.value)}
+          value={matchupType}
+          onChange={(e) => setMatchupType(e.target.value)}
         >
-          <option value="All">All divisions</option>
-          <option value="FBS">FBS</option>
-          <option value="FCS">FCS</option>
+          <option value="All">All matchups</option>
+          <option value="FBSvFBS">FBS vs FBS</option>
+          <option value="FCSvFCS">FCS vs FCS</option>
+          <option value="Cross">Cross-Division</option>
         </select>
       </div>
 

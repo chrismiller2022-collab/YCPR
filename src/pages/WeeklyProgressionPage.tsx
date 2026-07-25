@@ -58,10 +58,10 @@ function WeeklyProgressionRow({ team, meta, onNavigateConference }: any) {
 }
 
 
-export default function WeeklyProgressionPage({ metric, subLabel, onNavigateConference, onHome }: any) {
+export default function WeeklyProgressionPage({ metric, subLabel, defaultDivision, onNavigateConference, onHome }: any) {
   const meta = WEEKLY_PROGRESSION_META[metric];
   const [query, setQuery] = useState("");
-  const [division, setDivision] = useState("All");
+  const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("team");
   const [sortDir, setSortDir] = useState("asc");

@@ -2,68 +2,50 @@ import { useMemo, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
-import { CONFERENCES, TEAMS } from "../data/teams";
-import { TEAM_WIN_TOTALS } from "../lib/ranks";
+import { TEAMS, conferencesForDivision } from "../data/teams";
 
-function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
-  const wt = TEAM_WIN_TOTALS[team.team] || { total: 0, confTotal: 0 };
+const FCS_CONFERENCES = conferencesForDivision("FCS");
+
+function FCSRatingsRow({ team, onNavigateTeam, onNavigateConference }: any) {
   return (
     <tr>
       <td>
         <span
-          className={`rank-flag ${
-            team.rank <= 4 ? "top4" : team.rank <= 12 ? "top12" : ""
-          }`}
+          className={`rank-flag ${team.rank <= 4 ? "top4" : team.rank <= 12 ? "top12" : ""}`}
         >
           {team.rank}
         </span>
       </td>
       <td>
-        <button
-          className="team-link"
-          onClick={() => onNavigateTeam(team)}
-        >
+        <button className="team-link" onClick={() => onNavigateTeam(team)}>
           <TeamLogo team={team} />
           {team.team}
         </button>
-        <span className={`div-pill ${team.div === "FBS" ? "div-fbs" : "div-fcs"}`}>
-          {team.div}
-        </span>
       </td>
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className="wintotals-record-cell">0-0</td>
       <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
         {team.rating > 0 ? "+" : ""}
         {team.rating.toFixed(2)}
       </td>
-      <td className="wintotals-total-cell">{wt.total.toFixed(2)}</td>
-      <td className="wintotals-total-cell">{wt.confTotal.toFixed(2)}</td>
     </tr>
   );
 }
 
-
-export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onNavigateConference, onHome }: any) {
+export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
-  const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => {
-      if (division !== "All" && t.div !== division) return false;
+    let list = TEAMS.filter((t) => t.div === "FCS").filter((t) => {
       if (conference !== "All" && t.conf !== conference) return false;
       if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
-    }).map((t) => ({
-      ...t,
-      winTotal: TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-      confWinTotal: TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
-    }));
+    });
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
@@ -77,14 +59,14 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir]);
+  }, [query, conference, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
-      setSortDir("asc");
+      setSortDir(key === "rank" ? "asc" : "asc");
     }
   };
 
@@ -94,11 +76,11 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">Win Totals</div>
-        <h1 className="title matchup-title">LIVE</h1>
+        <div className="eyebrow">FCS</div>
+        <h1 className="title matchup-title">FCS POWER RATINGS · LIVE</h1>
         <p className="subtitle team-subtitle">
-          Projected season win totals, calculated by summing each team's
-          game-by-game win probability across their full schedule.
+          Power ratings for every FCS team, on the same scale as FBS —
+          negative is better, same convention as the main rankings.
         </p>
       </div>
 
@@ -111,20 +93,11 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
         />
         <select
           className="filter"
-          value={division}
-          onChange={(e) => setDivision(e.target.value)}
-        >
-          <option value="All">All divisions</option>
-          <option value="FBS">FBS</option>
-          <option value="FCS">FCS</option>
-        </select>
-        <select
-          className="filter"
           value={conference}
           onChange={(e) => setConference(e.target.value)}
         >
           <option value="All">All conferences</option>
-          {CONFERENCES.map((c) => (
+          {FCS_CONFERENCES.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -140,19 +113,16 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
                 <SortHeader label="Rank" sortKey="rank" active={sortKey === "rank"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-                <th className="th">Record</th>
-                <SortHeader label="Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Win Total" sortKey="winTotal" active={sortKey === "winTotal"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Conf Win Total" sortKey="confWinTotal" active={sortKey === "confWinTotal"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Power Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
-                <LiveWinTotalsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
+                <FCSRatingsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty">
+                  <td colSpan={4} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -163,8 +133,8 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
       </div>
 
       <div className="footer-note">
-        Win totals are projections based on current power ratings, not actual
-        results — records will update once games are played.
+        FCS ratings sit on the same scale as FBS ratings, so cross-division
+        comparisons (e.g. for the playoff bracket) are apples-to-apples.
       </div>
     </div>
   );

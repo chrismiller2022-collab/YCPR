@@ -183,7 +183,7 @@ export default function TopNav({ onNavigate, onNavigateTeam, onNavigateSingle, o
                               if (item.expandable) {
                                 setFuturesItem(item.key);
                               } else {
-                                onNavigate("futures", "Futures", item.key, item.label);
+                                onNavigate(cat.key, cat.label, item.key, item.label);
                                 toggleMenu();
                               }
                             }}

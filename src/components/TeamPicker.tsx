@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TEAMS } from "../data/teams";
 import { conferenceOptionsFor, teamsFilteredFor } from "../lib/ranks";
 
@@ -6,11 +6,18 @@ export default function TeamPicker({ side, label, division, conference, teamName
   const confOptions = conferenceOptionsFor(division);
   const teamOptions = teamsFilteredFor(division, conference);
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(teamName || "");
   const [focused, setFocused] = useState(false);
 
+  // Keep the search box in sync whenever the selection changes from
+  // somewhere else (the dropdown below, or a parent resetting things) —
+  // but not while the person is actively typing a new search.
+  useEffect(() => {
+    setQuery(teamName || "");
+  }, [teamName]);
+
   const matches =
-    query.trim().length > 0
+    query.trim().length > 0 && query !== teamName
       ? TEAMS.filter((t) =>
           t.team.toLowerCase().includes(query.trim().toLowerCase())
         ).slice(0, 6)
@@ -20,6 +27,11 @@ export default function TeamPicker({ side, label, division, conference, teamName
     onDivision(t.div);
     onConference(t.conf);
     onTeam(t.team);
+    setQuery(t.team);
+  };
+
+  const clearSelection = () => {
+    onTeam("");
     setQuery("");
   };
 
@@ -34,8 +46,27 @@ export default function TeamPicker({ side, label, division, conference, teamName
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setFocused(true)}
-          onBlur={() => setTimeout(() => setFocused(false), 120)}
+          onBlur={() => {
+            // Give a suggestion-item click a moment to register before we
+            // decide the edit was "abandoned" and snap back to the real
+            // selection.
+            setTimeout(() => {
+              setFocused(false);
+              setQuery(teamName || "");
+            }, 120);
+          }}
         />
+        {query.length > 0 && (
+          <button
+            type="button"
+            className="picker-clear-btn"
+            aria-label="Clear selected team"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={clearSelection}
+          >
+            ×
+          </button>
+        )}
         {focused && matches.length > 0 && (
           <div className="hero-suggest picker-suggest">
             {matches.map((t) => (
@@ -50,7 +81,7 @@ export default function TeamPicker({ side, label, division, conference, teamName
             ))}
           </div>
         )}
-        {focused && query.trim().length > 0 && matches.length === 0 && (
+        {focused && query.trim().length > 0 && query !== teamName && matches.length === 0 && (
           <div className="hero-suggest picker-suggest">
             <div className="hero-suggest-empty">No teams match "{query}"</div>
           </div>

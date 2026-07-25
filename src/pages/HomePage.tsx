@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from "react";
+import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
@@ -7,6 +8,7 @@ import { SOS_BY_TEAM } from "../data/sor";
 import { CONFERENCES, TEAMS } from "../data/teams";
 import { spreadColor } from "../lib/odds";
 import { CONF_WIN_TOTAL_RANK_BY_TEAM, SOR_RANK_BY_TEAM, TEAM_WIN_TOTALS, WIN_TOTAL_RANK_BY_TEAM } from "../lib/ranks";
+import { useWeeklyChange } from "../lib/api/weeklyStats";
 
 export default function HomePage({ onNavigateTeam, onNavigateConference }: any) {
   const [heroQuery, setHeroQuery] = useState("");
@@ -16,6 +18,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
+  const { byTeam: changeByTeam } = useWeeklyChange("rating");
 
   const filtered = useMemo(() => {
     let rows = TEAMS.filter((t) => {
@@ -167,6 +170,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
               <SortHeader label="Proj. Conf Win Total" sortKey="confWinTotal" active={sortKey === "confWinTotal"} dir={sortDir} onClick={handleSort} align="right" />
               <SortHeader label="YC Resume Rating" sortKey="resumeRating" active={sortKey === "resumeRating"} dir={sortDir} onClick={handleSort} align="right" />
               <SortHeader label="SOR" sortKey="sos" active={sortKey === "sos"} dir={sortDir} onClick={handleSort} align="right" />
+              <th className="th th-right">Change from Last Week</th>
             </tr>
           </thead>
           <tbody>
@@ -226,17 +230,18 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
                       "–"
                     )}
                   </td>
+                  <ChangeCell change={changeByTeam[t.team]?.change ?? null} />
                 </tr>
                 {showCutlines && t.rank === 4 && (
                   <tr>
-                    <td colSpan={8} className="cutline">
+                    <td colSpan={9} className="cutline">
                       ‒‒‒ Top 4 · Automatic Byes ‒‒‒
                     </td>
                   </tr>
                 )}
                 {showCutlines && t.rank === 12 && (
                   <tr>
-                    <td colSpan={8} className="cutline">
+                    <td colSpan={9} className="cutline">
                       ‒‒‒ Cutline · 12-Team Playoff Field ‒‒‒
                     </td>
                   </tr>
@@ -245,7 +250,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="empty">
+                <td colSpan={9} className="empty">
                   No teams match that search.
                 </td>
               </tr>

@@ -105,3 +105,21 @@ export function reseedAndPair(entries) {
   }
   return pairs;
 }
+
+// FCS doesn't have conference-championship or resume-rating data yet, so
+// the field here is simpler than the FBS 24-team field: just the top 24
+// FCS teams by Power Rating, seeded 1-24 in order. Once FCS resume ratings
+// and conference futures exist, this can grow auto-bid/at-large logic to
+// match buildPlayoff24Field above.
+export function buildFCS24Field() {
+  const fcsTeams = [...TEAMS]
+    .filter((t) => t.div === "FCS")
+    .sort((a, b) => a.rating - b.rating);
+
+  return fcsTeams.slice(0, 24).map((team, i) => ({
+    team,
+    bidConf: team.conf,
+    bid: i < 8 ? "Top Seed" : "At-Large",
+    seed: i + 1,
+  }));
+}
