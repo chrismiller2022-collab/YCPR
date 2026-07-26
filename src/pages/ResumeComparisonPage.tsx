@@ -4,6 +4,7 @@ import TeamPicker from "../components/TeamPicker";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { spreadColor } from "../lib/odds";
 import { computeNextOpponent, computeGraphicCardStats } from "../lib/schedule";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 const COMPARISON_ROW_LABELS = [
   "Power Rating + Rank",
@@ -44,9 +45,11 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
     .map((s) => TEAMS_BY_NAME[s.team])
     .filter(Boolean);
 
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
   const teamStats = selectedTeams.map((t) => ({
     team: t,
-    next: computeNextOpponent(t),
+    next: computeNextOpponent(t, liveByTeam),
     stats: computeGraphicCardStats(t),
   }));
 

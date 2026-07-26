@@ -3,9 +3,11 @@ import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
 import { BracketGame } from "./BracketPage";
 import { buildFCS24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair } from "../lib/bracket24";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const field = useMemo(() => buildFCS24Field(), []);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   if (field.length < 24) {
     return (
@@ -28,20 +30,20 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
   const firstRoundField = field.slice(8, 24);
 
   const r1Pairs = pairFirstRoundNoConfConflict(firstRoundField);
-  const r1Winners = r1Pairs.map((p) => playGame(p.host, p.away, false));
+  const r1Winners = r1Pairs.map((p) => playGame(p.host, p.away, false, liveByTeam));
 
   const r2Pool = [...byes, ...r1Winners];
   const r2Pairs = reseedAndPair(r2Pool);
-  const r2Winners = r2Pairs.map((p) => playGame(p.host, p.away, false));
+  const r2Winners = r2Pairs.map((p) => playGame(p.host, p.away, false, liveByTeam));
 
   const qfPairs = reseedAndPair(r2Winners);
-  const qfWinners = qfPairs.map((p) => playGame(p.host, p.away, false));
+  const qfWinners = qfPairs.map((p) => playGame(p.host, p.away, false, liveByTeam));
 
   const sfPairs = reseedAndPair(qfWinners);
-  const sfWinners = sfPairs.map((p) => playGame(p.host, p.away, false));
+  const sfWinners = sfPairs.map((p) => playGame(p.host, p.away, false, liveByTeam));
 
   const champPair = reseedAndPair(sfWinners)[0];
-  const champion = playGame(champPair.host, champPair.away, true);
+  const champion = playGame(champPair.host, champPair.away, true, liveByTeam);
 
   return (
     <div className="matchups-page">

@@ -4,6 +4,7 @@ import TeamPicker from "../components/TeamPicker";
 import { TEAMS } from "../data/teams";
 import { spreadColor } from "../lib/odds";
 import { computeSwapSchedule } from "../lib/schedule";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 function SwapScheduleRow({ item, ratingTeam, onNavigateTeam }: any) {
   const { game, opp, isHome, spread, winPct } = item;
@@ -111,10 +112,12 @@ export default function ScheduleSwapPage({ onNavigateTeam, onHome }: any) {
   const bothSelected = teamA && teamB;
   const sameTeam = bothSelected && teamA.team === teamB.team;
 
-  const teamAOwn = bothSelected ? computeSwapSchedule(teamA.team, teamA) : null;
-  const teamBOwn = bothSelected ? computeSwapSchedule(teamB.team, teamB) : null;
-  const teamAOnB = bothSelected ? computeSwapSchedule(teamB.team, teamA) : null;
-  const teamBOnA = bothSelected ? computeSwapSchedule(teamA.team, teamB) : null;
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  const teamAOwn = bothSelected ? computeSwapSchedule(teamA.team, teamA, liveByTeam) : null;
+  const teamBOwn = bothSelected ? computeSwapSchedule(teamB.team, teamB, liveByTeam) : null;
+  const teamAOnB = bothSelected ? computeSwapSchedule(teamB.team, teamA, liveByTeam) : null;
+  const teamBOnA = bothSelected ? computeSwapSchedule(teamA.team, teamB, liveByTeam) : null;
 
   return (
     <div className="matchup-page schedule-swap-page">

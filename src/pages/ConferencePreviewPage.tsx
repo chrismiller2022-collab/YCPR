@@ -4,12 +4,32 @@ import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { TEAMS } from "../data/teams";
 import { fmtNum, fmtOdds, fmtPct } from "../lib/format";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-function ConferencePreviewRow({ team, maxPct, onNavigateTeam }: any) {
+function DiffCell({ value }: any) {
+  if (value == null) return <td className="wintotals-total-cell">–</td>;
+  return (
+    <td className="wintotals-total-cell">
+      {value > 0 ? "+" : ""}
+      {value.toFixed(2)}
+    </td>
+  );
+}
+
+function ConferencePreviewRow({ team, live, maxPct, onNavigateTeam }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
-  const winTotal = TEAM_WIN_TOTALS[team.team]?.total ?? 0;
-  const confWinTotal = TEAM_WIN_TOTALS[team.team]?.confTotal ?? 0;
-  const pct = f?.confWinPct ?? 0;
+  const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total ?? 0;
+  const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[team.team]?.confTotal ?? 0;
+  const seasonWinLine = live?.season_win_line ?? null;
+  const confLine = live?.conf_line ?? f?.confLine ?? null;
+  const fairPrice = live?.fair_price ?? f?.fairPrice ?? null;
+  const confWinPct = live?.conf_win_pct ?? f?.confWinPct ?? 0;
+  const odds = live?.odds ?? f?.odds ?? null;
+
+  const seasonWinDiff = seasonWinLine != null ? winTotal - seasonWinLine : null;
+  const confWinDiff = confLine != null ? confWinTotal - confLine : null;
+
+  const pct = confWinPct ?? 0;
   const barWidth = maxPct > 0 ? Math.max((pct / maxPct) * 100, pct > 0 ? 2 : 0) : 0;
 
   return (
@@ -25,37 +45,42 @@ function ConferencePreviewRow({ team, maxPct, onNavigateTeam }: any) {
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{winTotal.toFixed(2)}</td>
+      <td className="wintotals-total-cell">{fmtNum(seasonWinLine)}</td>
+      <DiffCell value={seasonWinDiff} />
       <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
-      <td className="wintotals-total-cell">{fmtNum(f?.confLine)}</td>
+      <td className="wintotals-total-cell">{fmtNum(confLine)}</td>
+      <DiffCell value={confWinDiff} />
+      <td className="wintotals-total-cell">{fmtOdds(fairPrice)}</td>
       <td className="conf-odds-cell">
         <div className="conf-odds-bar-track">
           <div className="conf-odds-bar-fill" style={{ width: `${barWidth}%` }} />
         </div>
-        <span className="conf-odds-pct">{fmtPct(f?.confWinPct)}</span>
+        <span className="conf-odds-pct">{fmtPct(confWinPct)}</span>
       </td>
-      <td className="wintotals-total-cell">{fmtOdds(f?.odds)}</td>
+      <td className="wintotals-total-cell">{fmtOdds(odds)}</td>
     </tr>
   );
 }
 
-
 export default function ConferencePreviewPage({ conference, onNavigateTeam, onHome }: any) {
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
   const rows = useMemo(() => {
     const list = TEAMS.filter((t) => t.conf === conference);
     return [...list].sort((a, b) => {
-      const pa = CONF_FUTURES_BY_TEAM[a.team]?.confWinPct;
-      const pb = CONF_FUTURES_BY_TEAM[b.team]?.confWinPct;
+      const pa = liveByTeam[a.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[a.team]?.confWinPct;
+      const pb = liveByTeam[b.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[b.team]?.confWinPct;
       if (pa == null && pb == null) return a.rating - b.rating;
       if (pa == null) return 1;
       if (pb == null) return -1;
       return pb - pa;
     });
-  }, [conference]);
+  }, [conference, liveByTeam]);
 
-  const maxPct = rows.reduce(
-    (max, t) => Math.max(max, CONF_FUTURES_BY_TEAM[t.team]?.confWinPct ?? 0),
-    0
-  );
+  const maxPct = rows.reduce((max, t) => {
+    const pct = liveByTeam[t.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[t.team]?.confWinPct ?? 0;
+    return Math.max(max, pct);
+  }, 0);
 
   return (
     <div className="matchups-page">
@@ -66,15 +91,16 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
         <div className="eyebrow">Conference Preview</div>
         <h1 className="title matchup-title">{conference.toUpperCase()}</h1>
         <p className="subtitle team-subtitle">
-          Model odds to win the conference, plus projected win totals and the
-          market's conference win line for every {conference} team.
+          Model odds to win the conference, projected win totals (season and
+          conference), the market's lines for both, and our fair conference
+          price for every {conference} team.
         </p>
       </div>
 
       <div className="table-wrap">
         {rows.length === 0 ? (
           <div className="empty matchups-empty">
-            No futures data available for {conference} yet.
+            No teams found for {conference}.
           </div>
         ) : (
           <div className="table-scroll">
@@ -84,8 +110,12 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                   <th className="th">Team</th>
                   <th className="th th-right">Power Rating</th>
                   <th className="th th-right">Proj. Wins</th>
+                  <th className="th th-right">Vegas Win Total</th>
+                  <th className="th th-right">Win Total Diff</th>
                   <th className="th th-right">Conf. Wins</th>
                   <th className="th th-right">Conf. Win Vegas Line</th>
+                  <th className="th th-right">Conf. Win Diff</th>
+                  <th className="th th-right">Fair Conf. Price</th>
                   <th className="th">Conference Odds</th>
                   <th className="th th-right">Conference Vegas Odds</th>
                 </tr>
@@ -95,6 +125,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                   <ConferencePreviewRow
                     key={t.team}
                     team={t}
+                    live={liveByTeam[t.team]}
                     maxPct={maxPct}
                     onNavigateTeam={onNavigateTeam}
                   />
@@ -108,9 +139,9 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
       <div className="footer-note">
         Conference Odds bar reflects our model's probability to win the
         conference. Conference Vegas Odds is the market's current price.
-        Conference Win Vegas Line is the de-vigged line, accounting for the
-        juice on the over/under — for example, Ohio State at 7.5 with Over
-        +115 / Under -136 de-vigs to 7.25.
+        Fair Conf. Price is our model's own fair American-odds price to win
+        the conference. Diff columns are ours minus the market's line —
+        positive means we're projecting more wins than the market.
       </div>
     </div>
   );

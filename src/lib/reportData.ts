@@ -2,7 +2,7 @@ import { TEAMS, conferencesForDivision, type Team } from "../data/teams";
 import { GAMES, gamesForTeam } from "../data/games";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { TEAM_WIN_TOTALS } from "./ranks";
-import { HFA } from "./odds";
+import { HFA, hfaFor, spreadToWinPct, spreadToMoneyline } from "./odds";
 
 export interface ChangeRow {
   team: Team;
@@ -74,27 +74,35 @@ export interface ConferencePreviewRowData {
   rows: {
     team: Team;
     winTotal: number;
+    seasonWinLine: number | null;
     confWinTotal: number;
     confLine: number | null;
     confWinPct: number | null;
+    fairPrice: number | null;
     odds: number | null;
   }[];
 }
 
 /** All conferences in a division, each with its teams' preview data. */
-export function allConferencePreviews(division: "FBS" | "FCS"): ConferencePreviewRowData[] {
+export function allConferencePreviews(
+  division: "FBS" | "FCS",
+  liveByTeam: Record<string, any> = {}
+): ConferencePreviewRowData[] {
   return conferencesForDivision(division).map((conference) => {
     const teams = TEAMS.filter((t) => t.conf === conference);
     const rows = teams
       .map((t) => {
         const f = CONF_FUTURES_BY_TEAM[t.team];
+        const live = liveByTeam[t.team];
         return {
           team: t,
-          winTotal: TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-          confWinTotal: TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
-          confLine: f?.confLine ?? null,
-          confWinPct: f?.confWinPct ?? null,
-          odds: f?.odds ?? null,
+          winTotal: live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
+          seasonWinLine: live?.season_win_line ?? null,
+          confWinTotal: live?.conf_proj_wins ?? TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
+          confLine: live?.conf_line ?? f?.confLine ?? null,
+          confWinPct: live?.conf_win_pct ?? f?.confWinPct ?? null,
+          fairPrice: live?.fair_price ?? f?.fairPrice ?? null,
+          odds: live?.odds ?? f?.odds ?? null,
         };
       })
       .sort((a, b) => (b.confWinPct ?? 0) - (a.confWinPct ?? 0));
@@ -107,10 +115,19 @@ export interface MatchupRow {
   away: Team;
   home: Team;
   awaySpread: number;
+  homeSpread: number;
+  awayWinPct: number | null;
+  homeWinPct: number | null;
+  awayMoneyline: number | null;
+  homeMoneyline: number | null;
 }
 
 /** Games in a given week where both teams are in the same division. */
-export function weekMatchups(division: "FBS" | "FCS", week: number): MatchupRow[] {
+export function weekMatchups(
+  division: "FBS" | "FCS",
+  week: number,
+  liveByTeam: Record<string, any> = {}
+): MatchupRow[] {
   const teamsByName = Object.fromEntries(TEAMS.map((t) => [t.team, t]));
   return GAMES.filter((g) => g.week === week)
     .map((g) => {
@@ -118,7 +135,9 @@ export function weekMatchups(division: "FBS" | "FCS", week: number): MatchupRow[
       const home = teamsByName[g.home];
       if (!away || !home) return null;
       if (away.div !== division || home.div !== division) return null;
-      const awaySpread = away.rating - home.rating + HFA;
+      const awaySpread = away.rating - home.rating + hfaFor(g.home, liveByTeam);
+      const homeSpread = -awaySpread;
+      const awayWinPct = spreadToWinPct(awaySpread);
       return {
         dateLabel: new Date(g.date).toLocaleDateString(undefined, {
           weekday: "short",
@@ -128,6 +147,11 @@ export function weekMatchups(division: "FBS" | "FCS", week: number): MatchupRow[
         away,
         home,
         awaySpread,
+        homeSpread,
+        awayWinPct,
+        homeWinPct: awayWinPct != null ? 1 - awayWinPct : null,
+        awayMoneyline: spreadToMoneyline(awaySpread),
+        homeMoneyline: spreadToMoneyline(homeSpread),
       };
     })
     .filter((r): r is MatchupRow => r != null)

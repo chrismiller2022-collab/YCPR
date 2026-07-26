@@ -19,7 +19,6 @@
           color: var(--chalk);
           min-height: 100vh;
           padding: 0 0 3rem 0;
-          overflow-x: hidden;
           background-image:
             repeating-linear-gradient(
               0deg,
@@ -508,24 +507,7 @@
           letter-spacing: 0.06em;
         }
 
-        @media (max-width: 640px) {
-          .graphic-card-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-          .graphic-card-cell:nth-child(3n) {
-            border-right: 1px solid var(--hash);
-          }
-          .graphic-card-cell:nth-child(2n) {
-            border-right: none;
-          }
-          .graphic-card-cell:nth-last-child(-n+3) {
-            border-bottom: 1px solid var(--hash);
-          }
-          .graphic-card-cell:nth-last-child(-n+2) {
-            border-bottom: none;
-          }
-        }
-
+        
         .section-label {
           font-size: 0.68rem;
           text-transform: uppercase;
@@ -626,18 +608,8 @@
           letter-spacing: 0.06em;
         }
 
-        @media (max-width: 900px) {
-          .compare-picker-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-        }
-
-        @media (max-width: 560px) {
-          .compare-picker-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-
+        
+        
         .swap-summary {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
@@ -711,15 +683,7 @@
           font-size: 1.1rem;
         }
 
-        @media (max-width: 900px) {
-          .swap-summary {
-            grid-template-columns: repeat(2, 1fr);
-          }
-          .swap-table-row {
-            grid-template-columns: 1fr;
-          }
-        }
-
+        
         .picker-grid {
           display: grid;
           grid-template-columns: 1fr auto 1fr;
@@ -1042,12 +1006,7 @@
           margin-top: 1rem;
         }
 
-        @media (max-width: 640px) {
-          .bet-stats-row {
-            grid-template-columns: 1fr;
-          }
-        }
-
+        
         .matchups-page .table-wrap {
           max-width: 1100px;
         }
@@ -1139,19 +1098,7 @@
           white-space: nowrap;
         }
 
-        @media (max-width: 640px) {
-          .picker-grid {
-            grid-template-columns: 1fr;
-          }
-          .vs-divider {
-            padding-top: 0;
-            text-align: center;
-          }
-          .spread-cards {
-            grid-template-columns: 1fr;
-          }
-        }
-
+        
         .stat-row {
           display: flex;
           justify-content: center;
@@ -1649,12 +1596,7 @@
           max-width: 1020px;
         }
 
-        @media (max-width: 700px) {
-          .bracket-col {
-            min-width: 180px;
-          }
-        }
-
+        
         .rating-cell {
           text-align: right;
           font-weight: 700;
@@ -1720,93 +1662,3 @@
           font-size: 0.75rem;
           text-align: center;
         }
-
-        @media (max-width: 640px) {
-          .conf-cell, .bar-cell { display: none; }
-          .hero { padding: 2.5rem 1rem 2rem; }
-          .stat-row { gap: 1.5rem; }
-          .sub-grid { grid-template-columns: repeat(3, 1fr); }
-        }
-
-        /* ============================================================
-           Mobile: keep context visible while scrolling wide tables
-           ============================================================ */
-
-        /* Ranking-style tables (Strength of Schedule, Resume Ratings,
-           Conference Win Totals/Odds, Conference Previews, Live Win
-           Totals): pin the team name to the left edge so it stays put
-           while the rest of the row scrolls under it horizontally. */
-        .table-scroll table td:first-child,
-        .table-scroll table th:first-child {
-          position: sticky;
-          left: 0;
-          z-index: 15;
-          background: var(--turf);
-        }
-
-        .table-scroll table thead th:first-child {
-          z-index: 25;
-        }
-
-        .table-scroll tbody tr:hover td:first-child {
-          background: var(--turf-panel);
-        }
-
-        /* Matchups tables (Spreads/Moneyline/Totals): the date column has
-           a fixed width so the away-team column can be pinned right after
-           it at a known offset — both stay visible while the stat columns
-           scroll underneath. */
-        .matchups-table .game-date-cell {
-          width: 64px;
-          min-width: 64px;
-          max-width: 64px;
-        }
-
-        .matchups-table td:nth-of-type(2),
-        .matchups-table thead th:nth-of-type(2) {
-          position: sticky;
-          left: 64px;
-          z-index: 14;
-          background: var(--turf);
-        }
-
-        .matchups-table thead th:nth-of-type(2) {
-          z-index: 24;
-        }
-
-        .matchups-table tbody tr:hover td:nth-of-type(2) {
-          background: var(--turf-panel);
-        }
-
-        /* ============================================================
-           Mobile: small-screen layout fixes
-           ============================================================ */
-
-        @media (max-width: 640px) {
-          /* Prevent the Spreads/Moneyline/Totals toggle from clipping or
-             forcing a page-level horizontal scrollbar on narrow phones. */
-          .mode-toggle {
-            flex-wrap: wrap;
-            padding: 0 1rem;
-          }
-
-          /* Give scrollable tables a bit more vertical room now that the
-             viewport itself is shorter in landscape-locked mobile browsers. */
-          .table-scroll {
-            max-height: 70vh;
-          }
-
-          /* Comparison / matchup picker rows: stack instead of squeezing
-             two pickers and a divider into one row. */
-          .picker-grid {
-            gap: 1rem;
-          }
-        }
-
-        @media (max-width: 400px) {
-          .swap-summary,
-          .sub-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-        }
-

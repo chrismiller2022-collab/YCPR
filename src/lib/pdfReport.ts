@@ -4,6 +4,9 @@ import { fmtNum, fmtOdds, fmtPct } from "./format";
 import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
 
 const MARGIN = 40;
+// Landscape letter is 792pt wide x 612pt tall - much shorter than portrait,
+// so the "do we need a new page" threshold has to be lower.
+const MAX_Y = 540;
 
 function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: number) {
   doc.setFontSize(11);
@@ -54,7 +57,7 @@ function winsLossesTable(
 // Small helper so each call site doesn't need to repeat the
 // page-break-if-needed logic before every table.
 function pageBreakIfNeeded(doc: jsPDF, y: number): number {
-  if (y > 700) {
+  if (y > MAX_Y) {
     doc.addPage();
     return MARGIN;
   }
@@ -74,7 +77,7 @@ export interface WeekReportInput {
 }
 
 export function buildWeekReportPdf(input: WeekReportInput) {
-  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
   const {
     division,
     week,
@@ -89,7 +92,7 @@ export function buildWeekReportPdf(input: WeekReportInput) {
 
   // --- Title page ---
   doc.setFontSize(22);
-  doc.text(`${division} Week ${week} Report`, MARGIN, 60);
+  doc.text(`${division} Week ${week} Report`, MARGIN, 55);
   doc.setFontSize(11);
   doc.setTextColor(100);
   doc.text(
@@ -99,11 +102,11 @@ export function buildWeekReportPdf(input: WeekReportInput) {
       day: "numeric",
     })}`,
     MARGIN,
-    82
+    75
   );
   doc.setTextColor(0);
 
-  let y = 110;
+  let y = 100;
 
   if (!hasWeeklyChangeData) {
     doc.setFontSize(10);
@@ -119,7 +122,7 @@ export function buildWeekReportPdf(input: WeekReportInput) {
       y + 14
     );
     doc.setTextColor(0);
-    y += 40;
+    y += 34;
   }
 
   // --- Section 1: Top 25 gainers/losers ---
@@ -142,14 +145,60 @@ export function buildWeekReportPdf(input: WeekReportInput) {
   y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y) + 26;
 
   y = pageBreakIfNeeded(doc, y);
-  y = winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
+  y =
+    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
   y = pageBreakIfNeeded(doc, y);
-  y = winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
+  y =
+    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
 
-  // --- Section 2: Conference previews ---
+  // --- Section 2: Week matchups ---
   doc.addPage();
   doc.setFontSize(16);
-  doc.text(`2. All ${division} Conference Previews`, MARGIN, MARGIN);
+  doc.text(`2. ${division} Week ${week} Matchups`, MARGIN, MARGIN);
+
+  if (matchups.length === 0) {
+    doc.setFontSize(10);
+    doc.text(`No ${division} vs ${division} games scheduled for Week ${week}.`, MARGIN, MARGIN + 20);
+  } else {
+    autoTable(doc, {
+      startY: MARGIN + 16,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [[
+        "Date",
+        "Away",
+        "Away PR",
+        "Away Spread",
+        "Away ML",
+        "Away Win%",
+        "Home",
+        "Home PR",
+        "Home Spread",
+        "Home ML",
+        "Home Win%",
+      ]],
+      body: matchups.map((m) => [
+        m.dateLabel,
+        m.away.team,
+        (m.away.rating > 0 ? "+" : "") + m.away.rating.toFixed(2),
+        (m.awaySpread > 0 ? "+" : "") + m.awaySpread.toFixed(1),
+        fmtOdds(m.awayMoneyline),
+        fmtPct(m.awayWinPct),
+        m.home.team,
+        (m.home.rating > 0 ? "+" : "") + m.home.rating.toFixed(2),
+        (m.homeSpread > 0 ? "+" : "") + m.homeSpread.toFixed(1),
+        fmtOdds(m.homeMoneyline),
+        fmtPct(m.homeWinPct),
+      ]),
+      styles: { fontSize: 7, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
+  }
+
+  // --- Section 3: Conference previews ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`3. All ${division} Conference Previews`, MARGIN, MARGIN);
   y = MARGIN + 24;
 
   for (const cp of conferencePreviews) {
@@ -160,46 +209,37 @@ export function buildWeekReportPdf(input: WeekReportInput) {
     autoTable(doc, {
       startY: y + 8,
       margin: { left: MARGIN, right: MARGIN },
-      head: [["Team", "Power Rating", "Proj. Wins", "Conf. Wins", "Conf. Line", "Conf. Odds", "Vegas Odds"]],
+      head: [[
+        "Team",
+        "Power Rating",
+        "Proj. Wins",
+        "Vegas Win Total",
+        "Win Total Diff",
+        "Conf. Wins",
+        "Conf. Win Line",
+        "Conf. Win Diff",
+        "Fair Conf. Price",
+        "Conf. Odds",
+        "Conf. Vegas Odds",
+      ]],
       body: cp.rows.map((r) => [
         r.team.team,
         (r.team.rating > 0 ? "+" : "") + r.team.rating.toFixed(2),
         r.winTotal.toFixed(2),
+        fmtNum(r.seasonWinLine),
+        r.seasonWinLine != null ? ((r.winTotal - r.seasonWinLine) > 0 ? "+" : "") + (r.winTotal - r.seasonWinLine).toFixed(2) : "–",
         r.confWinTotal.toFixed(2),
         fmtNum(r.confLine),
+        r.confLine != null ? ((r.confWinTotal - r.confLine) > 0 ? "+" : "") + (r.confWinTotal - r.confLine).toFixed(2) : "–",
+        fmtOdds(r.fairPrice),
         fmtPct(r.confWinPct),
         fmtOdds(r.odds),
       ]),
-      styles: { fontSize: 8, cellPadding: 3 },
+      styles: { fontSize: 7, cellPadding: 2.5 },
       headStyles: { fillColor: [31, 32, 65] },
       theme: "striped",
     });
     y = (doc as any).lastAutoTable.finalY + 24;
-  }
-
-  // --- Section 3: Week matchups ---
-  doc.addPage();
-  doc.setFontSize(16);
-  doc.text(`3. ${division} Week ${week} Matchups`, MARGIN, MARGIN);
-
-  if (matchups.length === 0) {
-    doc.setFontSize(10);
-    doc.text(`No ${division} vs ${division} games scheduled for Week ${week}.`, MARGIN, MARGIN + 20);
-  } else {
-    autoTable(doc, {
-      startY: MARGIN + 16,
-      margin: { left: MARGIN, right: MARGIN },
-      head: [["Date", "Away (PR)", "Home (PR)", "Projected Spread"]],
-      body: matchups.map((m) => [
-        m.dateLabel,
-        `${m.away.team} (${m.away.rating > 0 ? "+" : ""}${m.away.rating.toFixed(2)})`,
-        `${m.home.team} (${m.home.rating > 0 ? "+" : ""}${m.home.rating.toFixed(2)})`,
-        (m.awaySpread > 0 ? "+" : "") + m.awaySpread.toFixed(1),
-      ]),
-      styles: { fontSize: 8, cellPadding: 3 },
-      headStyles: { fillColor: [31, 32, 65] },
-      theme: "striped",
-    });
   }
 
   doc.save(`${division.toLowerCase()}-week-${week}-report.pdf`);

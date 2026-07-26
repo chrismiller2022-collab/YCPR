@@ -24,6 +24,9 @@ const HEADER_ALIASES: Record<string, string> = {
   "resume rating": "resume_rating",
   "total wins": "total_wins",
   "live win proj": "total_wins",
+  "vegas win total": "season_win_line",
+  "vegas win total line": "season_win_line",
+  "season win line": "season_win_line",
   "preseason proj": "preseason_proj",
   change: "change_from_preseason",
   "live wins": "live_wins",
@@ -35,6 +38,8 @@ const HEADER_ALIASES: Record<string, string> = {
   "conf win total": "conf_proj_wins",
   "conf line": "conf_line",
   "conference line": "conf_line",
+  "conf wins": "conf_line",
+  win: "season_win_line",
   dif: "dif",
   diff: "dif",
   abs: "abs_dif",
@@ -50,21 +55,30 @@ const HEADER_ALIASES: Record<string, string> = {
   odds: "odds",
   value: "value",
   "natty odds": "natty_odds",
+  "my natty odds": "natty_odds",
   "natl champ odds": "natty_odds",
   "draftkings natty odds": "draftkings_natty_odds",
   "natty rank": "natty_rank",
+  "vegas natty rank": "natty_rank",
   "playoff seeding": "playoff_seed",
   "playoff seed": "playoff_seed",
   "ats wins": "ats_wins",
   "ats losses": "ats_losses",
   "games completed": "games_completed",
   "ats record rank": "ats_rank",
+  "wins rank": "rank",
+  hfa: "hfa",
+  "home field advantage": "hfa",
+  "home field adv": "hfa",
 };
 
 // Columns that are expected in the export but intentionally not stored per
 // week — shown as "ignored" rather than "not recognized" so it's clear
-// they're accounted for, not a mistake.
+// they're accounted for, not a mistake. "Column 1", "Column 2", etc. are
+// spacer columns that shift names as the sheet is edited, so match them
+// by pattern rather than an exact list.
 const IGNORED_HEADERS = new Set([".", "record", "ats record"]);
+const IGNORED_HEADER_PATTERN = /^column\s*\d+$/;
 
 const TEXT_FIELDS = new Set(["team", "bet", "div", "conf"]);
 
@@ -85,6 +99,7 @@ const NUMERIC_FIELDS = new Set([
   "resume_rank",
   "resume_rating",
   "total_wins",
+  "season_win_line",
   "preseason_proj",
   "change_from_preseason",
   "live_wins",
@@ -104,6 +119,7 @@ const NUMERIC_FIELDS = new Set([
   "ats_losses",
   "games_completed",
   "ats_rank",
+  "hfa",
   ...PERCENT_FIELDS,
 ]);
 
@@ -129,7 +145,7 @@ function parsePaste(raw: string) {
   const unmatchedHeaders: string[] = [];
   rawHeaders.forEach((h, i) => {
     const normalized = normalizeHeader(h);
-    if (IGNORED_HEADERS.has(normalized)) return;
+    if (IGNORED_HEADERS.has(normalized) || IGNORED_HEADER_PATTERN.test(normalized)) return;
     const key = HEADER_ALIASES[normalized];
     if (key) {
       headerMap[i] = key;

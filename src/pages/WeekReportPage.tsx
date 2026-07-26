@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { WEEKS } from "../data/games";
-import { useWeeklyChange } from "../lib/api/weeklyStats";
+import { useWeeklyChange, useWeeklyStats } from "../lib/api/weeklyStats";
 import {
   topGainersAndLosers,
   winsLossesLeft,
@@ -17,6 +17,7 @@ export default function WeekReportPage({ onHome }: any) {
   const { byTeam: sosChange, currentWeek, previousWeek } = useWeeklyChange("sor");
   const { byTeam: resumeChange } = useWeeklyChange("resume_rating");
   const { byTeam: ratingChange } = useWeeklyChange("rating");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const hasWeeklyChangeData = !!(currentWeek && previousWeek);
 
@@ -33,8 +34,8 @@ export default function WeekReportPage({ onHome }: any) {
           resume: topGainersAndLosers(division, resumeChange),
           rating: topGainersAndLosers(division, ratingChange),
           winsLossesLeft: winsLossesLeft(division),
-          conferencePreviews: allConferencePreviews(division),
-          matchups: weekMatchups(division, week),
+          conferencePreviews: allConferencePreviews(division, liveByTeam),
+          matchups: weekMatchups(division, week, liveByTeam),
           hasWeeklyChangeData,
         });
       } catch (err: any) {

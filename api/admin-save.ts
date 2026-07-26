@@ -17,6 +17,7 @@ const STAT_FIELDS = [
   "resume_rank",
   "resume_rating",
   "total_wins",
+  "season_win_line",
   "preseason_proj",
   "change_from_preseason",
   "live_wins",
@@ -42,6 +43,7 @@ const STAT_FIELDS = [
   "ats_losses",
   "games_completed",
   "ats_rank",
+  "hfa",
 ];
 
 export default async function handler(req: any, res: any) {

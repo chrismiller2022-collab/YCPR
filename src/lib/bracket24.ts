@@ -1,7 +1,7 @@
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { TEAMS } from "../data/teams";
-import { HFA } from "./odds";
+import { hfaFor } from "./odds";
 
 export const PLAYOFF24_AUTO_CONFERENCES = [
   "Big Ten",
@@ -88,10 +88,10 @@ export function pairFirstRoundNoConfConflict(sixteen) {
   return hosts.map((h, i) => ({ host: h, away: aways[i] }));
 }
 
-export function playGame(entryA, entryB, neutral) {
+export function playGame(entryA, entryB, neutral, liveByTeam) {
   const spreadA = neutral
     ? entryA.team.rating - entryB.team.rating
-    : entryA.team.rating - entryB.team.rating - HFA;
+    : entryA.team.rating - entryB.team.rating - hfaFor(entryA.team.team, liveByTeam);
   return spreadA <= 0 ? entryA : entryB;
 }
 

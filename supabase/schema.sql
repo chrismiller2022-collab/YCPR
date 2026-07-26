@@ -30,6 +30,7 @@ create table if not exists weekly_team_stats (
 
   -- season win projection (this is "Live Win Proj" in the weekly export)
   total_wins numeric,
+  season_win_line numeric,
   preseason_proj numeric,
   change_from_preseason numeric,
 
@@ -53,6 +54,9 @@ create table if not exists weekly_team_stats (
   implied_pct numeric,
   odds numeric,
   value numeric,
+
+  -- home field advantage, this team's own value (points added when hosting)
+  hfa numeric,
 
   -- national championship odds (model's own, and the market/Draftkings line)
   natty_odds numeric,

@@ -1,7 +1,7 @@
 import { TEAMS_BY_NAME } from "../data/teams";
-import { HFA } from "./odds";
+import { hfaFor } from "./odds";
 
-export function computeBettingStats(games) {
+export function computeBettingStats(games, liveByTeam) {
   const su = { w: 0, l: 0 };
   const ats = { w: 0, l: 0 };
   const fb = { w: 0, l: 0 };
@@ -14,7 +14,7 @@ export function computeBettingStats(games) {
     // Straight-up grading needs actual final scores, which aren't
     // tracked yet — this will start populating once scores are added.
     if (g.awayScore != null && g.homeScore != null) {
-      const awaySpread = away.rating - home.rating + HFA;
+      const awaySpread = away.rating - home.rating + hfaFor(g.home, liveByTeam);
       const projWinner =
         awaySpread < 0 ? "away" : awaySpread > 0 ? "home" : null;
       const actualWinner =

@@ -4,12 +4,13 @@ import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { BRACKET_SEED_NAMES, NATTY_BY_TEAM } from "../data/nattyOdds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { fmtOdds } from "../lib/format";
-import { HFA, spreadColor, spreadToMoneyline } from "../lib/odds";
+import { hfaFor, spreadColor, spreadToMoneyline } from "../lib/odds";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-export function BracketGame({ seedA, teamA, seedB, teamB, neutral, onNavigateTeam }: any) {
+export function BracketGame({ seedA, teamA, seedB, teamB, neutral, liveByTeam, onNavigateTeam }: any) {
   const spreadA = neutral
     ? teamA.rating - teamB.rating
-    : teamA.rating - teamB.rating - HFA;
+    : teamA.rating - teamB.rating - hfaFor(teamA.team, liveByTeam);
   const spreadB = -spreadA;
   const aWins = spreadA <= 0;
   const mlA = spreadToMoneyline(spreadA);
@@ -88,6 +89,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
     () => BRACKET_SEED_NAMES.map((name) => TEAMS_BY_NAME[name]).filter(Boolean),
     []
   );
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   if (seeds.length < 12) {
     return (
@@ -115,7 +117,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
   const r1Results = r1Pairs.map((p) => {
     const host = seeds[p.hostSeed - 1];
     const away = seeds[p.awaySeed - 1];
-    const spread = host.rating - away.rating - HFA;
+    const spread = host.rating - away.rating - hfaFor(host.team, liveByTeam);
     const hostWins = spread <= 0;
     return {
       hostSeed: p.hostSeed,
@@ -199,6 +201,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
                   teamA={m.host}
                   seedB={m.awaySeed}
                   teamB={m.away}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -216,6 +219,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
                   seedB={q.oppSeed}
                   teamB={q.opp}
                   neutral
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -231,6 +235,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
                 seedB={sf1B.seed}
                 teamB={sf1B.team}
                 neutral
+                liveByTeam={liveByTeam}
                 onNavigateTeam={onNavigateTeam}
               />
               <BracketGame
@@ -239,6 +244,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
                 seedB={sf2B.seed}
                 teamB={sf2B.team}
                 neutral
+                liveByTeam={liveByTeam}
                 onNavigateTeam={onNavigateTeam}
               />
             </div>
@@ -253,6 +259,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
                 seedB={sf2Winner.seed}
                 teamB={sf2Winner.team}
                 neutral
+                liveByTeam={liveByTeam}
                 onNavigateTeam={onNavigateTeam}
               />
             </div>

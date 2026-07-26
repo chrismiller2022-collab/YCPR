@@ -1,7 +1,8 @@
 import { useState } from "react";
 import TeamPicker from "../components/TeamPicker";
 import { TEAMS } from "../data/teams";
-import { HFA, spreadColor, spreadToWinPct } from "../lib/odds";
+import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 export default function MatchupPage({ onHome }: any) {
   const [divA, setDivA] = useState("All");
@@ -19,11 +20,13 @@ export default function MatchupPage({ onHome }: any) {
   const bothSelected = teamA && teamB;
   const sameTeam = bothSelected && teamA.team === teamB.team;
 
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
   let spreadA = null;
   if (bothSelected && !sameTeam) {
     spreadA = teamA.rating - teamB.rating;
-    if (home === "A") spreadA -= HFA;
-    if (home === "B") spreadA += HFA;
+    if (home === "A") spreadA -= hfaFor(teamA.team, liveByTeam);
+    if (home === "B") spreadA += hfaFor(teamB.team, liveByTeam);
   }
   const spreadB = spreadA === null ? null : -spreadA;
 
@@ -48,8 +51,7 @@ export default function MatchupPage({ onHome }: any) {
         <h1 className="title matchup-title">HYPOTHETICAL MATCHUP</h1>
         <p className="subtitle team-subtitle">
           Pick any two teams to calculate a projected spread from their power
-          ratings, with a flat {HFA}-point home field advantage. Team-specific
-          HFA is coming later.
+          ratings.
         </p>
       </div>
 

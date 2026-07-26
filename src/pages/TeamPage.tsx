@@ -1,10 +1,11 @@
 import TeamLogo from "../components/TeamLogo";
 import { gamesForTeam } from "../data/games";
 import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
-import { HFA, spreadColor, spreadToWinPct } from "../lib/odds";
+import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-function ScheduleRow({ game, team, onNavigateTeam }: any) {
+function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
   const oppName = isHome ? game.away : game.home;
   const opp = TEAMS_BY_NAME[oppName];
@@ -12,8 +13,8 @@ function ScheduleRow({ game, team, onNavigateTeam }: any) {
 
   // Spread from this team's perspective: negative = this team favored.
   const spread = isHome
-    ? team.rating - opp.rating - HFA
-    : team.rating - opp.rating + HFA;
+    ? team.rating - opp.rating - hfaFor(team.team, liveByTeam)
+    : team.rating - opp.rating + hfaFor(oppName, liveByTeam);
   const winPct = spreadToWinPct(spread);
   const result = spread < 0 ? "Win" : spread > 0 ? "Loss" : "Even";
 
@@ -67,8 +68,8 @@ function ScheduleRow({ game, team, onNavigateTeam }: any) {
 }
 
 
-function TeamGraphicCard({ team, onNavigateTeam }: any) {
-  const next = computeNextOpponent(team);
+function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
+  const next = computeNextOpponent(team, liveByTeam);
   const nextOpp = next?.opp ?? null;
   const nextLoc = next?.loc ?? null;
   const nextSpread = next?.spread ?? null;
@@ -140,6 +141,7 @@ function TeamGraphicCard({ team, onNavigateTeam }: any) {
 export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   return (
     <div className="team-page">
@@ -154,7 +156,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
       </div>
 
       <div className="table-wrap">
-        <TeamGraphicCard team={team} onNavigateTeam={onNavigateTeam} />
+        <TeamGraphicCard team={team} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
       </div>
 
       <div className="table-wrap">
@@ -182,6 +184,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                     key={g.id}
                     game={g}
                     team={team}
+                    liveByTeam={liveByTeam}
                     onNavigateTeam={onNavigateTeam}
                   />
                 ))}

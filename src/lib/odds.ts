@@ -2,6 +2,15 @@ import { WP_TABLE, ML_TABLE } from "../data/oddsTables";
 
 export const HFA = 2.4;
 
+// Fallback only — used when a team doesn't have a live per-team HFA value
+// saved yet (e.g. before the weekly CSV includes it, or for a team with no
+// data at all). Once a team has its own HFA saved, that value is used
+// instead, everywhere a spread involves them as the home team.
+export function hfaFor(homeTeamName, liveByTeam) {
+  const v = liveByTeam?.[homeTeamName]?.hfa;
+  return v != null ? v : HFA;
+}
+
 function interpolateTable(table, spread) {
   if (spread == null || Number.isNaN(spread)) return null;
   if (spread <= table[0][0]) return table[0][1];

@@ -3,10 +3,10 @@ import { gamesForTeam } from "../data/games";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { fmtOdds } from "./format";
-import { HFA, spreadBg, spreadColor, spreadToWinPct } from "./odds";
+import { HFA, hfaFor, spreadBg, spreadColor, spreadToWinPct } from "./odds";
 import { TEAM_WIN_TOTALS } from "./ranks";
 
-export function computeSwapSchedule(scheduleTeamName, ratingTeam) {
+export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam) {
   const games = gamesForTeam(scheduleTeamName);
   let winSum = 0;
   const rows = [];
@@ -16,8 +16,8 @@ export function computeSwapSchedule(scheduleTeamName, ratingTeam) {
     const opp = TEAMS_BY_NAME[oppName];
     if (!opp) return;
     const spread = isHome
-      ? ratingTeam.rating - opp.rating - HFA
-      : ratingTeam.rating - opp.rating + HFA;
+      ? ratingTeam.rating - opp.rating - hfaFor(scheduleTeamName, liveByTeam)
+      : ratingTeam.rating - opp.rating + hfaFor(oppName, liveByTeam);
     const winPct = spreadToWinPct(spread);
     winSum += winPct;
     rows.push({ game: g, opp, isHome, spread, winPct });
@@ -26,7 +26,7 @@ export function computeSwapSchedule(scheduleTeamName, ratingTeam) {
 }
 
 
-export function computeNextOpponent(team) {
+export function computeNextOpponent(team, liveByTeam) {
   const schedule = gamesForTeam(team.team);
   const nextGame = schedule[0] || null;
   if (!nextGame) return null;
@@ -35,8 +35,8 @@ export function computeNextOpponent(team) {
   const opp = TEAMS_BY_NAME[oppName];
   if (!opp) return null;
   const spread = isHome
-    ? team.rating - opp.rating - HFA
-    : team.rating - opp.rating + HFA;
+    ? team.rating - opp.rating - hfaFor(team.team, liveByTeam)
+    : team.rating - opp.rating + hfaFor(oppName, liveByTeam);
   return { opp, loc: isHome ? "H" : "A", spread };
 }
 

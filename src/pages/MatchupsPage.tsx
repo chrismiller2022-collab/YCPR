@@ -2,18 +2,19 @@ import { useMemo, useState } from "react";
 import TeamCell from "../components/TeamCell";
 import { GAMES } from "../data/games";
 import { TEAMS_BY_NAME } from "../data/teams";
-import { HFA, spreadColor, spreadToMoneyline, spreadToWinPct } from "../lib/odds";
+import { hfaFor, spreadColor, spreadToMoneyline, spreadToWinPct } from "../lib/odds";
 import { dateLabelFor } from "../lib/format";
 import { computeBettingStats, winPctLabel } from "../lib/betting";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-function SpreadsRow({ game, onNavigateTeam }: any) {
+function SpreadsRow({ game, liveByTeam, onNavigateTeam }: any) {
   const away = TEAMS_BY_NAME[game.away];
   const home = TEAMS_BY_NAME[game.home];
   if (!away || !home) return null;
 
   // Spread is always expressed from the away team's perspective:
   // negative = away favored, positive = home favored.
-  const awaySpread = away.rating - home.rating + HFA;
+  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
 
   return (
     <tr>
@@ -39,12 +40,12 @@ function SpreadsRow({ game, onNavigateTeam }: any) {
 }
 
 
-function MoneylineRow({ game, onNavigateTeam }: any) {
+function MoneylineRow({ game, liveByTeam, onNavigateTeam }: any) {
   const away = TEAMS_BY_NAME[game.away];
   const home = TEAMS_BY_NAME[game.home];
   if (!away || !home) return null;
 
-  const awaySpread = away.rating - home.rating + HFA;
+  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
   const awayWinPct = spreadToWinPct(awaySpread);
   const awayML = spreadToMoneyline(awaySpread);
   const winner = awaySpread < 0 ? away : awaySpread > 0 ? home : null;
@@ -107,7 +108,7 @@ const MATCHUPS_MODES = [
 ];
 
 
-function MatchupsTable({ games, onNavigateTeam, mode }: any) {
+function MatchupsTable({ games, liveByTeam, onNavigateTeam, mode }: any) {
   return (
     <div className="table-scroll">
       <table className="matchups-table">
@@ -158,11 +159,11 @@ function MatchupsTable({ games, onNavigateTeam, mode }: any) {
         <tbody>
           {mode === "spreads" &&
             games.map((g) => (
-              <SpreadsRow key={g.id} game={g} onNavigateTeam={onNavigateTeam} />
+              <SpreadsRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
             ))}
           {mode === "moneyline" &&
             games.map((g) => (
-              <MoneylineRow key={g.id} game={g} onNavigateTeam={onNavigateTeam} />
+              <MoneylineRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
             ))}
           {mode === "totals" &&
             games.map((g) => (
@@ -175,8 +176,8 @@ function MatchupsTable({ games, onNavigateTeam, mode }: any) {
 }
 
 
-function BettingStatsBlock({ games, title }: any) {
-  const stats = useMemo(() => computeBettingStats(games), [games]);
+function BettingStatsBlock({ games, liveByTeam, title }: any) {
+  const stats = useMemo(() => computeBettingStats(games, liveByTeam), [games, liveByTeam]);
 
   return (
     <div className="bet-stats">
@@ -223,6 +224,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [query, setQuery] = useState("");
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const matchesFilters = (g) => {
     const home = TEAMS_BY_NAME[g.home];
@@ -273,9 +275,9 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         <h1 className="title matchup-title">{subLabel.toUpperCase()}</h1>
         <p className="subtitle team-subtitle">
           {mode === "spreads" &&
-            `Projected spreads for every game, calculated from current power ratings with a flat ${HFA}-point home field advantage.`}
+            `Projected spreads for every game, calculated from current power ratings.`}
           {mode === "moneyline" &&
-            `Projected moneylines and win percentages for every game, derived from current power ratings with a flat ${HFA}-point home field advantage.`}
+            `Projected moneylines and win percentages for every game, derived from current power ratings.`}
           {mode === "totals" &&
             "Projected totals for every game — coming soon once a scoring model is connected."}
         </p>
@@ -321,8 +323,8 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
         {!isAll && filteredGames.length > 0 && (
           <>
-            <MatchupsTable games={filteredGames} onNavigateTeam={onNavigateTeam} mode={mode} />
-            <BettingStatsBlock games={filteredGames} title={`${subLabel} Betting Stats`} />
+            <MatchupsTable games={filteredGames} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} mode={mode} />
+            <BettingStatsBlock games={filteredGames} liveByTeam={liveByTeam} title={`${subLabel} Betting Stats`} />
           </>
         )}
 
@@ -338,12 +340,12 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
               <div className="section-label week-group-label">
                 Week {week}
               </div>
-              <MatchupsTable games={games} onNavigateTeam={onNavigateTeam} mode={mode} />
+              <MatchupsTable games={games} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} mode={mode} />
             </div>
           ))}
 
         {isAll && filteredGames.length > 0 && (
-          <BettingStatsBlock games={filteredGames} title="Season Betting Stats" />
+          <BettingStatsBlock games={filteredGames} liveByTeam={liveByTeam} title="Season Betting Stats" />
         )}
       </div>
 
