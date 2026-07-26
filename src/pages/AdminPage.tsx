@@ -1,21 +1,38 @@
 import { useMemo, useState } from "react";
 
 // Maps flexible/human column headers (however you happen to label them when
-// pasting from a spreadsheet) to the actual database column names.
+// pasting from a spreadsheet) to the actual database column names. Keys are
+// lowercased/whitespace-collapsed but otherwise exact, so punctuation like
+// the trailing period in "Conf." still needs to be included here.
 const HEADER_ALIASES: Record<string, string> = {
+  div: "div",
+  division: "div",
+  "conf.": "conf",
+  conf: "conf",
+  conference: "conf",
   team: "team",
   rating: "rating",
   "power rating": "rating",
+  "power ratings": "rating",
   rank: "rank",
   sor: "sor",
   sos: "sor",
   "strength of resume": "sor",
   "strength of schedule": "sor",
   "resume rank": "resume_rank",
+  "resume ranking": "resume_rank",
   "resume rating": "resume_rating",
   "total wins": "total_wins",
+  "live win proj": "total_wins",
+  "preseason proj": "preseason_proj",
+  change: "change_from_preseason",
+  "live wins": "live_wins",
+  "live losses": "live_losses",
+  "wins left": "wins_left",
+  "losses left": "losses_left",
   "conf proj wins": "conf_proj_wins",
   "conference projected wins": "conf_proj_wins",
+  "conf win total": "conf_proj_wins",
   "conf line": "conf_line",
   "conference line": "conf_line",
   dif: "dif",
@@ -25,6 +42,7 @@ const HEADER_ALIASES: Record<string, string> = {
   bet: "bet",
   edge: "edge",
   "conf win pct": "conf_win_pct",
+  "conf win %": "conf_win_pct",
   "conference win %": "conf_win_pct",
   "fair price": "fair_price",
   "implied pct": "implied_pct",
@@ -33,7 +51,32 @@ const HEADER_ALIASES: Record<string, string> = {
   value: "value",
   "natty odds": "natty_odds",
   "natl champ odds": "natty_odds",
+  "draftkings natty odds": "draftkings_natty_odds",
+  "natty rank": "natty_rank",
+  "playoff seeding": "playoff_seed",
+  "playoff seed": "playoff_seed",
+  "ats wins": "ats_wins",
+  "ats losses": "ats_losses",
+  "games completed": "games_completed",
+  "ats record rank": "ats_rank",
 };
+
+// Columns that are expected in the export but intentionally not stored per
+// week — shown as "ignored" rather than "not recognized" so it's clear
+// they're accounted for, not a mistake.
+const IGNORED_HEADERS = new Set([".", "record", "ats record"]);
+
+const TEXT_FIELDS = new Set(["team", "bet", "div", "conf"]);
+
+// Stored as fractions (0.1633) so they match fmtPct's expectation, even
+// though the export shows them as "16.33%".
+const PERCENT_FIELDS = new Set([
+  "conf_win_pct",
+  "implied_pct",
+  "value",
+  "natty_odds",
+  "draftkings_natty_odds",
+]);
 
 const NUMERIC_FIELDS = new Set([
   "rating",
@@ -42,17 +85,26 @@ const NUMERIC_FIELDS = new Set([
   "resume_rank",
   "resume_rating",
   "total_wins",
+  "preseason_proj",
+  "change_from_preseason",
+  "live_wins",
+  "live_losses",
+  "wins_left",
+  "losses_left",
   "conf_proj_wins",
   "conf_line",
   "dif",
   "abs_dif",
   "edge",
-  "conf_win_pct",
   "fair_price",
-  "implied_pct",
   "odds",
-  "value",
-  "natty_odds",
+  "natty_rank",
+  "playoff_seed",
+  "ats_wins",
+  "ats_losses",
+  "games_completed",
+  "ats_rank",
+  ...PERCENT_FIELDS,
 ]);
 
 const WEEK_OPTIONS = [
@@ -76,7 +128,9 @@ function parsePaste(raw: string) {
   const headerMap: Record<number, string> = {};
   const unmatchedHeaders: string[] = [];
   rawHeaders.forEach((h, i) => {
-    const key = HEADER_ALIASES[normalizeHeader(h)];
+    const normalized = normalizeHeader(h);
+    if (IGNORED_HEADERS.has(normalized)) return;
+    const key = HEADER_ALIASES[normalized];
     if (key) {
       headerMap[i] = key;
     } else if (h) {
@@ -90,8 +144,11 @@ function parsePaste(raw: string) {
     cells.forEach((cell, i) => {
       const field = headerMap[i];
       if (!field) return;
-      if (field === "team" || field === "bet") {
+      if (TEXT_FIELDS.has(field)) {
         row[field] = cell === "" ? null : cell;
+      } else if (PERCENT_FIELDS.has(field)) {
+        const n = parseFloat(cell.replace(/[^0-9.\-]/g, ""));
+        row[field] = cell === "" || Number.isNaN(n) ? null : n / 100;
       } else if (NUMERIC_FIELDS.has(field)) {
         const n = parseFloat(cell.replace(/[^0-9.\-]/g, ""));
         row[field] = cell === "" || Number.isNaN(n) ? null : n;
@@ -130,7 +187,8 @@ export default function AdminPage({ onHome }: any) {
       if (!res.ok) {
         setSaveError(data.error ?? "Save failed");
       } else {
-        setSaveResult(`Saved ${data.saved} teams for ${week}.`);
+        const teamsNote = data.teamsSynced ? ` (${data.teamsSynced} teams synced)` : "";
+        setSaveResult(`Saved ${data.saved} teams for ${week}.${teamsNote}`);
       }
     } catch (err: any) {
       setSaveError(err.message ?? "Save failed");

@@ -28,8 +28,18 @@ create table if not exists weekly_team_stats (
   resume_rank int,
   resume_rating numeric,
 
-  -- conference win totals / futures
+  -- season win projection (this is "Live Win Proj" in the weekly export)
   total_wins numeric,
+  preseason_proj numeric,
+  change_from_preseason numeric,
+
+  -- actual tracked record and games remaining
+  live_wins numeric,
+  live_losses numeric,
+  wins_left numeric,
+  losses_left numeric,
+
+  -- conference win totals / futures
   conf_proj_wins numeric,
   conf_line numeric,
   dif numeric,
@@ -44,8 +54,19 @@ create table if not exists weekly_team_stats (
   odds numeric,
   value numeric,
 
-  -- national championship odds
+  -- national championship odds (model's own, and the market/Draftkings line)
   natty_odds numeric,
+  draftkings_natty_odds numeric,
+  natty_rank int,
+
+  -- playoff seeding, when applicable
+  playoff_seed int,
+
+  -- against-the-spread betting record tracking
+  ats_wins numeric,
+  ats_losses numeric,
+  games_completed numeric,
+  ats_rank int,
 
   inserted_at timestamptz not null default now(),
 

@@ -2,13 +2,14 @@ import { createClient } from "@supabase/supabase-js";
 
 // This runs on Vercel's servers, not in the browser — it's the only place
 // the service role key is used, and it's the only code path allowed to write
-// to weekly_team_stats. The browser only ever holds the public anon (read-only) key.
+// to weekly_team_stats or teams. The browser only ever holds the public
+// anon (read-only) key.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const REQUIRED_FIELDS = [
+const STAT_FIELDS = [
   "team",
   "rating",
   "rank",
@@ -16,6 +17,12 @@ const REQUIRED_FIELDS = [
   "resume_rank",
   "resume_rating",
   "total_wins",
+  "preseason_proj",
+  "change_from_preseason",
+  "live_wins",
+  "live_losses",
+  "wins_left",
+  "losses_left",
   "conf_proj_wins",
   "conf_line",
   "dif",
@@ -28,6 +35,13 @@ const REQUIRED_FIELDS = [
   "odds",
   "value",
   "natty_odds",
+  "draftkings_natty_odds",
+  "natty_rank",
+  "playoff_seed",
+  "ats_wins",
+  "ats_losses",
+  "games_completed",
+  "ats_rank",
 ];
 
 export default async function handler(req: any, res: any) {
@@ -60,22 +74,42 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  // Only pass through known columns, and stamp every row with the target week.
-  const cleanRows = rows.map((r: any) => {
-    const cleaned: Record<string, any> = { week };
-    for (const field of REQUIRED_FIELDS) {
-      cleaned[field] = r[field] ?? null;
-    }
-    return cleaned;
-  });
-
-  const missingTeam = cleanRows.find((r) => !r.team);
+  const missingTeam = rows.find((r: any) => !r.team);
   if (missingTeam) {
     res.status(400).json({ error: "One or more rows is missing a team name" });
     return;
   }
 
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+  // Keep the teams table in sync automatically: if a row includes div/conf
+  // (the paste tool sends these even though they aren't stored per-week),
+  // upsert them so a new team shows up immediately and conference
+  // realignment doesn't require a manual reseed. Existing teams not
+  // present in this week's paste are left alone — nothing gets deleted.
+  const teamRows = rows
+    .filter((r: any) => r.div && r.conf)
+    .map((r: any) => ({ team: r.team, div: r.div, conf: r.conf }));
+
+  if (teamRows.length > 0) {
+    const { error: teamsError } = await supabaseAdmin
+      .from("teams")
+      .upsert(teamRows, { onConflict: "team" });
+    if (teamsError) {
+      res.status(500).json({ error: `Saving teams failed: ${teamsError.message}` });
+      return;
+    }
+  }
+
+  // Only pass through known stat columns, and stamp every row with the
+  // target week.
+  const cleanRows = rows.map((r: any) => {
+    const cleaned: Record<string, any> = { week };
+    for (const field of STAT_FIELDS) {
+      cleaned[field] = r[field] ?? null;
+    }
+    return cleaned;
+  });
 
   const { error, count } = await supabaseAdmin
     .from("weekly_team_stats")
@@ -86,5 +120,11 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  res.status(200).json({ ok: true, saved: cleanRows.length, week, count });
+  res.status(200).json({
+    ok: true,
+    saved: cleanRows.length,
+    teamsSynced: teamRows.length,
+    week,
+    count,
+  });
 }

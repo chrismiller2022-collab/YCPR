@@ -267,5 +267,7 @@ insert into teams (team, div, conf) values
   ('Arkansas-Pine Bluff', 'FCS', 'SWAC'),
   ('Stetson', 'FCS', 'Pioneer'),
   ('Northwestern State', 'FCS', 'Southland'),
-  ('Mississippi Valley State', 'FCS', 'SWAC')
+  ('Mississippi Valley State', 'FCS', 'SWAC'),
+  ('Chicago State', 'FCS', 'FCS Independents'),
+  ('West Florida', 'FCS', 'UAC')
 on conflict (team) do update set div = excluded.div, conf = excluded.conf;

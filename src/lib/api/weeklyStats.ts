@@ -10,6 +10,12 @@ export interface WeeklyTeamStats {
   resume_rank: number | null;
   resume_rating: number | null;
   total_wins: number | null;
+  preseason_proj: number | null;
+  change_from_preseason: number | null;
+  live_wins: number | null;
+  live_losses: number | null;
+  wins_left: number | null;
+  losses_left: number | null;
   conf_proj_wins: number | null;
   conf_line: number | null;
   dif: number | null;
@@ -22,6 +28,13 @@ export interface WeeklyTeamStats {
   odds: number | null;
   value: number | null;
   natty_odds: number | null;
+  draftkings_natty_odds: number | null;
+  natty_rank: number | null;
+  playoff_seed: number | null;
+  ats_wins: number | null;
+  ats_losses: number | null;
+  games_completed: number | null;
+  ats_rank: number | null;
 }
 
 /** All weeks that currently have at least one row saved, most recent first. */
