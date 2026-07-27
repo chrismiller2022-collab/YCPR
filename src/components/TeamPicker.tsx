@@ -41,7 +41,7 @@ export default function TeamPicker({ side, label, division, conference, teamName
 
       <div className="picker-search-wrap">
         <input
-          className="search picker-search"
+          className={`search picker-search ${teamName && query === teamName ? "picker-search-selected" : ""}`}
           placeholder="Search for a team…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -56,6 +56,11 @@ export default function TeamPicker({ side, label, division, conference, teamName
             }, 120);
           }}
         />
+        {teamName && query === teamName && (
+          <span className="picker-selected-check" aria-hidden="true">
+            ✓
+          </span>
+        )}
         {query.length > 0 && (
           <button
             type="button"

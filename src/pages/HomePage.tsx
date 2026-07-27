@@ -159,6 +159,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
       </div>
 
       <div className="table-wrap">
+        <div className="table-scroll">
         <table className="home-table">
           <thead>
             <tr>
@@ -257,6 +258,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="footer-note">

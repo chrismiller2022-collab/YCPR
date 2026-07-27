@@ -50,7 +50,7 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
   const teamStats = selectedTeams.map((t) => ({
     team: t,
     next: computeNextOpponent(t, liveByTeam),
-    stats: computeGraphicCardStats(t),
+    stats: computeGraphicCardStats(t, liveByTeam),
   }));
 
   return (

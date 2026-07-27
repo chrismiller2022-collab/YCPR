@@ -1,7 +1,10 @@
 import TeamLogo from "../components/TeamLogo";
+import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { gamesForTeam } from "../data/games";
 import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
+import { fmtPct } from "../lib/format";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
+import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
@@ -74,7 +77,7 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
   const nextLoc = next?.loc ?? null;
   const nextSpread = next?.spread ?? null;
 
-  const stats = computeGraphicCardStats(team);
+  const stats = computeGraphicCardStats(team, liveByTeam);
 
   return (
     <div className="graphic-card">
@@ -142,6 +145,10 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const maxConfPct = peers.reduce((max, p) => {
+    const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
+    return Math.max(max, pct);
+  }, 0);
 
   return (
     <div className="team-page">
@@ -199,52 +206,62 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
         <table>
           <thead>
             <tr>
-              <th className="th">Rank</th>
               <th className="th">Team</th>
-              <th className="th th-right">Rating</th>
+              <th className="th th-right">Power Rating</th>
+              <th className="th">Conference Odds</th>
+              <th className="th th-right">Conf. Win Proj.</th>
+              <th className="th th-right">Record</th>
             </tr>
           </thead>
           <tbody>
-            {peers.map((p) => (
-              <tr
-                key={p.team}
-                className={p.team === team.team ? "row-active" : ""}
-              >
-                <td>
-                  <span
-                    className={`rank-flag ${
-                      p.rank <= 4 ? "top4" : p.rank <= 12 ? "top12" : ""
+            {peers.map((p) => {
+              const live = liveByTeam[p.team];
+              const f = CONF_FUTURES_BY_TEAM[p.team];
+              const confWinPct = live?.conf_win_pct ?? f?.confWinPct ?? 0;
+              const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[p.team]?.confTotal ?? 0;
+              const liveWins = live?.live_wins ?? 0;
+              const liveLosses = live?.live_losses ?? 0;
+              const barWidth = maxConfPct > 0 ? Math.max((confWinPct / maxConfPct) * 100, confWinPct > 0 ? 2 : 0) : 0;
+              return (
+                <tr
+                  key={p.team}
+                  className={p.team === team.team ? "row-active" : ""}
+                >
+                  <td>
+                    {p.team === team.team ? (
+                      <span className="team-name">
+                        <TeamLogo team={p} />
+                        {p.team}
+                      </span>
+                    ) : (
+                      <button
+                        className="team-link"
+                        onClick={() => onNavigateTeam(p)}
+                      >
+                        <TeamLogo team={p} />
+                        {p.team}
+                      </button>
+                    )}
+                  </td>
+                  <td
+                    className={`rating-cell ${
+                      p.rating < 0 ? "rating-good" : "rating-bad"
                     }`}
                   >
-                    {p.rank}
-                  </span>
-                </td>
-                <td>
-                  {p.team === team.team ? (
-                    <span className="team-name">
-                      <TeamLogo team={p} />
-                      {p.team}
-                    </span>
-                  ) : (
-                    <button
-                      className="team-link"
-                      onClick={() => onNavigateTeam(p)}
-                    >
-                      <TeamLogo team={p} />
-                      {p.team}
-                    </button>
-                  )}
-                </td>
-                <td
-                  className={`rating-cell ${
-                    p.rating < 0 ? "rating-good" : "rating-bad"
-                  }`}
-                >
-                  {p.rating > 0 ? "+" : ""}
-                  {p.rating.toFixed(2)}
-                </td>
-              </tr>
-            ))}
+                    {p.rating > 0 ? "+" : ""}
+                    {p.rating.toFixed(2)}
+                  </td>
+                  <td className="conf-odds-cell">
+                    <div className="conf-odds-bar-track">
+                      <div className="conf-odds-bar-fill" style={{ width: `${barWidth}%` }} />
+                    </div>
+                    <span className="conf-odds-pct">{fmtPct(confWinPct)}</span>
+                  </td>
+                  <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
+                  <td className="wintotals-total-cell">{liveWins}-{liveLosses}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

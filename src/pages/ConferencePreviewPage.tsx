@@ -16,7 +16,7 @@ function DiffCell({ value }: any) {
   );
 }
 
-function ConferencePreviewRow({ team, live, maxPct, onNavigateTeam }: any) {
+function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigateTeam }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
   const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total ?? 0;
   const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[team.team]?.confTotal ?? 0;
@@ -45,19 +45,23 @@ function ConferencePreviewRow({ team, live, maxPct, onNavigateTeam }: any) {
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{winTotal.toFixed(2)}</td>
-      <td className="wintotals-total-cell">{fmtNum(seasonWinLine)}</td>
-      <DiffCell value={seasonWinDiff} />
       <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
-      <td className="wintotals-total-cell">{fmtNum(confLine)}</td>
-      <DiffCell value={confWinDiff} />
-      <td className="wintotals-total-cell">{fmtOdds(fairPrice)}</td>
       <td className="conf-odds-cell">
         <div className="conf-odds-bar-track">
           <div className="conf-odds-bar-fill" style={{ width: `${barWidth}%` }} />
         </div>
         <span className="conf-odds-pct">{fmtPct(confWinPct)}</span>
       </td>
+      <td className="wintotals-total-cell">{fmtOdds(fairPrice)}</td>
       <td className="wintotals-total-cell">{fmtOdds(odds)}</td>
+      {showVegasWinLines && (
+        <>
+          <td className="wintotals-total-cell">{fmtNum(seasonWinLine)}</td>
+          <DiffCell value={seasonWinDiff} />
+          <td className="wintotals-total-cell">{fmtNum(confLine)}</td>
+          <DiffCell value={confWinDiff} />
+        </>
+      )}
     </tr>
   );
 }
@@ -82,6 +86,11 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
     return Math.max(max, pct);
   }, 0);
 
+  // FCS doesn't have Vegas season/conference win-total lines to compare
+  // against yet, so those four columns are hidden rather than shown
+  // permanently blank.
+  const showVegasWinLines = rows[0]?.div !== "FCS";
+
   return (
     <div className="matchups-page">
       <div className="team-hero">
@@ -91,9 +100,9 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
         <div className="eyebrow">Conference Preview</div>
         <h1 className="title matchup-title">{conference.toUpperCase()}</h1>
         <p className="subtitle team-subtitle">
-          Model odds to win the conference, projected win totals (season and
-          conference), the market's lines for both, and our fair conference
-          price for every {conference} team.
+          Model odds to win the conference, projected win totals, our fair
+          conference price{showVegasWinLines ? ", and the market's lines" : ""} for
+          every {conference} team.
         </p>
       </div>
 
@@ -110,14 +119,18 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                   <th className="th">Team</th>
                   <th className="th th-right">Power Rating</th>
                   <th className="th th-right">Proj. Wins</th>
-                  <th className="th th-right">Vegas Win Total</th>
-                  <th className="th th-right">Win Total Diff</th>
                   <th className="th th-right">Conf. Wins</th>
-                  <th className="th th-right">Conf. Win Vegas Line</th>
-                  <th className="th th-right">Conf. Win Diff</th>
-                  <th className="th th-right">Fair Conf. Price</th>
                   <th className="th">Conference Odds</th>
-                  <th className="th th-right">Conference Vegas Odds</th>
+                  <th className="th th-right">Fair Conference Odds</th>
+                  <th className="th th-right">Vegas Conference Odds</th>
+                  {showVegasWinLines && (
+                    <>
+                      <th className="th th-right">Vegas Total Wins</th>
+                      <th className="th th-right">Total Win Diff</th>
+                      <th className="th th-right">Vegas Conf. Wins</th>
+                      <th className="th th-right">Conf. Win Diff</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -127,6 +140,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                     team={t}
                     live={liveByTeam[t.team]}
                     maxPct={maxPct}
+                    showVegasWinLines={showVegasWinLines}
                     onNavigateTeam={onNavigateTeam}
                   />
                 ))}
@@ -138,10 +152,11 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
 
       <div className="footer-note">
         Conference Odds bar reflects our model's probability to win the
-        conference. Conference Vegas Odds is the market's current price.
-        Fair Conf. Price is our model's own fair American-odds price to win
-        the conference. Diff columns are ours minus the market's line —
-        positive means we're projecting more wins than the market.
+        conference. Vegas Conference Odds is the market's current price.
+        Fair Conference Odds is our model's own fair American-odds price to
+        win the conference.
+        {showVegasWinLines &&
+          " Diff columns are ours minus the market's line — positive means we're projecting more wins than the market."}
       </div>
     </div>
   );
