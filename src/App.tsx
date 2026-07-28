@@ -11,6 +11,7 @@ import ResumeRatingsPage from "./pages/ResumeRatingsPage";
 import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
 import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
 import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
+import NattyOddsPage from "./pages/NattyOddsPage";
 import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
 import ConferencePreviewPage from "./pages/ConferencePreviewPage";
 import BracketPage from "./pages/BracketPage";
@@ -179,6 +180,16 @@ export default function App() {
           />
         )}
 
+      {page.type === "sub" &&
+        page.catKey === "futures" &&
+        page.subKey === "natty" && (
+          <NattyOddsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
       {page.type === "sub" && page.catKey === "confpreviews" && (
         <ConferencePreviewPage
           conference={page.subKey}
@@ -285,7 +296,7 @@ export default function App() {
           (page.catKey === "fcsratings" || page.catKey === "fcssos")) &&
         !(
           page.catKey === "futures" &&
-          (page.subKey === "confwinodds" || page.subKey === "confwintotals")
+          (page.subKey === "confwinodds" || page.subKey === "confwintotals" || page.subKey === "natty")
         ) && (
           <ComingSoon categoryLabel={page.catLabel} subLabel={page.subLabel} />
         )}

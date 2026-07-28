@@ -1,9 +1,13 @@
+import { useState } from "react";
+import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { gamesForTeam } from "../data/games";
+import { SOS_BY_TEAM } from "../data/sor";
 import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
 import { fmtPct } from "../lib/format";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
+import { computeRadarMetrics } from "../lib/percentiles";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -77,7 +81,9 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
   const nextLoc = next?.loc ?? null;
   const nextSpread = next?.spread ?? null;
 
-  const stats = computeGraphicCardStats(team, liveByTeam);
+  const [cardView, setCardView] = useState("basic");
+  const { basic, betting } = computeGraphicCardStats(team, liveByTeam);
+  const stats = cardView === "basic" ? basic : betting;
 
   return (
     <div className="graphic-card">
@@ -114,6 +120,21 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
         </div>
       </div>
 
+      <div className="graphic-card-toggle">
+        <button
+          className={`graphic-card-toggle-btn ${cardView === "basic" ? "active" : ""}`}
+          onClick={() => setCardView("basic")}
+        >
+          Basic
+        </button>
+        <button
+          className={`graphic-card-toggle-btn ${cardView === "betting" ? "active" : ""}`}
+          onClick={() => setCardView("betting")}
+        >
+          Betting
+        </button>
+      </div>
+
       <div className="graphic-card-grid">
         {stats.map((s) => (
           <div className="graphic-card-cell" key={s.label}>
@@ -145,6 +166,9 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const sor = liveByTeam[team.team]?.sor ?? SOS_BY_TEAM[team.team] ?? null;
+  const radarMetrics = computeRadarMetrics(team, liveByTeam);
+
   const maxConfPct = peers.reduce((max, p) => {
     const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
     return Math.max(max, pct);
@@ -159,11 +183,41 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
         <div className="eyebrow">
           {team.div} · {team.conf}
         </div>
-        <h1 className="title team-title">{team.team}</h1>
+        <div className="team-title-row">
+          <TeamLogo team={team} size="3.2rem" />
+          <h1 className="title team-title">{team.team}</h1>
+        </div>
+        <div className="team-hero-sor">
+          SOR{" "}
+          <span style={{ color: sor != null ? spreadColor(sor) : undefined }}>
+            {sor != null ? (sor > 0 ? "+" : "") + sor.toFixed(2) : "–"}
+          </span>
+        </div>
       </div>
 
       <div className="table-wrap">
         <TeamGraphicCard team={team} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
+      </div>
+
+      <div className="table-wrap">
+        <div className="section-label">{team.team} percentile profile ({team.div})</div>
+        <div className="radar-card">
+          <RadarChart series={[{ metrics: radarMetrics, color: "var(--gold)" }]} />
+          <div className="radar-legend">
+            {radarMetrics.map((m) => (
+              <div className="radar-legend-row" key={m.key}>
+                <span className="radar-legend-label">{m.label}</span>
+                <span className="radar-legend-value">
+                  {m.percentile != null ? `${Math.round(m.percentile)}th pct` : "–"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="footer-note" style={{ marginTop: "0.75rem" }}>
+          Percentiles are relative to {team.div} only, and inverted from raw
+          rank — the #1 team in a metric shows near the 100th percentile.
+        </div>
       </div>
 
       <div className="table-wrap">

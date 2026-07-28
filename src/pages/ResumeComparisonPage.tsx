@@ -1,21 +1,27 @@
 import { useState } from "react";
+import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import TeamPicker from "../components/TeamPicker";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { spreadColor } from "../lib/odds";
+import { computeRadarMetrics } from "../lib/percentiles";
 import { computeNextOpponent, computeGraphicCardStats } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 const COMPARISON_ROW_LABELS = [
   "Power Rating + Rank",
-  "Conference Record + Rank",
-  "CFP Resume Rating + Rank",
   "Overall Record",
-  "Win Total",
+  "Projected Record",
+  "Conference Record",
+  "Proj Conference Record + Rank",
+  "Proj Title Odds + Rank",
+  "Proj Conf Odds + Rank",
+  "SOR + Rank",
   "ATS Record + Rank",
-  "Title Odds + Rank",
-  "Proj Conf Odds",
-  "Vegas Conf Odds",
+  "Over/Under Record",
+  "Vegas Title Odds + Rank",
+  "Vegas Conf Odds + Rank",
+  "Vegas Win Total",
 ];
 
 
@@ -47,11 +53,14 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
-  const teamStats = selectedTeams.map((t) => ({
-    team: t,
-    next: computeNextOpponent(t, liveByTeam),
-    stats: computeGraphicCardStats(t, liveByTeam),
-  }));
+  const teamStats = selectedTeams.map((t) => {
+    const { basic, betting } = computeGraphicCardStats(t, liveByTeam);
+    return {
+      team: t,
+      next: computeNextOpponent(t, liveByTeam),
+      stats: [...basic, ...betting.slice(1)],
+    };
+  });
 
   return (
     <div className="matchup-page">
@@ -86,7 +95,47 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
         {selectedTeams.length === 0 ? (
           <div className="matchup-note">Pick at least one team to start comparing.</div>
         ) : (
-          <div className="table-wrap compare-table-wrap">
+          <>
+            {selectedTeams.length >= 2 && (
+              <div className="table-wrap">
+                <div className="section-label">
+                  Percentile Profile — {selectedTeams[0].team} vs {selectedTeams[1].team}
+                </div>
+                <div className="radar-card">
+                  <RadarChart
+                    series={[
+                      {
+                        metrics: computeRadarMetrics(selectedTeams[0], liveByTeam),
+                        color: "var(--gold)",
+                      },
+                      {
+                        metrics: computeRadarMetrics(selectedTeams[1], liveByTeam),
+                        color: "#6fb1e0",
+                      },
+                    ]}
+                  />
+                  <div className="radar-legend">
+                    <div className="radar-legend-row">
+                      <span className="radar-legend-label">
+                        <span className="radar-legend-swatch" style={{ background: "var(--gold)" }} />
+                        {selectedTeams[0].team}
+                      </span>
+                    </div>
+                    <div className="radar-legend-row">
+                      <span className="radar-legend-label">
+                        <span className="radar-legend-swatch" style={{ background: "#6fb1e0" }} />
+                        {selectedTeams[1].team}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="footer-note" style={{ marginTop: "0.75rem" }}>
+                  Percentiles are relative to each team's own division, and
+                  compare only the first two teams selected above.
+                </div>
+              </div>
+            )}
+            <div className="table-wrap compare-table-wrap">
             <div className="table-scroll">
               <table className="compare-table">
                 <thead>
@@ -149,6 +198,7 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
               </table>
             </div>
           </div>
+          </>
         )}
       </div>
     </div>
