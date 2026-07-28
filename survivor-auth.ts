@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
-import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
-import { RESUME_BY_TEAM } from "../data/resume";
+import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { CONFERENCES, TEAMS } from "../data/teams";
-import { useWeeklyChange } from "../lib/api/weeklyStats";
+import { fmtOdds, fmtPct } from "../lib/format";
+import { spreadColor } from "../lib/odds";
 
-function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }: any) {
-  const r = RESUME_BY_TEAM[team.team];
+function ConferenceWinOddsRow({ team, onNavigateTeam, onNavigateConference }: any) {
+  const f = CONF_FUTURES_BY_TEAM[team.team];
   return (
     <tr>
       <td>
@@ -23,28 +23,30 @@ function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
+      <td className="wintotals-total-cell">{fmtPct(f?.confWinPct)}</td>
+      <td className="wintotals-total-cell">{fmtOdds(f?.fairPrice)}</td>
+      <td className="wintotals-total-cell">{fmtPct(f?.impliedPct)}</td>
+      <td className="wintotals-total-cell">{fmtOdds(f?.odds)}</td>
+      <td
+        className="wintotals-total-cell"
+        style={{ color: f?.value != null ? spreadColor(-f.value * 100) : undefined }}
+      >
+        {fmtPct(f?.value)}
       </td>
-      <td className="wintotals-total-cell">{r ? r.rank : "–"}</td>
-      <td className="wintotals-total-cell">{r ? r.rating.toFixed(2) : "–"}</td>
-      <ChangeCell change={change} />
     </tr>
   );
 }
 
 
-export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
+export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
   const [division, setDivision] = useState("All");
   const [conference, setConference] = useState("All");
-  const [sortKey, setSortKey] = useState("resumeRank");
-  const [sortDir, setSortDir] = useState("asc");
-  const { byTeam: changeByTeam } = useWeeklyChange("resume_rating");
+  const [sortKey, setSortKey] = useState("value");
+  const [sortDir, setSortDir] = useState("desc");
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => RESUME_BY_TEAM[t.team])
+    let list = TEAMS.filter((t) => CONF_FUTURES_BY_TEAM[t.team])
       .filter((t) => {
         if (division !== "All" && t.div !== division) return false;
         if (conference !== "All" && t.conf !== conference) return false;
@@ -52,11 +54,17 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
           return false;
         return true;
       })
-      .map((t) => ({
-        ...t,
-        resumeRank: RESUME_BY_TEAM[t.team]?.rank ?? null,
-        resumeRating: RESUME_BY_TEAM[t.team]?.rating ?? null,
-      }));
+      .map((t) => {
+        const f: any = CONF_FUTURES_BY_TEAM[t.team] || {};
+        return {
+          ...t,
+          confWinPct: f.confWinPct ?? null,
+          fairPrice: f.fairPrice ?? null,
+          impliedPct: f.impliedPct ?? null,
+          odds: f.odds ?? null,
+          value: f.value ?? null,
+        };
+      });
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
@@ -90,12 +98,11 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">Resume Ratings</div>
-        <h1 className="title matchup-title">LIVE</h1>
+        <div className="eyebrow">Futures</div>
+        <h1 className="title matchup-title">CONFERENCE WIN ODDS</h1>
         <p className="subtitle team-subtitle">
-          Resume ranking measures what a team has actually accomplished —
-          results and quality of wins — separate from our predictive power
-          rating.
+          Our fair, no-vig odds to win the conference compared against the
+          market's price, with the resulting value edge.
         </p>
       </div>
 
@@ -136,25 +143,20 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
               <tr>
                 <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-                <SortHeader label="Power Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Resume Ranking" sortKey="resumeRank" active={sortKey === "resumeRank"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Resume Rating" sortKey="resumeRating" active={sortKey === "resumeRating"} dir={sortDir} onClick={handleSort} align="right" />
-                <th className="th th-right">Change from Last Week</th>
+                <SortHeader label="Conf Win %" sortKey="confWinPct" active={sortKey === "confWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Fair Price" sortKey="fairPrice" active={sortKey === "fairPrice"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Implied %" sortKey="impliedPct" active={sortKey === "impliedPct"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Odds" sortKey="odds" active={sortKey === "odds"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Value" sortKey="value" active={sortKey === "value"} dir={sortDir} onClick={handleSort} align="right" />
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
-                <ResumeRatingsRow
-                  key={t.team}
-                  team={t}
-                  change={changeByTeam[t.team]?.change ?? null}
-                  onNavigateTeam={onNavigateTeam}
-                  onNavigateConference={onNavigateConference}
-                />
+                <ConferenceWinOddsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="empty">
+                  <td colSpan={7} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -162,6 +164,11 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="footer-note">
+        Fair Price/Conf Win % come from our model. Implied %/Odds are the
+        market's price. Value is the edge between the two.
       </div>
     </div>
   );

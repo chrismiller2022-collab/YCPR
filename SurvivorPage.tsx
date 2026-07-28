@@ -1,0 +1,246 @@
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { fmtNum, fmtOdds, fmtPct } from "./format";
+import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
+
+const MARGIN = 40;
+// Landscape letter is 792pt wide x 612pt tall - much shorter than portrait,
+// so the "do we need a new page" threshold has to be lower.
+const MAX_Y = 540;
+
+function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: number) {
+  doc.setFontSize(11);
+  doc.text(title, MARGIN, startY);
+  autoTable(doc, {
+    startY: startY + 8,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [["Team", "Conference", "Change"]],
+    body: rows.map((r) => [
+      r.team.team,
+      r.team.conf,
+      (r.value > 0 ? "+" : "") + r.value.toFixed(2),
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [31, 32, 65] },
+    theme: "striped",
+  });
+  return (doc as any).lastAutoTable.finalY;
+}
+
+function winsLossesTable(
+  doc: jsPDF,
+  title: string,
+  rows: WinsLossesRow[],
+  valueKey: "winsLeft" | "lossesLeft",
+  startY: number
+) {
+  doc.setFontSize(11);
+  doc.text(title, MARGIN, startY);
+  autoTable(doc, {
+    startY: startY + 8,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [["Team", "Conference", "Win Projection", "Total Games", title.includes("Wins") ? "Wins Left" : "Losses Left"]],
+    body: rows.map((r) => [
+      r.team.team,
+      r.team.conf,
+      r.winProjection.toFixed(2),
+      String(r.totalGames),
+      r[valueKey].toFixed(2),
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [31, 32, 65] },
+    theme: "striped",
+  });
+  return (doc as any).lastAutoTable.finalY;
+}
+
+// Small helper so each call site doesn't need to repeat the
+// page-break-if-needed logic before every table.
+function pageBreakIfNeeded(doc: jsPDF, y: number): number {
+  if (y > MAX_Y) {
+    doc.addPage();
+    return MARGIN;
+  }
+  return y;
+}
+
+export interface WeekReportInput {
+  division: "FBS" | "FCS";
+  week: number;
+  sos: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  resume: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  rating: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  winsLossesLeft: { byWinsLeft: WinsLossesRow[]; byLossesLeft: WinsLossesRow[] };
+  conferencePreviews: ConferencePreviewRowData[];
+  matchups: MatchupRow[];
+  hasWeeklyChangeData: boolean;
+}
+
+export function buildWeekReportPdf(input: WeekReportInput) {
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+  const {
+    division,
+    week,
+    sos,
+    resume,
+    rating,
+    winsLossesLeft: wl,
+    conferencePreviews,
+    matchups,
+    hasWeeklyChangeData,
+  } = input;
+
+  // --- Title page ---
+  doc.setFontSize(22);
+  doc.text(`${division} Week ${week} Report`, MARGIN, 55);
+  doc.setFontSize(11);
+  doc.setTextColor(100);
+  doc.text(
+    `Generated ${new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })}`,
+    MARGIN,
+    75
+  );
+  doc.setTextColor(0);
+
+  let y = 100;
+
+  if (!hasWeeklyChangeData) {
+    doc.setFontSize(10);
+    doc.setTextColor(150, 90, 0);
+    doc.text(
+      "Note: fewer than two weeks of data have been saved yet, so the change-from-last-week",
+      MARGIN,
+      y
+    );
+    doc.text(
+      "sections below are empty. They'll populate automatically once two weeks exist.",
+      MARGIN,
+      y + 14
+    );
+    doc.setTextColor(0);
+    y += 34;
+  }
+
+  // --- Section 1: Top 25 gainers/losers ---
+  doc.setFontSize(16);
+  doc.text("1. Top 25 Gainers & Losers (Change From Last Week)", MARGIN, y);
+  y += 20;
+
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Gainers", sos.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Losers", sos.losers, y) + 26;
+
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Gainers", resume.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Losers", resume.losers, y) + 26;
+
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1c. Power Rating - Top 25 Gainers", rating.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y) + 26;
+
+  y = pageBreakIfNeeded(doc, y);
+  y =
+    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y =
+    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
+
+  // --- Section 2: Week matchups ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`2. ${division} Week ${week} Matchups`, MARGIN, MARGIN);
+
+  if (matchups.length === 0) {
+    doc.setFontSize(10);
+    doc.text(`No ${division} vs ${division} games scheduled for Week ${week}.`, MARGIN, MARGIN + 20);
+  } else {
+    autoTable(doc, {
+      startY: MARGIN + 16,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [[
+        "Date",
+        "Away",
+        "Away PR",
+        "Away Spread",
+        "Away ML",
+        "Away Win%",
+        "Home",
+        "Home PR",
+        "Home Spread",
+        "Home ML",
+        "Home Win%",
+      ]],
+      body: matchups.map((m) => [
+        m.dateLabel,
+        m.away.team,
+        (m.away.rating > 0 ? "+" : "") + m.away.rating.toFixed(2),
+        (m.awaySpread > 0 ? "+" : "") + m.awaySpread.toFixed(1),
+        fmtOdds(m.awayMoneyline),
+        fmtPct(m.awayWinPct),
+        m.home.team,
+        (m.home.rating > 0 ? "+" : "") + m.home.rating.toFixed(2),
+        (m.homeSpread > 0 ? "+" : "") + m.homeSpread.toFixed(1),
+        fmtOdds(m.homeMoneyline),
+        fmtPct(m.homeWinPct),
+      ]),
+      styles: { fontSize: 7, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
+  }
+
+  // --- Section 3: Conference previews ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`3. All ${division} Conference Previews`, MARGIN, MARGIN);
+  y = MARGIN + 24;
+
+  for (const cp of conferencePreviews) {
+    if (cp.rows.length === 0) continue;
+    y = pageBreakIfNeeded(doc, y);
+    doc.setFontSize(12);
+    doc.text(cp.conference, MARGIN, y);
+    autoTable(doc, {
+      startY: y + 8,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [[
+        "Team",
+        "Power Rating",
+        "Proj. Wins",
+        "Vegas Win Total",
+        "Win Total Diff",
+        "Conf. Wins",
+        "Conf. Win Line",
+        "Conf. Win Diff",
+        "Fair Conf. Price",
+        "Conf. Odds",
+        "Conf. Vegas Odds",
+      ]],
+      body: cp.rows.map((r) => [
+        r.team.team,
+        (r.team.rating > 0 ? "+" : "") + r.team.rating.toFixed(2),
+        r.winTotal.toFixed(2),
+        fmtNum(r.seasonWinLine),
+        r.seasonWinLine != null ? ((r.winTotal - r.seasonWinLine) > 0 ? "+" : "") + (r.winTotal - r.seasonWinLine).toFixed(2) : "–",
+        r.confWinTotal.toFixed(2),
+        fmtNum(r.confLine),
+        r.confLine != null ? ((r.confWinTotal - r.confLine) > 0 ? "+" : "") + (r.confWinTotal - r.confLine).toFixed(2) : "–",
+        fmtOdds(r.fairPrice),
+        fmtPct(r.confWinPct),
+        fmtOdds(r.odds),
+      ]),
+      styles: { fontSize: 7, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
+    y = (doc as any).lastAutoTable.finalY + 24;
+  }
+
+  doc.save(`${division.toLowerCase()}-week-${week}-report.pdf`);
+}

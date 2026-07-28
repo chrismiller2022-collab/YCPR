@@ -3,12 +3,12 @@ import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
-import { RESUME_BY_TEAM } from "../data/resume";
-import { CONFERENCES, TEAMS } from "../data/teams";
-import { useWeeklyChange } from "../lib/api/weeklyStats";
+import { SOS_BY_TEAM } from "../data/sor";
+import { CONFERENCES, TEAMS, conferencesForDivision } from "../data/teams";
+import { spreadColor } from "../lib/odds";
+import { useWeeklyStats, useWeeklyChange } from "../lib/api/weeklyStats";
 
-function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }: any) {
-  const r = RESUME_BY_TEAM[team.team];
+function StrengthOfScheduleRow({ team, sos, change, onNavigateTeam, onNavigateConference }: any) {
   return (
     <tr>
       <td>
@@ -27,24 +27,40 @@ function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }
         {team.rating > 0 ? "+" : ""}
         {team.rating.toFixed(2)}
       </td>
-      <td className="wintotals-total-cell">{r ? r.rank : "–"}</td>
-      <td className="wintotals-total-cell">{r ? r.rating.toFixed(2) : "–"}</td>
+      <td
+        className="wintotals-total-cell"
+        style={sos != null ? { color: spreadColor(sos) } : undefined}
+      >
+        {sos != null ? (sos > 0 ? "+" : "") + sos.toFixed(2) : "–"}
+      </td>
       <ChangeCell change={change} />
     </tr>
   );
 }
 
 
-export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
+export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
-  const [division, setDivision] = useState("All");
+  const [division, setDivision] = useState(forceDivision ?? "All");
   const [conference, setConference] = useState("All");
-  const [sortKey, setSortKey] = useState("resumeRank");
+  const [sortKey, setSortKey] = useState("sos");
   const [sortDir, setSortDir] = useState("asc");
-  const { byTeam: changeByTeam } = useWeeklyChange("resume_rating");
+
+  // Prefers live weekly data from Supabase; falls back to the static snapshot
+  // for any team not yet saved into the database (e.g. mid-migration).
+  const { byTeam: liveByTeam, loading: liveLoading, error: liveError } = useWeeklyStats("latest");
+  const { byTeam: changeByTeam } = useWeeklyChange("sor");
+
+  function sosFor(teamName: string): number | null {
+    const live = liveByTeam[teamName]?.sor;
+    if (live != null) return live;
+    return SOS_BY_TEAM[teamName] ?? null;
+  }
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => RESUME_BY_TEAM[t.team])
+    let list = TEAMS.filter((t) =>
+      forceDivision ? t.div === forceDivision : sosFor(t.team) != null
+    )
       .filter((t) => {
         if (division !== "All" && t.div !== division) return false;
         if (conference !== "All" && t.conf !== conference) return false;
@@ -54,8 +70,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
       })
       .map((t) => ({
         ...t,
-        resumeRank: RESUME_BY_TEAM[t.team]?.rank ?? null,
-        resumeRating: RESUME_BY_TEAM[t.team]?.rating ?? null,
+        sos: sosFor(t.team),
       }));
 
     list = [...list].sort((a, b) => {
@@ -73,7 +88,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir]);
+  }, [query, division, conference, sortKey, sortDir, liveByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -90,13 +105,32 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">Resume Ratings</div>
-        <h1 className="title matchup-title">LIVE</h1>
+        <div className="eyebrow">{forceDivision === "FCS" ? "FCS · " : ""}Strength of Schedule</div>
+        <h1 className="title matchup-title">{forceDivision === "FCS" ? "FCS SOS/SOR · LIVE" : "SOR · LIVE"}</h1>
         <p className="subtitle team-subtitle">
-          Resume ranking measures what a team has actually accomplished —
-          results and quality of wins — separate from our predictive power
-          rating.
+          SOR is similar to Strength of Schedule, and is based on Average
+          Opponent Power Rating — lower (more negative) means a tougher
+          schedule, same convention as power ratings.
         </p>
+        {forceDivision === "FCS" ? (
+          <p style={{ fontSize: "0.8rem", color: "#666" }}>
+            FCS strength-of-schedule data isn't calculated yet — this page is
+            wired up and will populate once it is.
+          </p>
+        ) : (
+          <>
+            {liveError && (
+              <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>
+                Live data unavailable ({liveError}) — showing last static snapshot.
+              </p>
+            )}
+            {!liveError && !liveLoading && Object.keys(liveByTeam).length === 0 && (
+              <p style={{ fontSize: "0.8rem", color: "#666" }}>
+                No weekly data saved yet — showing the preseason snapshot.
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       <div className="controls matchups-controls">
@@ -106,22 +140,24 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <select
-          className="filter"
-          value={division}
-          onChange={(e) => setDivision(e.target.value)}
-        >
-          <option value="All">All divisions</option>
-          <option value="FBS">FBS</option>
-          <option value="FCS">FCS</option>
-        </select>
+        {!forceDivision && (
+          <select
+            className="filter"
+            value={division}
+            onChange={(e) => setDivision(e.target.value)}
+          >
+            <option value="All">All divisions</option>
+            <option value="FBS">FBS</option>
+            <option value="FCS">FCS</option>
+          </select>
+        )}
         <select
           className="filter"
           value={conference}
           onChange={(e) => setConference(e.target.value)}
         >
           <option value="All">All conferences</option>
-          {CONFERENCES.map((c) => (
+          {(forceDivision ? conferencesForDivision(forceDivision) : CONFERENCES).map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -137,16 +173,16 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
                 <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Power Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Resume Ranking" sortKey="resumeRank" active={sortKey === "resumeRank"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Resume Rating" sortKey="resumeRating" active={sortKey === "resumeRating"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="SOR" sortKey="sos" active={sortKey === "sos"} dir={sortDir} onClick={handleSort} align="right" />
                 <th className="th th-right">Change from Last Week</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
-                <ResumeRatingsRow
+                <StrengthOfScheduleRow
                   key={t.team}
                   team={t}
+                  sos={t.sos}
                   change={changeByTeam[t.team]?.change ?? null}
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
@@ -154,7 +190,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="empty">
+                  <td colSpan={5} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -162,6 +198,11 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="footer-note">
+        SOR is similar to Strength of Schedule, and is based on Average
+        Opponent Power Rating.
       </div>
     </div>
   );

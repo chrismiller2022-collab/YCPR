@@ -2,11 +2,14 @@ import { useMemo } from "react";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
 import { BracketGame } from "./BracketPage";
-import { buildFCS24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair } from "../lib/bracket24";
+import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
+import { RESUME_BY_TEAM } from "../data/resume";
+import { buildPlayoff24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair } from "../lib/bracket24";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fmtOdds } from "../lib/format";
 
-export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
-  const field = useMemo(() => buildFCS24Field(), []);
+export default function Playoff24Page({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const field = useMemo(() => buildPlayoff24Field(), []);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   if (field.length < 24) {
@@ -16,11 +19,11 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
           <button className="back-link" onClick={onHome}>
             ‹ All rankings
           </button>
-          <div className="eyebrow">FCS</div>
-          <h1 className="title matchup-title">FCS PLAYOFF BRACKET</h1>
+          <div className="eyebrow">Tools</div>
+          <h1 className="title matchup-title">24-TEAM PLAYOFF (FCS STYLE)</h1>
         </div>
         <div className="empty matchups-empty">
-          Not enough FCS teams yet to build a full 24-team field.
+          Not enough qualifying teams yet to build a full 24-team field.
         </div>
       </div>
     );
@@ -51,13 +54,13 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">FCS</div>
-        <h1 className="title matchup-title">FCS PLAYOFF BRACKET</h1>
+        <div className="eyebrow">Tools</div>
+        <h1 className="title matchup-title">24-TEAM PLAYOFF (FCS STYLE)</h1>
         <p className="subtitle team-subtitle">
-          Top 24 FCS teams seeded purely by Power Rating (conference
-          auto-bids and resume-based at-large selection aren't modeled for
-          FCS yet). Top 8 seeds get a bye; the better seed hosts every round
-          except a neutral-site championship. Projected champion:{" "}
+          10 auto-bids (top team per conference by Proj Conf Odds) plus the
+          14 best remaining at-large teams by Resume Rating. Top 8 seeds get
+          a bye; the better seed hosts every round except a neutral-site
+          championship. Projected champion:{" "}
           <strong style={{ color: "var(--gold)" }}>{champion.team.team}</strong>.
         </p>
       </div>
@@ -153,7 +156,9 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                   <th className="th">Team</th>
                   <th className="th">Conference</th>
                   <th className="th">Bid</th>
+                  <th className="th th-right">Resume Rating</th>
                   <th className="th th-right">Power Rating</th>
+                  <th className="th th-right">Proj Conf Win Odds</th>
                 </tr>
               </thead>
               <tbody>
@@ -179,9 +184,25 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                       <ConfLink conf={f.team.conf} onNavigateConference={onNavigateConference} />
                     </td>
                     <td className="futures-bet-cell">{f.bid}</td>
+                    <td className="wintotals-total-cell">
+                      {RESUME_BY_TEAM[f.team.team]?.rating.toFixed(2) ?? "–"}
+                    </td>
                     <td className={`rating-cell ${f.team.rating < 0 ? "rating-good" : "rating-bad"}`}>
                       {f.team.rating > 0 ? "+" : ""}
                       {f.team.rating.toFixed(2)}
+                    </td>
+                    <td className="wintotals-total-cell">
+                      {CONF_FUTURES_BY_TEAM[f.team.team] ? (
+                        <>
+                          {(CONF_FUTURES_BY_TEAM[f.team.team].confWinPct * 100).toFixed(1)}%
+                          <span className="compare-value-sub">
+                            {" "}
+                            {fmtOdds(CONF_FUTURES_BY_TEAM[f.team.team].fairPrice)}
+                          </span>
+                        </>
+                      ) : (
+                        "–"
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -192,13 +213,12 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
       </div>
 
       <div className="footer-note">
-        Seeding is by Power Rating alone for now — conference auto-bids and
-        resume-based at-large selection will be added once FCS resume
-        ratings and conference futures data are wired up. First round
-        pairings avoid same-conference matchups where possible; every later
-        round reseeds the remaining field, pairing the best seed against the
-        worst, with the better seed hosting until a neutral-site
-        championship.
+        Auto-bids go to the top team in each of the 10 listed conferences by
+        Proj Conf Odds. At-large bids and overall seeding are by Resume
+        Rating. First round pairings avoid same-conference matchups where
+        possible; every later round reseeds the remaining field, pairing
+        the best seed against the worst, with the better seed hosting until
+        a neutral-site championship.
       </div>
     </div>
   );

@@ -1,0 +1,324 @@
+import { useState } from "react";
+import RadarChart from "../components/RadarChart";
+import TeamLogo from "../components/TeamLogo";
+import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
+import { gamesForTeam } from "../data/games";
+import { SOS_BY_TEAM } from "../data/sor";
+import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
+import { fmtPct } from "../lib/format";
+import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
+import { computeRadarMetrics } from "../lib/percentiles";
+import { TEAM_WIN_TOTALS } from "../lib/ranks";
+import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
+
+function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
+  const isHome = game.home === team.team;
+  const oppName = isHome ? game.away : game.home;
+  const opp = TEAMS_BY_NAME[oppName];
+  if (!opp) return null;
+
+  // Spread from this team's perspective: negative = this team favored.
+  const spread = isHome
+    ? team.rating - opp.rating - hfaFor(team.team, liveByTeam)
+    : team.rating - opp.rating + hfaFor(oppName, liveByTeam);
+  const winPct = spreadToWinPct(spread);
+  const result = spread < 0 ? "Win" : spread > 0 ? "Loss" : "Even";
+
+  const dateObj = new Date(game.date);
+  const dateLabel = dateObj.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "numeric",
+    day: "numeric",
+  });
+
+  return (
+    <tr>
+      <td className="schedule-week-cell">{game.week}</td>
+      <td className="game-date-cell">{dateLabel}</td>
+      <td className="matchup-team-cell">
+        <span className="schedule-loc">{isHome ? "vs" : "@"}</span>{" "}
+        <button
+          className="team-link matchup-team-btn"
+          onClick={() => onNavigateTeam(opp)}
+        >
+          <TeamLogo team={opp} />
+          {opp.team}
+        </button>
+        <span
+          className={`matchup-rating ${
+            opp.rating < 0 ? "rating-good" : "rating-bad"
+          }`}
+        >
+          {opp.rating > 0 ? "+" : ""}
+          {opp.rating.toFixed(2)}
+        </span>
+      </td>
+      <td
+        className="matchups-projected-cell"
+        style={{ color: spreadColor(spread) }}
+      >
+        {spread > 0 ? "+" : ""}
+        {spread.toFixed(1)}
+      </td>
+      <td
+        className="matchups-winpct-cell"
+        style={{ color: spreadColor(spread) }}
+      >
+        {(winPct * 100).toFixed(1)}%
+      </td>
+      <td className="schedule-result-cell" style={{ color: spreadColor(spread) }}>
+        {result}
+      </td>
+    </tr>
+  );
+}
+
+
+function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
+  const next = computeNextOpponent(team, liveByTeam);
+  const nextOpp = next?.opp ?? null;
+  const nextLoc = next?.loc ?? null;
+  const nextSpread = next?.spread ?? null;
+
+  const [cardView, setCardView] = useState("basic");
+  const { basic, betting } = computeGraphicCardStats(team, liveByTeam);
+  const stats = cardView === "basic" ? basic : betting;
+
+  return (
+    <div className="graphic-card">
+      <div className="graphic-card-top">
+        <div className="graphic-card-team">
+          <div className="graphic-card-team-name">{team.team}</div>
+          <div className="graphic-card-conf">{team.conf}</div>
+        </div>
+        <div className="graphic-card-next">
+          <div className="graphic-card-next-label">Next Opponent</div>
+          {nextOpp ? (
+            <>
+              <button
+                className="graphic-card-next-value"
+                onClick={() => onNavigateTeam(nextOpp)}
+              >
+                <span className="graphic-card-next-loc">({nextLoc})</span>{" "}
+                <span style={{ color: spreadColor(nextSpread) }}>
+                  {nextSpread > 0 ? "+" : ""}
+                  {nextSpread.toFixed(2)}
+                </span>{" "}
+                {nextOpp.team}
+              </button>
+              <div
+                className="graphic-card-next-winpct"
+                style={{ color: spreadColor(nextSpread) }}
+              >
+                {(spreadToWinPct(nextSpread) * 100).toFixed(1)}% to win
+              </div>
+            </>
+          ) : (
+            <span className="graphic-card-tbd">TBD</span>
+          )}
+        </div>
+      </div>
+
+      <div className="graphic-card-toggle">
+        <button
+          className={`graphic-card-toggle-btn ${cardView === "basic" ? "active" : ""}`}
+          onClick={() => setCardView("basic")}
+        >
+          Basic
+        </button>
+        <button
+          className={`graphic-card-toggle-btn ${cardView === "betting" ? "active" : ""}`}
+          onClick={() => setCardView("betting")}
+        >
+          Betting
+        </button>
+      </div>
+
+      <div className="graphic-card-grid">
+        {stats.map((s) => (
+          <div className="graphic-card-cell" key={s.label}>
+            <div className="graphic-card-cell-label">{s.label}</div>
+            {s.real ? (
+              <div
+                className="graphic-card-cell-value"
+                style={{ background: s.bg }}
+              >
+                <span style={{ color: s.color }}>{s.value}</span>
+                {s.sub && (
+                  <span className="graphic-card-cell-sub">{s.sub}</span>
+                )}
+              </div>
+            ) : (
+              <div className="graphic-card-cell-value graphic-card-cell-empty">
+                <span className="graphic-card-tbd">TBD</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
+  const peers = teamsForConference(team.div, team.conf);
+  const schedule = gamesForTeam(team.team);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const sor = liveByTeam[team.team]?.sor ?? SOS_BY_TEAM[team.team] ?? null;
+  const radarMetrics = computeRadarMetrics(team, liveByTeam);
+
+  const maxConfPct = peers.reduce((max, p) => {
+    const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
+    return Math.max(max, pct);
+  }, 0);
+
+  return (
+    <div className="team-page">
+      <div className="team-hero">
+        <button className="back-link" onClick={onHome}>
+          ‹ All rankings
+        </button>
+        <div className="eyebrow">
+          {team.div} · {team.conf}
+        </div>
+        <div className="team-title-row">
+          <TeamLogo team={team} size="3.2rem" />
+          <h1 className="title team-title">{team.team}</h1>
+        </div>
+        <div className="team-hero-sor">
+          SOR{" "}
+          <span style={{ color: sor != null ? spreadColor(sor) : undefined }}>
+            {sor != null ? (sor > 0 ? "+" : "") + sor.toFixed(2) : "–"}
+          </span>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <TeamGraphicCard team={team} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
+      </div>
+
+      <div className="table-wrap">
+        <div className="section-label">{team.team} percentile profile ({team.div})</div>
+        <div className="radar-card">
+          <RadarChart series={[{ metrics: radarMetrics, color: "var(--gold)" }]} />
+          <div className="radar-legend">
+            {radarMetrics.map((m) => (
+              <div className="radar-legend-row" key={m.key}>
+                <span className="radar-legend-label">{m.label}</span>
+                <span className="radar-legend-value">
+                  {m.percentile != null ? `${Math.round(m.percentile)}th pct` : "–"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="footer-note" style={{ marginTop: "0.75rem" }}>
+          Percentiles are relative to {team.div} only, and inverted from raw
+          rank — the #1 team in a metric shows near the 100th percentile.
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <div className="section-label">{team.team} schedule</div>
+        {schedule.length === 0 ? (
+          <div className="empty matchups-empty">
+            No games scheduled yet for {team.team}.
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="matchups-table schedule-table">
+              <thead>
+                <tr>
+                  <th className="th">Week</th>
+                  <th className="th">Date</th>
+                  <th className="th">Opponent</th>
+                  <th className="th th-right">Projected</th>
+                  <th className="th th-right">Win %</th>
+                  <th className="th">Proj. Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedule.map((g) => (
+                  <ScheduleRow
+                    key={g.id}
+                    game={g}
+                    team={team}
+                    liveByTeam={liveByTeam}
+                    onNavigateTeam={onNavigateTeam}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="table-wrap">
+        <div className="section-label">{team.conf} standings</div>
+        <table>
+          <thead>
+            <tr>
+              <th className="th">Team</th>
+              <th className="th th-right">Power Rating</th>
+              <th className="th">Conference Odds</th>
+              <th className="th th-right">Conf. Win Proj.</th>
+              <th className="th th-right">Record</th>
+            </tr>
+          </thead>
+          <tbody>
+            {peers.map((p) => {
+              const live = liveByTeam[p.team];
+              const f = CONF_FUTURES_BY_TEAM[p.team];
+              const confWinPct = live?.conf_win_pct ?? f?.confWinPct ?? 0;
+              const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[p.team]?.confTotal ?? 0;
+              const liveWins = live?.live_wins ?? 0;
+              const liveLosses = live?.live_losses ?? 0;
+              const barWidth = maxConfPct > 0 ? Math.max((confWinPct / maxConfPct) * 100, confWinPct > 0 ? 2 : 0) : 0;
+              return (
+                <tr
+                  key={p.team}
+                  className={p.team === team.team ? "row-active" : ""}
+                >
+                  <td>
+                    {p.team === team.team ? (
+                      <span className="team-name">
+                        <TeamLogo team={p} />
+                        {p.team}
+                      </span>
+                    ) : (
+                      <button
+                        className="team-link"
+                        onClick={() => onNavigateTeam(p)}
+                      >
+                        <TeamLogo team={p} />
+                        {p.team}
+                      </button>
+                    )}
+                  </td>
+                  <td
+                    className={`rating-cell ${
+                      p.rating < 0 ? "rating-good" : "rating-bad"
+                    }`}
+                  >
+                    {p.rating > 0 ? "+" : ""}
+                    {p.rating.toFixed(2)}
+                  </td>
+                  <td className="conf-odds-cell">
+                    <div className="conf-odds-bar-track">
+                      <div className="conf-odds-bar-fill" style={{ width: `${barWidth}%` }} />
+                    </div>
+                    <span className="conf-odds-pct">{fmtPct(confWinPct)}</span>
+                  </td>
+                  <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
+                  <td className="wintotals-total-cell">{liveWins}-{liveLosses}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
