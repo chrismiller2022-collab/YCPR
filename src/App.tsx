@@ -22,6 +22,7 @@ import WeekReportPage from "./pages/WeekReportPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
 import AdminPage from "./pages/AdminPage";
+import SurvivorPage from "./pages/SurvivorPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -57,12 +58,28 @@ export default function App() {
     if (window.location.hash === "#admin") {
       setPage({ type: "admin" });
     }
+    if (window.location.hash === "#survivor") {
+      setPage({ type: "survivor" });
+    }
   }, []);
 
   if (page.type === "admin") {
     return (
       <div className="page">
         <AdminPage
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (page.type === "survivor") {
+    return (
+      <div className="page">
+        <SurvivorPage
           onHome={() => {
             window.location.hash = "";
             handleHome();
