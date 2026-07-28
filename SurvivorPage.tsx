@@ -1,246 +1,380 @@
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import { fmtNum, fmtOdds, fmtPct } from "./format";
-import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
+import { useEffect, useMemo, useState } from "react";
+import TeamLogo from "../components/TeamLogo";
+import {
+  SURVIVOR_WEEKS,
+  availableConferences,
+  DEFAULT_CONFERENCES,
+  rowTeams,
+  gameForTeamInWeek,
+  opponentOf,
+  teamSpread,
+  cellStatus,
+  teamsUsedElsewhere,
+  allUsedTeams,
+} from "../lib/survivor";
 
-const MARGIN = 40;
-// Landscape letter is 792pt wide x 612pt tall - much shorter than portrait,
-// so the "do we need a new page" threshold has to be lower.
-const MAX_Y = 540;
+const STORAGE_KEY = "survivor_picks_v1";
+const AUTH_KEY = "survivor_authed";
 
-function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: number) {
-  doc.setFontSize(11);
-  doc.text(title, MARGIN, startY);
-  autoTable(doc, {
-    startY: startY + 8,
-    margin: { left: MARGIN, right: MARGIN },
-    head: [["Team", "Conference", "Change"]],
-    body: rows.map((r) => [
-      r.team.team,
-      r.team.conf,
-      (r.value > 0 ? "+" : "") + r.value.toFixed(2),
-    ]),
-    styles: { fontSize: 8, cellPadding: 3 },
-    headStyles: { fillColor: [31, 32, 65] },
-    theme: "striped",
-  });
-  return (doc as any).lastAutoTable.finalY;
-}
-
-function winsLossesTable(
-  doc: jsPDF,
-  title: string,
-  rows: WinsLossesRow[],
-  valueKey: "winsLeft" | "lossesLeft",
-  startY: number
-) {
-  doc.setFontSize(11);
-  doc.text(title, MARGIN, startY);
-  autoTable(doc, {
-    startY: startY + 8,
-    margin: { left: MARGIN, right: MARGIN },
-    head: [["Team", "Conference", "Win Projection", "Total Games", title.includes("Wins") ? "Wins Left" : "Losses Left"]],
-    body: rows.map((r) => [
-      r.team.team,
-      r.team.conf,
-      r.winProjection.toFixed(2),
-      String(r.totalGames),
-      r[valueKey].toFixed(2),
-    ]),
-    styles: { fontSize: 8, cellPadding: 3 },
-    headStyles: { fillColor: [31, 32, 65] },
-    theme: "striped",
-  });
-  return (doc as any).lastAutoTable.finalY;
-}
-
-// Small helper so each call site doesn't need to repeat the
-// page-break-if-needed logic before every table.
-function pageBreakIfNeeded(doc: jsPDF, y: number): number {
-  if (y > MAX_Y) {
-    doc.addPage();
-    return MARGIN;
+function loadPicks(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
   }
-  return y;
 }
 
-export interface WeekReportInput {
-  division: "FBS" | "FCS";
-  week: number;
-  sos: { gainers: ChangeRow[]; losers: ChangeRow[] };
-  resume: { gainers: ChangeRow[]; losers: ChangeRow[] };
-  rating: { gainers: ChangeRow[]; losers: ChangeRow[] };
-  winsLossesLeft: { byWinsLeft: WinsLossesRow[]; byLossesLeft: WinsLossesRow[] };
-  conferencePreviews: ConferencePreviewRowData[];
-  matchups: MatchupRow[];
-  hasWeeklyChangeData: boolean;
-}
+function PasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
-export function buildWeekReportPdf(input: WeekReportInput) {
-  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
-  const {
-    division,
-    week,
-    sos,
-    resume,
-    rating,
-    winsLossesLeft: wl,
-    conferencePreviews,
-    matchups,
-    hasWeeklyChangeData,
-  } = input;
+  async function submit() {
+    if (!password) {
+      setError("Enter a password first.");
+      return;
+    }
+    setChecking(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/survivor-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Incorrect password");
+        return;
+      }
+      sessionStorage.setItem(AUTH_KEY, "1");
+      onAuthed();
+    } catch (err: any) {
+      setError(err.message ?? "Something went wrong");
+    } finally {
+      setChecking(false);
+    }
+  }
 
-  // --- Title page ---
-  doc.setFontSize(22);
-  doc.text(`${division} Week ${week} Report`, MARGIN, 55);
-  doc.setFontSize(11);
-  doc.setTextColor(100);
-  doc.text(
-    `Generated ${new Date().toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    })}`,
-    MARGIN,
-    75
+  return (
+    <div style={{ maxWidth: 420, margin: "4rem auto", padding: "0 1rem" }}>
+      <h2>Survivor</h2>
+      <p>Enter the password to continue.</p>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Password"
+        style={{ width: "100%", padding: "0.6rem", marginBottom: "0.75rem" }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
+      />
+      <button onClick={submit} disabled={checking}>
+        {checking ? "Checking…" : "Continue"}
+      </button>
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <p style={{ marginTop: "2rem" }}>
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            onHome?.();
+          }}
+        >
+          ← Back to site
+        </a>
+      </p>
+    </div>
   );
-  doc.setTextColor(0);
+}
 
-  let y = 100;
+export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
+  const [authed, setAuthed] = useState(false);
+  const [picks, setPicks] = useState<Record<string, string[]>>({});
+  const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
+  const [hideUsed, setHideUsed] = useState(false);
 
-  if (!hasWeeklyChangeData) {
-    doc.setFontSize(10);
-    doc.setTextColor(150, 90, 0);
-    doc.text(
-      "Note: fewer than two weeks of data have been saved yet, so the change-from-last-week",
-      MARGIN,
-      y
-    );
-    doc.text(
-      "sections below are empty. They'll populate automatically once two weeks exist.",
-      MARGIN,
-      y + 14
-    );
-    doc.setTextColor(0);
-    y += 34;
-  }
+  useEffect(() => {
+    if (sessionStorage.getItem(AUTH_KEY) === "1") setAuthed(true);
+  }, []);
 
-  // --- Section 1: Top 25 gainers/losers ---
-  doc.setFontSize(16);
-  doc.text("1. Top 25 Gainers & Losers (Change From Last Week)", MARGIN, y);
-  y += 20;
+  useEffect(() => {
+    if (authed) setPicks(loadPicks());
+  }, [authed]);
 
-  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Gainers", sos.gainers, y) + 26;
-  y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Losers", sos.losers, y) + 26;
+  useEffect(() => {
+    if (authed) localStorage.setItem(STORAGE_KEY, JSON.stringify(picks));
+  }, [picks, authed]);
 
-  y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1b. Resume Rating - Top 25 Gainers", resume.gainers, y) + 26;
-  y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1b. Resume Rating - Top 25 Losers", resume.losers, y) + 26;
+  const allConfs = useMemo(() => availableConferences(), []);
+  const teams = useMemo(() => rowTeams(selectedConfs), [selectedConfs]);
+  const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
 
-  y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1c. Power Rating - Top 25 Gainers", rating.gainers, y) + 26;
-  y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y) + 26;
-
-  y = pageBreakIfNeeded(doc, y);
-  y =
-    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
-  y = pageBreakIfNeeded(doc, y);
-  y =
-    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
-
-  // --- Section 2: Week matchups ---
-  doc.addPage();
-  doc.setFontSize(16);
-  doc.text(`2. ${division} Week ${week} Matchups`, MARGIN, MARGIN);
-
-  if (matchups.length === 0) {
-    doc.setFontSize(10);
-    doc.text(`No ${division} vs ${division} games scheduled for Week ${week}.`, MARGIN, MARGIN + 20);
-  } else {
-    autoTable(doc, {
-      startY: MARGIN + 16,
-      margin: { left: MARGIN, right: MARGIN },
-      head: [[
-        "Date",
-        "Away",
-        "Away PR",
-        "Away Spread",
-        "Away ML",
-        "Away Win%",
-        "Home",
-        "Home PR",
-        "Home Spread",
-        "Home ML",
-        "Home Win%",
-      ]],
-      body: matchups.map((m) => [
-        m.dateLabel,
-        m.away.team,
-        (m.away.rating > 0 ? "+" : "") + m.away.rating.toFixed(2),
-        (m.awaySpread > 0 ? "+" : "") + m.awaySpread.toFixed(1),
-        fmtOdds(m.awayMoneyline),
-        fmtPct(m.awayWinPct),
-        m.home.team,
-        (m.home.rating > 0 ? "+" : "") + m.home.rating.toFixed(2),
-        (m.homeSpread > 0 ? "+" : "") + m.homeSpread.toFixed(1),
-        fmtOdds(m.homeMoneyline),
-        fmtPct(m.homeWinPct),
-      ]),
-      styles: { fontSize: 7, cellPadding: 2.5 },
-      headStyles: { fillColor: [31, 32, 65] },
-      theme: "striped",
+  function toggleConf(conf: string) {
+    setSelectedConfs((prev) => {
+      const next = new Set(prev);
+      if (next.has(conf)) next.delete(conf);
+      else next.add(conf);
+      return next;
     });
   }
 
-  // --- Section 3: Conference previews ---
-  doc.addPage();
-  doc.setFontSize(16);
-  doc.text(`3. All ${division} Conference Previews`, MARGIN, MARGIN);
-  y = MARGIN + 24;
-
-  for (const cp of conferencePreviews) {
-    if (cp.rows.length === 0) continue;
-    y = pageBreakIfNeeded(doc, y);
-    doc.setFontSize(12);
-    doc.text(cp.conference, MARGIN, y);
-    autoTable(doc, {
-      startY: y + 8,
-      margin: { left: MARGIN, right: MARGIN },
-      head: [[
-        "Team",
-        "Power Rating",
-        "Proj. Wins",
-        "Vegas Win Total",
-        "Win Total Diff",
-        "Conf. Wins",
-        "Conf. Win Line",
-        "Conf. Win Diff",
-        "Fair Conf. Price",
-        "Conf. Odds",
-        "Conf. Vegas Odds",
-      ]],
-      body: cp.rows.map((r) => [
-        r.team.team,
-        (r.team.rating > 0 ? "+" : "") + r.team.rating.toFixed(2),
-        r.winTotal.toFixed(2),
-        fmtNum(r.seasonWinLine),
-        r.seasonWinLine != null ? ((r.winTotal - r.seasonWinLine) > 0 ? "+" : "") + (r.winTotal - r.seasonWinLine).toFixed(2) : "–",
-        r.confWinTotal.toFixed(2),
-        fmtNum(r.confLine),
-        r.confLine != null ? ((r.confWinTotal - r.confLine) > 0 ? "+" : "") + (r.confWinTotal - r.confLine).toFixed(2) : "–",
-        fmtOdds(r.fairPrice),
-        fmtPct(r.confWinPct),
-        fmtOdds(r.odds),
-      ]),
-      styles: { fontSize: 7, cellPadding: 2.5 },
-      headStyles: { fillColor: [31, 32, 65] },
-      theme: "striped",
+  function handleCellClick(teamName: string, weekKey: string, status: string) {
+    if (status !== "open" && status !== "selected") return;
+    setPicks((prev) => {
+      const weekPicks = prev[weekKey] || [];
+      if (weekPicks.includes(teamName)) {
+        return { ...prev, [weekKey]: weekPicks.filter((t) => t !== teamName) };
+      }
+      const usedElsewhere = teamsUsedElsewhere(prev, weekKey);
+      if (usedElsewhere.has(teamName)) return prev;
+      if (weekPicks.length >= 2) return prev;
+      return { ...prev, [weekKey]: [...weekPicks, teamName] };
     });
-    y = (doc as any).lastAutoTable.finalY + 24;
   }
 
-  doc.save(`${division.toLowerCase()}-week-${week}-report.pdf`);
+  function resetAll() {
+    if (confirm("Clear all picks? This can't be undone.")) {
+      setPicks({});
+    }
+  }
+
+  if (!authed) {
+    return <PasswordGate onAuthed={() => setAuthed(true)} onHome={onHome} />;
+  }
+
+  const lockedWeeks = SURVIVOR_WEEKS.filter((w) => (picks[w.key] || []).length === 2).length;
+
+  return (
+    <div style={{ padding: "1rem 1.25rem 3rem" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "0.75rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0 }}>Survivor Pool</h2>
+          <p style={{ margin: "0.25rem 0 0", color: "var(--chalk-dim)", fontSize: "0.9rem" }}>
+            {lockedWeeks} of {SURVIVOR_WEEKS.length} weeks locked · {usedTeams.size} teams used
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button
+            className="menu-btn"
+            onClick={() => setHideUsed((v) => !v)}
+            style={{ opacity: hideUsed ? 1 : 0.7 }}
+          >
+            {hideUsed ? "Showing eligible only" : "Hide used teams"}
+          </button>
+          <button className="menu-btn" onClick={resetAll}>
+            Reset all
+          </button>
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              onHome?.();
+            }}
+            className="menu-btn"
+            style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+          >
+            ← Home
+          </a>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "0.4rem",
+          marginBottom: "1rem",
+          padding: "0.75rem",
+          background: "var(--turf-panel)",
+          border: "1px solid var(--hash)",
+          borderRadius: 8,
+        }}
+      >
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginRight: "0.5rem", alignSelf: "center" }}>
+          Conferences:
+        </span>
+        {allConfs.map((conf) => {
+          const active = selectedConfs.has(conf);
+          return (
+            <button
+              key={conf}
+              onClick={() => toggleConf(conf)}
+              style={{
+                fontSize: "0.78rem",
+                padding: "0.3rem 0.6rem",
+                borderRadius: 6,
+                border: `1px solid ${active ? "var(--gold)" : "var(--hash)"}`,
+                background: active ? "var(--gold-dim)" : "transparent",
+                color: active ? "var(--chalk)" : "var(--chalk-dim)",
+                cursor: "pointer",
+              }}
+            >
+              {conf}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
+          <thead>
+            <tr>
+              <th
+                style={{
+                  position: "sticky",
+                  left: 0,
+                  zIndex: 2,
+                  background: "var(--turf-panel-2)",
+                  padding: "0.5rem 0.75rem",
+                  textAlign: "left",
+                  minWidth: 150,
+                  borderBottom: "1px solid var(--hash)",
+                }}
+              >
+                Team
+              </th>
+              {SURVIVOR_WEEKS.map((w) => {
+                const locked = (picks[w.key] || []).length === 2;
+                return (
+                  <th
+                    key={w.key}
+                    style={{
+                      padding: "0.4rem 0.5rem",
+                      textAlign: "center",
+                      minWidth: 92,
+                      borderBottom: "1px solid var(--hash)",
+                      background: locked ? "rgba(255,255,255,0.06)" : "var(--turf-panel-2)",
+                      textDecoration: locked ? "line-through" : "none",
+                      color: locked ? "var(--chalk-dim)" : "var(--chalk)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700 }}>{w.label}</div>
+                    <div style={{ fontWeight: 400, fontSize: "0.68rem", opacity: 0.7 }}>
+                      {w.lockLabel}
+                    </div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {teams
+              .filter((team) => !hideUsed || !usedTeams.has(team.team))
+              .map((team) => (
+                <tr key={team.team}>
+                  <td
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 1,
+                      background: "var(--turf-panel)",
+                      padding: "0.4rem 0.75rem",
+                      borderBottom: "1px solid var(--hash)",
+                      textDecoration: usedTeams.has(team.team) ? "line-through" : "none",
+                      opacity: usedTeams.has(team.team) ? 0.5 : 1,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                      <TeamLogo team={team} />
+                      {team.team}
+                    </span>
+                  </td>
+                  {SURVIVOR_WEEKS.map((week) => {
+                    const game = gameForTeamInWeek(team.team, week.dataWeek);
+                    const opp = game ? opponentOf(game, team.team) : undefined;
+                    const usedElsewhere = teamsUsedElsewhere(picks, week.key);
+                    const status = cellStatus(
+                      team.team,
+                      week,
+                      game,
+                      opp,
+                      selectedConfs,
+                      picks,
+                      usedElsewhere
+                    );
+
+                    if (!game) {
+                      return (
+                        <td
+                          key={week.key}
+                          style={{
+                            textAlign: "center",
+                            padding: "0.4rem",
+                            borderBottom: "1px solid var(--hash)",
+                            color: "var(--chalk-dim)",
+                          }}
+                        >
+                          –
+                        </td>
+                      );
+                    }
+
+                    const isHome = game.home === team.team;
+                    const spread = opp ? teamSpread(team, opp, game) : null;
+                    const clickable = status === "open" || status === "selected";
+
+                    const bg =
+                      status === "selected"
+                        ? "var(--gold-dim)"
+                        : status === "ineligible" || status === "team-used" || status === "week-locked"
+                        ? "rgba(255,255,255,0.03)"
+                        : "transparent";
+
+                    return (
+                      <td
+                        key={week.key}
+                        onClick={() => clickable && handleCellClick(team.team, week.key, status)}
+                        title={
+                          status === "ineligible"
+                            ? "Opponent's conference isn't selected"
+                            : status === "team-used"
+                            ? "Team already used in another week"
+                            : status === "week-locked"
+                            ? "Both picks already made for this week"
+                            : undefined
+                        }
+                        style={{
+                          textAlign: "center",
+                          padding: "0.35rem 0.4rem",
+                          borderBottom: "1px solid var(--hash)",
+                          background: bg,
+                          cursor: clickable ? "pointer" : "not-allowed",
+                          opacity: status === "ineligible" || status === "team-used" || status === "week-locked" ? 0.4 : 1,
+                          textDecoration:
+                            status === "ineligible" || status === "team-used" ? "line-through" : "none",
+                        }}
+                      >
+                        <div style={{ fontWeight: 600 }}>
+                          {isHome ? "" : "@"}
+                          {opp ? opp.team : "?"}
+                        </div>
+                        {spread != null && (
+                          <div style={{ fontSize: "0.68rem", opacity: 0.75 }}>
+                            {spread > 0 ? "+" : ""}
+                            {spread.toFixed(1)}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
