@@ -2,54 +2,76 @@ import { useMemo, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
-import { TEAMS, conferencesForDivision } from "../data/teams";
+import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
+import { CONFERENCES, TEAMS } from "../data/teams";
+import { fmtOdds, fmtPct } from "../lib/format";
+import { spreadColor } from "../lib/odds";
 
-const FCS_CONFERENCES = conferencesForDivision("FCS");
-
-function FCSRatingsRow({ team, onNavigateTeam, onNavigateConference }: any) {
+function ConferenceWinOddsRow({ team, onNavigateTeam, onNavigateConference }: any) {
+  const f = CONF_FUTURES_BY_TEAM[team.team];
   return (
     <tr>
-      <td>
-        <span
-          className={`rank-flag ${team.rank <= 4 ? "top4" : team.rank <= 12 ? "top12" : ""}`}
-        >
-          {team.rank}
-        </span>
-      </td>
       <td>
         <button className="team-link" onClick={() => onNavigateTeam(team)}>
           <TeamLogo team={team} />
           {team.team}
         </button>
+        <span className={`div-pill ${team.div === "FBS" ? "div-fbs" : "div-fcs"}`}>
+          {team.div}
+        </span>
       </td>
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
+      <td className="wintotals-total-cell">{fmtPct(f?.confWinPct)}</td>
+      <td className="wintotals-total-cell">{fmtOdds(f?.fairPrice)}</td>
+      <td className="wintotals-total-cell">{fmtPct(f?.impliedPct)}</td>
+      <td className="wintotals-total-cell">{fmtOdds(f?.odds)}</td>
+      <td
+        className="wintotals-total-cell"
+        style={{ color: f?.value != null ? spreadColor(-f.value * 100) : undefined }}
+      >
+        {fmtPct(f?.value)}
       </td>
     </tr>
   );
 }
 
-export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
+
+export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
+  const [division, setDivision] = useState("All");
   const [conference, setConference] = useState("All");
-  const [sortKey, setSortKey] = useState("rank");
-  const [sortDir, setSortDir] = useState("asc");
+  const [sortKey, setSortKey] = useState("value");
+  const [sortDir, setSortDir] = useState("desc");
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => t.div === "FCS").filter((t) => {
-      if (conference !== "All" && t.conf !== conference) return false;
-      if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
-        return false;
-      return true;
-    });
+    let list = TEAMS.filter((t) => CONF_FUTURES_BY_TEAM[t.team])
+      .filter((t) => {
+        if (division !== "All" && t.div !== division) return false;
+        if (conference !== "All" && t.conf !== conference) return false;
+        if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
+          return false;
+        return true;
+      })
+      .map((t) => {
+        const f: any = CONF_FUTURES_BY_TEAM[t.team] || {};
+        return {
+          ...t,
+          confWinPct: f.confWinPct ?? null,
+          fairPrice: f.fairPrice ?? null,
+          impliedPct: f.impliedPct ?? null,
+          odds: f.odds ?? null,
+          value: f.value ?? null,
+        };
+      });
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
       let bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       if (typeof av === "string") {
         av = av.toLowerCase();
         bv = bv.toLowerCase();
@@ -59,14 +81,14 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
     });
 
     return list;
-  }, [query, conference, sortKey, sortDir]);
+  }, [query, division, conference, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
-      setSortDir(key === "rank" ? "asc" : "asc");
+      setSortDir("asc");
     }
   };
 
@@ -76,11 +98,11 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">FCS</div>
-        <h1 className="title matchup-title">FCS POWER RATINGS · LIVE</h1>
+        <div className="eyebrow">Futures</div>
+        <h1 className="title matchup-title">CONFERENCE WIN ODDS</h1>
         <p className="subtitle team-subtitle">
-          Power ratings for every FCS team, on the same scale as FBS —
-          negative is better, same convention as the main rankings.
+          Our fair, no-vig odds to win the conference compared against the
+          market's price, with the resulting value edge.
         </p>
       </div>
 
@@ -93,11 +115,20 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
         />
         <select
           className="filter"
+          value={division}
+          onChange={(e) => setDivision(e.target.value)}
+        >
+          <option value="All">All divisions</option>
+          <option value="FBS">FBS</option>
+          <option value="FCS">FCS</option>
+        </select>
+        <select
+          className="filter"
           value={conference}
           onChange={(e) => setConference(e.target.value)}
         >
           <option value="All">All conferences</option>
-          {FCS_CONFERENCES.map((c) => (
+          {CONFERENCES.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -110,19 +141,22 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
           <table>
             <thead>
               <tr>
-                <SortHeader label="Rank" sortKey="rank" active={sortKey === "rank"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-                <SortHeader label="Power Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Conf Win %" sortKey="confWinPct" active={sortKey === "confWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Fair Price" sortKey="fairPrice" active={sortKey === "fairPrice"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Implied %" sortKey="impliedPct" active={sortKey === "impliedPct"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Odds" sortKey="odds" active={sortKey === "odds"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Value" sortKey="value" active={sortKey === "value"} dir={sortDir} onClick={handleSort} align="right" />
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
-                <FCSRatingsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
+                <ConferenceWinOddsRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} />
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="empty">
+                  <td colSpan={7} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -133,8 +167,8 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
       </div>
 
       <div className="footer-note">
-        FCS ratings sit on the same scale as FBS ratings, so cross-division
-        comparisons (e.g. for the playoff bracket) are apples-to-apples.
+        Fair Price/Conf Win % come from our model. Implied %/Odds are the
+        market's price. Value is the edge between the two.
       </div>
     </div>
   );

@@ -1,125 +1,246 @@
-import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
-import { RESUME_BY_TEAM } from "../data/resume";
-import { TEAMS } from "../data/teams";
-import { hfaFor } from "./odds";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { fmtNum, fmtOdds, fmtPct } from "./format";
+import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
 
-export const PLAYOFF24_AUTO_CONFERENCES = [
-  "Big Ten",
-  "SEC",
-  "Big 12",
-  "ACC",
-  "Sun Belt",
-  "American Athletic",
-  "Mountain West",
-  "Mid-American",
-  "Conference USA",
-  "Pac-12",
-];
+const MARGIN = 40;
+// Landscape letter is 792pt wide x 612pt tall - much shorter than portrait,
+// so the "do we need a new page" threshold has to be lower.
+const MAX_Y = 540;
 
-export function computeAutoBidChampion(conf) {
-  const candidates = TEAMS.filter(
-    (t) => t.div === "FBS" && t.conf === conf && CONF_FUTURES_BY_TEAM[t.team]
-  );
-  if (candidates.length === 0) return null;
-  return candidates.reduce((best, t) => {
-    const p = CONF_FUTURES_BY_TEAM[t.team]?.confWinPct ?? 0;
-    const bestP = best ? CONF_FUTURES_BY_TEAM[best.team]?.confWinPct ?? 0 : -1;
-    return p > bestP ? t : best;
-  }, null);
+function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: number) {
+  doc.setFontSize(11);
+  doc.text(title, MARGIN, startY);
+  autoTable(doc, {
+    startY: startY + 8,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [["Team", "Conference", "Change"]],
+    body: rows.map((r) => [
+      r.team.team,
+      r.team.conf,
+      (r.value > 0 ? "+" : "") + r.value.toFixed(2),
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [31, 32, 65] },
+    theme: "striped",
+  });
+  return (doc as any).lastAutoTable.finalY;
 }
 
-export function buildPlayoff24Field() {
-  const autoBids = PLAYOFF24_AUTO_CONFERENCES.map((conf) => ({
-    conf,
-    team: computeAutoBidChampion(conf),
-  })).filter((x) => x.team);
-
-  const autoNames = new Set(autoBids.map((x) => x.team.team));
-
-  const atLargePool = TEAMS.filter(
-    (t) => t.div === "FBS" && !autoNames.has(t.team) && RESUME_BY_TEAM[t.team]
-  ).sort(
-    (a, b) => RESUME_BY_TEAM[a.team].rank - RESUME_BY_TEAM[b.team].rank
-  );
-
-  const atLarge = atLargePool.slice(0, 14);
-
-  const field = [
-    ...autoBids.map((x) => ({ team: x.team, bidConf: x.conf, bid: "Auto" })),
-    ...atLarge.map((t) => ({ team: t, bidConf: t.conf, bid: "At-Large" })),
-  ];
-
-  field.sort(
-    (a, b) =>
-      (RESUME_BY_TEAM[a.team.team]?.rank ?? 999) -
-      (RESUME_BY_TEAM[b.team.team]?.rank ?? 999)
-  );
-
-  return field.map((f, i) => ({ ...f, seed: i + 1 }));
+function winsLossesTable(
+  doc: jsPDF,
+  title: string,
+  rows: WinsLossesRow[],
+  valueKey: "winsLeft" | "lossesLeft",
+  startY: number
+) {
+  doc.setFontSize(11);
+  doc.text(title, MARGIN, startY);
+  autoTable(doc, {
+    startY: startY + 8,
+    margin: { left: MARGIN, right: MARGIN },
+    head: [["Team", "Conference", "Win Projection", "Total Games", title.includes("Wins") ? "Wins Left" : "Losses Left"]],
+    body: rows.map((r) => [
+      r.team.team,
+      r.team.conf,
+      r.winProjection.toFixed(2),
+      String(r.totalGames),
+      r[valueKey].toFixed(2),
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [31, 32, 65] },
+    theme: "striped",
+  });
+  return (doc as any).lastAutoTable.finalY;
 }
 
-export function pairFirstRoundNoConfConflict(sixteen) {
-  // sixteen: seeds 9-24, sorted ascending by seed.
-  const hosts = sixteen.slice(0, 8);
-  const aways = sixteen.slice(8, 16).slice().reverse();
+// Small helper so each call site doesn't need to repeat the
+// page-break-if-needed logic before every table.
+function pageBreakIfNeeded(doc: jsPDF, y: number): number {
+  if (y > MAX_Y) {
+    doc.addPage();
+    return MARGIN;
+  }
+  return y;
+}
 
-  for (let pass = 0; pass < 4; pass++) {
-    let conflict = false;
-    for (let i = 0; i < hosts.length; i++) {
-      if (hosts[i].team.conf === aways[i].team.conf) {
-        conflict = true;
-        for (let j = 0; j < aways.length; j++) {
-          if (j === i) continue;
-          const swapOk =
-            hosts[i].team.conf !== aways[j].team.conf &&
-            hosts[j].team.conf !== aways[i].team.conf;
-          if (swapOk) {
-            const tmp = aways[i];
-            aways[i] = aways[j];
-            aways[j] = tmp;
-            break;
-          }
-        }
-      }
-    }
-    if (!conflict) break;
+export interface WeekReportInput {
+  division: "FBS" | "FCS";
+  week: number;
+  sos: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  resume: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  rating: { gainers: ChangeRow[]; losers: ChangeRow[] };
+  winsLossesLeft: { byWinsLeft: WinsLossesRow[]; byLossesLeft: WinsLossesRow[] };
+  conferencePreviews: ConferencePreviewRowData[];
+  matchups: MatchupRow[];
+  hasWeeklyChangeData: boolean;
+}
+
+export function buildWeekReportPdf(input: WeekReportInput) {
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+  const {
+    division,
+    week,
+    sos,
+    resume,
+    rating,
+    winsLossesLeft: wl,
+    conferencePreviews,
+    matchups,
+    hasWeeklyChangeData,
+  } = input;
+
+  // --- Title page ---
+  doc.setFontSize(22);
+  doc.text(`${division} Week ${week} Report`, MARGIN, 55);
+  doc.setFontSize(11);
+  doc.setTextColor(100);
+  doc.text(
+    `Generated ${new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })}`,
+    MARGIN,
+    75
+  );
+  doc.setTextColor(0);
+
+  let y = 100;
+
+  if (!hasWeeklyChangeData) {
+    doc.setFontSize(10);
+    doc.setTextColor(150, 90, 0);
+    doc.text(
+      "Note: fewer than two weeks of data have been saved yet, so the change-from-last-week",
+      MARGIN,
+      y
+    );
+    doc.text(
+      "sections below are empty. They'll populate automatically once two weeks exist.",
+      MARGIN,
+      y + 14
+    );
+    doc.setTextColor(0);
+    y += 34;
   }
 
-  return hosts.map((h, i) => ({ host: h, away: aways[i] }));
-}
+  // --- Section 1: Top 25 gainers/losers ---
+  doc.setFontSize(16);
+  doc.text("1. Top 25 Gainers & Losers (Change From Last Week)", MARGIN, y);
+  y += 20;
 
-export function playGame(entryA, entryB, neutral, liveByTeam) {
-  const spreadA = neutral
-    ? entryA.team.rating - entryB.team.rating
-    : entryA.team.rating - entryB.team.rating - hfaFor(entryA.team.team, liveByTeam);
-  return spreadA <= 0 ? entryA : entryB;
-}
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Gainers", sos.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Losers", sos.losers, y) + 26;
 
-export function reseedAndPair(entries) {
-  // entries: array of {team, seed, ...}, any length. Sort by seed asc,
-  // pair best remaining vs worst remaining.
-  const sorted = [...entries].sort((a, b) => a.seed - b.seed);
-  const pairs = [];
-  for (let i = 0; i < sorted.length / 2; i++) {
-    pairs.push({ host: sorted[i], away: sorted[sorted.length - 1 - i] });
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Gainers", resume.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Losers", resume.losers, y) + 26;
+
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1c. Power Rating - Top 25 Gainers", rating.gainers, y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y) + 26;
+
+  y = pageBreakIfNeeded(doc, y);
+  y =
+    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
+  y = pageBreakIfNeeded(doc, y);
+  y =
+    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
+
+  // --- Section 2: Week matchups ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`2. ${division} Week ${week} Matchups`, MARGIN, MARGIN);
+
+  if (matchups.length === 0) {
+    doc.setFontSize(10);
+    doc.text(`No ${division} vs ${division} games scheduled for Week ${week}.`, MARGIN, MARGIN + 20);
+  } else {
+    autoTable(doc, {
+      startY: MARGIN + 16,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [[
+        "Date",
+        "Away",
+        "Away PR",
+        "Away Spread",
+        "Away ML",
+        "Away Win%",
+        "Home",
+        "Home PR",
+        "Home Spread",
+        "Home ML",
+        "Home Win%",
+      ]],
+      body: matchups.map((m) => [
+        m.dateLabel,
+        m.away.team,
+        (m.away.rating > 0 ? "+" : "") + m.away.rating.toFixed(2),
+        (m.awaySpread > 0 ? "+" : "") + m.awaySpread.toFixed(1),
+        fmtOdds(m.awayMoneyline),
+        fmtPct(m.awayWinPct),
+        m.home.team,
+        (m.home.rating > 0 ? "+" : "") + m.home.rating.toFixed(2),
+        (m.homeSpread > 0 ? "+" : "") + m.homeSpread.toFixed(1),
+        fmtOdds(m.homeMoneyline),
+        fmtPct(m.homeWinPct),
+      ]),
+      styles: { fontSize: 7, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
   }
-  return pairs;
-}
 
-// FCS doesn't have conference-championship or resume-rating data yet, so
-// the field here is simpler than the FBS 24-team field: just the top 24
-// FCS teams by Power Rating, seeded 1-24 in order. Once FCS resume ratings
-// and conference futures exist, this can grow auto-bid/at-large logic to
-// match buildPlayoff24Field above.
-export function buildFCS24Field() {
-  const fcsTeams = [...TEAMS]
-    .filter((t) => t.div === "FCS")
-    .sort((a, b) => a.rating - b.rating);
+  // --- Section 3: Conference previews ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`3. All ${division} Conference Previews`, MARGIN, MARGIN);
+  y = MARGIN + 24;
 
-  return fcsTeams.slice(0, 24).map((team, i) => ({
-    team,
-    bidConf: team.conf,
-    bid: i < 8 ? "Top Seed" : "At-Large",
-    seed: i + 1,
-  }));
+  for (const cp of conferencePreviews) {
+    if (cp.rows.length === 0) continue;
+    y = pageBreakIfNeeded(doc, y);
+    doc.setFontSize(12);
+    doc.text(cp.conference, MARGIN, y);
+    autoTable(doc, {
+      startY: y + 8,
+      margin: { left: MARGIN, right: MARGIN },
+      head: [[
+        "Team",
+        "Power Rating",
+        "Proj. Wins",
+        "Vegas Win Total",
+        "Win Total Diff",
+        "Conf. Wins",
+        "Conf. Win Line",
+        "Conf. Win Diff",
+        "Fair Conf. Price",
+        "Conf. Odds",
+        "Conf. Vegas Odds",
+      ]],
+      body: cp.rows.map((r) => [
+        r.team.team,
+        (r.team.rating > 0 ? "+" : "") + r.team.rating.toFixed(2),
+        r.winTotal.toFixed(2),
+        fmtNum(r.seasonWinLine),
+        r.seasonWinLine != null ? ((r.winTotal - r.seasonWinLine) > 0 ? "+" : "") + (r.winTotal - r.seasonWinLine).toFixed(2) : "–",
+        r.confWinTotal.toFixed(2),
+        fmtNum(r.confLine),
+        r.confLine != null ? ((r.confWinTotal - r.confLine) > 0 ? "+" : "") + (r.confWinTotal - r.confLine).toFixed(2) : "–",
+        fmtOdds(r.fairPrice),
+        fmtPct(r.confWinPct),
+        fmtOdds(r.odds),
+      ]),
+      styles: { fontSize: 7, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
+    y = (doc as any).lastAutoTable.finalY + 24;
+  }
+
+  doc.save(`${division.toLowerCase()}-week-${week}-report.pdf`);
 }

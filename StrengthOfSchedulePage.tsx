@@ -1,205 +1,184 @@
-import { useState } from "react";
-import RadarChart from "../components/RadarChart";
-import TeamLogo from "../components/TeamLogo";
-import TeamPicker from "../components/TeamPicker";
-import { TEAMS_BY_NAME } from "../data/teams";
-import { spreadColor } from "../lib/odds";
-import { computeRadarMetrics } from "../lib/percentiles";
-import { computeNextOpponent, computeGraphicCardStats } from "../lib/schedule";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useMemo, useState } from "react";
+import ConfLink from "../components/ConfLink";
+import SortHeader from "../components/SortHeader";
+import { WEEKS } from "../data/games";
+import { RESUME_BY_TEAM } from "../data/resume";
+import { SOS_BY_TEAM } from "../data/sor";
+import { CONFERENCES, TEAMS } from "../data/teams";
 
-const COMPARISON_ROW_LABELS = [
-  "Power Rating + Rank",
-  "Overall Record",
-  "Projected Record",
-  "Conference Record",
-  "Proj Conference Record + Rank",
-  "Proj Title Odds + Rank",
-  "Proj Conf Odds + Rank",
-  "SOR + Rank",
-  "ATS Record + Rank",
-  "Over/Under Record",
-  "Vegas Title Odds + Rank",
-  "Vegas Conf Odds + Rank",
-  "Vegas Win Total",
-];
+const WEEKLY_PROGRESSION_META = {
+  power: {
+    eyebrow: "Weekly Power Ratings",
+    title: "WEEKLY PROGRESSION",
+    metricLabel: "Power Rating",
+    filterTeams: (t) => true,
+    baseline: (t) => t.rating,
+  },
+  resume: {
+    eyebrow: "Resume Ratings",
+    title: "WEEKLY PROGRESSION",
+    metricLabel: "Resume Rating",
+    filterTeams: (t) => !!RESUME_BY_TEAM[t.team],
+    baseline: (t) => RESUME_BY_TEAM[t.team]?.rating ?? null,
+  },
+  sor: {
+    eyebrow: "Strength of Schedule",
+    title: "WEEKLY PROGRESSION",
+    metricLabel: "SOR",
+    filterTeams: (t) => SOS_BY_TEAM[t.team] != null,
+    baseline: (t) => SOS_BY_TEAM[t.team] ?? null,
+  },
+};
 
 
-function ComparisonCell({ stat }: any) {
-  if (!stat || !stat.real) {
-    return <span className="compare-tbd">TBD</span>;
-  }
+function WeeklyProgressionRow({ team, meta, onNavigateConference }: any) {
+  const preseason = meta.baseline(team);
   return (
-    <span className="compare-value-wrap">
-      <span style={{ color: stat.color }}>{stat.value}</span>
-      {stat.sub && <span className="compare-value-sub">{stat.sub}</span>}
-    </span>
+    <tr>
+      <td>
+        <span className="team-name">{team.team}</span>
+        <span className={`div-pill ${team.div === "FBS" ? "div-fbs" : "div-fcs"}`}>
+          {team.div}
+        </span>
+      </td>
+      <td className="conf-cell">
+        <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
+      </td>
+      <td className="wintotals-total-cell">
+        {preseason != null ? preseason.toFixed(2) : "–"}
+      </td>
+      {WEEKS.map((w) => (
+        <td key={w.key} className="matchups-empty-cell">
+          –
+        </td>
+      ))}
+      <td className="matchups-empty-cell">–</td>
+    </tr>
   );
 }
 
 
-export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
-  const [slots, setSlots] = useState(() =>
-    Array.from({ length: 6 }, () => ({ div: "All", conf: "All", team: "" }))
-  );
+export default function WeeklyProgressionPage({ metric, subLabel, defaultDivision, onNavigateConference, onHome }: any) {
+  const meta = WEEKLY_PROGRESSION_META[metric];
+  const [query, setQuery] = useState("");
+  const [division, setDivision] = useState(defaultDivision ?? "All");
+  const [conference, setConference] = useState("All");
+  const [sortKey, setSortKey] = useState("team");
+  const [sortDir, setSortDir] = useState("asc");
 
-  const updateSlot = (i, patch) => {
-    setSlots((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  const rows = useMemo(() => {
+    const list = TEAMS.filter(meta.filterTeams)
+      .filter((t) => {
+        if (division !== "All" && t.div !== division) return false;
+        if (conference !== "All" && t.conf !== conference) return false;
+        if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
+          return false;
+        return true;
+      })
+      .map((t) => ({ ...t, preseason: meta.baseline(t) }));
+
+    return [...list].sort((a, b) => {
+      let av = a[sortKey];
+      let bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") {
+        av = av.toLowerCase();
+        bv = bv.toLowerCase();
+        return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      }
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [metric, query, division, conference, sortKey, sortDir]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
   };
 
-  const selectedTeams = slots
-    .map((s) => TEAMS_BY_NAME[s.team])
-    .filter(Boolean);
-
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
-
-  const teamStats = selectedTeams.map((t) => {
-    const { basic, betting } = computeGraphicCardStats(t, liveByTeam);
-    return {
-      team: t,
-      next: computeNextOpponent(t, liveByTeam),
-      stats: [...basic, ...betting.slice(1)],
-    };
-  });
-
   return (
-    <div className="matchup-page">
+    <div className="matchups-page">
       <div className="team-hero">
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
         </button>
-        <div className="eyebrow">Tools</div>
-        <h1 className="title matchup-title">RESUME COMPARISON</h1>
+        <div className="eyebrow">{meta.eyebrow} · {subLabel}</div>
+        <h1 className="title matchup-title">{meta.title}</h1>
         <p className="subtitle team-subtitle">
-          Pick up to 6 teams to compare every stat from their team page's
-          graphic card, side by side.
+          {meta.metricLabel} for every team, week by week across the season,
+          plus the change from the Preseason projection. Weekly columns
+          populate as each week is completed.
         </p>
       </div>
 
-      <div className="matchup-body compare-body">
-        <div className="compare-picker-grid">
-          {slots.map((s, i) => (
-            <TeamPicker
-              key={i}
-              label={`Team ${i + 1}`}
-              division={s.div}
-              conference={s.conf}
-              teamName={s.team}
-              onDivision={(v) => updateSlot(i, { div: v, conf: "All", team: "" })}
-              onConference={(v) => updateSlot(i, { conf: v, team: "" })}
-              onTeam={(v) => updateSlot(i, { team: v })}
-            />
+      <div className="controls matchups-controls">
+        <input
+          className="search"
+          placeholder="Search for a team…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select
+          className="filter"
+          value={division}
+          onChange={(e) => setDivision(e.target.value)}
+        >
+          <option value="All">All divisions</option>
+          <option value="FBS">FBS</option>
+          <option value="FCS">FCS</option>
+        </select>
+        <select
+          className="filter"
+          value={conference}
+          onChange={(e) => setConference(e.target.value)}
+        >
+          <option value="All">All conferences</option>
+          {CONFERENCES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
-        </div>
+        </select>
+      </div>
 
-        {selectedTeams.length === 0 ? (
-          <div className="matchup-note">Pick at least one team to start comparing.</div>
+      <div className="table-wrap">
+        {rows.length === 0 ? (
+          <div className="empty matchups-empty">No teams match that search.</div>
         ) : (
-          <>
-            {selectedTeams.length >= 2 && (
-              <div className="table-wrap">
-                <div className="section-label">
-                  Percentile Profile — {selectedTeams[0].team} vs {selectedTeams[1].team}
-                </div>
-                <div className="radar-card">
-                  <RadarChart
-                    series={[
-                      {
-                        metrics: computeRadarMetrics(selectedTeams[0], liveByTeam),
-                        color: "var(--gold)",
-                      },
-                      {
-                        metrics: computeRadarMetrics(selectedTeams[1], liveByTeam),
-                        color: "#6fb1e0",
-                      },
-                    ]}
-                  />
-                  <div className="radar-legend">
-                    <div className="radar-legend-row">
-                      <span className="radar-legend-label">
-                        <span className="radar-legend-swatch" style={{ background: "var(--gold)" }} />
-                        {selectedTeams[0].team}
-                      </span>
-                    </div>
-                    <div className="radar-legend-row">
-                      <span className="radar-legend-label">
-                        <span className="radar-legend-swatch" style={{ background: "#6fb1e0" }} />
-                        {selectedTeams[1].team}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="footer-note" style={{ marginTop: "0.75rem" }}>
-                  Percentiles are relative to each team's own division, and
-                  compare only the first two teams selected above.
-                </div>
-              </div>
-            )}
-            <div className="table-wrap compare-table-wrap">
-            <div className="table-scroll">
-              <table className="compare-table">
-                <thead>
-                  <tr>
-                    <th className="th">Stat</th>
-                    {teamStats.map(({ team }) => (
-                      <th className="th" key={team.team}>
-                        <button
-                          className="team-link"
-                          onClick={() => onNavigateTeam(team)}
-                        >
-                          <TeamLogo team={team} />
-                          {team.team}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="compare-row-label">Next Opponent</td>
-                    {teamStats.map(({ team, next }) => (
-                      <td key={team.team}>
-                        {next ? (
-                          <span className="compare-value-wrap">
-                            <span className="compare-value-sub">
-                              ({next.loc})
-                            </span>{" "}
-                            <span style={{ color: spreadColor(next.spread) }}>
-                              {next.spread > 0 ? "+" : ""}
-                              {next.spread.toFixed(2)}
-                            </span>{" "}
-                            <button
-                              className="team-link"
-                              onClick={() => onNavigateTeam(next.opp)}
-                            >
-                              <TeamLogo team={next.opp} />
-                              {next.opp.team}
-                            </button>
-                          </span>
-                        ) : (
-                          <span className="compare-tbd">TBD</span>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                  {COMPARISON_ROW_LABELS.map((label) => (
-                    <tr key={label}>
-                      <td className="compare-row-label">{label}</td>
-                      {teamStats.map(({ team, stats }) => (
-                        <td key={team.team}>
-                          <ComparisonCell
-                            stat={stats.find((s) => s.label === label)}
-                          />
-                        </td>
-                      ))}
-                    </tr>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+                  <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+                  <SortHeader label="Preseason" sortKey="preseason" active={sortKey === "preseason"} dir={sortDir} onClick={handleSort} align="right" />
+                  {WEEKS.map((w) => (
+                    <th key={w.key} className="th th-right">
+                      {w.label.replace("Week ", "Wk ")}
+                    </th>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                  <th className="th th-right">Change from Preseason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((t) => (
+                  <WeeklyProgressionRow key={t.team} team={t} meta={meta} onNavigateConference={onNavigateConference} />
+                ))}
+              </tbody>
+            </table>
           </div>
-          </>
         )}
+      </div>
+
+      <div className="footer-note">
+        Weekly {meta.metricLabel} snapshots aren't connected yet — this page
+        is fully wired up and will populate automatically as each week's
+        data comes in.
       </div>
     </div>
   );
