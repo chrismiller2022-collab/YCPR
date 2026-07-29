@@ -3,7 +3,6 @@ import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { gamesForTeam } from "../data/games";
-import { SOS_BY_TEAM } from "../data/sor";
 import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
 import { fmtPct } from "../lib/format";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
@@ -166,7 +165,6 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
-  const sor = liveByTeam[team.team]?.sor ?? SOS_BY_TEAM[team.team] ?? null;
   const radarMetrics = computeRadarMetrics(team, liveByTeam);
 
   const maxConfPct = peers.reduce((max, p) => {
@@ -186,12 +184,6 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
         <div className="team-title-row">
           <TeamLogo team={team} size="3.2rem" />
           <h1 className="title team-title">{team.team}</h1>
-        </div>
-        <div className="team-hero-sor">
-          SOR{" "}
-          <span style={{ color: sor != null ? spreadColor(sor) : undefined }}>
-            {sor != null ? (sor > 0 ? "+" : "") + sor.toFixed(2) : "–"}
-          </span>
         </div>
       </div>
 
