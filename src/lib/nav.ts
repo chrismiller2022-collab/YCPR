@@ -3,6 +3,12 @@ import { conferencesForDivision } from "../data/teams";
 
 export const NAV: any[] = [
   {
+    key: "faq",
+    label: "FAQ",
+    single: true,
+    pageType: "faq",
+  },
+  {
     key: "teampages",
     label: "Team Pages",
     drill: true,
