@@ -1,23 +1,354 @@
-import TeamLogo from "./TeamLogo";
+import "./styles/global.css";
+import { useEffect, useState } from "react";
+import HomePage from "./pages/HomePage";
+import TeamPage from "./pages/TeamPage";
+import MatchupPage from "./pages/MatchupPage";
+import ScheduleSwapPage from "./pages/ScheduleSwapPage";
+import ResumeComparisonPage from "./pages/ResumeComparisonPage";
+import MatchupsPage from "./pages/MatchupsPage";
+import LiveWinTotalsPage from "./pages/LiveWinTotalsPage";
+import ResumeRatingsPage from "./pages/ResumeRatingsPage";
+import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
+import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
+import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
+import NattyOddsPage from "./pages/NattyOddsPage";
+import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
+import ConferencePreviewPage from "./pages/ConferencePreviewPage";
+import BracketPage from "./pages/BracketPage";
+import FCSBracketPage from "./pages/FCSBracketPage";
+import FCSRatingsPage from "./pages/FCSRatingsPage";
+import Playoff24Page from "./pages/Playoff24Page";
+import WeekReportPage from "./pages/WeekReportPage";
+import ComingSoon from "./pages/ComingSoon";
+import TopNav from "./pages/TopNav";
+import AdminPage from "./pages/AdminPage";
+import SurvivorPage from "./pages/SurvivorPage";
+import FAQPage from "./pages/FAQPage";
 
-export default function TeamCell({ team, onNavigateTeam }: any) {
+export default function App() {
+  const [page, setPage] = useState<any>({ type: "home" });
+
+  const handleNavigate = (catKey, catLabel, subKey, subLabel) => {
+    setPage({ type: "sub", catKey, catLabel, subKey, subLabel });
+  };
+
+  const handleNavigateTeam = (team) => {
+    setPage({ type: "team", team });
+    window.scrollTo?.(0, 0);
+  };
+
+  const handleNavigateConference = (conf) => {
+    setPage({
+      type: "sub",
+      catKey: "confpreviews",
+      catLabel: "Conference Previews",
+      subKey: conf,
+      subLabel: conf,
+    });
+    window.scrollTo?.(0, 0);
+  };
+
+  const handleNavigateSingle = (pageType) => {
+    setPage({ type: pageType });
+    window.scrollTo?.(0, 0);
+  };
+
+  const handleHome = () => setPage({ type: "home" });
+
+  useEffect(() => {
+    if (window.location.hash === "#admin") {
+      setPage({ type: "admin" });
+    }
+    if (window.location.hash === "#survivor") {
+      setPage({ type: "survivor" });
+    }
+  }, []);
+
+  if (page.type === "admin") {
+    return (
+      <div className="page">
+        <AdminPage
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (page.type === "survivor") {
+    return (
+      <div className="page">
+        <SurvivorPage
+          onNavigateTeam={handleNavigateTeam}
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <td className="matchup-team-cell">
-      <button
-        className="team-link matchup-team-btn"
-        onClick={() => onNavigateTeam(team)}
-      >
-        <TeamLogo team={team} />
-        {team.team}
-      </button>
-      <span
-        className={`matchup-rating ${
-          team.rating < 0 ? "rating-good" : "rating-bad"
-        }`}
-      >
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
-      </span>
-    </td>
+    <div className="page">
+      <TopNav
+        onNavigate={handleNavigate}
+        onNavigateTeam={handleNavigateTeam}
+        onNavigateSingle={handleNavigateSingle}
+        onHome={handleHome}
+      />
+
+      {page.type === "home" && (
+        <HomePage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+        />
+      )}
+
+      {page.type === "sub" && page.catKey === "matchups" && (
+        <MatchupsPage
+          subKey={page.subKey}
+          subLabel={page.subLabel}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" &&
+        page.catKey === "wintotals" &&
+        page.subKey === "live" && (
+          <LiveWinTotalsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "resume" &&
+        page.subKey === "live" && (
+          <ResumeRatingsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "sos" &&
+        page.subKey === "live" && (
+          <StrengthOfSchedulePage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "ratings" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="power"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "resume" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="resume"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "sos" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="sor"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "futures" &&
+        page.subKey === "confwinodds" && (
+          <ConferenceWinOddsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "futures" &&
+        page.subKey === "confwintotals" && (
+          <ConferenceWinTotalsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "futures" &&
+        page.subKey === "natty" && (
+          <NattyOddsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" && page.catKey === "confpreviews" && (
+        <ConferencePreviewPage
+          conference={page.subKey}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" && page.catKey === "bracket" && (
+        <BracketPage
+          subLabel={page.subLabel}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" && page.catKey === "fcsbracket" && (
+        <FCSBracketPage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcsratings" &&
+        page.subKey === "live" && (
+          <FCSRatingsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcsratings" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="power"
+            defaultDivision="FCS"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" && page.catKey === "fcsconfpreviews" && (
+        <ConferencePreviewPage
+          conference={page.subKey}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcswintotals" &&
+        page.subKey === "live" && (
+          <LiveWinTotalsPage
+            defaultDivision="FCS"
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcssos" &&
+        page.subKey === "live" && (
+          <StrengthOfSchedulePage
+            forceDivision="FCS"
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        page.catKey === "fcssos" &&
+        page.subKey === "weeklyprogression" && (
+          <WeeklyProgressionPage
+            metric="sor"
+            defaultDivision="FCS"
+            subLabel={page.subLabel}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
+      {page.type === "sub" &&
+        !(page.catKey === "matchups") &&
+        !(page.catKey === "wintotals" && page.subKey === "live") &&
+        !(page.catKey === "resume" && page.subKey === "live") &&
+        !(page.catKey === "sos" && page.subKey === "live") &&
+        !(page.subKey === "weeklyprogression" &&
+          (page.catKey === "ratings" || page.catKey === "resume" || page.catKey === "sos")) &&
+        !(page.catKey === "confpreviews") &&
+        !(page.catKey === "bracket") &&
+        !(page.catKey === "fcsbracket") &&
+        !(page.catKey === "fcsratings" && page.subKey === "live") &&
+        !(page.catKey === "fcsconfpreviews") &&
+        !(page.catKey === "fcswintotals" && page.subKey === "live") &&
+        !(page.catKey === "fcssos" && page.subKey === "live") &&
+        !(page.subKey === "weeklyprogression" &&
+          (page.catKey === "fcsratings" || page.catKey === "fcssos")) &&
+        !(
+          page.catKey === "futures" &&
+          (page.subKey === "confwinodds" || page.subKey === "confwintotals" || page.subKey === "natty")
+        ) && (
+          <ComingSoon categoryLabel={page.catLabel} subLabel={page.subLabel} />
+        )}
+
+      {page.type === "team" && (
+        <TeamPage
+          team={page.team}
+          onNavigateTeam={handleNavigateTeam}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "matchup" && <MatchupPage onHome={handleHome} />}
+
+      {page.type === "faq" && <FAQPage onHome={handleHome} />}
+
+      {page.type === "scheduleswap" && (
+        <ScheduleSwapPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "resumecompare" && (
+        <ResumeComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "playoff24" && (
+        <Playoff24Page
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
+      )}
+
+      {page.type === "weekreport" && <WeekReportPage onHome={handleHome} />}
+    </div>
   );
 }
