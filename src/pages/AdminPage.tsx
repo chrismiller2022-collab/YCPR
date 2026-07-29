@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
+import GamesLinesPanel from "./GamesLinesPanel";
+import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
 // Maps flexible/human column headers (however you happen to label them when
@@ -181,7 +183,7 @@ function parsePaste(raw: string) {
 
 const ADMIN_AUTH_KEY = "admin_authed";
 
-type AdminView = "home" | "upload" | "survivor" | "montecarlo" | "gametotals";
+type AdminView = "home" | "upload" | "survivor" | "montecarlo" | "gametotals" | "gameslines" | "matchups";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -394,6 +396,16 @@ function AdminDashboard({
           label="Survivor"
           description="Manage Survivor Pool picks and scores."
           onClick={() => onNavigateView("survivor")}
+        />
+        <MenuTile
+          label="Games & Lines"
+          description="View and sync CFBD games and betting lines."
+          onClick={() => onNavigateView("gameslines")}
+        />
+        <MenuTile
+          label="Matchups"
+          description="Admin matchups view (template copy of the public page for now)."
+          onClick={() => onNavigateView("matchups")}
         />
         <MenuTile
           label="Monte Carlo"
@@ -643,6 +655,10 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       )}
 
       {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
+
+      {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
+
+      {view === "matchups" && <AdminMatchupsPanel onBack={() => setView("home")} />}
 
       {view === "montecarlo" && (
         <AdminComingSoon title="Monte Carlo" onBack={() => setView("home")} />
