@@ -22,8 +22,6 @@ import WeekReportPage from "./pages/WeekReportPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
 import AdminPage from "./pages/AdminPage";
-import SurvivorPage from "./pages/SurvivorPage";
-import FAQPage from "./pages/FAQPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -59,10 +57,37 @@ export default function App() {
     if (window.location.hash === "#admin") {
       setPage({ type: "admin" });
     }
-    if (window.location.hash === "#survivor") {
-      setPage({ type: "survivor" });
-    }
   }, []);
+
+  // Quick links from the Admin dashboard — jump straight to a live public
+  // page and leave the Admin area (clearing the #admin hash so a refresh
+  // doesn't bounce back into Admin).
+  const goToLiveRatings = () => {
+    window.location.hash = "";
+    handleHome();
+  };
+
+  const goToLiveResume = () => {
+    window.location.hash = "";
+    setPage({
+      type: "sub",
+      catKey: "resume",
+      catLabel: "Resume Ratings",
+      subKey: "live",
+      subLabel: "Live",
+    });
+  };
+
+  const goToLiveSOS = () => {
+    window.location.hash = "";
+    setPage({
+      type: "sub",
+      catKey: "sos",
+      catLabel: "Strength of Schedule",
+      subKey: "live",
+      subLabel: "Live",
+    });
+  };
 
   if (page.type === "admin") {
     return (
@@ -72,20 +97,9 @@ export default function App() {
             window.location.hash = "";
             handleHome();
           }}
-        />
-      </div>
-    );
-  }
-
-  if (page.type === "survivor") {
-    return (
-      <div className="page">
-        <SurvivorPage
-          onNavigateTeam={handleNavigateTeam}
-          onHome={() => {
-            window.location.hash = "";
-            handleHome();
-          }}
+          onGoToRatings={goToLiveRatings}
+          onGoToResume={goToLiveResume}
+          onGoToSOS={goToLiveSOS}
         />
       </div>
     );
@@ -329,8 +343,6 @@ export default function App() {
       )}
 
       {page.type === "matchup" && <MatchupPage onHome={handleHome} />}
-
-      {page.type === "faq" && <FAQPage onHome={handleHome} />}
 
       {page.type === "scheduleswap" && (
         <ScheduleSwapPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
