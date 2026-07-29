@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import TeamLogo from "../components/TeamLogo";
+import { TEAMS_BY_NAME } from "../data/teams";
 import {
   SURVIVOR_WEEKS,
   availableConferences,
@@ -11,6 +14,7 @@ import {
   cellStatus,
   teamsUsedElsewhere,
   allUsedTeams,
+  isOpponentEligible,
 } from "../lib/survivor";
 
 const STORAGE_KEY = "survivor_picks_v1";
@@ -90,11 +94,19 @@ function PasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?: () 
   );
 }
 
-export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
+export default function SurvivorPage({
+  onHome,
+  onNavigateTeam,
+}: {
+  onHome?: () => void;
+  onNavigateTeam?: (team: any) => void;
+}) {
   const [authed, setAuthed] = useState(false);
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
   const [hideUsed, setHideUsed] = useState(false);
+  const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     if (sessionStorage.getItem(AUTH_KEY) === "1") setAuthed(true);
@@ -109,8 +121,35 @@ export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
   }, [picks, authed]);
 
   const allConfs = useMemo(() => availableConferences(), []);
-  const teams = useMemo(() => rowTeams(selectedConfs), [selectedConfs]);
+  const baseTeams = useMemo(() => rowTeams(selectedConfs), [selectedConfs]);
   const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
+
+  const teams = useMemo(() => {
+    if (!sortWeekKey) return baseTeams;
+    const week = SURVIVOR_WEEKS.find((w) => w.key === sortWeekKey);
+    if (!week) return baseTeams;
+
+    // Lower (more negative) spread = bigger favorite. Teams on a bye, or
+    // whose opponent isn't eligible under the current conference filter,
+    // have no meaningful spread and always sink to the bottom regardless
+    // of sort direction.
+    const withSpread = baseTeams.map((team) => {
+      const game = gameForTeamInWeek(team.team, week.dataWeek);
+      const opp = game ? opponentOf(game, team.team) : undefined;
+      const eligible = game && opp && isOpponentEligible(opp, selectedConfs);
+      const spread = eligible ? teamSpread(team, opp!, game!) : null;
+      return { team, spread };
+    });
+
+    const withValue = withSpread.filter((t) => t.spread != null);
+    const withoutValue = withSpread.filter((t) => t.spread == null);
+
+    withValue.sort((a, b) =>
+      sortDir === "asc" ? a.spread! - b.spread! : b.spread! - a.spread!
+    );
+
+    return [...withValue, ...withoutValue].map((t) => t.team);
+  }, [baseTeams, sortWeekKey, sortDir, selectedConfs]);
 
   function toggleConf(conf: string) {
     setSelectedConfs((prev) => {
@@ -133,6 +172,56 @@ export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
       if (weekPicks.length >= 2) return prev;
       return { ...prev, [weekKey]: [...weekPicks, teamName] };
     });
+  }
+
+  function handleSortByWeek(weekKey: string) {
+    if (sortWeekKey === weekKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortWeekKey(weekKey);
+      setSortDir("asc");
+    }
+  }
+
+  const allWeeksComplete = SURVIVOR_WEEKS.every((w) => (picks[w.key] || []).length === 2);
+
+  function downloadPdf() {
+    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+    doc.setFontSize(16);
+    doc.text("Survivor Pool — Full Picks", 40, 40);
+    doc.setFontSize(10);
+    doc.setTextColor(120);
+    doc.text(`Generated ${new Date().toLocaleDateString()}`, 40, 56);
+    doc.setTextColor(0);
+
+    const rows: string[][] = [];
+    SURVIVOR_WEEKS.forEach((week) => {
+      (picks[week.key] || []).forEach((teamName) => {
+        const team = TEAMS_BY_NAME[teamName];
+        const game = team ? gameForTeamInWeek(team.team, week.dataWeek) : undefined;
+        const opp = game && team ? opponentOf(game, team.team) : undefined;
+        const isHome = game && team ? game.home === team.team : false;
+        const spread = game && team && opp ? teamSpread(team, opp, game) : null;
+        rows.push([
+          week.label,
+          teamName,
+          opp ? `${isHome ? "" : "@"}${opp.team}` : "—",
+          spread != null ? `${spread > 0 ? "+" : ""}${spread.toFixed(1)}` : "—",
+        ]);
+      });
+    });
+
+    autoTable(doc, {
+      startY: 72,
+      margin: { left: 40, right: 40 },
+      head: [["Week", "Team Picked", "Opponent", "Spread"]],
+      body: rows,
+      styles: { fontSize: 9, cellPadding: 5 },
+      headStyles: { fillColor: [31, 32, 65] },
+      theme: "striped",
+    });
+
+    doc.save("survivor-picks.pdf");
   }
 
   function resetAll() {
@@ -166,6 +255,11 @@ export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
+          {allWeeksComplete && (
+            <button className="menu-btn" onClick={downloadPdf}>
+              Download PDF
+            </button>
+          )}
           <button
             className="menu-btn"
             onClick={() => setHideUsed((v) => !v)}
@@ -247,20 +341,32 @@ export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
               </th>
               {SURVIVOR_WEEKS.map((w) => {
                 const locked = (picks[w.key] || []).length === 2;
+                const isSorted = sortWeekKey === w.key;
                 return (
                   <th
                     key={w.key}
+                    onClick={() => handleSortByWeek(w.key)}
+                    title="Sort teams by this week's spread"
                     style={{
                       padding: "0.4rem 0.5rem",
                       textAlign: "center",
                       minWidth: 92,
                       borderBottom: "1px solid var(--hash)",
-                      background: locked ? "rgba(255,255,255,0.06)" : "var(--turf-panel-2)",
+                      background: isSorted
+                        ? "var(--gold-dim)"
+                        : locked
+                        ? "rgba(255,255,255,0.06)"
+                        : "var(--turf-panel-2)",
                       textDecoration: locked ? "line-through" : "none",
                       color: locked ? "var(--chalk-dim)" : "var(--chalk)",
+                      cursor: "pointer",
+                      userSelect: "none",
                     }}
                   >
-                    <div style={{ fontWeight: 700 }}>{w.label}</div>
+                    <div style={{ fontWeight: 700 }}>
+                      {w.label}
+                      {isSorted && <span style={{ marginLeft: "0.3rem" }}>{sortDir === "asc" ? "▲" : "▼"}</span>}
+                    </div>
                     <div style={{ fontWeight: 400, fontSize: "0.68rem", opacity: 0.7 }}>
                       {w.lockLabel}
                     </div>
@@ -289,7 +395,24 @@ export default function SurvivorPage({ onHome }: { onHome?: () => void }) {
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
                       <TeamLogo team={team} />
-                      {team.team}
+                      {onNavigateTeam ? (
+                        <button
+                          className="team-link"
+                          onClick={() => onNavigateTeam(team)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            font: "inherit",
+                            cursor: "pointer",
+                            textDecoration: usedTeams.has(team.team) ? "line-through" : "none",
+                          }}
+                        >
+                          {team.team}
+                        </button>
+                      ) : (
+                        team.team
+                      )}
                     </span>
                   </td>
                   {SURVIVOR_WEEKS.map((week) => {
