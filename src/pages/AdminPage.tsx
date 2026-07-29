@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Clock } from "lucide-react";
+import SurvivorPanel from "./SurvivorPanel";
+import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
 // Maps flexible/human column headers (however you happen to label them when
 // pasting from a spreadsheet) to the actual database column names. Keys are
@@ -176,11 +179,272 @@ function parsePaste(raw: string) {
   return { rows, unmatchedHeaders, headerMap };
 }
 
-export default function AdminPage({ onHome }: any) {
-  const [authed, setAuthed] = useState(false);
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
+const ADMIN_AUTH_KEY = "admin_authed";
 
+type AdminView = "home" | "upload" | "survivor" | "montecarlo" | "gametotals";
+
+// ---------------------------------------------------------------------
+// Password gate — verifies against /api/admin-auth on the server before
+// granting access (previously this just checked the field wasn't empty).
+// ---------------------------------------------------------------------
+function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  async function submit() {
+    if (!password) {
+      setError("Enter a password first.");
+      return;
+    }
+    setChecking(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Incorrect password");
+        return;
+      }
+      sessionStorage.setItem(ADMIN_AUTH_KEY, "1");
+      // Stored so Data Upload doesn't need to ask for the password a
+      // second time — admin-save.ts still independently re-checks it
+      // server-side before writing anything, so this doesn't weaken that.
+      sessionStorage.setItem("admin_password", password);
+      onAuthed();
+    } catch (err: any) {
+      setError(err.message ?? "Something went wrong");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <div className="page" style={{ maxWidth: 420, margin: "4rem auto", padding: "0 1rem" }}>
+      <h2>Admin</h2>
+      <p>Enter the admin password to continue.</p>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Password"
+        style={{ width: "100%", padding: "0.6rem", marginBottom: "0.75rem" }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
+      />
+      <button onClick={submit} disabled={checking}>
+        {checking ? "Checking…" : "Continue"}
+      </button>
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <p style={{ marginTop: "2rem" }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
+          ← Back to site
+        </a>
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Dashboard — last upload date, current week, quick links, and the menu
+// into the four admin sections.
+// ---------------------------------------------------------------------
+function DashboardCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        flex: "1 1 200px",
+        padding: "0.9rem 1rem",
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: 8,
+      }}
+    >
+      <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.35rem" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+function MenuTile({
+  label,
+  description,
+  comingSoon,
+  onClick,
+}: {
+  label: string;
+  description: string;
+  comingSoon?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: "left",
+        padding: "1rem 1.1rem",
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: 8,
+        cursor: "pointer",
+        color: "inherit",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.3rem",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 700 }}>{label}</span>
+        {comingSoon && (
+          <span
+            style={{
+              fontSize: "0.68rem",
+              padding: "0.15rem 0.5rem",
+              borderRadius: 999,
+              background: "rgba(255,255,255,0.06)",
+              color: "var(--chalk-dim)",
+            }}
+          >
+            Coming soon
+          </span>
+        )}
+      </div>
+      <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>{description}</span>
+    </button>
+  );
+}
+
+interface AdminDashboardProps {
+  lastUpload: LastUpload | null;
+  currentWeek: string | null;
+  loadingSummary: boolean;
+  onGoToRatings?: () => void;
+  onGoToResume?: () => void;
+  onGoToSOS?: () => void;
+  onNavigateView: (view: AdminView) => void;
+}
+
+function AdminDashboard({
+  lastUpload,
+  currentWeek,
+  loadingSummary,
+  onGoToRatings,
+  onGoToResume,
+  onGoToSOS,
+  onNavigateView,
+}: AdminDashboardProps) {
+  const lastUploadLabel = loadingSummary
+    ? "Loading…"
+    : lastUpload
+    ? `${lastUpload.week} · ${new Date(lastUpload.insertedAt).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}`
+    : "No uploads yet";
+
+  const currentWeekLabel = loadingSummary ? "Loading…" : currentWeek ?? "—";
+
+  return (
+    <div>
+      <h2 style={{ marginTop: 0 }}>Admin</h2>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginBottom: "1.5rem" }}>
+        <DashboardCard label="Last upload date" value={lastUploadLabel} />
+        <DashboardCard label="Current week" value={currentWeekLabel} />
+      </div>
+
+      <div style={{ marginBottom: "1.75rem" }}>
+        <div style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+          Quick links
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          <button className="menu-btn" onClick={onGoToRatings}>
+            Power Ratings →
+          </button>
+          <button className="menu-btn" onClick={onGoToResume}>
+            Resume Ratings →
+          </button>
+          <button className="menu-btn" onClick={onGoToSOS}>
+            Strength of Schedule →
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "0.75rem",
+        }}
+      >
+        <MenuTile
+          label="Data Upload"
+          description="Paste this week's power ratings and save them."
+          onClick={() => onNavigateView("upload")}
+        />
+        <MenuTile
+          label="Survivor"
+          description="Manage Survivor Pool picks and scores."
+          onClick={() => onNavigateView("survivor")}
+        />
+        <MenuTile
+          label="Monte Carlo"
+          description="Run and configure season simulations."
+          comingSoon
+          onClick={() => onNavigateView("montecarlo")}
+        />
+        <MenuTile
+          label="Game Totals"
+          description="Projected spreads and totals from power ratings."
+          comingSoon
+          onClick={() => onNavigateView("gametotals")}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Coming soon panel for Monte Carlo / Game Totals.
+// ---------------------------------------------------------------------
+function AdminComingSoon({ title, onBack }: { title: string; onBack: () => void }) {
+  return (
+    <div>
+      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+        ‹ Admin
+      </button>
+      <div
+        style={{
+          textAlign: "center",
+          padding: "3rem 1rem",
+          background: "var(--turf-panel)",
+          border: "1px solid var(--hash)",
+          borderRadius: 8,
+        }}
+      >
+        <Clock size={26} strokeWidth={1.75} style={{ margin: "0 auto 0.75rem" }} />
+        <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>{title}</div>
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", margin: 0 }}>
+          This section isn't built yet — check back soon.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Data Upload panel — unchanged parsing/save logic, just relocated under
+// the Admin menu instead of being the entire page.
+// ---------------------------------------------------------------------
+function DataUploadPanel({ onBack, onSaved }: { onBack: () => void; onSaved: () => void }) {
   const [week, setWeek] = useState("preseason");
   const [raw, setRaw] = useState("");
   const [saving, setSaving] = useState(false);
@@ -194,10 +458,16 @@ export default function AdminPage({ onHome }: any) {
     setSaveError(null);
     setSaveResult(null);
     try {
+      // The admin password itself is still checked here (not just at the
+      // gate) because /api/admin-save re-verifies it server-side before
+      // writing anything — but since the gate now already confirms the
+      // password up front, we can safely reuse the same value the person
+      // already entered rather than asking for it a second time.
+      const storedPassword = sessionStorage.getItem("admin_password") ?? "";
       const res = await fetch("/api/admin-save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password, week, rows: parsed.rows }),
+        body: JSON.stringify({ password: storedPassword, week, rows: parsed.rows }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -205,6 +475,7 @@ export default function AdminPage({ onHome }: any) {
       } else {
         const teamsNote = data.teamsSynced ? ` (${data.teamsSynced} teams synced)` : "";
         setSaveResult(`Saved ${data.saved} teams for ${week}.${teamsNote}`);
+        onSaved();
       }
     } catch (err: any) {
       setSaveError(err.message ?? "Save failed");
@@ -213,59 +484,13 @@ export default function AdminPage({ onHome }: any) {
     }
   }
 
-  if (!authed) {
-    return (
-      <div className="page" style={{ maxWidth: 420, margin: "4rem auto", padding: "0 1rem" }}>
-        <h2>Admin</h2>
-        <p>Enter the admin password to continue.</p>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          style={{ width: "100%", padding: "0.6rem", marginBottom: "0.75rem" }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              setAuthed(true);
-              setAuthError(null);
-            }
-          }}
-        />
-        <button
-          onClick={() => {
-            if (!password) {
-              setAuthError("Enter a password first.");
-              return;
-            }
-            setAuthed(true);
-            setAuthError(null);
-          }}
-        >
-          Continue
-        </button>
-        {authError && <p style={{ color: "crimson" }}>{authError}</p>}
-        <p style={{ marginTop: "2rem" }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
-            ← Back to site
-          </a>
-        </p>
-        <p style={{ fontSize: "0.85rem", color: "#666", marginTop: "1rem" }}>
-          Note: this just gates the paste screen from casual visitors — the
-          password is checked again on the server before anything is written,
-          so a wrong guess here does nothing on its own.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="page" style={{ maxWidth: 900, margin: "2rem auto", padding: "0 1rem" }}>
+    <div>
+      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+        ‹ Admin
+      </button>
+
       <h2>Weekly data entry</h2>
-      <p>
-        <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
-          ← Back to site
-        </a>
-      </p>
 
       <label style={{ display: "block", margin: "1rem 0 0.25rem", fontWeight: 600 }}>
         Week
@@ -344,6 +569,88 @@ export default function AdminPage({ onHome }: any) {
 
       {saveResult && <p style={{ color: "green" }}>{saveResult}</p>}
       {saveError && <p style={{ color: "crimson" }}>{saveError}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Top-level Admin page.
+// ---------------------------------------------------------------------
+interface AdminPageProps {
+  onHome?: () => void;
+  onGoToRatings?: () => void;
+  onGoToResume?: () => void;
+  onGoToSOS?: () => void;
+}
+
+export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToSOS }: AdminPageProps) {
+  const [authed, setAuthed] = useState(false);
+  const [view, setView] = useState<AdminView>("home");
+  const [lastUpload, setLastUpload] = useState<LastUpload | null>(null);
+  const [currentWeek, setCurrentWeek] = useState<string | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
+  useEffect(() => {
+    if (sessionStorage.getItem(ADMIN_AUTH_KEY) === "1") setAuthed(true);
+  }, []);
+
+  function loadSummary() {
+    setLoadingSummary(true);
+    Promise.all([fetchAvailableWeeks(), fetchLastUpload()])
+      .then(([weeks, last]) => {
+        setCurrentWeek(weeks[0] ?? null);
+        setLastUpload(last);
+      })
+      .catch(() => {
+        // Dashboard summary is informational only — if it fails to load,
+        // the cards just show a dash rather than blocking the rest of Admin.
+      })
+      .finally(() => setLoadingSummary(false));
+  }
+
+  useEffect(() => {
+    if (authed) loadSummary();
+  }, [authed]);
+
+  if (!authed) {
+    return <AdminPasswordGate onAuthed={() => setAuthed(true)} onHome={onHome} />;
+  }
+
+  return (
+    <div className="page" style={{ maxWidth: 1000, margin: "2rem auto", padding: "0 1rem" }}>
+      {view === "home" && (
+        <p style={{ marginTop: 0 }}>
+          <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
+            ← Back to site
+          </a>
+        </p>
+      )}
+
+      {view === "home" && (
+        <AdminDashboard
+          lastUpload={lastUpload}
+          currentWeek={currentWeek}
+          loadingSummary={loadingSummary}
+          onGoToRatings={onGoToRatings}
+          onGoToResume={onGoToResume}
+          onGoToSOS={onGoToSOS}
+          onNavigateView={setView}
+        />
+      )}
+
+      {view === "upload" && (
+        <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
+      )}
+
+      {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
+
+      {view === "montecarlo" && (
+        <AdminComingSoon title="Monte Carlo" onBack={() => setView("home")} />
+      )}
+
+      {view === "gametotals" && (
+        <AdminComingSoon title="Game Totals" onBack={() => setView("home")} />
+      )}
     </div>
   );
 }
