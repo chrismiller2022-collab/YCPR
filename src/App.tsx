@@ -23,6 +23,7 @@ import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
 import AdminPage from "./pages/AdminPage";
 import SurvivorPage from "./pages/SurvivorPage";
+import FAQPage from "./pages/FAQPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -80,6 +81,7 @@ export default function App() {
     return (
       <div className="page">
         <SurvivorPage
+          onNavigateTeam={handleNavigateTeam}
           onHome={() => {
             window.location.hash = "";
             handleHome();
@@ -327,6 +329,8 @@ export default function App() {
       )}
 
       {page.type === "matchup" && <MatchupPage onHome={handleHome} />}
+
+      {page.type === "faq" && <FAQPage onHome={handleHome} />}
 
       {page.type === "scheduleswap" && (
         <ScheduleSwapPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
