@@ -85,11 +85,7 @@ export default function FAQPage({ onHome }: { onHome?: () => void }) {
           <p style={{ lineHeight: 1.6 }}>
             This is where the gap really shows: Ohio State (rating ≈ -29.3)
             hosting Massachusetts (rating ≈ +30.6) produces a projected
-            spread north of <strong>60 points</strong>. In practice, real
-            sportsbooks typically cap posted lines well below that (often
-            in the 40s-50s) for reputational and liability reasons — but our
-            model has no such ceiling, so it'll show you the true scale of
-            the mismatch even when no book would actually post that number.
+            spread north of <strong>60 points</strong>.
           </p>
         </div>
       </div>
@@ -98,10 +94,9 @@ export default function FAQPage({ onHome }: { onHome?: () => void }) {
         <div className="section-label">How this differs from the Vegas line</div>
         <p style={{ lineHeight: 1.6 }}>
           A Vegas line isn't a pure quality projection — it's a price, shaped
-          by where sportsbooks expect money to land on each side, plus
-          injury reports, weather, short-week/travel situations, and
-          "trap game" narratives the market is pricing in. Two things follow
-          from that:
+          by where sportsbooks take money on each side, plus injury reports,
+          weather, short-week/travel situations, and any other narratives
+          the market is pricing in. Two things follow from that:
         </p>
         <ul style={{ lineHeight: 1.8, paddingLeft: "1.25rem" }}>
           <li>
