@@ -78,6 +78,27 @@ export async function fetchTeamHistory(team: string): Promise<WeeklyTeamStats[]>
   return data ?? [];
 }
 
+export interface LastUpload {
+  week: string;
+  insertedAt: string;
+}
+
+/**
+ * The single most recently saved row across every week — used by the Admin
+ * dashboard's "Last upload date" card. Returns null if nothing has been
+ * saved yet at all.
+ */
+export async function fetchLastUpload(): Promise<LastUpload | null> {
+  const { data, error } = await supabase
+    .from("weekly_team_stats")
+    .select("week, inserted_at")
+    .order("inserted_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  if (!data || data.length === 0) return null;
+  return { week: data[0].week, insertedAt: data[0].inserted_at };
+}
+
 interface UseWeeklyStatsResult {
   rows: WeeklyTeamStats[];
   byTeam: Record<string, WeeklyTeamStats>;
@@ -206,4 +227,3 @@ export function useWeeklyChange(field: keyof WeeklyTeamStats): UseWeeklyChangeRe
 
   return { byTeam, currentWeek, previousWeek, loading, error };
 }
-
