@@ -3,6 +3,14 @@ import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
+import PoolsMenuPanel from "./PoolsMenuPanel";
+import BritPoolPanel from "./BritPoolPanel";
+import PeayPoolPanel from "./PeayPoolPanel";
+import EspnMoneylinePanel from "./EspnMoneylinePanel";
+import EspnSpreadPanel from "./EspnSpreadPanel";
+import EspnConfidencePanel from "./EspnConfidencePanel";
+import CfbdPickemPanel from "./CfbdPickemPanel";
+import MonteCarloPanel from "./MonteCarloPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
 // Maps flexible/human column headers (however you happen to label them when
@@ -183,7 +191,21 @@ function parsePaste(raw: string) {
 
 const ADMIN_AUTH_KEY = "admin_authed";
 
-type AdminView = "home" | "upload" | "survivor" | "montecarlo" | "gametotals" | "gameslines" | "matchups";
+type AdminView =
+  | "home"
+  | "upload"
+  | "survivor"
+  | "montecarlo"
+  | "gametotals"
+  | "gameslines"
+  | "matchups"
+  | "pools"
+  | "brit"
+  | "peay"
+  | "espnml"
+  | "espnspread"
+  | "espnconfidence"
+  | "cfbdpickem";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -408,9 +430,13 @@ function AdminDashboard({
           onClick={() => onNavigateView("matchups")}
         />
         <MenuTile
+          label="Pools"
+          description="Weekly pools: The Brit, ESPN pools, Peay Pool."
+          onClick={() => onNavigateView("pools")}
+        />
+        <MenuTile
           label="Monte Carlo"
-          description="Run and configure season simulations."
-          comingSoon
+          description="Run season simulations for win totals, playoff, and title odds."
           onClick={() => onNavigateView("montecarlo")}
         />
         <MenuTile
@@ -660,9 +686,23 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
       {view === "matchups" && <AdminMatchupsPanel onBack={() => setView("home")} />}
 
-      {view === "montecarlo" && (
-        <AdminComingSoon title="Monte Carlo" onBack={() => setView("home")} />
+      {view === "pools" && (
+        <PoolsMenuPanel onBack={() => setView("home")} onSelectPool={(pool) => setView(pool as AdminView)} />
       )}
+
+      {view === "brit" && <BritPoolPanel onBack={() => setView("pools")} />}
+
+      {view === "peay" && <PeayPoolPanel onBack={() => setView("pools")} />}
+
+      {view === "espnml" && <EspnMoneylinePanel onBack={() => setView("pools")} />}
+
+      {view === "espnspread" && <EspnSpreadPanel onBack={() => setView("pools")} />}
+
+      {view === "espnconfidence" && <EspnConfidencePanel onBack={() => setView("pools")} />}
+
+      {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
+
+      {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 
       {view === "gametotals" && (
         <AdminComingSoon title="Game Totals" onBack={() => setView("home")} />

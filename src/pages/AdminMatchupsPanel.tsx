@@ -1,94 +1,224 @@
-import { useMemo, useState } from "react";
-import TeamCell from "../components/TeamCell";
-import { GAMES, WEEKS } from "../data/games";
+import { useEffect, useMemo, useState } from "react";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, spreadColor, spreadToMoneyline, spreadToWinPct } from "../lib/odds";
-import { dateLabelFor } from "../lib/format";
-import { computeBettingStats, winPctLabel } from "../lib/betting";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchGamesWithLines, type GameWithLines, type BettingLineRow } from "../lib/api/gamesLines";
 
 // ---------------------------------------------------------------------
-// NOTE: this is currently a straight clone of the public MatchupsPage,
-// per the plan to use the public page as a starting template. It's
-// expected to diverge from the public version over time (e.g. showing
-// actual CFBD lines from the games/betting_lines tables alongside our
-// own projections, or admin-only editing controls) — TBD.
+// This is the first "real" version of Admin Matchups — it now pulls
+// actual games and betting lines from Supabase (synced from CFBD)
+// instead of cloning the public page's local data/games.ts. Same table
+// format/columns as the public page, but Vegas Line / Score / Cover
+// columns are now populated with real data where the public page only
+// ever showed placeholder dashes.
+//
+// SIGN CONVENTION — worth double-checking against real results:
+// This site's existing convention (TeamPage, public MatchupsPage,
+// ScheduleSwapPage) expresses spread from the AWAY team's perspective:
+// negative = away favored, positive = home favored. CFBD's raw `spread`
+// field is documented as home-team-perspective (negative = home
+// favored), so it's negated here to convert into our convention:
+//   vegasAwaySpread = -cfbdLine.spread
+// This has NOT yet been verified against a completed game with a known
+// final line — once a real graded game is in the data, it's worth
+// eyeballing one row to confirm "Act. Cover Team" comes out right.
 // ---------------------------------------------------------------------
 
-function SpreadsRow({ game, liveByTeam, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
+const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
 
-  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
+function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
+  if (lines.length === 0) return null;
+  for (const p of PREFERRED_PROVIDERS) {
+    const match = lines.find((l) => l.provider === p);
+    if (match) return match;
+  }
+  return lines[0];
+}
 
-  return (
-    <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-projected-cell" style={{ color: spreadColor(awaySpread) }}>
-        {awaySpread > 0 ? "+" : ""}
-        {awaySpread.toFixed(1)}
+function classOf(g: GameWithLines, side: "home" | "away"): string {
+  const c = side === "home" ? g.home_classification : g.away_classification;
+  return (c ?? "").toLowerCase();
+}
+
+function isTracked(c: string) {
+  return c === "fbs" || c === "fcs";
+}
+
+interface MatchupComputed {
+  game: GameWithLines;
+  line: BettingLineRow | null;
+  awayTeam: any | null;
+  homeTeam: any | null;
+  projAwaySpread: number | null;
+  vegasAwaySpread: number | null;
+  amountOff: number | null;
+  projWinPct: number | null;
+  projMoneyline: number | null;
+  vegasMoneyline: number | null;
+  projCoverTeam: "away" | "home" | null;
+  actCoverTeam: "away" | "home" | "push" | null;
+  totalResult: "Over" | "Under" | "Push" | null;
+}
+
+function computeRow(game: GameWithLines, liveByTeam: Record<string, any>): MatchupComputed {
+  const line = pickLine(game.lines);
+  const awayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
+  const homeTeam = TEAMS_BY_NAME[game.home_team] ?? null;
+
+  const projAwaySpread =
+    awayTeam && homeTeam
+      ? awayTeam.rating - homeTeam.rating + hfaFor(game.home_team, liveByTeam)
+      : null;
+
+  const vegasAwaySpread = line?.spread != null ? -line.spread : null;
+
+  const amountOff =
+    projAwaySpread != null && vegasAwaySpread != null ? projAwaySpread - vegasAwaySpread : null;
+
+  const projWinPct = projAwaySpread != null ? spreadToWinPct(projAwaySpread) : null;
+  const projMoneyline = projAwaySpread != null ? spreadToMoneyline(projAwaySpread) : null;
+  const vegasMoneyline = line?.away_moneyline ?? null;
+
+  let projCoverTeam: "away" | "home" | null = null;
+  if (projAwaySpread != null && vegasAwaySpread != null) {
+    const projDiff = vegasAwaySpread - projAwaySpread;
+    projCoverTeam = projDiff > 0 ? "away" : projDiff < 0 ? "home" : null;
+  }
+
+  let actCoverTeam: "away" | "home" | "push" | null = null;
+  if (game.completed && game.away_points != null && game.home_points != null && vegasAwaySpread != null) {
+    const actualAwayMargin = game.away_points - game.home_points;
+    const coverMargin = actualAwayMargin + vegasAwaySpread;
+    actCoverTeam = coverMargin > 0 ? "away" : coverMargin < 0 ? "home" : "push";
+  }
+
+  let totalResult: "Over" | "Under" | "Push" | null = null;
+  if (game.completed && game.away_points != null && game.home_points != null && line?.over_under != null) {
+    const actualTotal = game.away_points + game.home_points;
+    totalResult = actualTotal > line.over_under ? "Over" : actualTotal < line.over_under ? "Under" : "Push";
+  }
+
+  return {
+    game,
+    line,
+    awayTeam,
+    homeTeam,
+    projAwaySpread,
+    vegasAwaySpread,
+    amountOff,
+    projWinPct,
+    projMoneyline,
+    vegasMoneyline,
+    projCoverTeam,
+    actCoverTeam,
+    totalResult,
+  };
+}
+
+function TeamNameCell({ team, name }: { team: any | null; name: string }) {
+  if (!team) {
+    // No local power-rating match for this CFBD team name — shown plainly
+    // rather than crashing. Usually means a naming mismatch between CFBD
+    // and data/teams.ts (accents, abbreviations, etc.) worth reconciling.
+    return (
+      <td className="matchup-team-cell">
+        <span style={{ opacity: 0.7 }}>{name}</span>
       </td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-    </tr>
+    );
+  }
+  return (
+    <td className="matchup-team-cell">
+      <span className="team-link matchup-team-btn" style={{ cursor: "default" }}>
+        {team.team}
+      </span>
+      <span className={`matchup-rating ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
+        {team.rating > 0 ? "+" : ""}
+        {team.rating.toFixed(2)}
+      </span>
+    </td>
   );
 }
 
-function MoneylineRow({ game, liveByTeam, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
+function MatchupsRow({ computed, mode }: { computed: MatchupComputed; mode: string }) {
+  const { game, line, awayTeam, homeTeam, projAwaySpread, vegasAwaySpread, amountOff, projWinPct, projMoneyline, vegasMoneyline, projCoverTeam, actCoverTeam, totalResult } = computed;
 
-  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
-  const awayWinPct = spreadToWinPct(awaySpread);
-  const awayML = spreadToMoneyline(awaySpread);
-  const winner = awaySpread < 0 ? away : awaySpread > 0 ? home : null;
+  const dateLabel = game.start_date
+    ? new Date(game.start_date).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" })
+    : "–";
 
+  const scoreLabel =
+    game.away_points != null && game.home_points != null ? `${game.away_points}-${game.home_points}` : "–";
+
+  if (mode === "spreads") {
+    return (
+      <tr>
+        <td className="game-date-cell">{dateLabel}</td>
+        <TeamNameCell team={awayTeam} name={game.away_team} />
+        <TeamNameCell team={homeTeam} name={game.home_team} />
+        <td className="matchups-projected-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
+          {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
+        </td>
+        <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
+          {projAwaySpread != null ? `${projAwaySpread > 0 ? "+" : ""}${projAwaySpread.toFixed(1)}` : "–"}
+        </td>
+        <td className="matchups-empty-cell">{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
+        <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+        <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
+        <td className="matchups-winner-cell">
+          {projCoverTeam ? (projCoverTeam === "away" ? game.away_team : game.home_team) : "–"}
+        </td>
+        <td className="matchups-empty-cell">–</td>
+        <td className="matchups-winner-cell">
+          {actCoverTeam ? (actCoverTeam === "push" ? "Push" : actCoverTeam === "away" ? game.away_team : game.home_team) : "–"}
+        </td>
+      </tr>
+    );
+  }
+
+  if (mode === "moneyline") {
+    const winner = projAwaySpread != null ? (projAwaySpread < 0 ? game.away_team : projAwaySpread > 0 ? game.home_team : "Pick'em") : "–";
+    const actualWinner =
+      game.away_points != null && game.home_points != null
+        ? game.away_points > game.home_points
+          ? game.away_team
+          : game.home_points > game.away_points
+          ? game.home_team
+          : "Tie"
+        : "–";
+    return (
+      <tr>
+        <td className="game-date-cell">{dateLabel}</td>
+        <TeamNameCell team={awayTeam} name={game.away_team} />
+        <TeamNameCell team={homeTeam} name={game.home_team} />
+        <td className="matchups-projected-cell">
+          {vegasMoneyline != null ? `${vegasMoneyline > 0 ? "+" : ""}${Math.round(vegasMoneyline)}` : "–"}
+        </td>
+        <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
+          {projMoneyline != null ? `${projMoneyline > 0 ? "+" : ""}${Math.round(projMoneyline)}` : "–"}
+        </td>
+        <td className="matchups-winpct-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
+          {projWinPct != null ? `${(projWinPct * 100).toFixed(1)}%` : "–"}
+        </td>
+        <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+        <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
+        <td className="matchups-winner-cell">{winner}</td>
+        <td className="matchups-winner-cell">{actualWinner}</td>
+      </tr>
+    );
+  }
+
+  // totals
   return (
     <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
+      <td className="game-date-cell">{dateLabel}</td>
+      <TeamNameCell team={awayTeam} name={game.away_team} />
+      <TeamNameCell team={homeTeam} name={game.home_team} />
+      <td className="matchups-projected-cell">{line?.over_under != null ? line.over_under : "–"}</td>
       <td className="matchups-empty-cell">–</td>
-      <td className="matchups-projected-cell" style={{ color: spreadColor(awaySpread) }}>
-        {awayML > 0 ? "+" : ""}
-        {Math.round(awayML)}
-      </td>
-      <td className="matchups-winpct-cell" style={{ color: spreadColor(awaySpread) }}>
-        {(awayWinPct * 100).toFixed(1)}%
-      </td>
+      <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+      <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
       <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-winner-cell">{winner ? winner.team : "Pick'em"}</td>
-      <td className="matchups-empty-cell">–</td>
-    </tr>
-  );
-}
-
-function TotalsRow({ game, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
-
-  return (
-    <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-winner-cell">{totalResult ?? "–"}</td>
     </tr>
   );
 }
@@ -99,135 +229,52 @@ const MATCHUPS_MODES = [
   { key: "totals", label: "Totals" },
 ];
 
-function MatchupsTable({ games, liveByTeam, onNavigateTeam, mode }: any) {
-  return (
-    <div className="table-scroll">
-      <table className="matchups-table">
-        <thead>
-          {mode === "spreads" && (
-            <tr>
-              <th className="th">Date</th>
-              <th className="th">Away (PR)</th>
-              <th className="th">Home (PR)</th>
-              <th className="th th-right">Vegas Line</th>
-              <th className="th th-right">Projected Spread</th>
-              <th className="th th-right">Amount Off</th>
-              <th className="th th-right">Away Score</th>
-              <th className="th th-right">Home Score</th>
-              <th className="th">Proj. Cover Team</th>
-              <th className="th">Filtered Bet</th>
-              <th className="th">Act. Cover Team</th>
-            </tr>
-          )}
-          {mode === "moneyline" && (
-            <tr>
-              <th className="th">Date</th>
-              <th className="th">Away (PR)</th>
-              <th className="th">Home (PR)</th>
-              <th className="th th-right">Vegas Moneyline</th>
-              <th className="th th-right">Projected Moneyline</th>
-              <th className="th th-right">Projected Win %</th>
-              <th className="th th-right">Away Score</th>
-              <th className="th th-right">Home Score</th>
-              <th className="th">Proj. Winner</th>
-              <th className="th">Act. Winner</th>
-            </tr>
-          )}
-          {mode === "totals" && (
-            <tr>
-              <th className="th">Date</th>
-              <th className="th">Away (PR)</th>
-              <th className="th">Home (PR)</th>
-              <th className="th th-right">Vegas Total</th>
-              <th className="th th-right">Projected Total</th>
-              <th className="th th-right">Away Score</th>
-              <th className="th th-right">Home Score</th>
-              <th className="th">Proj. Result (O/U)</th>
-              <th className="th">Total Result (O/U)</th>
-            </tr>
-          )}
-        </thead>
-        <tbody>
-          {mode === "spreads" &&
-            games.map((g) => (
-              <SpreadsRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
-            ))}
-          {mode === "moneyline" &&
-            games.map((g) => (
-              <MoneylineRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
-            ))}
-          {mode === "totals" &&
-            games.map((g) => <TotalsRow key={g.id} game={g} onNavigateTeam={onNavigateTeam} />)}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function BettingStatsBlock({ games, liveByTeam, title }: any) {
-  const stats = useMemo(() => computeBettingStats(games, liveByTeam), [games, liveByTeam]);
-
-  return (
-    <div className="bet-stats">
-      <div className="section-label bet-stats-label">{title || "Betting Stats"}</div>
-      <div className="bet-stats-row">
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">Straight Up</div>
-          <div className="bet-stats-record">
-            {stats.su.w}-{stats.su.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.su)}</div>
-        </div>
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">ATS</div>
-          <div className="bet-stats-record">
-            {stats.ats.w}-{stats.ats.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.ats)}</div>
-        </div>
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">Filtered Bets</div>
-          <div className="bet-stats-record">
-            {stats.fb.w}-{stats.fb.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.fb)}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const WEEK_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1);
 
 export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
-  const [weekSel, setWeekSel] = useState("all");
-  const isAll = weekSel === "all";
-  const weekNum = isAll ? null : parseInt(weekSel.replace("week", ""), 10);
-
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [weekSel, setWeekSel] = useState<"all" | number>("all");
   const [query, setQuery] = useState("");
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
+
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
-  const matchesFilters = (g: any) => {
-    const home = TEAMS_BY_NAME[g.home];
-    const away = TEAMS_BY_NAME[g.away];
-    if (matchupType !== "All") {
-      if (!home || !away) return false;
-      if (matchupType === "FBSvFBS" && !(home.div === "FBS" && away.div === "FBS")) return false;
-      if (matchupType === "FCSvFCS" && !(home.div === "FCS" && away.div === "FCS")) return false;
-      if (matchupType === "Cross" && home.div === away.div) return false;
-    }
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      if (!g.home.toLowerCase().includes(q) && !g.away.toLowerCase().includes(q)) return false;
-    }
-    return true;
-  };
+  useEffect(() => {
+    setLoading(true);
+    setLoadError(null);
+    fetchGamesWithLines(season, weekSel === "all" ? undefined : weekSel)
+      .then(setGames)
+      .catch((err) => setLoadError(err.message ?? "Failed to load games"))
+      .finally(() => setLoading(false));
+  }, [season, weekSel]);
 
   const filteredGames = useMemo(() => {
-    let list = isAll ? GAMES : GAMES.filter((g) => g.week === weekNum);
-    return list.filter(matchesFilters);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAll, weekNum, matchupType, query]);
+    return games.filter((g) => {
+      const homeClass = classOf(g, "home");
+      const awayClass = classOf(g, "away");
+
+      if (matchupType === "FBSvFBS" && !(homeClass === "fbs" && awayClass === "fbs")) return false;
+      if (matchupType === "FCSvFCS" && !(homeClass === "fcs" && awayClass === "fcs")) return false;
+      if (matchupType === "Cross" && !((isTracked(homeClass) && isTracked(awayClass)) && homeClass !== awayClass))
+        return false;
+
+      if (query.trim()) {
+        const q = query.trim().toLowerCase();
+        if (!g.home_team.toLowerCase().includes(q) && !g.away_team.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [games, matchupType, query]);
+
+  const computedRows = useMemo(
+    () => filteredGames.map((g) => computeRow(g, liveByTeam)),
+    [filteredGames, liveByTeam]
+  );
 
   return (
     <div>
@@ -237,16 +284,30 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
       <h2 style={{ marginTop: 0 }}>Matchups (Admin)</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        Currently a copy of the public Matchups page — this will diverge later (e.g.
-        showing real CFBD lines alongside our projections, or edit controls).
+        Now populated from the synced CFBD games/lines data — Vegas Line, Score, and Cover
+        columns show real values where the public page only shows dashes. Team rows without
+        a bolded rating mean the CFBD team name didn't match a name in data/teams.ts.
       </p>
 
       <div className="controls matchups-controls">
-        <select className="filter" value={weekSel} onChange={(e) => setWeekSel(e.target.value)}>
-          <option value="all">All weeks</option>
-          {WEEKS.map((w) => (
-            <option key={w.key} value={w.key}>
-              {w.label}
+        <label>
+          Season{" "}
+          <input
+            type="number"
+            value={season}
+            onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)}
+            style={{ width: 90 }}
+          />
+        </label>
+        <select
+          className="filter"
+          value={weekSel}
+          onChange={(e) => setWeekSel(e.target.value === "all" ? "all" : parseInt(e.target.value, 10))}
+        >
+          <option value="all">All weeks (whole season)</option>
+          {WEEK_OPTIONS.map((w) => (
+            <option key={w} value={w}>
+              Week {w}
             </option>
           ))}
         </select>
@@ -260,7 +321,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <option value="All">All matchups</option>
           <option value="FBSvFBS">FBS vs FBS</option>
           <option value="FCSvFCS">FCS vs FCS</option>
-          <option value="Cross">Cross-Division</option>
+          <option value="Cross">Cross-Division (FBS vs FCS)</option>
         </select>
       </div>
 
@@ -276,17 +337,78 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
+      {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
+
       <div className="table-wrap">
-        {filteredGames.length === 0 && (
-          <div className="empty matchups-empty">No games match that search.</div>
+        {loading && <div className="empty matchups-empty">Loading…</div>}
+
+        {!loading && computedRows.length === 0 && (
+          <div className="empty matchups-empty">
+            No games saved for this selection yet — sync this season/week from the Games &
+            Lines tile first.
+          </div>
         )}
 
-        {filteredGames.length > 0 && (
-          <>
-            <MatchupsTable games={filteredGames} liveByTeam={liveByTeam} onNavigateTeam={() => {}} mode={mode} />
-            <BettingStatsBlock games={filteredGames} liveByTeam={liveByTeam} title="Betting Stats" />
-          </>
+        {!loading && computedRows.length > 0 && (
+          <div className="table-scroll">
+            <table className="matchups-table">
+              <thead>
+                {mode === "spreads" && (
+                  <tr>
+                    <th className="th">Date</th>
+                    <th className="th">Away (PR)</th>
+                    <th className="th">Home (PR)</th>
+                    <th className="th th-right">Vegas Line</th>
+                    <th className="th th-right">Projected Spread</th>
+                    <th className="th th-right">Amount Off</th>
+                    <th className="th th-right">Away Score</th>
+                    <th className="th th-right">Home Score</th>
+                    <th className="th">Proj. Cover Team</th>
+                    <th className="th">Filtered Bet</th>
+                    <th className="th">Act. Cover Team</th>
+                  </tr>
+                )}
+                {mode === "moneyline" && (
+                  <tr>
+                    <th className="th">Date</th>
+                    <th className="th">Away (PR)</th>
+                    <th className="th">Home (PR)</th>
+                    <th className="th th-right">Vegas Moneyline</th>
+                    <th className="th th-right">Projected Moneyline</th>
+                    <th className="th th-right">Projected Win %</th>
+                    <th className="th th-right">Away Score</th>
+                    <th className="th th-right">Home Score</th>
+                    <th className="th">Proj. Winner</th>
+                    <th className="th">Act. Winner</th>
+                  </tr>
+                )}
+                {mode === "totals" && (
+                  <tr>
+                    <th className="th">Date</th>
+                    <th className="th">Away (PR)</th>
+                    <th className="th">Home (PR)</th>
+                    <th className="th th-right">Vegas Total</th>
+                    <th className="th th-right">Projected Total</th>
+                    <th className="th th-right">Away Score</th>
+                    <th className="th th-right">Home Score</th>
+                    <th className="th">Proj. Result (O/U)</th>
+                    <th className="th">Total Result (O/U)</th>
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {computedRows.map((c) => (
+                  <MatchupsRow key={c.game.id} computed={c} mode={mode} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      </div>
+
+      <div className="footer-note">
+        Projected Total isn't modeled yet (that's the future Game Totals tile) — only
+        Vegas Total and, for completed games, the actual Over/Under result are shown.
       </div>
     </div>
   );
