@@ -334,8 +334,10 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
           {unmatched.length > 0 && (
             <p style={{ color: "#a15c00", fontSize: "0.8rem" }}>
               No power rating found for: {unmatched.slice(0, 15).join(", ")}
-              {unmatched.length > 15 ? `, +${unmatched.length - 15} more` : ""}. Games involving
-              these were simulated as a 50/50 coin flip.
+              {unmatched.length > 15 ? `, +${unmatched.length - 15} more` : ""}. These are
+              treated as sub-FCS buy-game opponents — estimated at the median FCS rating +28
+              (worse) rather than a 50/50 coin flip, so they don't drag down projected win
+              totals for the teams that play them.
             </p>
           )}
 

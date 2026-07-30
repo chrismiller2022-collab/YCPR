@@ -10,6 +10,11 @@ import {
   type EspnConfidencePickWithGame,
 } from "../lib/api/espnConfidencePool";
 
+function fmtMl(v: number | null) {
+  if (v == null) return "–";
+  return `${v > 0 ? "+" : ""}${Math.round(v)}`;
+}
+
 async function espnConfidenceSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/espn-confidence-save", {
@@ -23,9 +28,21 @@ async function espnConfidenceSave(body: any) {
 }
 
 // ---------------------------------------------------------------------
-// Step 1: game selection (identical pattern to the other ESPN pools)
+// Step 1: game selection
 // ---------------------------------------------------------------------
-function GameSelectionStep({ season, week, onSaved }: { season: number; week: number; onSaved: () => void }) {
+const MAX_GAMES = 10;
+
+function GameSelectionStep({
+  season,
+  week,
+  onSaved,
+  refreshToken,
+}: {
+  season: number;
+  week: number;
+  onSaved: () => void;
+  refreshToken: number;
+}) {
   const [available, setAvailable] = useState<any[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [keyGameId, setKeyGameId] = useState<string | null>(null);
@@ -33,7 +50,7 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     setLoading(true);
     setError(null);
     Promise.all([fetchFbsGamesForWeek(season, week), fetchEspnConfidencePicksForWeek(season, week)])
@@ -44,7 +61,9 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
       })
       .catch((err) => setError(err.message ?? "Failed to load games"))
       .finally(() => setLoading(false));
-  }, [season, week]);
+  }
+
+  useEffect(load, [season, week, refreshToken]);
 
   function toggle(gameId: string) {
     setSelected((prev) => {
@@ -53,6 +72,7 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
         next.delete(gameId);
         if (keyGameId === gameId) setKeyGameId(null);
       } else {
+        if (next.size >= MAX_GAMES) return prev;
         next.add(gameId);
       }
       return next;
@@ -72,11 +92,37 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
     }
   }
 
+  async function handleResetGames() {
+    if (!confirm("Clear this week's selected games? Any picks made will be removed too.")) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await espnConfidenceSave({ action: "selectGames", season, week, gameIds: [], keyGameId: null });
+      setSelected(new Set());
+      setKeyGameId(null);
+      onSaved();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <p>Loading games…</p>;
 
   return (
     <div>
-      <div className="section-label">1. Select this week's games (FBS vs FBS)</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="section-label">
+          1. Select this week's games (FBS vs FBS){" "}
+          <span style={{ color: selected.size >= MAX_GAMES ? "#a15c00" : "var(--chalk-dim)", fontWeight: 400 }}>
+            · {selected.size}/{MAX_GAMES}
+          </span>
+        </div>
+        <button className="menu-btn" onClick={handleResetGames} disabled={saving}>
+          Reset games
+        </button>
+      </div>
       {available.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
           No FBS-vs-FBS games saved for {season} week {week} yet — sync this week from Games &
@@ -84,31 +130,35 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "1rem" }}>
-          {available.map((g) => (
-            <label
-              key={g.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.6rem",
-                padding: "0.45rem 0.6rem",
-                border: "1px solid var(--hash)",
-                borderRadius: 6,
-                background: selected.has(g.id) ? "var(--turf-panel)" : "transparent",
-              }}
-            >
-              <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggle(g.id)} />
-              <span style={{ flex: 1 }}>
-                {g.away_team} @ {g.home_team}
-              </span>
-              {selected.has(g.id) && (
-                <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
-                  <input type="radio" name="key-game" checked={keyGameId === g.id} onChange={() => setKeyGameId(g.id)} />
-                  Key game (tiebreaker)
+          {available.map((g) => {
+            const atCap = selected.size >= MAX_GAMES && !selected.has(g.id);
+            return (
+              <label
+                key={g.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.6rem",
+                  padding: "0.45rem 0.6rem",
+                  border: "1px solid var(--hash)",
+                  borderRadius: 6,
+                  background: selected.has(g.id) ? "var(--turf-panel)" : "transparent",
+                  opacity: atCap ? 0.4 : 1,
+                }}
+              >
+                <input type="checkbox" checked={selected.has(g.id)} disabled={atCap} onChange={() => toggle(g.id)} />
+                <span style={{ flex: 1 }}>
+                  {g.away_team} @ {g.home_team}
                 </span>
-              )}
-            </label>
-          ))}
+                {selected.has(g.id) && (
+                  <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
+                    <input type="radio" name="key-game" checked={keyGameId === g.id} onChange={() => setKeyGameId(g.id)} />
+                    Key game
+                  </span>
+                )}
+              </label>
+            );
+          })}
         </div>
       )}
       <button onClick={handleSave} disabled={saving || selected.size === 0}>
@@ -122,7 +172,7 @@ function GameSelectionStep({ season, week, onSaved }: { season: number; week: nu
 // ---------------------------------------------------------------------
 // Step 2: sortable picks table with confidence points
 // ---------------------------------------------------------------------
-function PickingStep({ season, week }: { season: number; week: number }) {
+function PickingStep({ season, week, refreshToken }: { season: number; week: number; refreshToken: number }) {
   const [picks, setPicks] = useState<EspnConfidencePickWithGame[]>([]);
   const [draft, setDraft] = useState<Record<number, any>>({});
   const [loading, setLoading] = useState(true);
@@ -139,11 +189,7 @@ function PickingStep({ season, week }: { season: number; week: number }) {
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
-          d[p.id] = {
-            picked_side: p.picked_side,
-            confidence_points: p.confidence_points,
-            predicted_total_points: p.predicted_total_points,
-          };
+          d[p.id] = { picked_side: p.picked_side, confidence_points: p.confidence_points };
         }
         setDraft(d);
       })
@@ -151,7 +197,7 @@ function PickingStep({ season, week }: { season: number; week: number }) {
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week]);
+  useEffect(load, [season, week, refreshToken]);
 
   function updateDraft(id: number, patch: any) {
     setDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -187,6 +233,20 @@ function PickingStep({ season, week }: { season: number; week: number }) {
     }
   }
 
+  async function handleResetPicks() {
+    if (!confirm("Clear all picks and confidence points for this week? The game list stays as-is.")) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await espnConfidenceSave({ action: "resetPicks", season, week });
+      load();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const accessor = (p: EspnConfidencePickWithGame, key: string): any => {
     const g = p.game;
     switch (key) {
@@ -196,8 +256,8 @@ function PickingStep({ season, week }: { season: number; week: number }) {
         return g?.home_team ?? "";
       case "start_date":
         return g?.start_date ?? "";
-      case "myProjMoneyline":
-        return p.myProjMoneyline;
+      case "myProjAwayMoneyline":
+        return p.myProjAwayMoneyline;
       case "vegasAwayMoneyline":
         return p.vegasAwayMoneyline;
       case "confidence_points":
@@ -228,34 +288,41 @@ function PickingStep({ season, week }: { season: number; week: number }) {
 
   return (
     <div style={{ marginTop: "1.5rem" }}>
-      <div className="section-label">
-        2. Pick winners & assign confidence{" "}
-        <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}>
-          · Points: {earned} earned / {possible} decided so far (max possible {(N * (N + 1)) / 2})
-        </span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+        <div className="section-label">
+          2. Pick winners & assign confidence{" "}
+          <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}>
+            · Points: {earned} earned / {possible} decided so far (max possible {(N * (N + 1)) / 2})
+          </span>
+        </div>
+        <button className="menu-btn" onClick={handleResetPicks} disabled={saving}>
+          Reset picks
+        </button>
       </div>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
           <thead>
             <tr>
               <SortHeader label="Away" sortKey="away_team" active={sortKey === "away_team"} dir={sortDir} onClick={handleSort} />
-              <SortHeader label="Home" sortKey="home_team" active={sortKey === "home_team"} dir={sortDir} onClick={handleSort} />
               <SortHeader
-                label="My Proj ML"
-                sortKey="myProjMoneyline"
-                active={sortKey === "myProjMoneyline"}
-                dir={sortDir}
-                onClick={handleSort}
-                align="right"
-              />
-              <SortHeader
-                label="Vegas ML"
+                label="Vegas ML (Away)"
                 sortKey="vegasAwayMoneyline"
                 active={sortKey === "vegasAwayMoneyline"}
                 dir={sortDir}
                 onClick={handleSort}
                 align="right"
               />
+              <SortHeader
+                label="My ML (Away)"
+                sortKey="myProjAwayMoneyline"
+                active={sortKey === "myProjAwayMoneyline"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader label="Home" sortKey="home_team" active={sortKey === "home_team"} dir={sortDir} onClick={handleSort} />
+              <th className="th th-right">Vegas ML (Home)</th>
+              <th className="th th-right">My ML (Home)</th>
               <th className="th">Pick</th>
               <SortHeader
                 label="Points"
@@ -278,14 +345,16 @@ function PickingStep({ season, week }: { season: number; week: number }) {
 
               return (
                 <tr key={p.id} style={{ background: p.is_key_game ? "var(--gold-dim)" : undefined }}>
-                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.away_team}</td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    {g.home_team}
+                    {g.away_team}
                     {p.is_key_game && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Key game{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
                       </div>
                     )}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtMl(p.vegasAwayMoneyline)}
                   </td>
                   <td
                     style={{
@@ -295,14 +364,24 @@ function PickingStep({ season, week }: { season: number; week: number }) {
                       color: p.myProjAwaySpread != null ? spreadColor(p.myProjAwaySpread) : undefined,
                     }}
                   >
-                    {p.myProjMoneyline != null ? `${p.myProjMoneyline > 0 ? "+" : ""}${Math.round(p.myProjMoneyline)}` : "–"}
+                    {fmtMl(p.myProjAwayMoneyline)}
                   </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.home_team}</td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {p.vegasAwayMoneyline != null ? Math.round(p.vegasAwayMoneyline) : "–"} /{" "}
-                    {p.vegasHomeMoneyline != null ? Math.round(p.vegasHomeMoneyline) : "–"}
+                    {fmtMl(p.vegasHomeMoneyline)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "0.5rem 0.6rem",
+                      borderBottom: "1px solid var(--hash)",
+                      textAlign: "right",
+                      color: p.myProjAwaySpread != null ? spreadColor(-p.myProjAwaySpread) : undefined,
+                    }}
+                  >
+                    {fmtMl(p.myProjHomeMoneyline)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <div style={{ display: "flex", gap: "0.3rem", marginBottom: p.is_key_game ? "0.4rem" : 0 }}>
+                    <div style={{ display: "flex", gap: "0.3rem" }}>
                       <button
                         className="menu-btn"
                         style={{ opacity: d.picked_side === "away" ? 1 : 0.5 }}
@@ -318,21 +397,6 @@ function PickingStep({ season, week }: { season: number; week: number }) {
                         {g.home_team}
                       </button>
                     </div>
-                    {p.is_key_game && (
-                      <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.75rem" }}>
-                        <span>Tiebreaker — total points:</span>
-                        <input
-                          type="number"
-                          value={d.predicted_total_points ?? ""}
-                          onChange={(e) =>
-                            updateDraft(p.id, {
-                              predicted_total_points: e.target.value === "" ? null : Number(e.target.value),
-                            })
-                          }
-                          style={{ width: 70 }}
-                        />
-                      </div>
-                    )}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     <select
@@ -353,12 +417,6 @@ function PickingStep({ season, week }: { season: number; week: number }) {
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     {grade === "pending" ? "–" : grade === "win" ? "✅ Win" : "❌ Loss"}
-                    {p.is_key_game && g.completed && g.away_points != null && g.home_points != null && (
-                      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
-                        Actual total: {g.away_points + g.home_points}
-                        {d.predicted_total_points != null ? ` (predicted ${d.predicted_total_points})` : ""}
-                      </div>
-                    )}
                   </td>
                 </tr>
               );
@@ -392,8 +450,8 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
       <h2 style={{ marginTop: 0 }}>ESPN Confidence</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Pick straight-up winners and rank them by confidence — 1 for your least confident
-        pick up to the total number of games for your most confident. One key game each week
-        also needs a tiebreaker: predicted total combined points.
+        pick up to the total number of games for your most confident. The key game shows the
+        Vegas Total purely as a reference.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem" }}>
@@ -414,8 +472,8 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
         </label>
       </div>
 
-      <GameSelectionStep season={season} week={week} onSaved={() => setRefreshKey((k) => k + 1)} />
-      <PickingStep key={`picking-${refreshKey}`} season={season} week={week} />
+      <GameSelectionStep season={season} week={week} refreshToken={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
+      <PickingStep season={season} week={week} refreshToken={refreshKey} />
     </div>
   );
 }
