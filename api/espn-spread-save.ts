@@ -88,6 +88,22 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    if (action === "resetPicks") {
+      const { season, week } = req.body;
+      if (!season || !week) {
+        res.status(400).json({ error: "Missing season or week" });
+        return;
+      }
+      const { error } = await supabaseAdmin
+        .from("espn_spread_picks")
+        .update({ picked_side: null, predicted_total_points: null, updated_at: new Date().toISOString() })
+        .eq("season", season)
+        .eq("week", week);
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "Save failed" });
