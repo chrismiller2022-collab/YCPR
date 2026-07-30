@@ -7,10 +7,18 @@ export interface GameRow {
   season_type: string;
   start_date: string | null;
   neutral_site: boolean;
+  conference_game: boolean;
+  completed: boolean;
   home_team: string;
-  away_team: string;
+  home_classification: string | null;
+  home_conference: string | null;
   home_points: number | null;
+  home_postgame_win_probability: number | null;
+  away_team: string;
+  away_classification: string | null;
+  away_conference: string | null;
   away_points: number | null;
+  away_postgame_win_probability: number | null;
 }
 
 export interface BettingLineRow {
@@ -30,11 +38,22 @@ export interface GameWithLines extends GameRow {
   lines: BettingLineRow[];
 }
 
-/** Games for a given season/week, each with its betting lines attached. */
-export async function fetchGamesWithLines(season: number, week: number): Promise<GameWithLines[]> {
+/**
+ * Games for a given season, each with its betting lines attached. Pass a
+ * week to filter to just that week, or omit it to pull the whole season.
+ */
+export async function fetchGamesWithLines(season: number, week?: number): Promise<GameWithLines[]> {
+  let gamesQuery = supabase.from("games").select("*").eq("season", season);
+  let linesQuery = supabase.from("betting_lines").select("*").eq("season", season);
+
+  if (week != null) {
+    gamesQuery = gamesQuery.eq("week", week);
+    linesQuery = linesQuery.eq("week", week);
+  }
+
   const [{ data: games, error: gamesError }, { data: lines, error: linesError }] = await Promise.all([
-    supabase.from("games").select("*").eq("season", season).eq("week", week).order("start_date", { ascending: true }),
-    supabase.from("betting_lines").select("*").eq("season", season).eq("week", week),
+    gamesQuery.order("start_date", { ascending: true }),
+    linesQuery,
   ]);
 
   if (gamesError) throw gamesError;
