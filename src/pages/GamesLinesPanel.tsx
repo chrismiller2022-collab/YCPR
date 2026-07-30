@@ -28,6 +28,10 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  const [fpiSyncing, setFpiSyncing] = useState(false);
+  const [fpiResult, setFpiResult] = useState<string | null>(null);
+  const [fpiError, setFpiError] = useState<string | null>(null);
+
   function loadView() {
     setLoading(true);
     setLoadError(null);
@@ -44,6 +48,30 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
     loadView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, week, wholeSeason]);
+
+  async function handleFpiSync() {
+    setFpiSyncing(true);
+    setFpiError(null);
+    setFpiResult(null);
+    try {
+      const storedPassword = sessionStorage.getItem("admin_password") ?? "";
+      const res = await fetch("/api/fpi-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: storedPassword, year: season }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFpiError(data.error ?? "FPI sync failed");
+      } else {
+        setFpiResult(`Synced FPI ratings for ${data.saved} of ${data.fetched} teams (${data.year}).`);
+      }
+    } catch (err: any) {
+      setFpiError(err.message ?? "FPI sync failed");
+    } finally {
+      setFpiSyncing(false);
+    }
+  }
 
   async function handleSync() {
     setSyncing(true);
@@ -136,7 +164,13 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
         <button className="menu-btn" onClick={loadView} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh view"}
         </button>
+        <button onClick={handleFpiSync} disabled={fpiSyncing}>
+          {fpiSyncing ? "Syncing…" : "Sync FPI Ratings"}
+        </button>
       </div>
+
+      {fpiResult && <p style={{ color: "green" }}>{fpiResult}</p>}
+      {fpiError && <p style={{ color: "crimson" }}>{fpiError}</p>}
 
       {wholeSeason && (
         <p style={{ fontSize: "0.78rem", color: "#a15c00" }}>
