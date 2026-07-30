@@ -86,6 +86,20 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
     }
   }
 
+  // Diff columns are computed here, live, from the row's *current* state —
+  // not read from a stored field — so they update immediately as a Peay
+  // line is typed in, rather than staying stuck at whatever they were
+  // when the page first loaded.
+  function myVsVegas(r: PeayRow): number | null {
+    return r.myProjAwaySpread != null && r.vegasAwaySpread != null ? r.myProjAwaySpread - r.vegasAwaySpread : null;
+  }
+  function peayVsMineLive(r: PeayRow): number | null {
+    return r.peay_line != null && r.myProjAwaySpread != null ? r.peay_line - r.myProjAwaySpread : null;
+  }
+  function peayVsVegasLive(r: PeayRow): number | null {
+    return r.peay_line != null && r.vegasAwaySpread != null ? r.peay_line - r.vegasAwaySpread : null;
+  }
+
   const accessor = (r: PeayRow, key: string): any => {
     switch (key) {
       case "away_team":
@@ -100,10 +114,12 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         return r.vegasAwaySpread;
       case "peay_line":
         return r.peay_line;
+      case "myVsVegas":
+        return myVsVegas(r);
       case "peayVsMine":
-        return r.peayVsMine;
+        return peayVsMineLive(r);
       case "peayVsVegas":
-        return r.peayVsVegas;
+        return peayVsVegasLive(r);
       default:
         return null;
     }
@@ -228,6 +244,14 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                     align="right"
                   />
                   <SortHeader
+                    label="My vs Vegas"
+                    sortKey="myVsVegas"
+                    active={sortKey === "myVsVegas"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
                     label="Peay vs Mine"
                     sortKey="peayVsMine"
                     active={sortKey === "peayVsMine"}
@@ -251,24 +275,22 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
               <tbody>
                 {visibleRows.map((r) => {
                   const grade = gradePeayPick(r);
+                  const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
                     <tr key={r.game_id} style={{ background: r.is_key_pick ? "var(--gold-dim)" : undefined }}>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.game.away_team}</td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.game.home_team}</td>
+                      <td style={cellStyle}>{r.game.away_team}</td>
+                      <td style={cellStyle}>{r.game.home_team}</td>
                       <td
                         style={{
-                          padding: "0.4rem 0.6rem",
-                          borderBottom: "1px solid var(--hash)",
+                          ...cellStyle,
                           textAlign: "right",
                           color: r.myProjAwaySpread != null ? spreadColor(r.myProjAwaySpread) : undefined,
                         }}
                       >
                         {fmt(r.myProjAwaySpread)}
                       </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                        {fmt(r.vegasAwaySpread)}
-                      </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>
                         <input
                           type="number"
                           step="0.5"
@@ -276,41 +298,38 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           onChange={(e) =>
                             updateRow(r.game_id, { peay_line: e.target.value === "" ? null : Number(e.target.value) })
                           }
-                          style={{ width: 60, textAlign: "right" }}
+                          style={{ width: 55, textAlign: "right" }}
                         />
                       </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                        {fmt(r.peayVsMine, 2)}
-                      </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                        {fmt(r.peayVsVegas, 2)}
-                      </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                        <div style={{ display: "flex", gap: "0.25rem" }}>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(myVsVegas(r), 2)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(peayVsMineLive(r), 2)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(peayVsVegasLive(r), 2)}</td>
+                      <td style={cellStyle}>
+                        <div style={{ display: "flex", gap: "0.2rem" }}>
                           <button
                             className="menu-btn"
-                            style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.2rem 0.5rem" }}
+                            style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem" }}
                             onClick={() => updateRow(r.game_id, { picked_side: "away" })}
                           >
                             Away
                           </button>
                           <button
                             className="menu-btn"
-                            style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.2rem 0.5rem" }}
+                            style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem" }}
                             onClick={() => updateRow(r.game_id, { picked_side: "home" })}
                           >
                             Home
                           </button>
                         </div>
                       </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "center" }}>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
                         <input
                           type="checkbox"
                           checked={r.is_key_pick}
                           onChange={(e) => updateRow(r.game_id, { is_key_pick: e.target.checked })}
                         />
                       </td>
-                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                      <td style={cellStyle}>
                         {grade === "pending" ? "–" : grade === "win" ? "✅ Win" : grade === "push" ? "Push" : "❌ Loss"}
                       </td>
                     </tr>
@@ -321,7 +340,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           </div>
 
           <button onClick={handleSave} disabled={saving} style={{ marginTop: "1rem" }}>
-            {saving ? "Saving…" : "Save week"}
+            {saving ? "Saving…" : "Save Peay Lines"}
           </button>
           {saveMsg && <span style={{ color: "green", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
