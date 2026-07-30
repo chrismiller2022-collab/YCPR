@@ -10,6 +10,7 @@ import EspnMoneylinePanel from "./EspnMoneylinePanel";
 import EspnSpreadPanel from "./EspnSpreadPanel";
 import EspnConfidencePanel from "./EspnConfidencePanel";
 import CfbdPickemPanel from "./CfbdPickemPanel";
+import CbsPickemPanel from "./CbsPickemPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
@@ -205,7 +206,8 @@ type AdminView =
   | "espnml"
   | "espnspread"
   | "espnconfidence"
-  | "cfbdpickem";
+  | "cfbdpickem"
+  | "cbspickem";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -701,6 +703,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       {view === "espnconfidence" && <EspnConfidencePanel onBack={() => setView("pools")} />}
 
       {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
+
+      {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
 
       {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 
