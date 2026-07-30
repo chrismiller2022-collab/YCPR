@@ -1,7 +1,8 @@
 import { TEAMS, TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor, spreadToWinPct } from "../odds";
+import { hfaFor } from "../odds";
 
 export interface SimGame {
+  week: number;
   home_team: string;
   away_team: string;
   neutral_site: boolean;
@@ -16,9 +17,11 @@ export interface TeamSimResult {
   conf: string;
   currentWins: number;
   currentLosses: number;
+  totalGames: number;
   meanWins: number;
   winDistribution: number[]; // index = win count (0..15), value = trial count
-  confTitlePct: number;
+  madeConfChampPct: number; // odds to MAKE the conference championship game
+  confTitlePct: number; // odds to WIN the conference championship
   playoffPct: number;
   avgSeed: number | null;
   nattyPct: number;
@@ -29,30 +32,202 @@ export interface SimulationResult {
   unmatchedTeams: string[];
 }
 
-const MAX_WINS_BUCKET = 15;
+export interface ScheduleRow {
+  week: number;
+  awayTeam: string;
+  homeTeam: string;
+  mySpread: number | null;
+  randomValue: number | null; // null for already-completed (actual) games
+  finalResult: number | null; // away-perspective: negative = away wins by |value|
+  winner: string | null;
+  loser: string | null;
+  margin: number | null; // always positive — the winner's margin
+  status: "actual" | "simulated";
+}
 
-interface RemainingGame {
-  homeIdx: number | null; // index into fbsTeams, or null if not a tracked FBS team
-  awayIdx: number | null;
-  isConf: boolean;
-  awayWinProb: number; // precomputed once — ratings don't change trial to trial
+const MAX_WINS_BUCKET = 15;
+const MARGIN_STDDEV = 15.7;
+const MARGIN_CLIP = 25;
+
+// ---------------------------------------------------------------------
+// Random margin generator — ported directly from the provided script.
+// Acklam's algorithm for the inverse of the standard normal CDF, then
+// scaled by MARGIN_STDDEV (mean 0) and clipped to +/-MARGIN_CLIP.
+// ---------------------------------------------------------------------
+function invNorm(p: number): number {
+  const a1 = -39.6968302866538,
+    a2 = 220.946098424521,
+    a3 = -275.928510446969,
+    a4 = 138.357751867269,
+    a5 = -30.6647980661472,
+    a6 = 2.50662827745924;
+  const b1 = -54.4760987982241,
+    b2 = 161.585836858041,
+    b3 = -155.698979859887,
+    b4 = 66.8013118877197,
+    b5 = -13.2806815528857;
+  const c1 = -0.00778489400243029,
+    c2 = -0.322396458041136,
+    c3 = -2.40075827716184,
+    c4 = -2.54973253934373,
+    c5 = 4.37466414146497,
+    c6 = 2.93816398269878;
+  const d1 = 0.00778469570904146,
+    d2 = 0.32246712907004,
+    d3 = 2.44513413714299,
+    d4 = 3.75440866190742;
+
+  const pLow = 0.02425;
+  const pHigh = 1 - pLow;
+  let q, r;
+
+  if (p < pLow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) / ((((d1 * q + d2) * q + d3) * q + d4) * q + 1);
+  } else if (p <= pHigh) {
+    q = p - 0.5;
+    r = q * q;
+    return (
+      ((((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q) /
+      (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1)
+    );
+  } else {
+    q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) / ((((d1 * q + d2) * q + d3) * q + d4) * q + 1);
+  }
+}
+
+export function drawMarginNoise(): number {
+  const raw = MARGIN_STDDEV * invNorm(Math.random());
+  return Math.max(-MARGIN_CLIP, Math.min(MARGIN_CLIP, raw));
+}
+
+// ---------------------------------------------------------------------
+// Rating lookup - prefers this week's live upload (weekly_team_stats),
+// falls back to the static data/teams.ts snapshot, same pattern already
+// used elsewhere on the site (e.g. StrengthOfSchedulePage's sosFor).
+// Previously the engine only ever read the static file, which meant it
+// never reflected whatever you'd actually uploaded that week.
+// ---------------------------------------------------------------------
+function ratingFor(teamName: string, liveByTeam: Record<string, any>): number | null {
+  const live = liveByTeam?.[teamName]?.rating;
+  if (live != null) return live;
+  return TEAMS_BY_NAME[teamName]?.rating ?? null;
+}
+
+function computeFcsMedianRating(liveByTeam: Record<string, any>): number {
+  const ratings = TEAMS.filter((t) => t.div === "FCS")
+    .map((t) => ratingFor(t.team, liveByTeam))
+    .filter((r): r is number => r != null)
+    .sort((a, b) => a - b);
+  if (ratings.length === 0) return 0;
+  const mid = Math.floor(ratings.length / 2);
+  return ratings.length % 2 === 1 ? ratings[mid] : (ratings[mid - 1] + ratings[mid]) / 2;
+}
+
+/** Exposed so the UI can show the actual numbers behind the "sub-FCS opponent" fallback. */
+export function getSubFcsRatingInfo(liveByTeam: Record<string, any>): { medianFcsRating: number; syntheticRating: number } {
+  const medianFcsRating = computeFcsMedianRating(liveByTeam);
+  return { medianFcsRating, syntheticRating: medianFcsRating + 28 };
 }
 
 /**
- * Runs `numTrials` full-season simulations and returns per-FBS-team
- * aggregate results. Only FBS teams are tracked for win totals, conference
- * titles, and playoff/natty odds — games against FCS/other opponents
- * still count toward an FBS team's simulated record, they just don't
- * produce a tracked result for the other side.
- *
+ * My Spread for a game, away-perspective (negative = away favored/wins),
+ * same convention as the rest of the site. Falls back to a synthetic
+ * rating (median FCS rating + 28, i.e. clearly worse) for a side with no
+ * rating at all - sub-FCS buy-game opponents - so those games still
+ * produce a realistic near-certain-win projection instead of a coin flip
+ * or a missing value. Returns null only if NEITHER side has any rating,
+ * real or synthetic (shouldn't happen given the sync's division filter).
+ */
+function computeMySpread(
+  game: { home_team: string; away_team: string; neutral_site: boolean },
+  liveByTeam: Record<string, any>,
+  syntheticSubFcsRating: number
+): number | null {
+  const homeReal = ratingFor(game.home_team, liveByTeam);
+  const awayReal = ratingFor(game.away_team, liveByTeam);
+  const homeRating = homeReal ?? (awayReal != null ? syntheticSubFcsRating : null);
+  const awayRating = awayReal ?? (homeReal != null ? syntheticSubFcsRating : null);
+  if (homeRating == null || awayRating == null) return null;
+  return game.neutral_site ? awayRating - homeRating : awayRating - homeRating + hfaFor(game.home_team, liveByTeam);
+}
+
+// ---------------------------------------------------------------------
+// Single-season schedule generator (for the SRS tab). One realization,
+// not an average - every remaining game gets one fresh random draw.
+// Already-completed games use the actual result, not a simulated one.
+// ---------------------------------------------------------------------
+export function simulateSingleSeason(games: SimGame[], liveByTeam: Record<string, any>): ScheduleRow[] {
+  const syntheticSubFcsRating = computeFcsMedianRating(liveByTeam) + 28;
+
+  return games.map((g) => {
+    if (g.completed && g.home_points != null && g.away_points != null) {
+      const finalResult = g.home_points - g.away_points; // negative = away won by that much
+      const winner = finalResult < 0 ? g.away_team : g.home_team;
+      const loser = finalResult < 0 ? g.home_team : g.away_team;
+      const margin = Math.abs(finalResult);
+      return {
+        week: g.week,
+        awayTeam: g.away_team,
+        homeTeam: g.home_team,
+        mySpread: computeMySpread(g, liveByTeam, syntheticSubFcsRating),
+        randomValue: null,
+        finalResult,
+        winner,
+        loser,
+        margin,
+        status: "actual" as const,
+      };
+    }
+
+    const mySpread = computeMySpread(g, liveByTeam, syntheticSubFcsRating);
+    const randomValue = drawMarginNoise();
+    const finalResult = (mySpread ?? 0) + randomValue;
+    const winner = finalResult < 0 ? g.away_team : g.home_team;
+    const loser = finalResult < 0 ? g.home_team : g.away_team;
+    const margin = Math.abs(finalResult);
+
+    return {
+      week: g.week,
+      awayTeam: g.away_team,
+      homeTeam: g.home_team,
+      mySpread,
+      randomValue,
+      finalResult,
+      winner,
+      loser,
+      margin,
+      status: "simulated" as const,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------
+// Aggregate Monte Carlo - thousands of full-season realizations, tallied.
+// ---------------------------------------------------------------------
+interface RemainingGame {
+  homeIdx: number | null;
+  awayIdx: number | null;
+  isConf: boolean;
+  mySpread: number; // 0 if truly no rating on either side (rare fallback)
+}
+
+/**
  * v1 simplifications (by design, not oversight):
- * - Conference tiebreakers are a straight win% comparison with a random
- *   coin-flip on ties — not each conference's real tiebreaker rules.
- * - Playoff seeding uses each team's current (static) power rating as a
- *   stand-in for a committee ranking — ratings don't evolve mid-simulation.
- * - Playoff bracket structure (5 auto-bids + 7 at-large, byes to the top 4
- *   conference champions) mirrors the real 12-team CFP format and reuses
- *   this site's existing 12-team bracket shape from BracketPage.tsx.
+ * - Conference tiebreakers (regular season ranking) are straight win% with
+ *   a random coin-flip on ties - not each conference's real tiebreaker
+ *   rules.
+ * - The conference championship game itself IS simulated (top 2 teams by
+ *   conference win%, one extra game between them, neutral site) - so the
+ *   "win conference" team can differ from the regular-season record
+ *   leader, same as real life.
+ * - Playoff seeding uses each team's current rating as a stand-in for a
+ *   committee ranking - ratings don't evolve mid-simulation based on
+ *   simulated results.
+ * - Playoff bracket structure (5 auto-bids + 7 at-large, byes to the top
+ *   4 conference champions) mirrors the real 12-team CFP format and
+ *   reuses this site's existing 12-team bracket shape from BracketPage.tsx.
  */
 export function runMonteCarlo(
   games: SimGame[],
@@ -62,29 +237,12 @@ export function runMonteCarlo(
   const fbsTeams = TEAMS.filter((t) => t.div === "FBS");
   const indexByName = new Map(fbsTeams.map((t, i) => [t.team, i]));
   const n = fbsTeams.length;
+  const syntheticSubFcsRating = computeFcsMedianRating(liveByTeam) + 28;
 
   const baseWins = new Array(n).fill(0);
   const baseLosses = new Array(n).fill(0);
   const baseConfWins = new Array(n).fill(0);
   const baseConfLosses = new Array(n).fill(0);
-
-  // Synthetic rating for opponents with no power rating at all (D2/D3/NAIA
-  // "buy game" opponents FCS teams occasionally schedule) — median FCS
-  // rating + 28 (worse, since lower rating = better on this site). This
-  // avoids treating those games as a 50/50 coin flip, which would badly
-  // understate win totals for every team that plays one, since a coin flip
-  // is nowhere close to the ~95%+ real win probability against a team that
-  // isn't even FCS-caliber.
-  const fcsRatings = TEAMS.filter((t) => t.div === "FCS")
-    .map((t) => t.rating)
-    .sort((a, b) => a - b);
-  const medianFcsRating =
-    fcsRatings.length > 0
-      ? fcsRatings.length % 2 === 1
-        ? fcsRatings[(fcsRatings.length - 1) / 2]
-        : (fcsRatings[fcsRatings.length / 2 - 1] + fcsRatings[fcsRatings.length / 2]) / 2
-      : 0;
-  const SYNTHETIC_SUB_FCS_RATING = medianFcsRating + 28;
 
   const unmatchedTeams = new Set<string>();
   const remaining: RemainingGame[] = [];
@@ -92,11 +250,8 @@ export function runMonteCarlo(
   for (const g of games) {
     const homeIdx = indexByName.get(g.home_team) ?? null;
     const awayIdx = indexByName.get(g.away_team) ?? null;
-    const homeRatingTeam = TEAMS_BY_NAME[g.home_team];
-    const awayRatingTeam = TEAMS_BY_NAME[g.away_team];
-
-    if (!homeRatingTeam) unmatchedTeams.add(g.home_team);
-    if (!awayRatingTeam) unmatchedTeams.add(g.away_team);
+    if (ratingFor(g.home_team, liveByTeam) == null) unmatchedTeams.add(g.home_team);
+    if (ratingFor(g.away_team, liveByTeam) == null) unmatchedTeams.add(g.away_team);
 
     const isConf =
       g.conference_game && homeIdx != null && awayIdx != null && fbsTeams[homeIdx].conf === fbsTeams[awayIdx].conf;
@@ -122,34 +277,18 @@ export function runMonteCarlo(
       continue;
     }
 
-    // Remaining (not yet played) game — precompute win probability once,
-    // since ratings are static for the whole simulation. If exactly one
-    // side has no real rating (a sub-FCS buy-game opponent), use the
-    // synthetic rating for that side instead of falling back to a coin
-    // flip. Only fall back to a true coin flip if NEITHER side has a
-    // rating (shouldn't happen given the sync's division filter, but
-    // guarded here regardless).
-    const homeRatingValue = homeRatingTeam?.rating ?? (awayRatingTeam ? SYNTHETIC_SUB_FCS_RATING : null);
-    const awayRatingValue = awayRatingTeam?.rating ?? (homeRatingTeam ? SYNTHETIC_SUB_FCS_RATING : null);
-
-    let awayWinProb = 0.5;
-    if (homeRatingValue != null && awayRatingValue != null) {
-      const awaySpread = g.neutral_site
-        ? awayRatingValue - homeRatingValue
-        : awayRatingValue - homeRatingValue + hfaFor(g.home_team, liveByTeam);
-      const wp = spreadToWinPct(awaySpread);
-      if (wp != null) awayWinProb = wp;
-    }
-
     remaining.push({
       homeIdx,
       awayIdx,
       isConf,
-      awayWinProb,
+      mySpread: computeMySpread(g, liveByTeam, syntheticSubFcsRating) ?? 0,
     });
   }
 
-  // Conference groups (FBS only, excluding independents — no title to win there).
+  const totalGames = fbsTeams.map(
+    (_, i) => baseWins[i] + baseLosses[i] + remaining.filter((g) => g.homeIdx === i || g.awayIdx === i).length
+  );
+
   const confGroups = new Map<string, number[]>();
   fbsTeams.forEach((t, i) => {
     if (t.conf === "FBS Independents") return;
@@ -159,6 +298,7 @@ export function runMonteCarlo(
   });
 
   const winDistribution: number[][] = Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0));
+  const madeConfChampCount = new Array(n).fill(0);
   const confTitleCount = new Array(n).fill(0);
   const playoffCount = new Array(n).fill(0);
   const seedSum = new Array(n).fill(0);
@@ -171,7 +311,8 @@ export function runMonteCarlo(
     const confLosses = baseConfLosses.slice();
 
     for (const g of remaining) {
-      const awayWins = Math.random() < g.awayWinProb;
+      const finalResult = g.mySpread + drawMarginNoise();
+      const awayWins = finalResult < 0;
       if (g.homeIdx != null) {
         if (awayWins) losses[g.homeIdx]++;
         else wins[g.homeIdx]++;
@@ -195,33 +336,39 @@ export function runMonteCarlo(
       winDistribution[i][bucket]++;
     }
 
-    // Conference champions: best conf win% per group, random tiebreak.
+    // Conference championship: rank by conf win%, top 2 make the game,
+    // then simulate one more (neutral site) game between them.
     const champions: number[] = [];
     for (const [, teamIdxs] of confGroups) {
-      let bestPct = -1;
-      let candidates: number[] = [];
-      for (const i of teamIdxs) {
-        const total = confWins[i] + confLosses[i];
-        const pct = total > 0 ? confWins[i] / total : -1;
-        if (pct > bestPct) {
-          bestPct = pct;
-          candidates = [i];
-        } else if (pct === bestPct && pct >= 0) {
-          candidates.push(i);
-        }
+      const ranked = teamIdxs
+        .map((i) => {
+          const total = confWins[i] + confLosses[i];
+          return { i, pct: total > 0 ? confWins[i] / total : -1 };
+        })
+        .filter((r) => r.pct >= 0)
+        .sort((a, b) => b.pct - a.pct || Math.random() - 0.5);
+
+      if (ranked.length === 0) continue;
+
+      if (ranked.length === 1) {
+        madeConfChampCount[ranked[0].i]++;
+        confTitleCount[ranked[0].i]++;
+        champions.push(ranked[0].i);
+        continue;
       }
-      if (candidates.length > 0 && bestPct >= 0) {
-        const champ = candidates[Math.floor(Math.random() * candidates.length)];
-        champions.push(champ);
-        confTitleCount[champ]++;
-      }
+
+      const a = ranked[0].i;
+      const b = ranked[1].i;
+      madeConfChampCount[a]++;
+      madeConfChampCount[b]++;
+
+      const champGameSpread = fbsTeams[b].rating - fbsTeams[a].rating; // neutral site
+      const champResult = champGameSpread + drawMarginNoise();
+      const champ = champResult < 0 ? b : a;
+      confTitleCount[champ]++;
+      champions.push(champ);
     }
 
-    // Playoff field: 5 highest-rated conference champions get auto-bids;
-    // remaining 7 spots are the next-best teams overall (any FBS team not
-    // already selected) by rating. Byes (seeds 1-4) go to the top 4 of
-    // the 5 auto-bid champions; the 5th champion drops into the reseeded
-    // 5-12 pool alongside the 7 at-large teams.
     const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
     const sortedChamps = [...champions].sort(byRating);
     const autoBids = sortedChamps.slice(0, 5);
@@ -237,7 +384,7 @@ export function runMonteCarlo(
     const fifthChamp = autoBids[4];
     const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byRating);
 
-    const field = [...byeSeeds, ...seed5to12]; // index 0 = seed 1, etc.
+    const field = [...byeSeeds, ...seed5to12];
     field.forEach((teamIdx, i) => {
       playoffCount[teamIdx]++;
       seedSum[teamIdx] += i + 1;
@@ -250,14 +397,16 @@ export function runMonteCarlo(
   }
 
   const teamResults: TeamSimResult[] = fbsTeams.map((t, i) => {
-    const totalWins = winDistribution[i].reduce((sum, count, wins) => sum + count * wins, 0);
+    const winsSum = winDistribution[i].reduce((sum, count, wins) => sum + count * wins, 0);
     return {
       team: t.team,
       conf: t.conf,
       currentWins: baseWins[i],
       currentLosses: baseLosses[i],
-      meanWins: totalWins / numTrials,
+      totalGames: totalGames[i],
+      meanWins: winsSum / numTrials,
       winDistribution: winDistribution[i],
+      madeConfChampPct: (madeConfChampCount[i] / numTrials) * 100,
       confTitlePct: (confTitleCount[i] / numTrials) * 100,
       playoffPct: (playoffCount[i] / numTrials) * 100,
       avgSeed: playoffCount[i] > 0 ? seedSum[i] / playoffCount[i] : null,
@@ -271,26 +420,24 @@ export function runMonteCarlo(
 // Mirrors BracketPage.tsx's fixed 12-team CFP bracket shape: round 1 is
 // seeds 5-8 hosting 9-12; quarterfinals are neutral-site, each top-4 seed
 // facing the corresponding round-1 winner; semis and championship are
-// also neutral. Unlike BracketPage.tsx (which always picks the favorite),
-// this draws a random outcome from the win probability each time.
+// also neutral. Uses the same margin-simulation method as everything else.
 function simulateBracket(field: number[], fbsTeams: any[], liveByTeam: Record<string, any>): number | null {
   function playGame(aIdx: number, bIdx: number, hostIdx: number | null): number {
     const a = fbsTeams[aIdx];
     const b = fbsTeams[bIdx];
     const awayIsB = hostIdx === aIdx || hostIdx == null;
-    const awaySpread =
+    const spread =
       hostIdx === aIdx
         ? b.rating - a.rating + hfaFor(a.team, liveByTeam)
         : hostIdx === bIdx
         ? a.rating - b.rating + hfaFor(b.team, liveByTeam)
-        : b.rating - a.rating; // neutral, arbitrary "away" = b
-    const awayWinProb = spreadToWinPct(awaySpread) ?? 0.5;
-    const awayWins = Math.random() < awayWinProb;
+        : b.rating - a.rating;
+    const finalResult = spread + drawMarginNoise();
+    const awayWins = finalResult < 0;
     if (awayIsB) return awayWins ? bIdx : aIdx;
     return awayWins ? aIdx : bIdx;
   }
 
-  // field: [seed1..seed12] as team indices
   const [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12] = field;
 
   const r1_8v9 = playGame(s8, s9, s8);
