@@ -39,6 +39,20 @@ export function spreadToMoneyline(spread) {
   return interpolateTable(ML_TABLE, spread);
 }
 
+// Derives a moneyline directly from a win probability, using the standard
+// American-odds formula, instead of interpolating ML_TABLE. This exists
+// because linearly interpolating ML_TABLE near a pick'em game produces
+// values inside the -100..+100 "dead zone" that no real moneyline can
+// occupy (odds jump straight from -100 to +100 at true even money — there
+// is no valid value in between). Deriving directly from probability can
+// never land in that zone, so it's used anywhere a probability is already
+// available (e.g. the ESPN pool tools) rather than spreadToMoneyline.
+export function fairMoneylineFromWinPct(winPct) {
+  if (winPct == null || Number.isNaN(winPct)) return null;
+  const p = Math.min(Math.max(winPct, 0.0001), 0.9999);
+  return p >= 0.5 ? -100 * (p / (1 - p)) : 100 * ((1 - p) / p);
+}
+
 // Green = favorite (more negative), red = underdog (more positive),
 // with a neutral gray around a pick'em (0).
 function spreadRGB(value) {
