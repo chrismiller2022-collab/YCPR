@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
-import { TEAMS_BY_NAME } from "../data/teams";
-import { hfaFor, spreadToMoneyline } from "../lib/odds";
+import { TEAMS_BY_NAME } from "../../data/teams";
+import { hfaFor, spreadToMoneyline } from "../odds";
 import type { GameRow, BettingLineRow } from "./gamesLines";
 
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
