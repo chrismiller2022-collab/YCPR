@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { runMonteCarlo, type TeamSimResult } from "../lib/montecarlo/engine";
+import { runMonteCarlo, simulateSingleSeason, getSubFcsRatingInfo, type TeamSimResult, type ScheduleRow } from "../lib/montecarlo/engine";
 import {
   fetchSeasonGames,
   fetchMonteCarloRuns,
@@ -18,9 +18,35 @@ function fmtPct(v: number) {
   return `${v.toFixed(1)}%`;
 }
 
+function fmtSpread(v: number | null) {
+  if (v == null) return "–";
+  return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
+}
+
+// ---------------------------------------------------------------------
+// Distribution breakdown — shown when a team row is expanded.
+// ---------------------------------------------------------------------
+function DistributionDetail({ result }: { result: TeamSimResult }) {
+  const total = result.winDistribution.reduce((s, c) => s + c, 0);
+  const buckets = result.winDistribution
+    .map((count, wins) => ({ wins, losses: result.totalGames - wins, pct: (count / total) * 100 }))
+    .filter((b) => b.pct > 0.05)
+    .sort((a, b) => b.pct - a.pct);
+
+  return (
+    <tr>
+      <td colSpan={9} style={{ padding: "0.5rem 0.75rem", background: "rgba(255,255,255,0.03)", fontSize: "0.75rem" }}>
+        <strong>{result.team} win-total distribution:</strong>{" "}
+        {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
+      </td>
+    </tr>
+  );
+}
+
 function ResultsTable({ results }: { results: TeamSimResult[] }) {
   const [sortKey, setSortKey] = useState("nattyPct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   function handleSort(key: string) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -49,10 +75,17 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
           <tr>
             <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
             <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-            <th className="th th-right">Record</th>
-            <SortHeader label="Proj Wins" sortKey="meanWins" active={sortKey === "meanWins"} dir={sortDir} onClick={handleSort} align="right" />
+            <th className="th th-right">Proj Record</th>
             <SortHeader
-              label="Conf Title %"
+              label="Make Champ %"
+              sortKey="madeConfChampPct"
+              active={sortKey === "madeConfChampPct"}
+              dir={sortDir}
+              onClick={handleSort}
+              align="right"
+            />
+            <SortHeader
+              label="Win Champ %"
               sortKey="confTitlePct"
               active={sortKey === "confTitlePct"}
               dir={sortDir}
@@ -69,33 +102,48 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
             />
             <SortHeader label="Avg Seed" sortKey="avgSeed" active={sortKey === "avgSeed"} dir={sortDir} onClick={handleSort} align="right" />
             <SortHeader label="Natty %" sortKey="nattyPct" active={sortKey === "nattyPct"} dir={sortDir} onClick={handleSort} align="right" />
+            <th className="th"></th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
-            <tr key={r.team}>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {r.currentWins}-{r.currentLosses}
-              </td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {r.meanWins.toFixed(1)}
-              </td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {fmtPct(r.confTitlePct)}
-              </td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {fmtPct(r.playoffPct)}
-              </td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {r.avgSeed != null ? r.avgSeed.toFixed(1) : "–"}
-              </td>
-              <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {fmtPct(r.nattyPct)}
-              </td>
-            </tr>
-          ))}
+          {sorted.map((r) => {
+            const projWins = Math.round(r.meanWins);
+            const projLosses = r.totalGames - projWins;
+            const isOpen = expanded === r.team;
+            return (
+              <Fragment key={r.team}>
+                <tr>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {projWins}-{projLosses}{" "}
+                    <span style={{ color: "var(--chalk-dim)", fontSize: "0.72rem" }}>({r.meanWins.toFixed(1)})</span>
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.madeConfChampPct)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.confTitlePct)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.playoffPct)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.avgSeed != null ? r.avgSeed.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.nattyPct)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                    <button className="menu-btn" style={{ padding: "0.15rem 0.4rem" }} onClick={() => setExpanded(isOpen ? null : r.team)}>
+                      {isOpen ? "Hide" : "Distribution"}
+                    </button>
+                  </td>
+                </tr>
+                {isOpen && <DistributionDetail result={r} />}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -179,7 +227,7 @@ function HistoryTab({ season }: { season: number }) {
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Date</th>
                   <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Proj Wins</th>
-                  <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Conf Title %</th>
+                  <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Win Champ %</th>
                   <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Playoff %</th>
                   <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Natty %</th>
                 </tr>
@@ -222,7 +270,7 @@ function HistoryTab({ season }: { season: number }) {
   );
 }
 
-export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
+function MonteCarloResultsSection() {
   const [tab, setTab] = useState<"run" | "history">("run");
   const [season, setSeason] = useState(new Date().getFullYear());
   const [numTrials, setNumTrials] = useState(5000);
@@ -251,8 +299,6 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
       const week = completedWeeks.length > 0 ? Math.max(...completedWeeks) + 1 : 1;
       setCurrentWeek(week);
 
-      // Give the "Running…" state a chance to paint before the sim
-      // blocks the main thread.
       await new Promise((r) => setTimeout(r, 30));
       const { teamResults, unmatchedTeams } = runMonteCarlo(games, liveByTeam, numTrials);
       setResults(teamResults);
@@ -280,19 +326,6 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
-
-      <h2 style={{ marginTop: 0 }}>Monte Carlo</h2>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        Simulates the rest of the season thousands of times from current power ratings —
-        projected win totals, conference title odds, playoff odds/seed, and national
-        championship odds. Conference tiebreakers use a simple win% + random tiebreak, and
-        playoff seeding uses each team's current rating as a stand-in for a committee
-        ranking (see code comments for the full list of v1 simplifications).
-      </p>
-
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <button className={`mode-btn ${tab === "run" ? "mode-btn-active" : ""}`} onClick={() => setTab("run")}>
           Run
@@ -350,6 +383,157 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === "history" && <HistoryTab season={season} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// SRS tab — for now, a single simulated realization of the full season
+// schedule. This is the foundation the actual SRS computation will build
+// on top of later; for now it's just the game-by-game results table.
+// ---------------------------------------------------------------------
+function SrsTab() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [weekFilter, setWeekFilter] = useState<"all" | number>("all");
+  const [rows, setRows] = useState<ScheduleRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  async function generate() {
+    setLoading(true);
+    setError(null);
+    try {
+      const games = await fetchSeasonGames(season);
+      if (games.length === 0) {
+        setError(`No games saved for ${season} yet — sync the season from Games & Lines first.`);
+        setLoading(false);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      setRows(simulateSingleSeason(games, liveByTeam));
+    } catch (err: any) {
+      setError(err.message ?? "Failed to generate schedule");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const weeks = useMemo(() => Array.from(new Set(rows.map((r) => r.week))).sort((a, b) => a - b), [rows]);
+  const visibleRows = weekFilter === "all" ? rows : rows.filter((r) => r.week === weekFilter);
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+        One simulated realization of the full season — every remaining game gets a single
+        fresh random draw (Normal, mean 0, stddev 15.7, clipped ±25) added to your projected
+        spread. Already-completed games show the actual result. This is the foundation the
+        full SRS (Simple Rating System) build will sit on top of — for now it's just the
+        game-by-game schedule and results.
+      </p>
+
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <label>
+          Season{" "}
+          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+        </label>
+        {weeks.length > 0 && (
+          <select value={weekFilter} onChange={(e) => setWeekFilter(e.target.value === "all" ? "all" : parseInt(e.target.value, 10))}>
+            <option value="all">All weeks</option>
+            {weeks.map((w) => (
+              <option key={w} value={w}>
+                Week {w}
+              </option>
+            ))}
+          </select>
+        )}
+        <button onClick={generate} disabled={loading}>
+          {loading ? "Generating…" : rows.length > 0 ? "Re-roll" : "Generate schedule"}
+        </button>
+      </div>
+
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+
+      {rows.length > 0 && (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 600, overflowY: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Week</th>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Away</th>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Home</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>My Spread</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Random</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Final Result</th>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Winner</th>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Loser</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Margin</th>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.week}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.awayTeam}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.homeTeam}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtSpread(r.mySpread)}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.randomValue != null ? fmtSpread(r.randomValue) : "–"}
+                  </td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtSpread(r.finalResult)}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", fontWeight: 600 }}>{r.winner ?? "–"}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.loser ?? "–"}</td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.margin != null ? r.margin.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", color: r.status === "actual" ? "var(--gold)" : "var(--chalk-dim)" }}>
+                    {r.status === "actual" ? "Actual" : "Simulated"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
+  const [section, setSection] = useState<"results" | "srs">("results");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { medianFcsRating, syntheticRating } = getSubFcsRatingInfo(liveByTeam);
+
+  return (
+    <div>
+      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+        ‹ Admin
+      </button>
+
+      <h2 style={{ marginTop: 0 }}>Monte Carlo</h2>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
+        <button className={`mode-btn ${section === "results" ? "mode-btn-active" : ""}`} onClick={() => setSection("results")}>
+          Monte Carlo Results
+        </button>
+        <button className={`mode-btn ${section === "srs" ? "mode-btn-active" : ""}`} onClick={() => setSection("srs")}>
+          SRS
+        </button>
+      </div>
+
+      {section === "results" && <MonteCarloResultsSection />}
+      {section === "srs" && <SrsTab />}
+
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: "2rem", borderTop: "1px solid var(--hash)", paddingTop: "1rem" }}>
+        Simulates the rest of the season using your projected spread for every remaining
+        game plus a random margin drawn from a Normal distribution (mean 0, stddev 15.7,
+        clipped ±25) — your same spreadsheet method. Conference tiebreakers use a simple
+        win% ranking, and the conference championship game itself is simulated between the
+        top 2 teams. Opponents with no power rating at all (sub-FCS buy-game teams) are
+        estimated at the current median FCS rating ({medianFcsRating.toFixed(2)}) + 28, i.e.{" "}
+        {syntheticRating.toFixed(2)}, rather than a coin flip.
+      </p>
     </div>
   );
 }

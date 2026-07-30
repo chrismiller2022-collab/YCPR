@@ -447,8 +447,19 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
         ‹ Pools
       </button>
 
-      <h2 style={{ marginTop: 0 }}>ESPN Confidence</h2>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+        <h2 style={{ margin: 0 }}>ESPN Confidence</h2>
+        <a
+          href="https://fantasy.espn.com/games/college-football-pickem-2026/picks"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="menu-btn"
+          style={{ textDecoration: "none" }}
+        >
+          Open ESPN Pick'em ↗
+        </a>
+      </div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Pick straight-up winners and rank them by confidence — 1 for your least confident
         pick up to the total number of games for your most confident. The key game shows the
         Vegas Total purely as a reference.

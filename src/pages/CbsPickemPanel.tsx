@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   fetchFbsGamesForWeek,
-  fetchEspnSpreadPicksForWeek,
-  gradeEspnSpreadPick,
-  type EspnSpreadPickWithGame,
-} from "../lib/api/espnSpreadPool";
+  fetchCbsPickemPicksForWeek,
+  gradeCbsPickemPick,
+  type CbsPickemPickWithGame,
+} from "../lib/api/cbsPickemPool";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-async function espnSpreadSave(body: any) {
+async function cbsPickemSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  const res = await fetch("/api/espn-spread-save", {
+  const res = await fetch("/api/cbs-pickem-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password, ...body }),
@@ -48,7 +48,7 @@ function GameSelectionStep({
   function load() {
     setLoading(true);
     setError(null);
-    Promise.all([fetchFbsGamesForWeek(season, week), fetchEspnSpreadPicksForWeek(season, week)])
+    Promise.all([fetchFbsGamesForWeek(season, week), fetchCbsPickemPicksForWeek(season, week)])
       .then(([games, picks]) => {
         setAvailable(games);
         setSelected(new Set(picks.map((p) => p.game_id)));
@@ -78,7 +78,7 @@ function GameSelectionStep({
     setSaving(true);
     setError(null);
     try {
-      await espnSpreadSave({ action: "selectGames", season, week, gameIds: Array.from(selected), keyGameId });
+      await cbsPickemSave({ action: "selectGames", season, week, gameIds: Array.from(selected), keyGameId });
       onSaved();
     } catch (err: any) {
       setError(err.message);
@@ -92,7 +92,7 @@ function GameSelectionStep({
     setSaving(true);
     setError(null);
     try {
-      await espnSpreadSave({ action: "selectGames", season, week, gameIds: [], keyGameId: null });
+      await cbsPickemSave({ action: "selectGames", season, week, gameIds: [], keyGameId: null });
       setSelected(new Set());
       setKeyGameId(null);
       onSaved();
@@ -165,7 +165,7 @@ function GameSelectionStep({
 }
 
 function PickingStep({ season, week, refreshToken }: { season: number; week: number; refreshToken: number }) {
-  const [picks, setPicks] = useState<EspnSpreadPickWithGame[]>([]);
+  const [picks, setPicks] = useState<CbsPickemPickWithGame[]>([]);
   const [draft, setDraft] = useState<Record<number, any>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -174,7 +174,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
 
   function load() {
     setLoading(true);
-    fetchEspnSpreadPicksForWeek(season, week, liveByTeam)
+    fetchCbsPickemPicksForWeek(season, week, liveByTeam)
       .then((data) => {
         setPicks(data);
         const d: Record<number, any> = {};
@@ -198,7 +198,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     setError(null);
     try {
       const payload = Object.entries(draft).map(([id, v]: any) => ({ id: Number(id), ...v }));
-      await espnSpreadSave({ action: "savePicks", picks: payload });
+      await cbsPickemSave({ action: "savePicks", picks: payload });
       load();
     } catch (err: any) {
       setError(err.message);
@@ -212,7 +212,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     setSaving(true);
     setError(null);
     try {
-      await espnSpreadSave({ action: "resetPicks", season, week });
+      await cbsPickemSave({ action: "resetPicks", season, week });
       load();
     } catch (err: any) {
       setError(err.message);
@@ -226,7 +226,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
 
   const record = picks.reduce(
     (acc, p) => {
-      const g = gradeEspnSpreadPick(p);
+      const g = gradeCbsPickemPick(p);
       if (g === "win") acc.wins++;
       else if (g === "loss") acc.losses++;
       else if (g === "push") acc.pushes++;
@@ -255,7 +255,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
             <tr>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Projection</th>
-              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>ESPN Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS Spread</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
@@ -265,7 +265,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               const g = p.game;
               if (!g) return null;
               const d = draft[p.id] ?? {};
-              const grade = gradeEspnSpreadPick(p);
+              const grade = gradeCbsPickemPick(p);
 
               return (
                 <tr key={p.id} style={{ background: p.is_key_game ? "var(--gold-dim)" : undefined }}>
@@ -288,7 +288,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     {fmt(p.myProjAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmt(p.espnAwaySpread)}
+                    {fmt(p.cbsAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>
@@ -325,7 +325,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   );
 }
 
-export default function EspnSpreadPanel({ onBack }: { onBack: () => void }) {
+export default function CbsPickemPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -337,19 +337,19 @@ export default function EspnSpreadPanel({ onBack }: { onBack: () => void }) {
       </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
-        <h2 style={{ margin: 0 }}>ESPN Spreads</h2>
+        <h2 style={{ margin: 0 }}>CBS Pickem</h2>
         <a
-          href="https://fantasy.espn.com/games/college-football-pickem-2026/picks"
+          href="https://picks.cbssports.com/college-football/pickem/challenge?entryId=ivxhi4tzhizdkmjqgy3tcmbu"
           target="_blank"
           rel="noopener noreferrer"
           className="menu-btn"
           style={{ textDecoration: "none" }}
         >
-          Open ESPN Pick'em ↗
+          Open CBS Pickem ↗
         </a>
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Pick against ESPN's own spread for each game. The key game shows the Vegas Total
+        Pick against CBS's own spread for each game. The key game shows the Vegas Total
         purely as a reference.
       </p>
 

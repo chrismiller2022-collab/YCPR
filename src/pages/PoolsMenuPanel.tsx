@@ -79,6 +79,11 @@ export default function PoolsMenuPanel({
           description="Fill in predicted margins for CFBD's own prediction contest CSV."
           onClick={() => onSelectPool("cfbdpickem")}
         />
+        <PoolTile
+          label="CBS Pickem"
+          description="Pick against CBS's spread for each game."
+          onClick={() => onSelectPool("cbspickem")}
+        />
       </div>
     </div>
   );
