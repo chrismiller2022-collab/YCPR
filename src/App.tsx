@@ -22,6 +22,8 @@ import WeekReportPage from "./pages/WeekReportPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
 import AdminPage from "./pages/AdminPage";
+import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
+import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -54,9 +56,25 @@ export default function App() {
   const handleHome = () => setPage({ type: "home" });
 
   useEffect(() => {
-    if (window.location.hash === "#admin") {
-      setPage({ type: "admin" });
+    function parseHash() {
+      if (window.location.hash === "#admin") {
+        setPage({ type: "admin" });
+        return;
+      }
+      const poolMatch = window.location.hash.match(/^#survivorpool-(.+)$/);
+      if (poolMatch) {
+        const standingsMatch = poolMatch[1].match(/^standings-(\d+)$/);
+        if (standingsMatch) {
+          setPage({ type: "survivorpoolstandings", season: parseInt(standingsMatch[1], 10) });
+        } else {
+          setPage({ type: "survivorpool", slug: poolMatch[1] });
+        }
+      }
     }
+
+    parseHash();
+    window.addEventListener("hashchange", parseHash);
+    return () => window.removeEventListener("hashchange", parseHash);
   }, []);
 
   // Quick links from the Admin dashboard — jump straight to a live public
@@ -100,6 +118,34 @@ export default function App() {
           onGoToRatings={goToLiveRatings}
           onGoToResume={goToLiveResume}
           onGoToSOS={goToLiveSOS}
+        />
+      </div>
+    );
+  }
+
+  if (page.type === "survivorpool") {
+    return (
+      <div className="page">
+        <SurvivorPoolPublicPage
+          slug={page.slug}
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (page.type === "survivorpoolstandings") {
+    return (
+      <div className="page">
+        <SurvivorPoolStandingsPage
+          season={page.season}
+          onHome={() => {
+            window.location.hash = "";
+            handleHome();
+          }}
         />
       </div>
     );
