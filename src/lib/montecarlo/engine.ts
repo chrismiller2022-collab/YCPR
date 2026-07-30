@@ -68,6 +68,24 @@ export function runMonteCarlo(
   const baseConfWins = new Array(n).fill(0);
   const baseConfLosses = new Array(n).fill(0);
 
+  // Synthetic rating for opponents with no power rating at all (D2/D3/NAIA
+  // "buy game" opponents FCS teams occasionally schedule) — median FCS
+  // rating + 28 (worse, since lower rating = better on this site). This
+  // avoids treating those games as a 50/50 coin flip, which would badly
+  // understate win totals for every team that plays one, since a coin flip
+  // is nowhere close to the ~95%+ real win probability against a team that
+  // isn't even FCS-caliber.
+  const fcsRatings = TEAMS.filter((t) => t.div === "FCS")
+    .map((t) => t.rating)
+    .sort((a, b) => a - b);
+  const medianFcsRating =
+    fcsRatings.length > 0
+      ? fcsRatings.length % 2 === 1
+        ? fcsRatings[(fcsRatings.length - 1) / 2]
+        : (fcsRatings[fcsRatings.length / 2 - 1] + fcsRatings[fcsRatings.length / 2]) / 2
+      : 0;
+  const SYNTHETIC_SUB_FCS_RATING = medianFcsRating + 28;
+
   const unmatchedTeams = new Set<string>();
   const remaining: RemainingGame[] = [];
 
@@ -105,12 +123,20 @@ export function runMonteCarlo(
     }
 
     // Remaining (not yet played) game — precompute win probability once,
-    // since ratings are static for the whole simulation.
+    // since ratings are static for the whole simulation. If exactly one
+    // side has no real rating (a sub-FCS buy-game opponent), use the
+    // synthetic rating for that side instead of falling back to a coin
+    // flip. Only fall back to a true coin flip if NEITHER side has a
+    // rating (shouldn't happen given the sync's division filter, but
+    // guarded here regardless).
+    const homeRatingValue = homeRatingTeam?.rating ?? (awayRatingTeam ? SYNTHETIC_SUB_FCS_RATING : null);
+    const awayRatingValue = awayRatingTeam?.rating ?? (homeRatingTeam ? SYNTHETIC_SUB_FCS_RATING : null);
+
     let awayWinProb = 0.5;
-    if (homeRatingTeam && awayRatingTeam) {
+    if (homeRatingValue != null && awayRatingValue != null) {
       const awaySpread = g.neutral_site
-        ? awayRatingTeam.rating - homeRatingTeam.rating
-        : awayRatingTeam.rating - homeRatingTeam.rating + hfaFor(g.home_team, liveByTeam);
+        ? awayRatingValue - homeRatingValue
+        : awayRatingValue - homeRatingValue + hfaFor(g.home_team, liveByTeam);
       const wp = spreadToWinPct(awaySpread);
       if (wp != null) awayWinProb = wp;
     }
