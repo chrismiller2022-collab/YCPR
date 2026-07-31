@@ -143,6 +143,7 @@ export async function fetchSpreadsForGames(season: number, gameIds: string[]): P
 export interface EntrantPickRow {
   id: number;
   week: number;
+  slot: number;
   game_id: string;
   team: string;
   submitted_at: string;
@@ -243,11 +244,11 @@ export function gradePickResult(pick: { game_id: string; team: string }, gamesBy
   return teamWon ? "win" : "loss";
 }
 
-export async function submitPick(slug: string, week: number, gameId: string, team: string) {
+export async function submitPick(slug: string, week: number, gameId: string, team: string, remove = false) {
   const res = await fetch("/api/survivor-pool-pick-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slug, week, gameId, team }),
+    body: JSON.stringify({ slug, week, gameId, team, remove }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to save pick");
