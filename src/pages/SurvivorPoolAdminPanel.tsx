@@ -243,6 +243,18 @@ function FpiRatingsTab({ season }: { season: number }) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
+  // CFBD may not have FPI published yet for the current season (e.g. very
+  // early/preseason) — sourceYear lets you pull a different year's FPI
+  // (like last season's) as a placeholder, saved tagged under `season`.
+  const [sourceYear, setSourceYear] = useState(season);
+
+  const [manualTeam, setManualTeam] = useState("");
+  const [manualConf, setManualConf] = useState("");
+  const [manualFpi, setManualFpi] = useState("");
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualMsg, setManualMsg] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
+
   function load() {
     setLoading(true);
     setError(null);
@@ -262,6 +274,7 @@ function FpiRatingsTab({ season }: { season: number }) {
   }
 
   useEffect(load, [season]);
+  useEffect(() => setSourceYear(season), [season]);
 
   async function handleSync() {
     setSyncing(true);
@@ -272,19 +285,56 @@ function FpiRatingsTab({ season }: { season: number }) {
       const res = await fetch("/api/fpi-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password, year: season }),
+        body: JSON.stringify({ password, year: season, sourceYear }),
       });
       const data = await res.json();
       if (!res.ok) {
         setSyncError(data.error ?? "FPI sync failed");
       } else {
-        setSyncMsg(`Synced FPI ratings for ${data.saved} of ${data.fetched} teams (${data.year}).`);
+        const sourceNote = data.sourceYear !== season ? ` (pulled from CFBD's ${data.sourceYear} data)` : "";
+        setSyncMsg(`Synced FPI ratings for ${data.saved} of ${data.fetched} teams, saved under season ${season}${sourceNote}.`);
         load();
       }
     } catch (err: any) {
       setSyncError(err.message ?? "FPI sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleManualSave() {
+    if (!manualTeam.trim() || manualFpi.trim() === "") return;
+    setManualSaving(true);
+    setManualMsg(null);
+    setManualError(null);
+    try {
+      const password = sessionStorage.getItem("admin_password") ?? "";
+      const res = await fetch("/api/fpi-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password,
+          year: season,
+          action: "manualUpsert",
+          team: manualTeam.trim(),
+          conference: manualConf.trim() || null,
+          fpi: Number(manualFpi),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setManualError(data.error ?? "Save failed");
+      } else {
+        setManualMsg(`Saved ${manualTeam.trim()}.`);
+        setManualTeam("");
+        setManualConf("");
+        setManualFpi("");
+        load();
+      }
+    } catch (err: any) {
+      setManualError(err.message ?? "Save failed");
+    } finally {
+      setManualSaving(false);
     }
   }
 
@@ -295,13 +345,22 @@ function FpiRatingsTab({ season }: { season: number }) {
       <div className="section-label">FPI Ratings — {season}</div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", marginTop: 0 }}>
         Diagnostic view for the public pool's FPI spread mode. If this table is empty, the
-        public grid's "FPI" odds toggle won't show any spreads either — sync below to fix
-        that.
+        public grid's "FPI" odds toggle won't show any spreads either.
       </p>
 
-      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+        <label style={{ fontSize: "0.82rem" }}>
+          Pull from CFBD's{" "}
+          <input
+            type="number"
+            value={sourceYear}
+            onChange={(e) => setSourceYear(parseInt(e.target.value, 10) || sourceYear)}
+            style={{ width: 80 }}
+          />{" "}
+          data
+        </label>
         <button onClick={handleSync} disabled={syncing}>
-          {syncing ? "Syncing…" : "Sync FPI Ratings"}
+          {syncing ? "Syncing…" : `Sync FPI Ratings (save as ${season})`}
         </button>
         <input
           placeholder="Filter by team…"
@@ -310,17 +369,36 @@ function FpiRatingsTab({ season }: { season: number }) {
           style={{ flex: 1, minWidth: 160, maxWidth: 260 }}
         />
       </div>
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        If CFBD doesn't have {season} FPI published yet (common very early in a season), set
+        the source year above to something like {season - 1} — it'll still be saved under
+        season {season} as a placeholder.
+      </p>
 
       {syncMsg && <p style={{ color: "green" }}>{syncMsg}</p>}
       {syncError && <p style={{ color: "crimson" }}>{syncError}</p>}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
+      <div style={{ marginTop: "1rem", marginBottom: "1.25rem", padding: "0.75rem", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.5rem" }}>
+          Manually add/edit one team (for placeholder values without a CFBD pull)
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+          <input placeholder="Team name" value={manualTeam} onChange={(e) => setManualTeam(e.target.value)} style={{ minWidth: 160 }} />
+          <input placeholder="Conference (optional)" value={manualConf} onChange={(e) => setManualConf(e.target.value)} style={{ minWidth: 140 }} />
+          <input placeholder="FPI value" type="number" value={manualFpi} onChange={(e) => setManualFpi(e.target.value)} style={{ width: 100 }} />
+          <button onClick={handleManualSave} disabled={manualSaving || !manualTeam.trim() || manualFpi.trim() === ""}>
+            {manualSaving ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {manualMsg && <p style={{ color: "green", marginTop: "0.5rem" }}>{manualMsg}</p>}
+        {manualError && <p style={{ color: "crimson", marginTop: "0.5rem" }}>{manualError}</p>}
+      </div>
+
       {loading ? (
         <p>Loading…</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: "#a15c00" }}>
-          No FPI ratings saved for {season} yet — click "Sync FPI Ratings" above.
-        </p>
+        <p style={{ color: "#a15c00" }}>No FPI ratings saved for {season} yet — sync or add one manually above.</p>
       ) : (
         <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 500, overflowY: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
@@ -466,8 +544,167 @@ function PicksTab({ season }: { season: number }) {
   );
 }
 
+// ---------------------------------------------------------------------
+// Private Standings tab — like the public standings page, but NEVER
+// gated by the reveal deadline. Shows submission time per pick and
+// flags any past-or-current week where an entrant is missing one or
+// both picks, so you know exactly who to remind.
+// ---------------------------------------------------------------------
+function PrivateStandingsTab({ season }: { season: number }) {
+  const [entrants, setEntrants] = useState<SurvivorPoolEntrant[]>([]);
+  const [picks, setPicks] = useState<any[]>([]);
+  const [poolGames, setPoolGames] = useState<PoolGameRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const settings = await fetchSurvivorPoolSettings(season);
+        const confs = settings?.conferences ?? [];
+        const [e, p, g] = await Promise.all([
+          fetchSurvivorPoolEntrants(season),
+          fetchAllSeasonPicks(season),
+          fetchPoolSeasonGames(season, confs),
+        ]);
+        setEntrants(e);
+        setPicks(p);
+        setPoolGames(g);
+      } catch (err: any) {
+        setError(err.message ?? "Failed to load standings");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [season]);
+
+  const gamesById = new Map(poolGames.map((g) => [g.gameId, g]));
+  const weeks = Array.from(new Set(poolGames.map((g) => g.week))).sort((a, b) => a - b);
+  const currentWeek = (() => {
+    const completed = poolGames.filter((g) => g.completed).map((g) => g.week);
+    return completed.length > 0 ? Math.max(...completed) + 1 : weeks[0] ?? 1;
+  })();
+
+  const picksByEntrant = new Map<number, Map<number, any[]>>();
+  for (const p of picks) {
+    const inner = picksByEntrant.get(p.entrant_id) ?? new Map<number, any[]>();
+    const list = inner.get(p.week) ?? [];
+    list.push(p);
+    inner.set(p.week, list);
+    picksByEntrant.set(p.entrant_id, inner);
+  }
+
+  if (loading) return <p>Loading…</p>;
+  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+
+  return (
+    <div>
+      <div className="section-label">Private Standings — {season}</div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", marginTop: 0 }}>
+        Same shape as the public standings page, but never withheld by the reveal deadline —
+        every pick and its submission time is visible here immediately, and any week up to
+        and including the current one with fewer than 2 picks is flagged in red so you know
+        who to remind.
+      </p>
+
+      {entrants.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)" }}>No entrants in this pool yet.</p>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", left: 0, background: "var(--turf-panel-2)", zIndex: 1 }}>
+                  Entrant
+                </th>
+                {weeks.map((w) => (
+                  <th key={w} style={{ padding: "0.4rem 0.5rem", textAlign: "center", minWidth: 130, borderBottom: "1px solid var(--hash)" }}>
+                    Wk {w}
+                    {w === currentWeek && <div style={{ fontSize: "0.62rem", fontWeight: 400 }}>(current)</div>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entrants.map((entrant) => {
+                const inner = picksByEntrant.get(entrant.id) ?? new Map<number, any[]>();
+                return (
+                  <tr key={entrant.id}>
+                    <td
+                      style={{
+                        position: "sticky",
+                        left: 0,
+                        background: "var(--turf-panel)",
+                        padding: "0.4rem 0.75rem",
+                        borderBottom: "1px solid var(--hash)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {entrant.name}
+                    </td>
+                    {weeks.map((w) => {
+                      const weekPicks: any[] = inner.get(w) ?? [];
+                      const needsAttention = w <= currentWeek && weekPicks.length < 2;
+                      return (
+                        <td
+                          key={w}
+                          style={{
+                            padding: "0.4rem 0.5rem",
+                            borderBottom: "1px solid var(--hash)",
+                            textAlign: "center",
+                            background: needsAttention ? "rgba(196,92,82,0.15)" : undefined,
+                          }}
+                        >
+                          {weekPicks.length === 0 ? (
+                            w <= currentWeek ? (
+                              <span style={{ color: "#c45c52", fontWeight: 700 }}>NEEDS PICKS</span>
+                            ) : (
+                              <span style={{ color: "var(--chalk-dim)" }}>–</span>
+                            )
+                          ) : (
+                            <>
+                              {weekPicks.map((p, i) => {
+                                const result = gradePickResult(p, gamesById);
+                                return (
+                                  <div key={i} style={{ marginBottom: "0.1rem" }}>
+                                    <span style={{ color: result === "loss" ? "#c45c52" : result === "win" ? "#8fd39a" : undefined }}>
+                                      {p.team}
+                                    </span>
+                                    {result !== "pending" && <span style={{ fontSize: "0.65rem" }}>{result === "win" ? " ✅" : " ❌"}</span>}
+                                    <div style={{ fontSize: "0.62rem", color: "var(--chalk-dim)" }}>
+                                      {new Date(p.submitted_at).toLocaleString(undefined, {
+                                        month: "short",
+                                        day: "numeric",
+                                        hour: "numeric",
+                                        minute: "2-digit",
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {weekPicks.length < 2 && w <= currentWeek && (
+                                <div style={{ fontSize: "0.65rem", color: "#c45c52", fontWeight: 700 }}>MISSING 1</div>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SurvivorPoolAdminPanel({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<"settings" | "entrants" | "picks" | "fpiratings">("settings");
+  const [tab, setTab] = useState<"settings" | "entrants" | "picks" | "fpiratings" | "privatestandings">("settings");
   const [season, setSeason] = useState(new Date().getFullYear());
 
   return (
@@ -503,12 +740,16 @@ export default function SurvivorPoolAdminPanel({ onBack }: { onBack: () => void 
         <button className={`mode-btn ${tab === "fpiratings" ? "mode-btn-active" : ""}`} onClick={() => setTab("fpiratings")}>
           FPI Ratings
         </button>
+        <button className={`mode-btn ${tab === "privatestandings" ? "mode-btn-active" : ""}`} onClick={() => setTab("privatestandings")}>
+          Private Standings
+        </button>
       </div>
 
       {tab === "settings" && <SettingsTab season={season} />}
       {tab === "entrants" && <EntrantsTab season={season} />}
       {tab === "picks" && <PicksTab season={season} />}
       {tab === "fpiratings" && <FpiRatingsTab season={season} />}
+      {tab === "privatestandings" && <PrivateStandingsTab season={season} />}
     </div>
   );
 }
