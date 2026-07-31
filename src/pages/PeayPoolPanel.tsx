@@ -9,11 +9,13 @@ const KEY_PICKS_TARGET = 3;
 
 async function peaySave(season: number, week: number, rows: PeayRow[]) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  const res = await fetch("/api/peay-save", {
+  const res = await fetch("/api/pool-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       password,
+      pool: "peay",
+      action: "saveWeek",
       season,
       week,
       rows: rows.map((r) => ({

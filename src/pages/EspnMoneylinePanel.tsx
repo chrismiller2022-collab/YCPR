@@ -10,10 +10,10 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 async function espnMlSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  const res = await fetch("/api/espn-ml-save", {
+  const res = await fetch("/api/pool-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, ...body }),
+    body: JSON.stringify({ password, pool: "espnml", ...body }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Save failed");

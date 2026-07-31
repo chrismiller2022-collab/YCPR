@@ -10,10 +10,10 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 async function espnSpreadSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  const res = await fetch("/api/espn-spread-save", {
+  const res = await fetch("/api/pool-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, ...body }),
+    body: JSON.stringify({ password, pool: "espnspread", ...body }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Save failed");

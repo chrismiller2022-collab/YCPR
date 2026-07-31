@@ -17,10 +17,10 @@ function fmtMl(v: number | null) {
 
 async function espnConfidenceSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  const res = await fetch("/api/espn-confidence-save", {
+  const res = await fetch("/api/pool-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, ...body }),
+    body: JSON.stringify({ password, pool: "espnconfidence", ...body }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Save failed");
