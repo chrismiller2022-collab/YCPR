@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
 import { availableConferences } from "../lib/survivor";
 import {
   fetchSurvivorPoolSettings,
@@ -226,6 +227,144 @@ function EntrantsTab({ season }: { season: number }) {
 import { fetchPoolSeasonGames, fetchAllSeasonPicks, gradePickResult, type PoolGameRow } from "../lib/api/survivorPoolPublic";
 
 // ---------------------------------------------------------------------
+// FPI Ratings tab — lets you confirm the FPI sync actually populated
+// data (and spot-check the values) without having to go dig through
+// Games & Lines. If spreads aren't showing in FPI mode on the public
+// grid, this is the first place to check — an empty table here means
+// the sync hasn't been run yet (or returned no matching rows) for this
+// season, not a bug in the grid itself.
+// ---------------------------------------------------------------------
+function FpiRatingsTab({ season }: { season: number }) {
+  const [rows, setRows] = useState<{ team: string; conference: string | null; fpi: number | null; updated_at: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  function load() {
+    setLoading(true);
+    setError(null);
+    supabase
+      .from("fpi_ratings")
+      .select("team, conference, fpi, updated_at")
+      .eq("season", season)
+      .order("team", { ascending: true })
+      .then(({ data, error: err }: any) => {
+        if (err) {
+          setError(err.message);
+        } else {
+          setRows(data ?? []);
+        }
+        setLoading(false);
+      });
+  }
+
+  useEffect(load, [season]);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMsg(null);
+    setSyncError(null);
+    try {
+      const password = sessionStorage.getItem("admin_password") ?? "";
+      const res = await fetch("/api/fpi-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, year: season }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSyncError(data.error ?? "FPI sync failed");
+      } else {
+        setSyncMsg(`Synced FPI ratings for ${data.saved} of ${data.fetched} teams (${data.year}).`);
+        load();
+      }
+    } catch (err: any) {
+      setSyncError(err.message ?? "FPI sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const filtered = rows.filter((r) => !query.trim() || r.team.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <div>
+      <div className="section-label">FPI Ratings — {season}</div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", marginTop: 0 }}>
+        Diagnostic view for the public pool's FPI spread mode. If this table is empty, the
+        public grid's "FPI" odds toggle won't show any spreads either — sync below to fix
+        that.
+      </p>
+
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <button onClick={handleSync} disabled={syncing}>
+          {syncing ? "Syncing…" : "Sync FPI Ratings"}
+        </button>
+        <input
+          placeholder="Filter by team…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ flex: 1, minWidth: 160, maxWidth: 260 }}
+        />
+      </div>
+
+      {syncMsg && <p style={{ color: "green" }}>{syncMsg}</p>}
+      {syncError && <p style={{ color: "crimson" }}>{syncError}</p>}
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+
+      {loading ? (
+        <p>Loading…</p>
+      ) : rows.length === 0 ? (
+        <p style={{ color: "#a15c00" }}>
+          No FPI ratings saved for {season} yet — click "Sync FPI Ratings" above.
+        </p>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 500, overflowY: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>
+                  Team
+                </th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>
+                  Conference
+                </th>
+                <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>
+                  FPI
+                </th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", position: "sticky", top: 0, background: "var(--turf-panel-2)" }}>
+                  Last synced
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.team}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.fpi != null ? r.fpi.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                    {new Date(r.updated_at).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: "0.75rem" }}>
+        {rows.length} teams total{query.trim() ? `, ${filtered.length} shown` : ""}.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Picks tab — everyone's picks, always visible here regardless of
 // deadline (this is the admin-gated view, not the public reveal-after-
 // deadline one).
@@ -328,7 +467,7 @@ function PicksTab({ season }: { season: number }) {
 }
 
 export default function SurvivorPoolAdminPanel({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<"settings" | "entrants" | "picks">("settings");
+  const [tab, setTab] = useState<"settings" | "entrants" | "picks" | "fpiratings">("settings");
   const [season, setSeason] = useState(new Date().getFullYear());
 
   return (
@@ -361,11 +500,15 @@ export default function SurvivorPoolAdminPanel({ onBack }: { onBack: () => void 
         <button className={`mode-btn ${tab === "picks" ? "mode-btn-active" : ""}`} onClick={() => setTab("picks")}>
           Picks
         </button>
+        <button className={`mode-btn ${tab === "fpiratings" ? "mode-btn-active" : ""}`} onClick={() => setTab("fpiratings")}>
+          FPI Ratings
+        </button>
       </div>
 
       {tab === "settings" && <SettingsTab season={season} />}
       {tab === "entrants" && <EntrantsTab season={season} />}
       {tab === "picks" && <PicksTab season={season} />}
+      {tab === "fpiratings" && <FpiRatingsTab season={season} />}
     </div>
   );
 }
