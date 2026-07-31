@@ -25,7 +25,7 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const { password, year } = req.body ?? {};
+  const { password, year, sourceYear, action } = req.body ?? {};
   if (password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: "Incorrect password" });
     return;
@@ -38,7 +38,32 @@ export default async function handler(req: any, res: any) {
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
-    const cfbdRes = await fetch(`${CFBD_BASE}/ratings/fpi?year=${year}`, {
+    // Manual entry — for when CFBD doesn't have FPI for this season yet
+    // (e.g. very early in a season before ratings are published) and you
+    // want to hand-enter a placeholder value for one team instead of
+    // pulling from CFBD at all.
+    if (action === "manualUpsert") {
+      const { team, conference, fpi } = req.body;
+      if (!team || fpi == null) {
+        res.status(400).json({ error: "Missing team or fpi" });
+        return;
+      }
+      const { error } = await supabaseAdmin.from("fpi_ratings").upsert(
+        [{ season: year, team, conference: conference ?? null, fpi, updated_at: new Date().toISOString() }],
+        { onConflict: "season,team" }
+      );
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    // sourceYear lets you pull a DIFFERENT year's FPI from CFBD (e.g. 2025,
+    // if 2026's hasn't been published yet) while still saving it tagged
+    // under the actual pool season (`year`) — so the rest of the app finds
+    // it under the season it actually needs, as a stand-in/placeholder.
+    const fetchYear = sourceYear && typeof sourceYear === "number" ? sourceYear : year;
+
+    const cfbdRes = await fetch(`${CFBD_BASE}/ratings/fpi?year=${fetchYear}`, {
       headers: { Authorization: `Bearer ${CFBD_API_KEY}`, Accept: "application/json" },
     });
     if (!cfbdRes.ok) {
@@ -66,7 +91,7 @@ export default async function handler(req: any, res: any) {
       saved = count ?? rows.length;
     }
 
-    res.status(200).json({ ok: true, year, fetched: (data ?? []).length, saved });
+    res.status(200).json({ ok: true, year, sourceYear: fetchYear, fetched: (data ?? []).length, saved });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "FPI sync failed" });
   }
