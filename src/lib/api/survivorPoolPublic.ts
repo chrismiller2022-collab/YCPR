@@ -1,5 +1,4 @@
 import { supabase } from "../supabaseClient";
-import { hfaFor } from "../odds";
 
 export interface SurvivorPoolEntrantPublic {
   id: number;
@@ -54,30 +53,38 @@ export async function fetchPoolSeasonGames(season: number, conferences: string[]
   }));
 }
 
-export interface SpreadWithSource {
-  awaySpread: number | null; // away-perspective, same site convention throughout
-  source: "vegas" | "fpi" | "unavailable";
+// Vegas and FPI are now kept fully separate (not a waterfall) so the UI
+// can offer them as two distinct view modes. Both are always "away
+// perspective" (negative = away favored), the same convention used
+// throughout this site — display code is responsible for flipping the
+// sign when showing a value from the HOME team's row (this was the
+// source of the Auburn/Baylor-both-show-+6.5 bug: the raw away-spread
+// value was being shown unflipped for the home team's row too).
+export interface GameSpreads {
+  vegasAwaySpread: number | null;
+  fpiAwaySpread: number | null;
 }
 
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
 
+// Per explicit request: FPI mode always uses a flat 2.4-point home-field
+// edge, not each team's live/custom HFA value.
+const FPI_FLAT_HFA = 2.4;
+
 /**
- * Vegas -> FPI waterfall for a batch of games. Vegas line (if synced) wins;
- * FPI is the fallback. FPI is higher-is-better (ESPN's own convention),
- * the opposite of this site's own power ratings, so the sign is flipped
- * to land in the site's existing away-perspective convention:
- *   awaySpread = homeFpi - awayFpi + hfa(home)
+ * Fetches Vegas and FPI spreads for a batch of games, independently (no
+ * fallback precedence baked in here — the UI toggle decides which to show).
+ * FPI is higher-is-better (ESPN's own convention), the opposite of this
+ * site's own power ratings, so the sign is flipped to land in the site's
+ * existing away-perspective convention:
+ *   awaySpread = homeFpi - awayFpi + 2.4 (flat, non-neutral-site games)
  * ESPN's FPI is designed so the difference between two teams' FPI values
  * approximates the expected scoring margin directly — this hasn't been
  * spot-checked against a real completed game yet, worth eyeballing once
  * results start coming in.
  */
-export async function fetchSpreadsForGames(
-  season: number,
-  gameIds: string[],
-  liveByTeam: Record<string, any>
-): Promise<Map<string, SpreadWithSource>> {
-  const result = new Map<string, SpreadWithSource>();
+export async function fetchSpreadsForGames(season: number, gameIds: string[]): Promise<Map<string, GameSpreads>> {
+  const result = new Map<string, GameSpreads>();
   if (gameIds.length === 0) return result;
 
   const [{ data: lines, error: linesError }, { data: fpiRows, error: fpiError }, { data: gameRows, error: gameError }] =
@@ -111,27 +118,23 @@ export async function fetchSpreadsForGames(
   for (const gameId of gameIds) {
     const g = gamesById.get(gameId);
     if (!g) {
-      result.set(gameId, { awaySpread: null, source: "unavailable" });
+      result.set(gameId, { vegasAwaySpread: null, fpiAwaySpread: null });
       continue;
     }
 
     const line = pickLine(linesByGame.get(gameId) ?? []);
-    if (line?.spread != null) {
-      result.set(gameId, { awaySpread: -line.spread, source: "vegas" });
-      continue;
-    }
+    const vegasAwaySpread = line?.spread != null ? -line.spread : null;
 
     const homeFpi = fpiByTeam.get(g.home_team);
     const awayFpi = fpiByTeam.get(g.away_team);
-    if (homeFpi != null && awayFpi != null) {
-      const awaySpread = g.neutral_site
-        ? homeFpi - awayFpi
-        : homeFpi - awayFpi + hfaFor(g.home_team, liveByTeam);
-      result.set(gameId, { awaySpread, source: "fpi" });
-      continue;
-    }
+    const fpiAwaySpread =
+      homeFpi != null && awayFpi != null
+        ? g.neutral_site
+          ? homeFpi - awayFpi
+          : homeFpi - awayFpi + FPI_FLAT_HFA
+        : null;
 
-    result.set(gameId, { awaySpread: null, source: "unavailable" });
+    result.set(gameId, { vegasAwaySpread, fpiAwaySpread });
   }
 
   return result;
