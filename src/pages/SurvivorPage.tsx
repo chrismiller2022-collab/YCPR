@@ -183,12 +183,15 @@ export default function SurvivorPage({
     }
   }
 
-  const allWeeksComplete = SURVIVOR_WEEKS.every((w) => (picks[w.key] || []).length === 2);
+  const regularWeeks = SURVIVOR_WEEKS.filter((w) => w.key !== "champ");
+  const regularWeeksComplete = regularWeeks.every((w) => (picks[w.key] || []).length === 2);
+  const champWeek = SURVIVOR_WEEKS.find((w) => w.key === "champ");
+  const champComplete = champWeek ? (picks[champWeek.key] || []).length === 2 : true;
 
   function downloadPdf() {
     const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
     doc.setFontSize(16);
-    doc.text("Survivor Pool — Full Picks", 40, 40);
+    doc.text("Survivor Pool — Picks Report", 40, 40);
     doc.setFontSize(10);
     doc.setTextColor(120);
     doc.text(`Generated ${new Date().toLocaleDateString()}`, 40, 56);
@@ -220,6 +223,36 @@ export default function SurvivorPage({
       headStyles: { fillColor: [31, 32, 65] },
       theme: "striped",
     });
+
+    if (!champComplete) {
+      const usedSoFar = allUsedTeams(picks);
+      const available = rowTeams(selectedConfs)
+        .filter((t) => !usedSoFar.has(t.team))
+        .sort((a, b) => a.rating - b.rating);
+
+      const afterY = (doc as any).lastAutoTable.finalY + 24;
+      doc.setFontSize(12);
+      doc.text("Available Teams for Conference Championship Week", 40, afterY);
+      doc.setFontSize(9);
+      doc.setTextColor(120);
+      doc.text("Ranked by power rating, best team first", 40, afterY + 14);
+      doc.setTextColor(0);
+
+      autoTable(doc, {
+        startY: afterY + 22,
+        margin: { left: 40, right: 40 },
+        head: [["Rank", "Team", "Conference", "Power Rating"]],
+        body: available.map((t, i) => [
+          String(i + 1),
+          t.team,
+          t.conf,
+          `${t.rating > 0 ? "+" : ""}${t.rating.toFixed(2)}`,
+        ]),
+        styles: { fontSize: 9, cellPadding: 5 },
+        headStyles: { fillColor: [31, 32, 65] },
+        theme: "striped",
+      });
+    }
 
     doc.save("survivor-picks.pdf");
   }
@@ -255,7 +288,7 @@ export default function SurvivorPage({
           </p>
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
-          {allWeeksComplete && (
+          {regularWeeksComplete && (
             <button className="menu-btn" onClick={downloadPdf}>
               Download PDF
             </button>
@@ -388,12 +421,18 @@ export default function SurvivorPage({
                       background: "var(--turf-panel)",
                       padding: "0.4rem 0.75rem",
                       borderBottom: "1px solid var(--hash)",
-                      textDecoration: usedTeams.has(team.team) ? "line-through" : "none",
-                      opacity: usedTeams.has(team.team) ? 0.5 : 1,
                       whiteSpace: "nowrap",
                     }}
                   >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.4rem",
+                        textDecoration: usedTeams.has(team.team) ? "line-through" : "none",
+                        opacity: usedTeams.has(team.team) ? 0.5 : 1,
+                      }}
+                    >
                       <TeamLogo team={team} />
                       {onNavigateTeam ? (
                         <button

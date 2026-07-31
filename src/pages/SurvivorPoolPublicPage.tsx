@@ -59,7 +59,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
 
   const [localPlan, setLocalPlan] = useState<Record<number, string[]>>({});
 
-  const [pendingAction, setPendingAction] = useState<{ team: string; gameId: string; mode: "add" | "remove" } | null>(null);
+  const [pendingActions, setPendingActions] = useState<{ team: string; gameId: string; mode: "add" | "remove" }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
@@ -198,7 +198,17 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
       if (lockTime && new Date() >= lockTime) return;
       setSubmitError(null);
       setSubmitMsg(null);
-      setPendingAction({ team, gameId: cell.gameId, mode: alreadyPicked ? "remove" : "add" });
+      // If this exact team+mode is already queued, clicking again cancels
+      // just that one queued action (toggle off) instead of stacking a
+      // contradictory pair.
+      setPendingActions((prev) => {
+        const mode = alreadyPicked ? "remove" : "add";
+        const existingIdx = prev.findIndex((a) => a.team === team);
+        if (existingIdx !== -1 && prev[existingIdx].mode === mode) {
+          return prev.filter((_, i) => i !== existingIdx);
+        }
+        return [...prev, { team, gameId: cell.gameId, mode }];
+      });
       setLocalPlan((prev) => {
         const next = { ...prev };
         const list = next[week] ?? [];
@@ -215,38 +225,45 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     }
   }
 
-  async function confirmPendingAction() {
-    if (!pendingAction) return;
+  async function confirmPendingActions() {
+    if (pendingActions.length === 0) return;
     setSubmitting(true);
     setSubmitError(null);
     setSubmitMsg(null);
+    const succeeded: string[] = [];
     try {
-      await submitPick(slug, currentWeek, pendingAction.gameId, pendingAction.team, pendingAction.mode === "remove");
-      setSubmitMsg(
-        pendingAction.mode === "add"
-          ? `Picked ${pendingAction.team} for Week ${currentWeek}.`
-          : `Removed ${pendingAction.team} from Week ${currentWeek}.`
-      );
-      setPendingAction(null);
+      for (const action of pendingActions) {
+        await submitPick(slug, currentWeek, action.gameId, action.team, action.mode === "remove");
+        succeeded.push(action.mode === "add" ? `Picked ${action.team}` : `Removed ${action.team}`);
+      }
+      setSubmitMsg(`${succeeded.join(", ")} for Week ${currentWeek}.`);
+      setPendingActions([]);
       await loadAll();
     } catch (err: any) {
-      setSubmitError(err.message ?? "Failed to save pick");
+      setSubmitError(
+        (succeeded.length > 0 ? `${succeeded.join(", ")} saved. ` : "") + (err.message ?? "Failed to save the rest")
+      );
+      // Reload to reflect whatever partially succeeded, and drop the queue
+      // rather than risk resubmitting an action that already went through.
+      setPendingActions([]);
+      await loadAll();
     } finally {
       setSubmitting(false);
     }
   }
 
-  function cancelPendingAction() {
-    if (pendingAction) {
-      setLocalPlan((prev) => {
-        const next = { ...prev };
-        const list = next[currentWeek] ?? [];
-        next[currentWeek] =
-          pendingAction.mode === "add" ? list.filter((t) => t !== pendingAction.team) : [...list, pendingAction.team];
-        return next;
-      });
-    }
-    setPendingAction(null);
+  function cancelPendingActions() {
+    // Revert every queued optimistic local toggle.
+    setLocalPlan((prev) => {
+      const next = { ...prev };
+      let list = next[currentWeek] ?? [];
+      for (const action of pendingActions) {
+        list = action.mode === "add" ? list.filter((t) => t !== action.team) : [...list, action.team];
+      }
+      next[currentWeek] = list;
+      return next;
+    });
+    setPendingActions([]);
   }
 
   if (loading) {
@@ -293,7 +310,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
   const currentWeekTeams = localPlan[currentWeek] ?? [];
 
   return (
-    <div style={{ padding: `1.5rem 1.25rem ${pendingAction ? "6rem" : "3rem"}`, maxWidth: 1150, margin: "0 auto" }}>
+    <div style={{ padding: `1.5rem 1.25rem ${pendingActions.length > 0 ? "6rem" : "3rem"}`, maxWidth: 1150, margin: "0 auto" }}>
       <div style={{ marginBottom: "1.25rem" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
           <div>
@@ -539,7 +556,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
         </div>
       )}
 
-      {pendingAction && (
+      {pendingActions.length > 0 && (
         <div
           style={{
             position: "fixed",
@@ -561,14 +578,20 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           }}
         >
           <span>
-            {pendingAction.mode === "add" ? "Confirm pick" : "Confirm removal"}: <strong>{pendingAction.team}</strong> — Week{" "}
-            {currentWeek}
+            Week {currentWeek}:{" "}
+            {pendingActions.map((a, i) => (
+              <span key={i}>
+                {a.mode === "add" ? "Pick " : "Remove "}
+                <strong>{a.team}</strong>
+                {i < pendingActions.length - 1 ? ", " : ""}
+              </span>
+            ))}
           </span>
           <div style={{ display: "flex", gap: "0.5rem" }}>
-            <button onClick={confirmPendingAction} disabled={submitting}>
-              {submitting ? "Saving…" : pendingAction.mode === "add" ? "Submit pick" : "Confirm removal"}
+            <button onClick={confirmPendingActions} disabled={submitting}>
+              {submitting ? "Saving…" : `Submit ${pendingActions.length} pick${pendingActions.length > 1 ? "s" : ""}`}
             </button>
-            <button className="menu-btn" onClick={cancelPendingAction} disabled={submitting}>
+            <button className="menu-btn" onClick={cancelPendingActions} disabled={submitting}>
               Cancel
             </button>
           </div>
