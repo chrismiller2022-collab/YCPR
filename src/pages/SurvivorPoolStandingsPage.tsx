@@ -60,27 +60,32 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
   }
 
   const picksByEntrant = useMemo(() => {
-    const map = new Map<number, Map<number, any>>();
+    const map = new Map<number, Map<number, any[]>>();
     for (const p of picks) {
-      const inner = map.get(p.entrant_id) ?? new Map<number, any>();
-      inner.set(p.week, p);
+      const inner = map.get(p.entrant_id) ?? new Map<number, any[]>();
+      const list = inner.get(p.week) ?? [];
+      list.push(p);
+      inner.set(p.week, list);
       map.set(p.entrant_id, inner);
     }
     return map;
   }, [picks]);
 
-  // Alive/eliminated: eliminated the first week a submitted pick lost, or
-  // the first past-deadline week with no pick submitted at all.
+  const PICKS_PER_WEEK = 2;
+
+  // Alive/eliminated: eliminated the first revealed week where the
+  // entrant doesn't have both required picks submitted, or where either
+  // submitted pick lost.
   function entrantStatus(entrantId: number): { alive: boolean; eliminatedWeek: number | null } {
     const inner = picksByEntrant.get(entrantId) ?? new Map();
     for (const w of weeks) {
       if (!isWeekRevealed(w)) break; // future/undecided weeks don't count yet
-      const pick = inner.get(w);
-      if (!pick) {
+      const weekPicks = inner.get(w) ?? [];
+      if (weekPicks.length < PICKS_PER_WEEK) {
         return { alive: false, eliminatedWeek: w };
       }
-      const result = gradePickResult(pick, gamesById);
-      if (result === "loss") {
+      const anyLoss = weekPicks.some((p: any) => gradePickResult(p, gamesById) === "loss");
+      if (anyLoss) {
         return { alive: false, eliminatedWeek: w };
       }
     }
@@ -197,7 +202,7 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
                     </td>
                     {weeks.map((w) => {
                       const revealed = isWeekRevealed(w);
-                      const pick = inner.get(w);
+                      const weekPicks: any[] = inner.get(w) ?? [];
 
                       if (!revealed) {
                         return (
@@ -209,29 +214,36 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
                           </td>
                         );
                       }
-                      if (!pick) {
+                      if (weekPicks.length === 0) {
                         return (
                           <td
                             key={w}
                             style={{ padding: "0.4rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "center", color: "var(--chalk-dim)" }}
                           >
-                            No pick
+                            No picks
                           </td>
                         );
                       }
-                      const result: PickResult = gradePickResult(pick, gamesById);
                       return (
-                        <td
-                          key={w}
-                          style={{
-                            padding: "0.4rem 0.5rem",
-                            borderBottom: "1px solid var(--hash)",
-                            textAlign: "center",
-                            color: result === "loss" ? "#c45c52" : result === "win" ? "#8fd39a" : undefined,
-                          }}
-                        >
-                          {pick.team}
-                          {result !== "pending" && <div style={{ fontSize: "0.68rem" }}>{result === "win" ? "✅" : "❌"}</div>}
+                        <td key={w} style={{ padding: "0.4rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "center" }}>
+                          {weekPicks.map((pick, i) => {
+                            const result: PickResult = gradePickResult(pick, gamesById);
+                            return (
+                              <div
+                                key={i}
+                                style={{
+                                  color: result === "loss" ? "#c45c52" : result === "win" ? "#8fd39a" : undefined,
+                                  marginBottom: i < weekPicks.length - 1 ? "0.2rem" : 0,
+                                }}
+                              >
+                                {pick.team}
+                                {result !== "pending" && (
+                                  <span style={{ fontSize: "0.68rem", marginLeft: "0.2rem" }}>{result === "win" ? "✅" : "❌"}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {weekPicks.length < 2 && <div style={{ fontSize: "0.68rem", color: "#a15c00" }}>(missing 1)</div>}
                         </td>
                       );
                     })}
