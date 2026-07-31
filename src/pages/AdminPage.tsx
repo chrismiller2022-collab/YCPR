@@ -11,6 +11,7 @@ import EspnSpreadPanel from "./EspnSpreadPanel";
 import EspnConfidencePanel from "./EspnConfidencePanel";
 import CfbdPickemPanel from "./CfbdPickemPanel";
 import CbsPickemPanel from "./CbsPickemPanel";
+import SurvivorPoolAdminPanel from "./SurvivorPoolAdminPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
@@ -207,7 +208,8 @@ type AdminView =
   | "espnspread"
   | "espnconfidence"
   | "cfbdpickem"
-  | "cbspickem";
+  | "cbspickem"
+  | "survivorpooladmin";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -420,6 +422,11 @@ function AdminDashboard({
           label="Survivor"
           description="Manage Survivor Pool picks and scores."
           onClick={() => onNavigateView("survivor")}
+        />
+        <MenuTile
+          label="Survivor Pool (Public)"
+          description="Conference scope + entrants for a public survivor pool."
+          onClick={() => onNavigateView("survivorpooladmin")}
         />
         <MenuTile
           label="Games & Lines"
@@ -683,6 +690,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       )}
 
       {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
+
+      {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
 
       {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
 
