@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import SortHeader from "../components/SortHeader";
 import {
   fetchEntrantBySlug,
   fetchPoolSeasonGames,
@@ -9,11 +10,10 @@ import {
   submitPick,
   type SurvivorPoolEntrantPublic,
   type PoolGameRow,
-  type SpreadWithSource,
+  type GameSpreads,
   type EntrantPickRow,
 } from "../lib/api/survivorPoolPublic";
 import { fetchSurvivorPoolSettings } from "../lib/api/survivorPoolAdmin";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 function fmtSpread(v: number | null) {
   if (v == null) return "–";
@@ -32,13 +32,15 @@ function fmtDeadline(d: Date | null) {
   });
 }
 
+type OddsMode = "vegas" | "fpi";
+
 interface GridCell {
   gameId: string;
   opponent: string;
   isHome: boolean;
   opponentConf: string | null;
   eligible: boolean;
-  spread: SpreadWithSource;
+  displaySpread: number | null;
   startDate: string | null;
 }
 
@@ -47,18 +49,22 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
   const [conferences, setConferences] = useState<string[]>([]);
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set());
   const [poolGames, setPoolGames] = useState<PoolGameRow[]>([]);
-  const [spreads, setSpreads] = useState<Map<string, SpreadWithSource>>(new Map());
+  const [spreads, setSpreads] = useState<Map<string, GameSpreads>>(new Map());
   const [picks, setPicks] = useState<EntrantPickRow[]>([]);
   const [hideUsed, setHideUsed] = useState(false);
+  const [oddsMode, setOddsMode] = useState<OddsMode>("vegas");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [localPlan, setLocalPlan] = useState<Record<number, string>>({});
 
   const [selection, setSelection] = useState<{ team: string; gameId: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const [sortWeek, setSortWeek] = useState<number | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   async function loadAll() {
     setLoading(true);
@@ -81,11 +87,12 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
       setPoolGames(games);
 
       const gameIds = games.map((g) => g.gameId);
-      const spreadMap = await fetchSpreadsForGames(e.season, gameIds, liveByTeam);
+      const spreadMap = await fetchSpreadsForGames(e.season, gameIds);
       setSpreads(spreadMap);
 
       const entrantPicks = await fetchEntrantPicks(e.id);
       setPicks(entrantPicks);
+      setLocalPlan(Object.fromEntries(entrantPicks.map((p) => [p.week, p.team])));
     } catch (err: any) {
       setError(err.message ?? "Failed to load pool");
     } finally {
@@ -97,8 +104,6 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
-
-  const usedTeams = useMemo(() => new Set(picks.map((p) => p.team)), [picks]);
 
   const weeks = useMemo(() => Array.from(new Set(poolGames.map((g) => g.week))).sort((a, b) => a - b), [poolGames]);
 
@@ -114,7 +119,9 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
 
   const currentPick = picks.find((p) => p.week === currentWeek) ?? null;
 
-  const rowTeams = useMemo(() => {
+  const plannedTeams = useMemo(() => new Set(Object.values(localPlan)), [localPlan]);
+
+  const baseRowTeams = useMemo(() => {
     const set = new Set<string>();
     for (const g of poolGames) {
       if (g.homeConference && selectedConfs.has(g.homeConference)) set.add(g.homeTeam);
@@ -130,9 +137,26 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     const opponent = isHome ? game.awayTeam : game.homeTeam;
     const opponentConf = isHome ? game.awayConference : game.homeConference;
     const eligible = !!opponentConf && selectedConfs.has(opponentConf);
-    const spread = spreads.get(game.gameId) ?? { awaySpread: null, source: "unavailable" as const };
-    return { gameId: game.gameId, opponent, isHome, opponentConf, eligible, spread, startDate: game.startDate };
+
+    const entry = spreads.get(game.gameId);
+    const raw = oddsMode === "vegas" ? entry?.vegasAwaySpread : entry?.fpiAwaySpread;
+    const displaySpread = raw == null ? null : isHome ? -raw : raw;
+
+    return { gameId: game.gameId, opponent, isHome, opponentConf, eligible, displaySpread, startDate: game.startDate };
   }
+
+  const rowTeams = useMemo(() => {
+    if (sortWeek == null) return baseRowTeams;
+    const withValues = baseRowTeams.map((team) => ({ team, value: cellFor(team, sortWeek)?.displaySpread ?? null }));
+    withValues.sort((a, b) => {
+      if (a.value == null && b.value == null) return 0;
+      if (a.value == null) return 1;
+      if (b.value == null) return -1;
+      return sortDir === "asc" ? a.value - b.value : b.value - a.value;
+    });
+    return withValues.map((w) => w.team);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseRowTeams, sortWeek, sortDir, spreads, oddsMode]);
 
   function toggleConf(conf: string) {
     setSelectedConfs((prev) => {
@@ -143,17 +167,43 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     });
   }
 
+  function handleWeekHeaderClick(week: number) {
+    if (sortWeek === week) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortWeek(week);
+      setSortDir("asc");
+    }
+  }
+
   function handleCellClick(team: string, week: number, cell: GridCell) {
-    if (week !== currentWeek) return;
     if (!cell.eligible) return;
-    const lockTime = computeGameLockTime(cell.startDate, weekDeadline);
-    if (lockTime && new Date() >= lockTime) return;
-    const usedElsewhere = picks.some((p) => p.team === team && p.week !== currentWeek);
+    const usedElsewhere = Object.entries(localPlan).some(([w, t]) => Number(w) !== week && t === team);
     if (usedElsewhere) return;
 
-    setSubmitError(null);
-    setSubmitMsg(null);
-    setSelection({ team, gameId: cell.gameId });
+    const isCurrentWeek = week === currentWeek;
+    const alreadyThisPick = localPlan[week] === team;
+
+    if (isCurrentWeek) {
+      const lockTime = computeGameLockTime(cell.startDate, weekDeadline);
+      if (lockTime && new Date() >= lockTime) return;
+      setSubmitError(null);
+      setSubmitMsg(null);
+      setSelection(alreadyThisPick ? null : { team, gameId: cell.gameId });
+      setLocalPlan((prev) => {
+        const next = { ...prev };
+        if (alreadyThisPick) delete next[week];
+        else next[week] = team;
+        return next;
+      });
+    } else {
+      setLocalPlan((prev) => {
+        const next = { ...prev };
+        if (alreadyThisPick) delete next[week];
+        else next[week] = team;
+        return next;
+      });
+    }
   }
 
   async function confirmSubmit() {
@@ -215,17 +265,40 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
   }
 
   return (
-    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: 1150, margin: "0 auto" }}>
       <div style={{ marginBottom: "1.25rem" }}>
-        <div className="eyebrow">Survivor Pool</div>
-        <h1 className="title" style={{ fontSize: "1.8rem" }}>
-          {entrant.name}'s Picks
-        </h1>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+          <div>
+            <div className="eyebrow">Survivor Pool</div>
+            <h1 className="title" style={{ fontSize: "1.8rem", margin: 0 }}>
+              {entrant.name}'s Picks
+            </h1>
+          </div>
+          <button
+            onClick={() => {
+              window.location.hash = `survivorpool-standings-${entrant.season}`;
+            }}
+            style={{
+              padding: "0.7rem 1.3rem",
+              fontSize: "0.95rem",
+              fontWeight: 700,
+              borderRadius: 8,
+              border: "1px solid var(--gold)",
+              background: "var(--gold-dim)",
+              color: "var(--chalk)",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            📊 View Full Pool Standings
+          </button>
+        </div>
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.9rem" }}>
           Week {currentWeek} is open for picks — overall deadline{" "}
           <strong style={{ color: "var(--chalk)" }}>{fmtDeadline(weekDeadline)}</strong>. Games
-          earlier in the week lock at their own kickoff instead. Other weeks are shown so you
-          can plan ahead, but can't be picked yet.
+          earlier in the week lock at their own kickoff instead. You can click ahead into
+          future weeks to plan — those clicks just grey out the team for planning and aren't
+          submitted until that week becomes current.
         </p>
         {currentPick && (
           <p style={{ fontSize: "0.85rem" }}>
@@ -237,19 +310,6 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
               minute: "2-digit",
             })}
             ) — you can still change this until it locks.
-          </p>
-        )}
-        {typeof entrant === "object" && entrant !== null && (
-          <p style={{ fontSize: "0.85rem" }}>
-            <a
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                window.location.hash = `survivorpool-standings-${entrant.season}`;
-              }}
-            >
-              View full pool standings →
-            </a>
           </p>
         )}
       </div>
@@ -264,11 +324,10 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           background: "var(--turf-panel)",
           border: "1px solid var(--hash)",
           borderRadius: 8,
+          alignItems: "center",
         }}
       >
-        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginRight: "0.5rem", alignSelf: "center" }}>
-          Conferences:
-        </span>
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginRight: "0.3rem" }}>Conferences:</span>
         {conferences.map((conf) => {
           const active = selectedConfs.has(conf);
           return (
@@ -289,6 +348,37 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
             </button>
           );
         })}
+
+        <span style={{ marginLeft: "1rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Odds:</span>
+        <div style={{ display: "flex", border: "1px solid var(--hash)", borderRadius: 6, overflow: "hidden" }}>
+          <button
+            onClick={() => setOddsMode("vegas")}
+            style={{
+              padding: "0.3rem 0.7rem",
+              fontSize: "0.78rem",
+              border: "none",
+              background: oddsMode === "vegas" ? "var(--gold-dim)" : "transparent",
+              color: oddsMode === "vegas" ? "var(--chalk)" : "var(--chalk-dim)",
+              cursor: "pointer",
+            }}
+          >
+            Vegas
+          </button>
+          <button
+            onClick={() => setOddsMode("fpi")}
+            style={{
+              padding: "0.3rem 0.7rem",
+              fontSize: "0.78rem",
+              border: "none",
+              background: oddsMode === "fpi" ? "var(--gold-dim)" : "transparent",
+              color: oddsMode === "fpi" ? "var(--chalk)" : "var(--chalk-dim)",
+              cursor: "pointer",
+            }}
+          >
+            FPI
+          </button>
+        </div>
+
         <button
           className="menu-btn"
           onClick={() => setHideUsed((v) => !v)}
@@ -323,25 +413,21 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                   Team
                 </th>
                 {weeks.map((w) => (
-                  <th
+                  <SortHeader
                     key={w}
-                    style={{
-                      padding: "0.4rem 0.5rem",
-                      textAlign: "center",
-                      minWidth: 100,
-                      borderBottom: "1px solid var(--hash)",
-                      background: w === currentWeek ? "var(--gold-dim)" : "var(--turf-panel-2)",
-                    }}
-                  >
-                    Week {w}
-                    {w === currentWeek && <div style={{ fontSize: "0.62rem", fontWeight: 400 }}>Pickable</div>}
-                  </th>
+                    label={`Week ${w}${w === currentWeek ? " (Pickable)" : ""}`}
+                    sortKey={String(w)}
+                    active={sortWeek === w}
+                    dir={sortDir}
+                    onClick={() => handleWeekHeaderClick(w)}
+                    align="center"
+                  />
                 ))}
               </tr>
             </thead>
             <tbody>
               {rowTeams
-                .filter((team) => !hideUsed || !usedTeams.has(team))
+                .filter((team) => !hideUsed || !plannedTeams.has(team))
                 .map((team) => (
                   <tr key={team}>
                     <td
@@ -352,8 +438,8 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                         background: "var(--turf-panel)",
                         padding: "0.4rem 0.75rem",
                         borderBottom: "1px solid var(--hash)",
-                        textDecoration: usedTeams.has(team) ? "line-through" : "none",
-                        opacity: usedTeams.has(team) ? 0.5 : 1,
+                        textDecoration: plannedTeams.has(team) ? "line-through" : "none",
+                        opacity: plannedTeams.has(team) ? 0.5 : 1,
                         whiteSpace: "nowrap",
                       }}
                     >
@@ -380,11 +466,10 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                       const isCurrentWeek = week === currentWeek;
                       const lockTime = isCurrentWeek ? computeGameLockTime(cell.startDate, weekDeadline) : null;
                       const locked = !!lockTime && new Date() >= lockTime;
-                      const usedElsewhere = picks.some((p) => p.team === team && p.week !== currentWeek);
-                      const isSelectedPick = currentPick?.team === team && isCurrentWeek;
-                      const isPendingSelection = selection?.team === team && isCurrentWeek;
-                      const clickable = isCurrentWeek && cell.eligible && !locked && !usedElsewhere;
-                      const dimmed = !cell.eligible || (usedTeams.has(team) && !isSelectedPick);
+                      const usedElsewhere = Object.entries(localPlan).some(([w, t]) => Number(w) !== week && t === team);
+                      const isPlanned = localPlan[week] === team;
+                      const clickable = cell.eligible && !usedElsewhere && !(isCurrentWeek && locked);
+                      const dimmed = !cell.eligible || (plannedTeams.has(team) && !isPlanned);
 
                       return (
                         <td
@@ -394,13 +479,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                             textAlign: "center",
                             padding: "0.35rem 0.4rem",
                             borderBottom: "1px solid var(--hash)",
-                            background: isSelectedPick
-                              ? "var(--gold-dim)"
-                              : isPendingSelection
-                              ? "rgba(255,200,87,0.15)"
-                              : isCurrentWeek
-                              ? "rgba(255,200,87,0.06)"
-                              : "transparent",
+                            background: isPlanned ? "var(--gold-dim)" : isCurrentWeek ? "rgba(255,200,87,0.06)" : "transparent",
                             opacity: dimmed ? 0.4 : 1,
                             cursor: clickable ? "pointer" : "default",
                           }}
@@ -410,7 +489,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                               : locked
                               ? "This game has already locked"
                               : usedElsewhere
-                              ? "Already used in another week"
+                              ? "Already used/planned in another week"
                               : undefined
                           }
                         >
@@ -418,25 +497,11 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
                             {cell.isHome ? "" : "@"}
                             {cell.opponent}
                           </div>
-                          <div style={{ fontSize: "0.68rem", opacity: 0.8 }}>
-                            {fmtSpread(cell.spread.awaySpread)}
-                            {cell.spread.source !== "unavailable" && (
-                              <span
-                                style={{
-                                  marginLeft: "0.3rem",
-                                  fontSize: "0.62rem",
-                                  padding: "0.05rem 0.3rem",
-                                  borderRadius: 999,
-                                  background: cell.spread.source === "vegas" ? "rgba(90,168,105,0.25)" : "rgba(111,177,224,0.25)",
-                                  color: cell.spread.source === "vegas" ? "#8fd39a" : "#9cc7e8",
-                                }}
-                              >
-                                {cell.spread.source === "vegas" ? "Vegas" : "FPI"}
-                              </span>
-                            )}
-                          </div>
+                          <div style={{ fontSize: "0.68rem", opacity: 0.8 }}>{fmtSpread(cell.displaySpread)}</div>
                           {isCurrentWeek && locked && <div style={{ fontSize: "0.62rem", color: "#a15c00" }}>Locked</div>}
-                          {isSelectedPick && <div style={{ fontSize: "0.62rem", color: "var(--gold)" }}>Your pick</div>}
+                          {isPlanned && (
+                            <div style={{ fontSize: "0.62rem", color: "var(--gold)" }}>{isCurrentWeek ? "Your pick" : "Planned"}</div>
+                          )}
                         </td>
                       );
                     })}
@@ -482,11 +547,10 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
       {submitError && <p style={{ color: "crimson", marginTop: "0.75rem" }}>{submitError}</p>}
 
       <div className="footer-note" style={{ marginTop: "1rem" }}>
-        Spreads use the Vegas line when available, otherwise a projection from ESPN's FPI —
-        the small badge on each cell shows which. Only Week {currentWeek} can be picked right
-        now; other weeks are shown for planning. A pick can be changed any time before it
-        locks — either at its own kickoff (for early-week games) or the week's overall
-        deadline, whichever comes first.
+        Click any week's header to sort teams by that week's spread (biggest favorite first).
+        Only Week {currentWeek} can actually be submitted — clicking ahead into other weeks
+        just plans a team locally so you can see how your choices play out, and resets if you
+        reload the page.
       </div>
     </div>
   );
