@@ -9,7 +9,15 @@ import {
 } from "../lib/api/survivorPoolPublic";
 import { fetchSurvivorPoolSettings, fetchSurvivorPoolEntrants, type SurvivorPoolEntrant } from "../lib/api/survivorPoolAdmin";
 
-export default function SurvivorPoolStandingsPage({ season, onHome }: { season: number; onHome?: () => void }) {
+export default function SurvivorPoolStandingsPage({
+  season,
+  viewerSlug,
+  onHome,
+}: {
+  season: number;
+  viewerSlug?: string | null;
+  onHome?: () => void;
+}) {
   const [entrants, setEntrants] = useState<SurvivorPoolEntrant[]>([]);
   const [picks, setPicks] = useState<(any & { entrant_id: number })[]>([]);
   const [poolGames, setPoolGames] = useState<PoolGameRow[]>([]);
@@ -59,6 +67,16 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
     return !deadline || new Date() >= deadline;
   }
 
+  const viewerEntrantId = useMemo(() => {
+    if (!viewerSlug) return null;
+    return entrants.find((e) => e.slug === viewerSlug)?.id ?? null;
+  }, [entrants, viewerSlug]);
+
+  function isWeekRevealedFor(week: number, entrantId: number): boolean {
+    if (viewerEntrantId != null && entrantId === viewerEntrantId) return true;
+    return isWeekRevealed(week);
+  }
+
   const picksByEntrant = useMemo(() => {
     const map = new Map<number, Map<number, any[]>>();
     for (const p of picks) {
@@ -79,7 +97,7 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
   function entrantStatus(entrantId: number): { alive: boolean; eliminatedWeek: number | null } {
     const inner = picksByEntrant.get(entrantId) ?? new Map();
     for (const w of weeks) {
-      if (!isWeekRevealed(w)) break; // future/undecided weeks don't count yet
+      if (!isWeekRevealedFor(w, entrantId)) break; // future/undecided weeks don't count yet
       const weekPicks = inner.get(w) ?? [];
       if (weekPicks.length < PICKS_PER_WEEK) {
         return { alive: false, eliminatedWeek: w };
@@ -119,6 +137,7 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
           A week's picks stay hidden for everyone until that week's own deadline passes — at
           that point nothing can be changed anyway, so revealing them can't give anyone an
           edge.
+          {viewerEntrantId != null && " Your own picks are shown early here, before the deadline — only yours."}
         </p>
         {onHome && (
           <p>
@@ -177,7 +196,7 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
                 const status = entrantStatus(entrant.id);
                 const inner = picksByEntrant.get(entrant.id) ?? new Map();
                 return (
-                  <tr key={entrant.id}>
+                  <tr key={entrant.id} style={{ background: entrant.id === viewerEntrantId ? "rgba(255,200,87,0.06)" : undefined }}>
                     <td
                       style={{
                         position: "sticky",
@@ -201,7 +220,7 @@ export default function SurvivorPoolStandingsPage({ season, onHome }: { season: 
                       )}
                     </td>
                     {weeks.map((w) => {
-                      const revealed = isWeekRevealed(w);
+                      const revealed = isWeekRevealedFor(w, entrant.id);
                       const weekPicks: any[] = inner.get(w) ?? [];
 
                       if (!revealed) {

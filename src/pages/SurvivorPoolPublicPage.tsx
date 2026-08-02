@@ -62,7 +62,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
   const [pendingActions, setPendingActions] = useState<{ team: string; gameId: string; mode: "add" | "remove" }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitMsg, setSubmitMsg] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{ week: number; teams: string[] } | null>(null);
 
   const [sortWeek, setSortWeek] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -197,14 +197,16 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
       const lockTime = computeGameLockTime(cell.startDate, weekDeadline);
       if (lockTime && new Date() >= lockTime) return;
       setSubmitError(null);
-      setSubmitMsg(null);
-      // If this exact team+mode is already queued, clicking again cancels
-      // just that one queued action (toggle off) instead of stacking a
-      // contradictory pair.
+      setConfirmation(null);
+      // A second click on the same team always cancels its queued action
+      // net-to-nothing — remove it from the queue entirely, whatever mode
+      // it was queued as. Without this, clicking a team then unclicking it
+      // left BOTH the add and the remove sitting in the queue, showing an
+      // inflated "Submit 4 picks" for what was really just 2 net changes.
       setPendingActions((prev) => {
         const mode = alreadyPicked ? "remove" : "add";
         const existingIdx = prev.findIndex((a) => a.team === team);
-        if (existingIdx !== -1 && prev[existingIdx].mode === mode) {
+        if (existingIdx !== -1) {
           return prev.filter((_, i) => i !== existingIdx);
         }
         return [...prev, { team, gameId: cell.gameId, mode }];
@@ -229,22 +231,20 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     if (pendingActions.length === 0) return;
     setSubmitting(true);
     setSubmitError(null);
-    setSubmitMsg(null);
-    const succeeded: string[] = [];
+    setConfirmation(null);
     try {
       for (const action of pendingActions) {
         await submitPick(slug, currentWeek, action.gameId, action.team, action.mode === "remove");
-        succeeded.push(action.mode === "add" ? `Picked ${action.team}` : `Removed ${action.team}`);
       }
-      setSubmitMsg(`${succeeded.join(", ")} for Week ${currentWeek}.`);
+      // localPlan already reflects the final state from the optimistic
+      // toggles as each cell was clicked, so it's the source of truth for
+      // exactly what's now picked for this week.
+      const finalTeams = localPlan[currentWeek] ?? [];
+      setConfirmation({ week: currentWeek, teams: finalTeams });
       setPendingActions([]);
       await loadAll();
     } catch (err: any) {
-      setSubmitError(
-        (succeeded.length > 0 ? `${succeeded.join(", ")} saved. ` : "") + (err.message ?? "Failed to save the rest")
-      );
-      // Reload to reflect whatever partially succeeded, and drop the queue
-      // rather than risk resubmitting an action that already went through.
+      setSubmitError(err.message ?? "Failed to save picks");
       setPendingActions([]);
       await loadAll();
     } finally {
@@ -321,7 +321,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           </div>
           <button
             onClick={() => {
-              window.location.hash = `survivorpool-standings-${entrant.season}`;
+              window.location.hash = `survivorpool-standings-${entrant.season}-viewer-${slug}`;
             }}
             style={{
               padding: "0.7rem 1.3rem",
@@ -598,7 +598,35 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
         </div>
       )}
 
-      {submitMsg && <p style={{ color: "green", marginTop: "0.75rem" }}>{submitMsg}</p>}
+      {confirmation && (
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem 1.1rem",
+            background: "var(--gold-dim)",
+            border: "1px solid var(--gold)",
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>✅ Picks confirmed for Week {confirmation.week}</div>
+          <div style={{ marginBottom: "0.75rem" }}>
+            {confirmation.teams.length > 0 ? (
+              <>
+                You've picked <strong>{confirmation.teams.join(" and ")}</strong> for Week {confirmation.week}.
+              </>
+            ) : (
+              "No picks currently made for this week."
+            )}
+          </div>
+          <button
+            onClick={() => {
+              window.location.hash = `survivorpool-standings-${entrant.season}-viewer-${slug}`;
+            }}
+          >
+            View Standings (your picks visible)
+          </button>
+        </div>
+      )}
       {submitError && <p style={{ color: "crimson", marginTop: "0.75rem" }}>{submitError}</p>}
 
       <div className="footer-note" style={{ marginTop: "1rem" }}>
