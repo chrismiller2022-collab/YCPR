@@ -24,6 +24,7 @@ import TopNav from "./pages/TopNav";
 import AdminPage from "./pages/AdminPage";
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
+import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -407,6 +408,8 @@ export default function App() {
       )}
 
       {page.type === "weekreport" && <WeekReportPage onHome={handleHome} />}
+
+      {page.type === "cfbsurvivor" && <CfbSurvivorToolPage onHome={handleHome} />}
     </div>
   );
 }
