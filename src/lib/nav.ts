@@ -25,6 +25,8 @@ export const NAV: any[] = [
       { key: "matchup", label: "Hypothetical Matchup", pageType: "matchup" },
       { key: "scheduleswap", label: "Schedule Swap", pageType: "scheduleswap" },
       { key: "resumecompare", label: "Resume Comparison", pageType: "resumecompare" },
+      { key: "confcompare", label: "Conference Comparison", pageType: "confcompare" },
+      { key: "tougheststretch", label: "Toughest Game Stretch", pageType: "tougheststretch" },
       { key: "playoff24", label: "24 Team Playoff (FCS Style)", pageType: "playoff24" },
       { key: "weekreport", label: "Week Report (PDF)", pageType: "weekreport" },
       { key: "cfbsurvivor", label: "CFB Survivor", pageType: "cfbsurvivor" },
@@ -82,7 +84,12 @@ export const NAV: any[] = [
   {
     key: "sos",
     label: "Strength of Schedule",
-    subs: [...WEEKS, { key: "live", label: "Live" }, { key: "weeklyprogression", label: "Weekly Progression" }],
+    subs: [
+      ...WEEKS,
+      { key: "live", label: "Live" },
+      { key: "weeklyprogression", label: "Weekly Progression" },
+      { key: "tougheststretch", label: "Toughest Game Stretch", pageType: "tougheststretch" },
+    ],
   },
   {
     key: "bracket",
@@ -142,6 +149,7 @@ export const NAV: any[] = [
       { key: "2024", label: "2024" },
       { key: "2025", label: "2025" },
       { key: "2026", label: "2026" },
+      { key: "all", label: "All" },
     ],
   },
 ];
