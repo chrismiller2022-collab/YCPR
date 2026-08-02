@@ -1796,3 +1796,202 @@
           font-size: 0.75rem;
           text-align: center;
         }
+
+        .conf-stat-cards {
+          margin-top: 2rem;
+        }
+
+        .conf-stat-card {
+          text-align: left;
+        }
+
+        .conf-stat-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.4rem 0;
+          border-bottom: 1px dashed var(--hash);
+        }
+
+        .conf-stat-row:last-of-type {
+          border-bottom: none;
+        }
+
+        .conf-stat-note {
+          margin: 0.6rem 0 0;
+          padding: 0;
+          text-align: left;
+        }
+
+        .lineup-table {
+          min-width: 820px;
+        }
+
+        .lineup-seed-cell {
+          color: var(--chalk-dim);
+          font-size: 0.75rem;
+          font-variant-numeric: tabular-nums;
+          text-align: center;
+        }
+
+        .lineup-team-cell {
+          white-space: nowrap;
+        }
+
+        .lineup-team-right {
+          text-align: right;
+        }
+
+        .lineup-team-right .matchup-team-btn {
+          flex-direction: row-reverse;
+        }
+
+        .conf-record-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+          margin-top: 2.5rem;
+        }
+
+        .footer-link {
+          color: var(--gold);
+          font-weight: 700;
+          text-decoration: none;
+        }
+
+        .footer-link:hover {
+          text-decoration: underline;
+        }
+
+        .stretch-list {
+          max-width: 1100px;
+          margin: 2rem auto 0;
+          padding: 0 1.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.1rem;
+        }
+
+        .stretch-card {
+          background: var(--turf-panel);
+          border: 1px solid var(--hash);
+          border-radius: 12px;
+          padding: 1.1rem 1.25rem;
+        }
+
+        .stretch-card-head {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .stretch-rank {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 2.2rem;
+          height: 2.2rem;
+          flex-shrink: 0;
+          border-radius: 50%;
+          background: var(--turf-panel-2);
+          color: var(--chalk-dim);
+          font-family: 'Anton', sans-serif;
+          font-size: 1rem;
+        }
+
+        .stretch-rank-1 {
+          background: var(--gold);
+          color: var(--turf);
+        }
+
+        .stretch-rank-top5 {
+          background: var(--gold-dim);
+          color: var(--chalk);
+        }
+
+        .stretch-team-block {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .stretch-team-link {
+          font-size: 1.05rem;
+        }
+
+        .stretch-team-meta {
+          margin-top: 0.2rem;
+          font-size: 0.75rem;
+          color: var(--chalk-dim);
+        }
+
+        .stretch-explosses {
+          text-align: right;
+          flex-shrink: 0;
+        }
+
+        .stretch-explosses-value {
+          font-family: 'Anton', sans-serif;
+          font-size: 1.7rem;
+          color: var(--gold);
+          line-height: 1;
+        }
+
+        .stretch-explosses-label {
+          margin-top: 0.2rem;
+          font-size: 0.62rem;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: var(--chalk-dim);
+        }
+
+        .stretch-games {
+          display: grid;
+          gap: 0.75rem;
+        }
+
+        .stretch-game-box {
+          background: var(--turf);
+          border: 1px solid var(--hash);
+          border-left-width: 3px;
+          border-radius: 8px;
+          padding: 0.7rem 0.75rem;
+        }
+
+        .stretch-game-loc {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--chalk-dim);
+          margin-bottom: 0.3rem;
+        }
+
+        .stretch-game-team {
+          font-size: 0.85rem;
+          margin-bottom: 0.3rem;
+        }
+
+        .stretch-game-rating {
+          font-size: 0.7rem;
+          color: var(--chalk-dim);
+          font-variant-numeric: tabular-nums;
+          margin-bottom: 0.5rem;
+        }
+
+        .stretch-game-spread {
+          font-family: 'Anton', sans-serif;
+          font-size: 1.3rem;
+          line-height: 1;
+        }
+
+        .stretch-game-winpct {
+          margin-top: 0.25rem;
+          font-size: 0.75rem;
+          font-weight: 700;
+        }
+
+        @media (max-width: 720px) {
+          .stretch-games {
+            grid-template-columns: 1fr !important;
+          }
+        }
