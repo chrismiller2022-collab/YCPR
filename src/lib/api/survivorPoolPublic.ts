@@ -13,6 +13,25 @@ export async function fetchEntrantBySlug(slug: string): Promise<SurvivorPoolEntr
   return data ?? null;
 }
 
+/**
+ * Looks up an entrant by just the short code (the random suffix after the
+ * last hyphen in their slug, e.g. slug "test1-es7ikk" -> code "es7ikk").
+ * This is what the public CFB Survivor tool's "enter your code" box uses —
+ * entrants only need to remember/type the short code, not the full link.
+ */
+export async function fetchEntrantByCode(code: string): Promise<SurvivorPoolEntrantPublic | null> {
+  const trimmed = code.trim().toLowerCase();
+  if (!trimmed) return null;
+  const { data, error } = await supabase
+    .from("survivor_pool_entrants")
+    .select("*")
+    .ilike("slug", `%-${trimmed}`)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
 export interface PoolGameRow {
   gameId: string;
   week: number;
