@@ -27,6 +27,7 @@ export const NAV: any[] = [
       { key: "resumecompare", label: "Resume Comparison", pageType: "resumecompare" },
       { key: "playoff24", label: "24 Team Playoff (FCS Style)", pageType: "playoff24" },
       { key: "weekreport", label: "Week Report (PDF)", pageType: "weekreport" },
+      { key: "cfbsurvivor", label: "CFB Survivor", pageType: "cfbsurvivor" },
     ],
   },
   {
