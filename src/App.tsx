@@ -5,6 +5,8 @@ import TeamPage from "./pages/TeamPage";
 import MatchupPage from "./pages/MatchupPage";
 import ScheduleSwapPage from "./pages/ScheduleSwapPage";
 import ResumeComparisonPage from "./pages/ResumeComparisonPage";
+import ConferenceComparisonPage from "./pages/ConferenceComparisonPage";
+import ToughestStretchPage from "./pages/ToughestStretchPage";
 import MatchupsPage from "./pages/MatchupsPage";
 import LiveWinTotalsPage from "./pages/LiveWinTotalsPage";
 import ResumeRatingsPage from "./pages/ResumeRatingsPage";
@@ -25,6 +27,7 @@ import AdminPage from "./pages/AdminPage";
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
+import BetHistoryPage from "./pages/BetHistoryPage";
 
 export default function App() {
   const [page, setPage] = useState<any>({ type: "home" });
@@ -64,9 +67,13 @@ export default function App() {
       }
       const poolMatch = window.location.hash.match(/^#survivorpool-(.+)$/);
       if (poolMatch) {
-        const standingsMatch = poolMatch[1].match(/^standings-(\d+)$/);
+        const standingsMatch = poolMatch[1].match(/^standings-(\d+)(?:-viewer-(.+))?$/);
         if (standingsMatch) {
-          setPage({ type: "survivorpoolstandings", season: parseInt(standingsMatch[1], 10) });
+          setPage({
+            type: "survivorpoolstandings",
+            season: parseInt(standingsMatch[1], 10),
+            viewerSlug: standingsMatch[2] || null,
+          });
         } else {
           setPage({ type: "survivorpool", slug: poolMatch[1] });
         }
@@ -143,6 +150,7 @@ export default function App() {
       <div className="page">
         <SurvivorPoolStandingsPage
           season={page.season}
+          viewerSlug={page.viewerSlug}
           onHome={() => {
             window.location.hash = "";
             handleHome();
@@ -358,6 +366,10 @@ export default function App() {
           />
         )}
 
+      {page.type === "sub" && page.catKey === "modelresults" && page.subKey === "all" && (
+        <BetHistoryPage onHome={handleHome} />
+      )}
+
       {page.type === "sub" &&
         !(page.catKey === "matchups") &&
         !(page.catKey === "wintotals" && page.subKey === "live") &&
@@ -377,7 +389,8 @@ export default function App() {
         !(
           page.catKey === "futures" &&
           (page.subKey === "confwinodds" || page.subKey === "confwintotals" || page.subKey === "natty")
-        ) && (
+        ) &&
+        !(page.catKey === "modelresults" && page.subKey === "all") && (
           <ComingSoon categoryLabel={page.catLabel} subLabel={page.subLabel} />
         )}
 
@@ -397,6 +410,18 @@ export default function App() {
 
       {page.type === "resumecompare" && (
         <ResumeComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "confcompare" && (
+        <ConferenceComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "tougheststretch" && (
+        <ToughestStretchPage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
       )}
 
       {page.type === "playoff24" && (
