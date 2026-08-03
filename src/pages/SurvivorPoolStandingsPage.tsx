@@ -97,7 +97,14 @@ export default function SurvivorPoolStandingsPage({
   function entrantStatus(entrantId: number): { alive: boolean; eliminatedWeek: number | null } {
     const inner = picksByEntrant.get(entrantId) ?? new Map();
     for (const w of weeks) {
-      if (!isWeekRevealedFor(w, entrantId)) break; // future/undecided weeks don't count yet
+      // Deliberately the plain, non-viewer-aware check here — whether a
+      // week actually counts toward elimination depends on its real
+      // deadline having passed, the same for everyone. Using the
+      // viewer-aware early-reveal here was the bug: it made every future,
+      // not-yet-open week look "concluded" for the viewer's own row,
+      // wrongly flagging missing picks for weeks that haven't even
+      // opened yet as an elimination.
+      if (!isWeekRevealed(w)) break;
       const weekPicks = inner.get(w) ?? [];
       if (weekPicks.length < PICKS_PER_WEEK) {
         return { alive: false, eliminatedWeek: w };

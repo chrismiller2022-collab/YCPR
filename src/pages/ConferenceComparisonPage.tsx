@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { conferencesForDivision, teamsForConference } from "../data/teams";
 import { SOS_BY_TEAM } from "../data/sor";
+import { RESUME_BY_TEAM } from "../data/resume";
 import { spreadColor, spreadToWinPct } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
@@ -36,7 +37,7 @@ function ConferencePicker({ label, division, conference, onDivision, onConferenc
   );
 }
 
-function StatCard({ label, count, avgRating, avgSos }: any) {
+function StatCard({ label, count, avgRating, avgSos, avgResume }: any) {
   return (
     <div className="spread-card conf-stat-card">
       <div className="spread-team">{label}</div>
@@ -56,6 +57,15 @@ function StatCard({ label, count, avgRating, avgSos }: any) {
           style={avgSos != null ? { color: spreadColor(avgSos) } : undefined}
         >
           {avgSos != null ? (avgSos > 0 ? "+" : "") + avgSos.toFixed(2) : "–"}
+        </span>
+      </div>
+      <div className="conf-stat-row">
+        <span className="compare-row-label">Avg Resume Rating</span>
+        <span
+          className="compare-value-wrap"
+          style={avgResume != null ? { color: spreadColor(avgResume) } : undefined}
+        >
+          {avgResume != null ? (avgResume > 0 ? "+" : "") + avgResume.toFixed(2) : "–"}
         </span>
       </div>
       <div className="footer-note conf-stat-note">{count} teams</div>
@@ -97,7 +107,10 @@ function LineupRow({ seed, left, right, onNavigateTeam }: any) {
       <td className="matchups-winpct-cell" style={{ color: spreadColor(leftSpread) }}>
         {(leftWinPct * 100).toFixed(1)}%
       </td>
-      <td className="matchup-team-cell lineup-team-cell lineup-team-right">
+      <td
+        className="matchup-team-cell lineup-team-cell lineup-team-right"
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.6rem", paddingRight: "1.25rem" }}
+      >
         <span
           className={`matchup-rating ${right.liveRating < 0 ? "rating-good" : "rating-bad"}`}
         >
@@ -112,7 +125,7 @@ function LineupRow({ seed, left, right, onNavigateTeam }: any) {
           <TeamLogo team={right} />
         </button>
       </td>
-      <td className="matchups-winner-cell">
+      <td className="matchups-winner-cell" style={{ paddingLeft: "1rem" }}>
         {favored === "left" ? left.team : favored === "right" ? right.team : "Pick'em"}
       </td>
     </tr>
@@ -133,25 +146,33 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
   const sosFor = (teamName: string) =>
     liveByTeam[teamName]?.sor ?? SOS_BY_TEAM[teamName] ?? null;
 
-  const teamsA = useMemo(
-    () =>
-      (confA ? teamsForConference(divA, confA) : []).map((t) => ({
-        ...t,
-        liveRating: ratingFor(t.team, t.rating),
-        liveSos: sosFor(t.team),
-      })),
-    [divA, confA, liveByTeam]
-  );
+  const resumeFor = (teamName: string) =>
+    liveByTeam[teamName]?.resume ?? RESUME_BY_TEAM[teamName] ?? null;
 
-  const teamsB = useMemo(
-    () =>
-      (confB ? teamsForConference(divB, confB) : []).map((t) => ({
-        ...t,
-        liveRating: ratingFor(t.team, t.rating),
-        liveSos: sosFor(t.team),
-      })),
-    [divB, confB, liveByTeam]
-  );
+  // Sorted best-to-worst by LIVE rating (not just whatever order
+  // teamsForConference happened to return) — this is the fix for the
+  // Clemson-below-Louisville bug: the list was being paired/displayed in
+  // its original order, which doesn't reflect live rating updates, so a
+  // team could have a better live rating than the team above it.
+  const teamsA = useMemo(() => {
+    const list = (confA ? teamsForConference(divA, confA) : []).map((t) => ({
+      ...t,
+      liveRating: ratingFor(t.team, t.rating),
+      liveSos: sosFor(t.team),
+      liveResume: resumeFor(t.team),
+    }));
+    return list.sort((a, b) => a.liveRating - b.liveRating);
+  }, [divA, confA, liveByTeam]);
+
+  const teamsB = useMemo(() => {
+    const list = (confB ? teamsForConference(divB, confB) : []).map((t) => ({
+      ...t,
+      liveRating: ratingFor(t.team, t.rating),
+      liveSos: sosFor(t.team),
+      liveResume: resumeFor(t.team),
+    }));
+    return list.sort((a, b) => a.liveRating - b.liveRating);
+  }, [divB, confB, liveByTeam]);
 
   const bothSelected = !!confA && !!confB;
   const sameConf = bothSelected && divA === divB && confA === confB;
@@ -163,6 +184,8 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
   const avgRatingB = avgOf(teamsB.map((t) => t.liveRating));
   const avgSosA = avgOf(teamsA.map((t) => t.liveSos).filter((v) => v != null) as number[]);
   const avgSosB = avgOf(teamsB.map((t) => t.liveSos).filter((v) => v != null) as number[]);
+  const avgResumeA = avgOf(teamsA.map((t) => t.liveResume).filter((v) => v != null) as number[]);
+  const avgResumeB = avgOf(teamsB.map((t) => t.liveResume).filter((v) => v != null) as number[]);
 
   const pairCount = Math.min(teamsA.length, teamsB.length);
   const pairs = Array.from({ length: pairCount }, (_, i) => ({
@@ -236,8 +259,8 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
         {bothSelected && !sameConf && (
           <>
             <div className="spread-cards conf-stat-cards">
-              <StatCard label={confA} count={teamsA.length} avgRating={avgRatingA} avgSos={avgSosA} />
-              <StatCard label={confB} count={teamsB.length} avgRating={avgRatingB} avgSos={avgSosB} />
+              <StatCard label={confA} count={teamsA.length} avgRating={avgRatingA} avgSos={avgSosA} avgResume={avgResumeA} />
+              <StatCard label={confB} count={teamsB.length} avgRating={avgRatingB} avgSos={avgSosB} avgResume={avgResumeB} />
             </div>
 
             <div className="table-wrap compare-table-wrap">

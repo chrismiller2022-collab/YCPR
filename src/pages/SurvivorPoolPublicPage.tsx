@@ -338,6 +338,30 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
             View Full Pool Standings
           </button>
         </div>
+
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+          {onHome && (
+            <button
+              className="menu-btn"
+              onClick={onHome}
+              style={{ fontSize: "0.82rem" }}
+            >
+              ← Back to main site
+            </button>
+          )}
+          <a
+            href="https://www.espn.com/college-football/fpi"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="menu-btn"
+            style={{ fontSize: "0.82rem", textDecoration: "none" }}
+          >
+            ESPN FPI Ratings ↗
+          </a>
+          <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", alignSelf: "center" }}>
+            Spreads not sourced from Vegas use ESPN's FPI power ratings instead.
+          </span>
+        </div>
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.9rem" }}>
           Week {currentWeek} is open for picks — overall deadline{" "}
           <strong style={{ color: "var(--chalk)" }}>{fmtDeadline(weekDeadline)}</strong>. Games
@@ -348,16 +372,27 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           becomes current.
         </p>
         {currentWeekPicks.length > 0 && (
-          <p style={{ fontSize: "0.85rem" }}>
-            Submitted for Week {currentWeek}:{" "}
+          <div
+            style={{
+              marginTop: "0.9rem",
+              padding: "0.9rem 1.1rem",
+              background: "rgba(90,168,105,0.15)",
+              border: "1px solid #5aa869",
+              borderRadius: 8,
+              fontSize: "1rem",
+            }}
+          >
+            <span style={{ fontWeight: 700, color: "#8fd39a" }}>✅ Picks submitted for Week {currentWeek}: </span>
             {currentWeekPicks.map((p, i) => (
-              <span key={p.id}>
-                <strong>{p.team}</strong>
-                {i < currentWeekPicks.length - 1 ? ", " : ""}
+              <span key={p.id} style={{ fontWeight: 700 }}>
+                {p.team}
+                {i < currentWeekPicks.length - 1 ? " and " : ""}
               </span>
-            ))}{" "}
-            — you can still change these until they lock.
-          </p>
+            ))}
+            <div style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "0.25rem", fontWeight: 400 }}>
+              You can still change these until they lock.
+            </div>
+          </div>
         )}
       </div>
 
