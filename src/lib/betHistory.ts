@@ -1,4 +1,7 @@
 import { type BetHistoryRecord } from "../data/betHistory.data";
+import { isP4, bucketFor } from "./conferenceBuckets";
+
+export { isP4, bucketFor };
 
 export type HfaMode = "flat" | "teamSpecific";
 
@@ -16,23 +19,8 @@ export const DEFAULT_HFA_MODE_BY_SEASON: Record<number, HfaMode> = {
   2026: "teamSpecific",
 };
 
-// ---------------------------------------------------------------------
-// P4 / G6 classification. Notre Dame and UConn are both independents
-// (same conference string), so this has to special-case by team name,
-// not just by conference.
-// ---------------------------------------------------------------------
-const P4_CONFERENCES = new Set(["SEC", "Big Ten", "Big 12", "ACC"]);
-const P4_INDEPENDENTS = new Set(["Notre Dame"]);
-
-export function isP4(team: string, conference: string): boolean {
-  if (P4_CONFERENCES.has(conference)) return true;
-  if (P4_INDEPENDENTS.has(team)) return true;
-  return false;
-}
-
-export function bucketFor(team: string, conference: string): "P4" | "G6" {
-  return isP4(team, conference) ? "P4" : "G6";
-}
+// P4/G6 classification lives in ./conferenceBuckets now (shared with
+// Toughest Game Stretch) — imported and re-exported above.
 
 // ---------------------------------------------------------------------
 // Grading a single record under a given HFA mode + filter threshold.
