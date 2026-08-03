@@ -5,12 +5,15 @@ import { gamesForTeam } from "../data/games";
 import { CONFERENCES, TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { bucketFor } from "../lib/conferenceBuckets";
 
 const GAME_COUNTS = [2, 3, 4];
+const CONF_FILTER_OPTIONS = ["All", "P4", "G6"];
 
 interface StretchEntry {
   game: ReturnType<typeof gamesForTeam>[number];
   opp: any;
+  liveOppRating: number;
   isHome: boolean;
   spread: number;
   winPct: number;
@@ -25,11 +28,40 @@ interface StretchResult {
   endWeek: number;
 }
 
-// For a single team, walks its full (chronological, bye-tolerant) schedule
-// and returns whichever N-consecutive-game window has the highest combined
-// expected losses — i.e. that team's single toughest stretch of the year.
-function computeToughestWindow(team: any, n: number, liveByTeam: Record<string, any>): StretchResult | null {
-  const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
+/**
+ * Top-25 average rating, computed separately for FBS and FCS, using live
+ * ratings where available. This is the "average elite team" stand-in used
+ * in place of each subject team's own rating (see computeToughestWindow).
+ */
+function computeTop25Avg(div: "FBS" | "FCS", liveByTeam: Record<string, any>): number {
+  const ratings = TEAMS.filter((t) => t.div === div)
+    .map((t) => liveByTeam[t.team]?.rating ?? t.rating)
+    .sort((a, b) => a - b) // ascending — most negative (best) first
+    .slice(0, 25);
+  if (ratings.length === 0) return 0;
+  return ratings.reduce((s, v) => s + v, 0) / ratings.length;
+}
+
+/**
+ * For a single team's SCHEDULE, walks its full (chronological,
+ * bye-tolerant) games and returns whichever N-consecutive-game window is
+ * toughest — but "toughest" is measured for a hypothetical AVERAGE TOP-25
+ * TEAM playing that same opponent stretch, not for this team itself.
+ *
+ * This is the fix for the "toughest stretches are just the worst teams"
+ * problem: the subject team's own rating is replaced with a constant (the
+ * top-25 average for their division), while the opponent's actual rating
+ * is left untouched. That isolates how hard the OPPONENTS are, independent
+ * of whether the team on this specific schedule happens to be good or bad.
+ */
+function computeToughestWindow(
+  team: any,
+  n: number,
+  liveByTeam: Record<string, any>,
+  top25AvgByDiv: { FBS: number; FCS: number }
+): StretchResult | null {
+  const normalizedRating = top25AvgByDiv[team.div as "FBS" | "FCS"] ?? top25AvgByDiv.FBS;
+  const liveOppRatingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
 
   const entries: StretchEntry[] = gamesForTeam(team.team)
     .map((game) => {
@@ -38,14 +70,13 @@ function computeToughestWindow(team: any, n: number, liveByTeam: Record<string, 
       const opp = TEAMS_BY_NAME[oppName];
       if (!opp) return null;
 
-      const teamRating = ratingFor(team.team, team.rating);
-      const oppRating = ratingFor(oppName, opp.rating);
+      const liveOppRating = liveOppRatingFor(oppName, opp.rating);
       const spread = isHome
-        ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
-        : teamRating - oppRating + hfaFor(oppName, liveByTeam);
+        ? normalizedRating - liveOppRating - hfaFor(team.team, liveByTeam)
+        : normalizedRating - liveOppRating + hfaFor(oppName, liveByTeam);
       const winPct = spreadToWinPct(spread);
 
-      return { game, opp, isHome, spread, winPct, expLoss: 1 - winPct };
+      return { game, opp, liveOppRating, isHome, spread, winPct, expLoss: 1 - winPct };
     })
     .filter((e): e is StretchEntry => e !== null);
 
@@ -78,8 +109,8 @@ function StretchGameBox({ entry, onNavigateTeam }: any) {
         {entry.opp.team}
       </button>
       <div className="stretch-game-rating">
-        {entry.opp.rating > 0 ? "+" : ""}
-        {entry.opp.rating.toFixed(2)}
+        {entry.liveOppRating > 0 ? "+" : ""}
+        {entry.liveOppRating.toFixed(2)}
       </div>
       <div className="stretch-game-spread" style={{ color: spreadColor(entry.spread) }}>
         {entry.spread > 0 ? "+" : ""}
@@ -135,20 +166,30 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
+  const top25AvgByDiv = useMemo(
+    () => ({
+      FBS: computeTop25Avg("FBS", liveByTeam),
+      FCS: computeTop25Avg("FCS", liveByTeam),
+    }),
+    [liveByTeam]
+  );
+
   const rows = useMemo(() => {
     const pool = TEAMS.filter((t) => {
       if (division !== "All" && t.div !== division) return false;
-      if (conference !== "All" && t.conf !== conference) return false;
+      if (conference === "P4" && bucketFor(t.team, t.conf) !== "P4") return false;
+      if (conference === "G6" && bucketFor(t.team, t.conf) !== "G6") return false;
+      if (conference !== "All" && conference !== "P4" && conference !== "G6" && t.conf !== conference) return false;
       return true;
     });
 
     const results = pool
-      .map((t) => computeToughestWindow(t, gameCount, liveByTeam))
+      .map((t) => computeToughestWindow(t, gameCount, liveByTeam, top25AvgByDiv))
       .filter((r): r is StretchResult => r !== null);
 
     results.sort((a, b) => b.totalExpLoss - a.totalExpLoss);
     return results;
-  }, [gameCount, division, conference, liveByTeam]);
+  }, [gameCount, division, conference, liveByTeam, top25AvgByDiv]);
 
   return (
     <div className="matchups-page">
@@ -159,10 +200,12 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
         <div className="eyebrow">Tools · Strength of Schedule</div>
         <h1 className="title matchup-title">TOUGHEST GAME STRETCH</h1>
         <p className="subtitle team-subtitle">
-          For every team, this finds the toughest run of consecutive games on
-          their actual schedule (bye weeks don't break the streak), ranked by
-          expected losses — each game's own probability of losing, based on
-          the two teams' current power ratings, summed across the stretch.
+          For every team's actual schedule, this finds the toughest run of consecutive
+          opponents (bye weeks don't break the streak) — measured as how many expected
+          losses an <em>average top-25 team</em> would take against that same stretch of
+          opponents, not how many this specific team would take. That isolates how hard the
+          opponents are, independent of whether the team on that schedule happens to be good
+          or bad.
         </p>
       </div>
 
@@ -196,7 +239,11 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
           value={conference}
           onChange={(e) => setConference(e.target.value)}
         >
-          <option value="All">All conferences</option>
+          {CONF_FILTER_OPTIONS.map((c) => (
+            <option key={c} value={c}>
+              {c === "All" ? "All conferences" : c === "P4" ? "Power 4 (+ Notre Dame)" : "Group of 6 (+ UConn)"}
+            </option>
+          ))}
           {(division === "All" ? CONFERENCES : conferencesForDivision(division)).map((c) => (
             <option key={c} value={c}>
               {c}
@@ -224,12 +271,12 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
       </div>
 
       <div className="footer-note">
-        Expected losses = {gameCount} games minus the sum of this team's own
-        win probability in each of those games — a team completely favored to
-        win every game would show 0.00, a team a total underdog in all of
-        them would show {gameCount.toFixed(2)}. Ratings are neutral of home
-        field except where a game has a designated home team. Idea and
-        format credit to{" "}
+        Expected losses = {gameCount} games minus the sum of an average top-25 team's win
+        probability in each of those games, using each team's real opponents, sites, and
+        home-field edges — a stretch where a top-25 team would be favored in every game shows
+        close to 0.00; a stretch where a top-25 team would be a total underdog in all of them
+        shows close to {gameCount.toFixed(2)}. Each opponent's own rating is their live rating
+        where available. Idea and format credit to{" "}
         <a
           className="footer-link"
           href="https://www.puntandrally.com/toughest_stretches.php"
@@ -238,8 +285,8 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
         >
           Punt &amp; Rally's "The Gauntlet"
         </a>
-        — this version uses our own power ratings and win probabilities
-        rather than theirs.
+        — this version uses our own power ratings and win probabilities rather than theirs,
+        and normalizes the subject team to a top-25-average rating rather than using their own.
       </div>
     </div>
   );
