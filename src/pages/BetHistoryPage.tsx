@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
-import { aggregatePlain, filterRecords, winPct, type RecordTally, type BetHistoryFilters } from "../lib/betHistory";
+import { aggregatePlain, filterRecords, winPct, computeErrorStatsFromBetHistory, type RecordTally, type BetHistoryFilters } from "../lib/betHistory";
 
 const SEASONS = [2024, 2025, 2026];
 
@@ -16,55 +16,169 @@ function fmtPct(t: RecordTally) {
 function StatsBlock({ title, overall, byWeek }: { title: string; overall: RecordTally; byWeek: Map<number, RecordTally> }) {
   const weeks = Array.from(byWeek.keys()).sort((a, b) => a - b);
   return (
-    <div style={{ marginBottom: "1.5rem" }}>
-      <div className="section-label">{title}</div>
+    <div style={{ marginBottom: "1.75rem" }}>
       <div
         style={{
-          display: "flex",
-          gap: "1.5rem",
-          alignItems: "baseline",
-          padding: "0.9rem 1.1rem",
+          padding: "1.1rem 1.3rem",
           background: "var(--turf-panel)",
           border: "1px solid var(--hash)",
-          borderRadius: 8,
-          marginBottom: "0.75rem",
+          borderRadius: 10,
         }}
       >
-        <div>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{fmtRecord(overall)}</div>
-          <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Record</div>
+        <div
+          style={{
+            fontSize: "0.8rem",
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: "var(--gold)",
+            marginBottom: "0.6rem",
+          }}
+        >
+          {title}
         </div>
-        <div>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{fmtPct(overall)}</div>
-          <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Win %</div>
+        <div style={{ display: "flex", gap: "2.5rem", alignItems: "baseline", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(overall)}</div>
+            <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Record</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(overall)}</div>
+            <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Win %</div>
+          </div>
         </div>
       </div>
 
       {weeks.length > 0 && (
-        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
-                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
-                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {weeks.map((w) => {
-                const t = byWeek.get(w)!;
-                return (
-                  <tr key={w}>
-                    <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
-                    <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(t)}</td>
-                    <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(t)}</td>
-                  </tr>
-                );
-              })}
+        <details style={{ marginTop: "0.5rem" }}>
+          <summary style={{ cursor: "pointer", fontSize: "0.82rem", color: "var(--chalk-dim)", padding: "0.3rem 0.1rem" }}>
+            Weekly breakdown
+          </summary>
+          <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginTop: "0.5rem" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+              <thead>
+                <tr>
+                  <th className="th">Week</th>
+                  <th className="th th-right">Record</th>
+                  <th className="th th-right">Win %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weeks.map((w) => {
+                  const t = byWeek.get(w)!;
+                  return (
+                    <tr key={w}>
+                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
+                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(t)}</td>
+                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(t)}</td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
+        </details>
       )}
+    </div>
+  );
+}
+
+function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof computeErrorStatsFromBetHistory> }) {
+  const fmtNum = (v: number | null, digits = 2) => (v == null ? "–" : v.toFixed(digits));
+  const fmtDelta = (v: number | null, digits = 2) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`);
+
+  return (
+    <div style={{ marginBottom: "1.5rem" }}>
+      <div className="section-label">ATS Stats</div>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+          <thead>
+            <tr>
+              <th className="th"></th>
+              <th className="th th-right">YC</th>
+              <th className="th th-right">Vegas</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Abs Error</td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.yc.absError)}
+              </td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.vegas.absError)}
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Median Abs Error</td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.yc.medianAbsError)}
+              </td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.vegas.medianAbsError)}
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Mean Squared Error</td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.yc.mse)}
+              </td>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {fmtNum(errorStats.vegas.mse)}
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Abs Error over Vegas</td>
+              <td
+                style={{
+                  padding: "0.35rem 0.6rem",
+                  borderBottom: "1px solid var(--hash)",
+                  textAlign: "right",
+                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                }}
+              >
+                {fmtDelta(errorStats.absErrorOverVegasYc)}
+              </td>
+              <td
+                style={{
+                  padding: "0.35rem 0.6rem",
+                  borderBottom: "1px solid var(--hash)",
+                  textAlign: "right",
+                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                }}
+              >
+                {fmtDelta(errorStats.absErrorOverVegasYc != null ? -errorStats.absErrorOverVegasYc : null)}
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.35rem 0.6rem" }}>MSE over Vegas</td>
+              <td
+                style={{
+                  padding: "0.35rem 0.6rem",
+                  textAlign: "right",
+                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                }}
+              >
+                {fmtDelta(errorStats.mseOverVegasYc)}
+              </td>
+              <td
+                style={{
+                  padding: "0.35rem 0.6rem",
+                  textAlign: "right",
+                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                }}
+              >
+                {fmtDelta(errorStats.mseOverVegasYc != null ? -errorStats.mseOverVegasYc : null)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", marginTop: "0.5rem" }}>
+        Abs Error / MSE compare each projection (YC's model, Vegas's own line) against the
+        actual final margin — negative "over Vegas" values mean lower error (better) than
+        Vegas. Recomputes live from whatever seasons/weeks/conferences/team are filtered above.
+      </p>
     </div>
   );
 }
@@ -106,6 +220,7 @@ export default function BetHistoryPage({ onHome }: { onHome?: () => void }) {
     [filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery]
   );
   const { overall, byWeek } = useMemo(() => aggregatePlain(filtered), [filtered]);
+  const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
 
   const everyBetByWeek = new Map<number, RecordTally>();
   const filteredBetByWeek = new Map<number, RecordTally>();
@@ -223,6 +338,7 @@ export default function BetHistoryPage({ onHome }: { onHome?: () => void }) {
           <StatsBlock title="Every Game Bet" overall={overall.everyBet} byWeek={everyBetByWeek} />
           <StatsBlock title="Filtered Bets" overall={overall.filteredBet} byWeek={filteredBetByWeek} />
           <StatsBlock title="Weighted Filtered Bets" overall={overall.weightedFilteredBet} byWeek={weightedByWeek} />
+          <ErrorStatsBlock errorStats={errorStats} />
         </>
       )}
 

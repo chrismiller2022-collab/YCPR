@@ -4,7 +4,8 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
 
-const POOL_URL = "https://app.splashsports.com/entries";
+const POOL_URL =
+  "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
 const KEY_PICKS_TARGET = 3;
 
 async function peaySave(season: number, week: number, rows: PeayRow[]) {

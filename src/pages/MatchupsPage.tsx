@@ -1,105 +1,120 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import TeamCell from "../components/TeamCell";
-import { GAMES } from "../data/games";
-import { TEAMS_BY_NAME } from "../data/teams";
-import { hfaFor, spreadColor, spreadToMoneyline, spreadToWinPct } from "../lib/odds";
-import { dateLabelFor } from "../lib/format";
-import { computeBettingStats, winPctLabel } from "../lib/betting";
+import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
 
-function SpreadsRow({ game, liveByTeam, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
+function dateLabel(g: GameWithLines) {
+  return g.start_date
+    ? new Date(g.start_date).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" })
+    : "–";
+}
 
-  // Spread is always expressed from the away team's perspective:
-  // negative = away favored, positive = home favored.
-  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
+function teamLabel(computed: MatchupComputed, side: "away" | "home" | "push" | null) {
+  if (!side) return "–";
+  if (side === "push") return "Push";
+  return side === "away" ? computed.game.away_team : computed.game.home_team;
+}
+
+function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
+  const {
+    game,
+    awayTeam,
+    homeTeam,
+    projAwaySpread,
+    vegasAwaySpread,
+    amountOff,
+    relativeOff,
+    projCoverTeam,
+    filteredBetTeam,
+    weightedFilteredBetTeam,
+    wtfTeam,
+    actCoverTeam,
+  } = computed;
+  if (!awayTeam || !homeTeam || projAwaySpread == null) return null;
 
   return (
     <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
-      <td className="matchups-empty-cell">–</td>
-      <td
-        className="matchups-projected-cell"
-        style={{ color: spreadColor(awaySpread) }}
-      >
-        {awaySpread > 0 ? "+" : ""}
-        {awaySpread.toFixed(1)}
+      <td className="game-date-cell">{dateLabel(game)}</td>
+      <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
+      <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
+      <td className="matchups-empty-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
+        {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
       </td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-projected-cell" style={{ color: spreadColor(projAwaySpread) }}>
+        {projAwaySpread > 0 ? "+" : ""}
+        {projAwaySpread.toFixed(1)}
+      </td>
+      <td className="matchups-empty-cell">{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
+      <td className="matchups-empty-cell">{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
+      <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+      <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
+      <td className="matchups-winner-cell">{teamLabel(computed, projCoverTeam)}</td>
+      <td className="matchups-winner-cell">{teamLabel(computed, filteredBetTeam)}</td>
+      <td className="matchups-winner-cell">{teamLabel(computed, weightedFilteredBetTeam)}</td>
+      <td className="matchups-winner-cell" style={wtfTeam ? { color: "#c45c52", fontWeight: 700 } : undefined}>
+        {wtfTeam ? `${teamLabel(computed, wtfTeam)} ⚠️` : "–"}
+      </td>
+      <td className="matchups-winner-cell">{teamLabel(computed, actCoverTeam)}</td>
     </tr>
   );
 }
 
+function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
+  const { game, awayTeam, homeTeam, projAwaySpread, vegasMoneyline, projMoneyline, projWinPct } = computed;
+  if (!awayTeam || !homeTeam || projAwaySpread == null) return null;
 
-function MoneylineRow({ game, liveByTeam, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
-
-  const awaySpread = away.rating - home.rating + hfaFor(game.home, liveByTeam);
-  const awayWinPct = spreadToWinPct(awaySpread);
-  const awayML = spreadToMoneyline(awaySpread);
-  const winner = awaySpread < 0 ? away : awaySpread > 0 ? home : null;
+  const projWinner = projAwaySpread < 0 ? game.away_team : projAwaySpread > 0 ? game.home_team : "Pick'em";
+  const actualWinner =
+    game.away_points != null && game.home_points != null
+      ? game.away_points > game.home_points
+        ? game.away_team
+        : game.home_points > game.away_points
+        ? game.home_team
+        : "Tie"
+      : "–";
 
   return (
     <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
-      <td className="matchups-empty-cell">–</td>
-      <td
-        className="matchups-projected-cell"
-        style={{ color: spreadColor(awaySpread) }}
-      >
-        {awayML > 0 ? "+" : ""}
-        {Math.round(awayML)}
+      <td className="game-date-cell">{dateLabel(game)}</td>
+      <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
+      <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
+      <td className="matchups-projected-cell">
+        {vegasMoneyline != null ? `${vegasMoneyline > 0 ? "+" : ""}${Math.round(vegasMoneyline)}` : "–"}
       </td>
-      <td
-        className="matchups-winpct-cell"
-        style={{ color: spreadColor(awaySpread) }}
-      >
-        {(awayWinPct * 100).toFixed(1)}%
+      <td className="matchups-projected-cell" style={{ color: spreadColor(projAwaySpread) }}>
+        {projMoneyline != null ? `${projMoneyline > 0 ? "+" : ""}${Math.round(projMoneyline)}` : "–"}
       </td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-winner-cell">
-        {winner ? winner.team : "Pick'em"}
+      <td className="matchups-winpct-cell" style={{ color: spreadColor(projAwaySpread) }}>
+        {projWinPct != null ? `${(projWinPct * 100).toFixed(1)}%` : "–"}
       </td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+      <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
+      <td className="matchups-winner-cell">{projWinner}</td>
+      <td className="matchups-winner-cell">{actualWinner}</td>
     </tr>
   );
 }
 
-
-function TotalsRow({ game, onNavigateTeam }: any) {
-  const away = TEAMS_BY_NAME[game.away];
-  const home = TEAMS_BY_NAME[game.home];
-  if (!away || !home) return null;
+function TotalsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
+  const { game, awayTeam, homeTeam, line, totalResult } = computed;
+  if (!awayTeam || !homeTeam) return null;
 
   return (
     <tr>
-      <td className="game-date-cell">{dateLabelFor(game)}</td>
-      <TeamCell team={away} onNavigateTeam={onNavigateTeam} />
-      <TeamCell team={home} onNavigateTeam={onNavigateTeam} />
+      <td className="game-date-cell">{dateLabel(game)}</td>
+      <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
+      <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
+      <td className="matchups-projected-cell">{line?.over_under != null ? line.over_under : "–"}</td>
       <td className="matchups-empty-cell">–</td>
+      <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
+      <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
       <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-winner-cell">{totalResult ?? "–"}</td>
     </tr>
   );
 }
-
 
 const MATCHUPS_MODES = [
   { key: "spreads", label: "Spreads" },
@@ -107,8 +122,7 @@ const MATCHUPS_MODES = [
   { key: "totals", label: "Totals" },
 ];
 
-
-function MatchupsTable({ games, liveByTeam, onNavigateTeam, mode }: any) {
+function MatchupsTable({ rows, onNavigateTeam, mode }: { rows: MatchupComputed[]; onNavigateTeam: any; mode: string }) {
   return (
     <div className="table-scroll">
       <table className="matchups-table">
@@ -121,10 +135,13 @@ function MatchupsTable({ games, liveByTeam, onNavigateTeam, mode }: any) {
               <th className="th th-right">Vegas Line</th>
               <th className="th th-right">Projected Spread</th>
               <th className="th th-right">Amount Off</th>
+              <th className="th th-right">Relative Off</th>
               <th className="th th-right">Away Score</th>
               <th className="th th-right">Home Score</th>
               <th className="th">Proj. Cover Team</th>
               <th className="th">Filtered Bet</th>
+              <th className="th">Weighted Filtered</th>
+              <th className="th">WTF</th>
               <th className="th">Act. Cover Team</th>
             </tr>
           )}
@@ -157,113 +174,246 @@ function MatchupsTable({ games, liveByTeam, onNavigateTeam, mode }: any) {
           )}
         </thead>
         <tbody>
-          {mode === "spreads" &&
-            games.map((g) => (
-              <SpreadsRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
-            ))}
-          {mode === "moneyline" &&
-            games.map((g) => (
-              <MoneylineRow key={g.id} game={g} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
-            ))}
-          {mode === "totals" &&
-            games.map((g) => (
-              <TotalsRow key={g.id} game={g} onNavigateTeam={onNavigateTeam} />
-            ))}
+          {mode === "spreads" && rows.map((c) => <SpreadsRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
+          {mode === "moneyline" && rows.map((c) => <MoneylineRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
+          {mode === "totals" && rows.map((c) => <TotalsRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
         </tbody>
       </table>
     </div>
   );
 }
 
+function pctLabel(w: number, l: number) {
+  const decided = w + l;
+  return decided === 0 ? "–" : `${((w / decided) * 100).toFixed(1)}%`;
+}
+function recordLabel(w: number, l: number, push?: number) {
+  return `${w.toFixed ? w.toFixed(1) : w}-${l.toFixed ? l.toFixed(1) : l}${push ? `-${push}` : ""}`;
+}
 
-function BettingStatsBlock({ games, liveByTeam, title }: any) {
-  const stats = useMemo(() => computeBettingStats(games, liveByTeam), [games, liveByTeam]);
+function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: string }) {
+  const stats = useMemo(() => computeMatchupStats(rows), [rows]);
+  const errorStats = useMemo(() => computeErrorStats(rows), [rows]);
+  const { straightUp, ats } = stats;
+
+  const fmtNum = (v: number | null, digits = 2) => (v == null ? "–" : v.toFixed(digits));
+  const fmtDelta = (v: number | null, digits = 2) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`);
 
   return (
     <div className="bet-stats">
-      <div className="section-label bet-stats-label">
-        {title || "Betting Stats"}
-      </div>
-      <div className="bet-stats-row">
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">Straight Up</div>
-          <div className="bet-stats-record">
-            {stats.su.w}-{stats.su.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.su)}</div>
+      <div className="section-label bet-stats-label">{title || "Betting Stats"}</div>
+
+      <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <div style={{ minWidth: 220, flex: 1 }}>
+          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--gold)", marginBottom: "0.4rem" }}>Straight Up</div>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th className="th"></th>
+                <th className="th th-right">YC</th>
+                <th className="th th-right">Vegas</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Wins</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{straightUp.yc.w}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{straightUp.vegas.w}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Losses</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{straightUp.yc.l}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{straightUp.vegas.l}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem", fontWeight: 700 }}>Win %</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>
+                  {pctLabel(straightUp.yc.w, straightUp.yc.l)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>
+                  {pctLabel(straightUp.vegas.w, straightUp.vegas.l)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">ATS</div>
-          <div className="bet-stats-record">
-            {stats.ats.w}-{stats.ats.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.ats)}</div>
+
+        <div style={{ minWidth: 260, flex: 1 }}>
+          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--gold)", marginBottom: "0.4rem" }}>ATS (Every Game)</div>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th className="th"></th>
+                <th className="th th-right">YC</th>
+                <th className="th th-right">Breakeven Baseline</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Wins</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{ats.yc.w}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{ats.baselineWins.toFixed(1)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Losses</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{ats.yc.l}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{ats.baselineLosses.toFixed(1)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem", fontWeight: 700 }}>Win %</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>{pctLabel(ats.yc.w, ats.yc.l)}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>52.4%</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div className="bet-stats-card">
-          <div className="bet-stats-title">Filtered Bets</div>
-          <div className="bet-stats-record">
-            {stats.fb.w}-{stats.fb.l}
-          </div>
-          <div className="bet-stats-pct">{winPctLabel(stats.fb)}</div>
+
+        <div style={{ minWidth: 280, flex: 1 }}>
+          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--gold)", marginBottom: "0.4rem" }}>ATS Stats</div>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+            <thead>
+              <tr>
+                <th className="th"></th>
+                <th className="th th-right">YC</th>
+                <th className="th th-right">Vegas</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Abs Error</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.yc.absError)}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.vegas.absError)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Median Abs Error</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.yc.medianAbsError)}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.vegas.medianAbsError)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Mean Squared Error</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.yc.mse)}</td>
+                <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{fmtNum(errorStats.vegas.mse)}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>Abs Error over Vegas</td>
+                <td
+                  style={{
+                    padding: "0.3rem 0.6rem",
+                    textAlign: "right",
+                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                  }}
+                >
+                  {fmtDelta(errorStats.absErrorOverVegasYc)}
+                </td>
+                <td
+                  style={{
+                    padding: "0.3rem 0.6rem",
+                    textAlign: "right",
+                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                  }}
+                >
+                  {fmtDelta(errorStats.absErrorOverVegasYc != null ? -errorStats.absErrorOverVegasYc : null)}
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: "0.3rem 0.6rem" }}>MSE over Vegas</td>
+                <td
+                  style={{
+                    padding: "0.3rem 0.6rem",
+                    textAlign: "right",
+                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                  }}
+                >
+                  {fmtDelta(errorStats.mseOverVegasYc)}
+                </td>
+                <td
+                  style={{
+                    padding: "0.3rem 0.6rem",
+                    textAlign: "right",
+                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                  }}
+                >
+                  {fmtDelta(errorStats.mseOverVegasYc != null ? -errorStats.mseOverVegasYc : null)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-      <div className="bet-stats-note">
-        Records grade automatically once final scores, Vegas lines, and
-        filtered-bet picks are added — currently 0-0 since that data isn't
-        connected yet.
-      </div>
+
+      <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", margin: 0 }}>
+        The ATS "Breakeven Baseline" is bankroll math, not a model comparison: at standard
+        -110 spread odds, you need to win 52.4% of your decided bets just to break even
+        before any profit — that's a fixed constant built into the vig, the same for every
+        bettor regardless of dataset or edge size. Beating 52.4% is the bar that actually
+        matters; beating 50% doesn't mean you're profitable. Abs Error / MSE compare each
+        projection (YC's model, Vegas's own line) against the actual final margin —
+        negative "over Vegas" values mean lower error (better) than Vegas.
+      </p>
     </div>
   );
 }
 
-
 export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome }: any) {
   const isAll = subKey === "all";
   const weekNum = isAll ? null : parseInt(subKey.replace("week", ""), 10);
+  const season = new Date().getFullYear();
 
   const [query, setQuery] = useState("");
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
+  const [hideNoLine, setHideNoLine] = useState(true);
+
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
-  const matchesFilters = (g) => {
-    const home = TEAMS_BY_NAME[g.home];
-    const away = TEAMS_BY_NAME[g.away];
-    if (matchupType !== "All") {
-      if (!home || !away) return false;
-      if (matchupType === "FBSvFBS" && !(home.div === "FBS" && away.div === "FBS"))
-        return false;
-      if (matchupType === "FCSvFCS" && !(home.div === "FCS" && away.div === "FCS"))
-        return false;
-      if (matchupType === "Cross" && home.div === away.div) return false;
-    }
+  useEffect(() => {
+    setLoading(true);
+    setLoadError(null);
+    fetchGamesWithLines(season, isAll ? undefined : weekNum ?? undefined)
+      .then(setGames)
+      .catch((err) => setLoadError(err.message ?? "Failed to load games"))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, subKey]);
+
+  const matchesFilters = (g: GameWithLines) => {
+    const homeClass = classOf(g, "home");
+    const awayClass = classOf(g, "away");
+    if (matchupType === "FBSvFBS" && !(homeClass === "fbs" && awayClass === "fbs")) return false;
+    if (matchupType === "FCSvFCS" && !(homeClass === "fcs" && awayClass === "fcs")) return false;
+    if (matchupType === "Cross" && !(isTracked(homeClass) && isTracked(awayClass) && homeClass !== awayClass)) return false;
     if (query.trim()) {
       const q = query.trim().toLowerCase();
-      if (
-        !g.home.toLowerCase().includes(q) &&
-        !g.away.toLowerCase().includes(q)
-      )
-        return false;
+      if (!g.home_team.toLowerCase().includes(q) && !g.away_team.toLowerCase().includes(q)) return false;
     }
     return true;
   };
 
-  const filteredGames = useMemo(() => {
-    let list = isAll ? GAMES : GAMES.filter((g) => g.week === weekNum);
-    return list.filter(matchesFilters);
-  }, [isAll, weekNum, matchupType, query]);
+  const filteredGames = useMemo(() => games.filter(matchesFilters), [games, matchupType, query]);
+
+  const computedRows = useMemo(() => filteredGames.map((g) => computeRow(g, liveByTeam)), [filteredGames, liveByTeam]);
+
+  const visibleRows = useMemo(
+    () => (hideNoLine ? computedRows.filter((c) => c.vegasAwaySpread != null) : computedRows),
+    [computedRows, hideNoLine]
+  );
 
   const groupedByWeek = useMemo(() => {
     if (!isAll) return null;
-    const map = {};
-    filteredGames.forEach((g) => {
-      (map[g.week] = map[g.week] || []).push(g);
-    });
-    return Object.keys(map)
-      .map(Number)
-      .sort((a, b) => a - b)
-      .map((w) => ({ week: w, games: map[w] }));
-  }, [isAll, filteredGames]);
+    const map = new Map<number, MatchupComputed[]>();
+    for (const c of visibleRows) {
+      const list = map.get(c.game.week) ?? [];
+      list.push(c);
+      map.set(c.game.week, list);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([week, rows]) => ({ week, rows }));
+  }, [isAll, visibleRows]);
 
   return (
     <div className="matchups-page">
@@ -275,83 +425,72 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         <h1 className="title matchup-title">{subLabel.toUpperCase()}</h1>
         <p className="subtitle team-subtitle">
           {mode === "spreads" &&
-            `Projected spreads for every game, calculated from current power ratings.`}
+            `Projected spreads for every game, calculated from current power ratings, alongside the live Vegas line.`}
           {mode === "moneyline" &&
             `Projected moneylines and win percentages for every game, derived from current power ratings.`}
-          {mode === "totals" &&
-            "Projected totals for every game — coming soon once a scoring model is connected."}
+          {mode === "totals" && "Vegas totals and, once games are final, the actual Over/Under result."}
         </p>
       </div>
 
       <div className="controls matchups-controls">
-        <input
-          className="search"
-          placeholder="Search for a team…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <select
-          className="filter"
-          value={matchupType}
-          onChange={(e) => setMatchupType(e.target.value)}
-        >
+        <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <select className="filter" value={matchupType} onChange={(e) => setMatchupType(e.target.value)}>
           <option value="All">All matchups</option>
           <option value="FBSvFBS">FBS vs FBS</option>
           <option value="FCSvFCS">FCS vs FCS</option>
           <option value="Cross">Cross-Division</option>
         </select>
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
+          Hide games with no Vegas line
+        </label>
       </div>
 
       <div className="mode-toggle">
         {MATCHUPS_MODES.map((m) => (
-          <button
-            key={m.key}
-            className={`mode-btn ${mode === m.key ? "mode-btn-active" : ""}`}
-            onClick={() => setMode(m.key)}
-          >
+          <button key={m.key} className={`mode-btn ${mode === m.key ? "mode-btn-active" : ""}`} onClick={() => setMode(m.key)}>
             {m.label}
           </button>
         ))}
       </div>
 
+      {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
+
       <div className="table-wrap">
-        {!isAll && filteredGames.length === 0 && (
-          <div className="empty matchups-empty">
-            No games scheduled for {subLabel} yet.
-          </div>
+        {loading && <div className="empty matchups-empty">Loading…</div>}
+
+        {!loading && !isAll && visibleRows.length === 0 && (
+          <div className="empty matchups-empty">No games scheduled for {subLabel} yet.</div>
         )}
 
-        {!isAll && filteredGames.length > 0 && (
+        {!loading && !isAll && visibleRows.length > 0 && (
           <>
-            <MatchupsTable games={filteredGames} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} mode={mode} />
-            <BettingStatsBlock games={filteredGames} liveByTeam={liveByTeam} title={`${subLabel} Betting Stats`} />
+            <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} />
+            <BettingStatsBlock rows={visibleRows} title={`${subLabel} Betting Stats`} />
           </>
         )}
 
-        {isAll && groupedByWeek.length === 0 && (
-          <div className="empty matchups-empty">
-            No games match that search.
-          </div>
+        {!loading && isAll && (!groupedByWeek || groupedByWeek.length === 0) && (
+          <div className="empty matchups-empty">No games match that search.</div>
         )}
 
-        {isAll &&
-          groupedByWeek.map(({ week, games }) => (
+        {!loading &&
+          isAll &&
+          groupedByWeek &&
+          groupedByWeek.map(({ week, rows }) => (
             <div key={week} className="week-group">
-              <div className="section-label week-group-label">
-                Week {week}
-              </div>
-              <MatchupsTable games={games} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} mode={mode} />
+              <div className="section-label week-group-label">Week {week}</div>
+              <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} />
             </div>
           ))}
 
-        {isAll && filteredGames.length > 0 && (
-          <BettingStatsBlock games={filteredGames} liveByTeam={liveByTeam} title="Season Betting Stats" />
-        )}
+        {!loading && isAll && visibleRows.length > 0 && <BettingStatsBlock rows={visibleRows} title="Season Betting Stats" />}
       </div>
 
       <div className="footer-note">
-        Projections use each team's current power rating and do not yet
-        account for injuries, weather, or other game-specific factors.
+        Projections use each team's current power rating and do not yet account for injuries,
+        weather, or other game-specific factors. Vegas lines are synced from CollegeFootballData
+        and may not be available for every game, especially further out.
       </div>
     </div>
   );
