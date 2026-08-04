@@ -1,6 +1,7 @@
 import { type BetHistoryRecord, type BetPick } from "../data/betHistory.data";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { isP4, bucketFor } from "./conferenceBuckets";
+import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
 
 export { isP4, bucketFor };
 
@@ -73,15 +74,15 @@ export function aggregatePlain(records: BetHistoryRecord[]): TripleAggregate {
 export interface CustomParams {
   filterThreshold: number; // default 6 — min absolute amount-off to count as a Filtered Bet
   minAbsLine: number; // default 1 — games at/below this absolute line are excluded from Weighted Filtered (avoids blowup near pick'em)
-  posThreshold: number; // default 1 — relative-off must exceed this (positive side) to qualify as Weighted Filtered
-  negThreshold: number; // default -1.7 — relative-off must be below this (negative side) to qualify as Weighted Filtered
+  posThreshold: number; // default 1.7 — relative-off must exceed this (positive side) to qualify as Weighted Filtered
+  negThreshold: number; // default -1 — relative-off must be below this (negative side) to qualify as Weighted Filtered
 }
 
 export const DEFAULT_CUSTOM_PARAMS: CustomParams = {
   filterThreshold: 6,
   minAbsLine: 1,
-  posThreshold: 1,
-  negThreshold: -1.7,
+  posThreshold: 1.7,
+  negThreshold: -1,
 };
 
 export interface CustomGraded {
@@ -302,4 +303,28 @@ export function breakdownByConference(
 export function breakdownByTeam(records: BetHistoryRecord[], mode: "plain" | "custom", params?: CustomParams): BreakdownTriple {
   const picksFn = mode === "plain" ? picksFromPlain : (r: BetHistoryRecord) => picksFromCustom(r, params!);
   return breakdownGeneric(records, picksFn, (team) => team);
+}
+
+// ---------------------------------------------------------------------
+// Error metrics (Abs Error, Median Abs Error, MSE, "over Vegas" deltas) —
+// same underlying math as the Matchups pages, but this dataset's `spread`
+// and `prediction` use the OPPOSITE sign convention (negative = home
+// favored, validated at 100% earlier in this file's history) from the
+// Matchups pages' own projAwaySpread/vegasAwaySpread (positive = home
+// favored). So where Matchups subtracts directly, this ADDS the raw
+// spread/prediction to the actual home margin — same formula, flipped
+// input sign. Easy to get backwards; don't "simplify" this to match
+// Matchups' subtraction without re-flipping the sign first.
+// ---------------------------------------------------------------------
+export function computeErrorStatsFromBetHistory(records: BetHistoryRecord[]): ErrorStatsBundle {
+  const ycErrors: number[] = [];
+  const vegasErrors: number[] = [];
+
+  for (const r of records) {
+    const actualHomeMargin = r.homeScore - r.awayScore;
+    ycErrors.push(actualHomeMargin + r.prediction);
+    vegasErrors.push(actualHomeMargin + r.spread);
+  }
+
+  return bundleErrors(ycErrors, vegasErrors);
 }
