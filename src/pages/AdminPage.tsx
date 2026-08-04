@@ -671,7 +671,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   }
 
   return (
-    <div className="page" style={{ maxWidth: 1000, margin: "2rem auto", padding: "0 1rem" }}>
+    <div className="page" style={{ maxWidth: view === "matchups" ? "none" : 1000, margin: "2rem auto", padding: "0 1rem" }}>
       {view === "home" && (
         <p style={{ marginTop: 0 }}>
           <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
