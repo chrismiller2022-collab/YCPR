@@ -25,7 +25,6 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
     projAwaySpread,
     vegasAwaySpread,
     amountOff,
-    relativeOff,
     projCoverTeam,
     filteredBetTeam,
     weightedFilteredBetTeam,
@@ -47,7 +46,6 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
         {projAwaySpread.toFixed(1)}
       </td>
       <td className="matchups-empty-cell">{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
-      <td className="matchups-empty-cell">{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
       <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
       <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
       <td className="matchups-winner-cell">{teamLabel(computed, projCoverTeam)}</td>
@@ -135,7 +133,6 @@ function MatchupsTable({ rows, onNavigateTeam, mode }: { rows: MatchupComputed[]
               <th className="th th-right">Vegas Line</th>
               <th className="th th-right">Projected Spread</th>
               <th className="th th-right">Amount Off</th>
-              <th className="th th-right">Relative Off</th>
               <th className="th th-right">Away Score</th>
               <th className="th th-right">Home Score</th>
               <th className="th">Proj. Cover Team</th>
@@ -456,35 +453,37 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
 
-      <div className="table-wrap">
-        {loading && <div className="empty matchups-empty">Loading…</div>}
+      <div style={{ width: "100vw", position: "relative", left: "50%", marginLeft: "-50vw", padding: "0 1rem" }}>
+        <div className="table-wrap">
+          {loading && <div className="empty matchups-empty">Loading…</div>}
 
-        {!loading && !isAll && visibleRows.length === 0 && (
-          <div className="empty matchups-empty">No games scheduled for {subLabel} yet.</div>
-        )}
+          {!loading && !isAll && visibleRows.length === 0 && (
+            <div className="empty matchups-empty">No games scheduled for {subLabel} yet.</div>
+          )}
 
-        {!loading && !isAll && visibleRows.length > 0 && (
-          <>
-            <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} />
-            <BettingStatsBlock rows={visibleRows} title={`${subLabel} Betting Stats`} />
-          </>
-        )}
+          {!loading && !isAll && visibleRows.length > 0 && (
+            <>
+              <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} />
+              <BettingStatsBlock rows={visibleRows} title={`${subLabel} Betting Stats`} />
+            </>
+          )}
 
-        {!loading && isAll && (!groupedByWeek || groupedByWeek.length === 0) && (
-          <div className="empty matchups-empty">No games match that search.</div>
-        )}
+          {!loading && isAll && (!groupedByWeek || groupedByWeek.length === 0) && (
+            <div className="empty matchups-empty">No games match that search.</div>
+          )}
 
-        {!loading &&
-          isAll &&
-          groupedByWeek &&
-          groupedByWeek.map(({ week, rows }) => (
-            <div key={week} className="week-group">
-              <div className="section-label week-group-label">Week {week}</div>
-              <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} />
-            </div>
-          ))}
+          {!loading &&
+            isAll &&
+            groupedByWeek &&
+            groupedByWeek.map(({ week, rows }) => (
+              <div key={week} className="week-group">
+                <div className="section-label week-group-label">Week {week}</div>
+                <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} />
+              </div>
+            ))}
 
-        {!loading && isAll && visibleRows.length > 0 && <BettingStatsBlock rows={visibleRows} title="Season Betting Stats" />}
+          {!loading && isAll && visibleRows.length > 0 && <BettingStatsBlock rows={visibleRows} title="Season Betting Stats" />}
+        </div>
       </div>
 
       <div className="footer-note">

@@ -183,14 +183,15 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
   );
 }
 
-export default function BetHistoryPage({ onHome }: { onHome?: () => void }) {
+export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => void; lockedYear?: number }) {
   const allConfs = useMemo(() => availableConferences(), []);
-  const [years, setYears] = useState<Set<number>>(new Set(SEASONS));
+  const [years, setYears] = useState<Set<number>>(new Set(lockedYear ? [lockedYear] : SEASONS));
   const [week, setWeek] = useState<number | "all">("all");
   const [confFilters, setConfFilters] = useState<Set<string>>(new Set());
   const [teamQuery, setTeamQuery] = useState("");
 
   function toggleYear(y: number) {
+    if (lockedYear) return; // locked to one year on the per-year pages — nothing to toggle
     setYears((prev) => {
       const next = new Set(prev);
       if (next.has(y)) next.delete(y);
@@ -242,7 +243,7 @@ export default function BetHistoryPage({ onHome }: { onHome?: () => void }) {
           </button>
         )}
         <div className="eyebrow">Track Record</div>
-        <h1 className="title matchup-title">BET HISTORY</h1>
+        <h1 className="title matchup-title">BET HISTORY{lockedYear ? ` — ${lockedYear}` : ""}</h1>
         <p className="subtitle team-subtitle">
           Against-the-spread results, graded against the closing line — for every game bet,
           filtered bets (a meaningful disagreement with the market), and weighted filtered
@@ -263,8 +264,9 @@ export default function BetHistoryPage({ onHome }: { onHome?: () => void }) {
           alignItems: "center",
         }}
       >
-        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Seasons:</span>
-        {SEASONS.map((y) => {
+        {!lockedYear && <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Seasons:</span>}
+        {!lockedYear &&
+          SEASONS.map((y) => {
           const active = years.has(y);
           return (
             <button

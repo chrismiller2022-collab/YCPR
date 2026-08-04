@@ -32,6 +32,8 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
   const [hideUsed, setHideUsed] = useState(false);
+  const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     setPicks(loadPicks());
@@ -45,6 +47,23 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const teams = useMemo(() => rowTeams(selectedConfs), [selectedConfs]);
   const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
 
+  const visibleTeams = useMemo(
+    () => teams.filter((team) => !hideUsed || !usedTeams.has(team.team)),
+    [teams, hideUsed, usedTeams]
+  );
+
+  const sortedTeams = useMemo(() => {
+    if (!sortWeekKey) return visibleTeams;
+    return [...visibleTeams].sort((a, b) => {
+      const sa = spreadForWeek(a, sortWeekKey);
+      const sb = spreadForWeek(b, sortWeekKey);
+      if (sa == null && sb == null) return 0;
+      if (sa == null) return 1; // no game this week — always sinks to the bottom
+      if (sb == null) return -1;
+      return sortDir === "asc" ? sa - sb : sb - sa;
+    });
+  }, [visibleTeams, sortWeekKey, sortDir]);
+
   function toggleConf(conf: string) {
     setSelectedConfs((prev) => {
       const next = new Set(prev);
@@ -52,6 +71,25 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
       else next.add(conf);
       return next;
     });
+  }
+
+  function handleSortClick(weekKey: string) {
+    if (sortWeekKey === weekKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortWeekKey(weekKey);
+      setSortDir("asc");
+    }
+  }
+
+  function spreadForWeek(team: any, weekKey: string): number | null {
+    const week = SURVIVOR_WEEKS.find((w) => w.key === weekKey);
+    if (!week) return null;
+    const game = gameForTeamInWeek(team.team, week.dataWeek);
+    if (!game) return null;
+    const opp = opponentOf(game, team.team);
+    if (!opp) return null;
+    return teamSpread(team, opp, game);
   }
 
   function handleCellClick(teamName: string, weekKey: string, status: string) {
@@ -176,9 +214,11 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
               </th>
               {SURVIVOR_WEEKS.map((w) => {
                 const locked = (picks[w.key] || []).length === 2;
+                const isSorted = sortWeekKey === w.key;
                 return (
                   <th
                     key={w.key}
+                    onClick={() => handleSortClick(w.key)}
                     style={{
                       padding: "0.4rem 0.5rem",
                       textAlign: "center",
@@ -187,9 +227,15 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                       background: locked ? "rgba(255,255,255,0.06)" : "var(--turf-panel-2)",
                       textDecoration: locked ? "line-through" : "none",
                       color: locked ? "var(--chalk-dim)" : "var(--chalk)",
+                      cursor: "pointer",
                     }}
                   >
-                    <div style={{ fontWeight: 700 }}>{w.label}</div>
+                    <div style={{ fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}>
+                      {w.label}
+                      <span style={{ fontSize: "0.6rem", opacity: isSorted ? 1 : 0.35 }}>
+                        {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "—"}
+                      </span>
+                    </div>
                     <div style={{ fontWeight: 400, fontSize: "0.68rem", opacity: 0.7 }}>
                       {w.lockLabel}
                     </div>
@@ -199,9 +245,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             </tr>
           </thead>
           <tbody>
-            {teams
-              .filter((team) => !hideUsed || !usedTeams.has(team.team))
-              .map((team) => (
+            {sortedTeams.map((team) => (
                 <tr key={team.team}>
                   <td
                     style={{

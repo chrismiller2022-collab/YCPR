@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import SortHeader from "../components/SortHeader";
 import { availableConferences, DEFAULT_CONFERENCES } from "../lib/survivor";
 import {
   fetchPoolSeasonGames,
@@ -351,17 +350,31 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
                 >
                   Team
                 </th>
-                {weeks.map((w) => (
-                  <SortHeader
-                    key={w}
-                    label={`Week ${w}${w === currentWeek ? " (Current)" : ""}`}
-                    sortKey={String(w)}
-                    active={sortWeek === w}
-                    dir={sortDir}
-                    onClick={() => handleWeekHeaderClick(w)}
-                    align="center"
-                  />
-                ))}
+                {weeks.map((w) => {
+                  const isSorted = sortWeek === w;
+                  return (
+                    <th
+                      key={w}
+                      onClick={() => handleWeekHeaderClick(w)}
+                      style={{
+                        padding: "0.5rem 0.5rem",
+                        textAlign: "center",
+                        minWidth: 92,
+                        borderBottom: "1px solid var(--hash)",
+                        background: "var(--turf-panel-2)",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                        {`Week ${w}${w === currentWeek ? " (Current)" : ""}`}
+                        <span style={{ fontSize: "0.6rem", opacity: isSorted ? 1 : 0.35 }}>
+                          {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "—"}
+                        </span>
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>

@@ -236,7 +236,14 @@ export default function TopNav({ onNavigate, onNavigateTeam, onNavigateSingle, o
                 )}
 
                 {!cat.single && !cat.futures && openCategory === cat.key && !cat.drill && (
-                  <div className="sub-grid">
+                  <div
+                    className="sub-grid"
+                    style={
+                      cat.key === "tools"
+                        ? { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", overflow: "visible", maxHeight: "none" }
+                        : undefined
+                    }
+                  >
                     {cat.subs.map((s) => (
                       <button
                         key={s.key}

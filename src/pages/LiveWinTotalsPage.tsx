@@ -6,7 +6,8 @@ import { CONFERENCES, TEAMS } from "../data/teams";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 
 function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
-  const wt = TEAM_WIN_TOTALS[team.team] || { total: 0, confTotal: 0 };
+  const wt = TEAM_WIN_TOTALS[team.team] || { total: 0, vegasTotal: null };
+  const diff = wt.vegasTotal != null ? wt.total - wt.vegasTotal : null;
   return (
     <tr>
       <td>
@@ -39,7 +40,13 @@ function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{wt.total.toFixed(2)}</td>
-      <td className="wintotals-total-cell">{wt.confTotal.toFixed(2)}</td>
+      <td className="wintotals-total-cell">{wt.vegasTotal != null ? wt.vegasTotal.toFixed(1) : "–"}</td>
+      <td
+        className="wintotals-total-cell"
+        style={diff != null ? { color: diff > 0 ? "#8fd39a" : diff < 0 ? "#c45c52" : undefined } : undefined}
+      >
+        {diff != null ? `${diff > 0 ? "+" : ""}${diff.toFixed(2)}` : "–"}
+      </td>
     </tr>
   );
 }
@@ -62,12 +69,19 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
     }).map((t) => ({
       ...t,
       winTotal: TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-      confWinTotal: TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
+      vegasTotal: TEAM_WIN_TOTALS[t.team]?.vegasTotal ?? null,
+      diff:
+        TEAM_WIN_TOTALS[t.team]?.vegasTotal != null
+          ? (TEAM_WIN_TOTALS[t.team]?.total ?? 0) - TEAM_WIN_TOTALS[t.team]!.vegasTotal
+          : null,
     }));
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
       let bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       if (typeof av === "string") {
         av = av.toLowerCase();
         bv = bv.toLowerCase();
@@ -143,7 +157,8 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
                 <th className="th">Record</th>
                 <SortHeader label="Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
                 <SortHeader label="Win Total" sortKey="winTotal" active={sortKey === "winTotal"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Conf Win Total" sortKey="confWinTotal" active={sortKey === "confWinTotal"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Vegas Win Total" sortKey="vegasTotal" active={sortKey === "vegasTotal"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Difference" sortKey="diff" active={sortKey === "diff"} dir={sortDir} onClick={handleSort} align="right" />
               </tr>
             </thead>
             <tbody>
@@ -152,7 +167,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty">
+                  <td colSpan={8} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -164,7 +179,10 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
 
       <div className="footer-note">
         Win totals are projections based on current power ratings, not actual
-        results — records will update once games are played.
+        results — records will update once games are played. Vegas Win Total
+        currently shows "–" for every team — there's no synced source for
+        those lines yet, so the Difference column has nothing to compare
+        against until that's wired up.
       </div>
     </div>
   );
