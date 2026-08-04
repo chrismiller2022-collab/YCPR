@@ -549,8 +549,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
 
-      <div style={{ width: "100vw", position: "relative", left: "50%", marginLeft: "-50vw", padding: "0 1rem" }}>
-        <div className="table-wrap">
+      <div className="table-wrap" style={{ maxWidth: "none" }}>
           {loading && <div className="empty matchups-empty">Loading…</div>}
 
           {!loading && sortedRows.length === 0 && (
@@ -624,7 +623,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             <BettingStatsBlock rows={sortedRows} title={weekSel === "all" ? "Season Betting Stats" : `Week ${weekSel} Betting Stats`} />
           )}
         </div>
-      </div>
 
       <div className="footer-note">
         Projected Total isn't modeled yet (that's the future Game Totals tile) — only

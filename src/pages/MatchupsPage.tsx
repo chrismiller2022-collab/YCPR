@@ -123,7 +123,7 @@ const MATCHUPS_MODES = [
 function MatchupsTable({ rows, onNavigateTeam, mode }: { rows: MatchupComputed[]; onNavigateTeam: any; mode: string }) {
   return (
     <div className="table-scroll">
-      <table className="matchups-table">
+      <table className="matchups-table" style={{ width: "100%" }}>
         <thead>
           {mode === "spreads" && (
             <tr>
@@ -453,8 +453,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
 
-      <div style={{ width: "100vw", position: "relative", left: "50%", marginLeft: "-50vw", padding: "0 1rem" }}>
-        <div className="table-wrap">
+      <div className="table-wrap" style={{ maxWidth: "none" }}>
           {loading && <div className="empty matchups-empty">Loading…</div>}
 
           {!loading && !isAll && visibleRows.length === 0 && (
@@ -484,7 +483,6 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
           {!loading && isAll && visibleRows.length > 0 && <BettingStatsBlock rows={visibleRows} title="Season Betting Stats" />}
         </div>
-      </div>
 
       <div className="footer-note">
         Projections use each team's current power rating and do not yet account for injuries,
