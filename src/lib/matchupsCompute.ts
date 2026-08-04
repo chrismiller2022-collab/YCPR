@@ -50,6 +50,8 @@ export interface MatchupComputed {
   projWinPct: number | null;
   projMoneyline: number | null;
   vegasMoneyline: number | null;
+  vegasWinPct: number | null;
+  ev: number | null; // projWinPct - vegasWinPct, in percentage points
   projCoverTeam: "away" | "home" | null;
   filteredBetTeam: "away" | "home" | null;
   weightedFilteredBetTeam: "away" | "home" | null;
@@ -166,6 +168,19 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
   const projMoneyline = projAwaySpread != null ? spreadToMoneyline(projAwaySpread) : null;
   const vegasMoneyline = line?.away_moneyline ?? null;
 
+  // Standard moneyline-to-implied-probability conversion. This includes
+  // the sportsbook's vig (implied probabilities on both sides of a
+  // two-way market sum to slightly more than 100%), so it's "Vegas's
+  // implied win% for the away side," not a de-vigged true probability.
+  const vegasWinPct =
+    vegasMoneyline != null
+      ? vegasMoneyline > 0
+        ? 100 / (vegasMoneyline + 100)
+        : Math.abs(vegasMoneyline) / (Math.abs(vegasMoneyline) + 100)
+      : null;
+
+  const ev = projWinPct != null && vegasWinPct != null ? (projWinPct - vegasWinPct) * 100 : null;
+
   let projCoverTeam: "away" | "home" | null = null;
   if (projAwaySpread != null && vegasAwaySpread != null) {
     const projDiff = vegasAwaySpread - projAwaySpread;
@@ -223,6 +238,8 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     projWinPct,
     projMoneyline,
     vegasMoneyline,
+    vegasWinPct,
+    ev,
     projCoverTeam,
     filteredBetTeam,
     weightedFilteredBetTeam,
