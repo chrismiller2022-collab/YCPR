@@ -47,6 +47,7 @@ export interface MatchupComputed {
   amountOff: number | null;
   absAmountOff: number | null;
   relativeOff: number | null;
+  sigmaOff: number | null; // absAmountOff / 15.7 (site's game-outcome stddev) — how many "standard game swings" off the market
   projWinPct: number | null;
   projMoneyline: number | null;
   vegasMoneyline: number | null;
@@ -55,6 +56,8 @@ export interface MatchupComputed {
   projCoverTeam: "away" | "home" | null;
   filteredBetTeam: "away" | "home" | null;
   weightedFilteredBetTeam: "away" | "home" | null;
+  nwfbTeam: "away" | "home" | null; // sigmaOff > 0.4
+  betTeam: "away" | "home" | null; // whichever team projCoverTeam picks, IF any of filtered/WFB/NWFB signal
   wtfTeam: "away" | "home" | null;
   actCoverTeam: "away" | "home" | "push" | null;
   totalResult: "Over" | "Under" | "Push" | null;
@@ -69,6 +72,9 @@ export interface Tally {
 export interface MatchupStatsBundle {
   straightUp: { yc: Tally; vegas: Tally };
   ats: { yc: Tally; baselineWins: number; baselineLosses: number; baselineTotal: number };
+  filtered: Tally;
+  wfb: Tally;
+  nwfb: Tally;
 }
 
 // Standard -110 vig breakeven: at typical spread-betting odds (risk $110
@@ -90,6 +96,19 @@ export function computeMatchupStats(rows: MatchupComputed[]): MatchupStatsBundle
   const ycStraightUp: Tally = { w: 0, l: 0 };
   const vegasStraightUp: Tally = { w: 0, l: 0 };
   const ats: Tally = { w: 0, l: 0, push: 0 };
+  const filtered: Tally = { w: 0, l: 0, push: 0 };
+  const wfb: Tally = { w: 0, l: 0, push: 0 };
+  const nwfb: Tally = { w: 0, l: 0, push: 0 };
+
+  function grade(tally: Tally, team: "away" | "home" | null, actCoverTeam: "away" | "home" | "push" | null) {
+    if (!team || !actCoverTeam) return;
+    if (actCoverTeam === "push") {
+      tally.push = (tally.push ?? 0) + 1;
+      return;
+    }
+    if (team === actCoverTeam) tally.w++;
+    else tally.l++;
+  }
 
   for (const r of rows) {
     if (!r.game.completed || r.game.away_points == null || r.game.home_points == null) continue;
@@ -109,14 +128,10 @@ export function computeMatchupStats(rows: MatchupComputed[]): MatchupStatsBundle
       else vegasStraightUp.l++;
     }
 
-    if (r.projCoverTeam && r.actCoverTeam) {
-      if (r.actCoverTeam === "push") {
-        ats.push = (ats.push ?? 0) + 1;
-      } else {
-        if (r.projCoverTeam === r.actCoverTeam) ats.w++;
-        else ats.l++;
-      }
-    }
+    grade(ats, r.projCoverTeam, r.actCoverTeam);
+    grade(filtered, r.filteredBetTeam, r.actCoverTeam);
+    grade(wfb, r.weightedFilteredBetTeam, r.actCoverTeam);
+    grade(nwfb, r.nwfbTeam, r.actCoverTeam);
   }
 
   const decided = ats.w + ats.l;
@@ -126,6 +141,9 @@ export function computeMatchupStats(rows: MatchupComputed[]): MatchupStatsBundle
   return {
     straightUp: { yc: ycStraightUp, vegas: vegasStraightUp },
     ats: { yc: ats, baselineWins, baselineLosses, baselineTotal: decided },
+    filtered,
+    wfb,
+    nwfb,
   };
 }
 
@@ -195,14 +213,15 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
   const filteredBetTeam =
     absAmountOff != null && absAmountOff > DEFAULT_CUSTOM_PARAMS.filterThreshold ? projCoverTeam : null;
 
-  const weightedFilteredBetTeam =
-    absBettingLine != null &&
-    absBettingLine > DEFAULT_CUSTOM_PARAMS.minAbsLine &&
-    relativeOff != null &&
-    (relativeOff > DEFAULT_CUSTOM_PARAMS.posThreshold || relativeOff < DEFAULT_CUSTOM_PARAMS.negThreshold)
-      ? projCoverTeam
-      : null;
-
+  // Favorite flip — Vegas and our model disagree on which side is even
+  // favored at all, not just by how much. Computed here (before Weighted
+  // Filtered) because it overrides that check below: a flip is a
+  // qualitatively different, stronger signal than the relative-off ratio
+  // was ever designed to capture, and dividing by a large Vegas line
+  // systematically shrinks that ratio for exactly the biggest flips
+  // (a 10+ point underdog flipped to favorite reads as a "small" relative
+  // number purely because the denominator is big) — so a real flip always
+  // qualifies regardless of what the ratio says.
   let wtfTeam: "away" | "home" | null = null;
   if (projAwaySpread != null && vegasAwaySpread != null && projAwaySpread !== 0 && vegasAwaySpread !== 0) {
     const oursFavorsAway = projAwaySpread < 0;
@@ -211,6 +230,26 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
       wtfTeam = oursFavorsAway ? "away" : "home";
     }
   }
+
+  const weightedFilteredBetTeam =
+    wtfTeam != null && absBettingLine != null && absBettingLine > DEFAULT_CUSTOM_PARAMS.minAbsLine
+      ? projCoverTeam
+      : absBettingLine != null &&
+        absBettingLine > DEFAULT_CUSTOM_PARAMS.minAbsLine &&
+        relativeOff != null &&
+        (relativeOff > DEFAULT_CUSTOM_PARAMS.posThreshold || relativeOff < DEFAULT_CUSTOM_PARAMS.negThreshold)
+      ? projCoverTeam
+      : null;
+
+  // Sigma Off: absAmountOff expressed in units of the site's own
+  // game-outcome standard deviation (15.7, from the Monte Carlo
+  // methodology) — "how many standard game swings is this disagreement
+  // worth," independent of the size of the line itself.
+  const sigmaOff = absAmountOff != null ? absAmountOff / 15.7 : null;
+
+  const nwfbTeam = sigmaOff != null && sigmaOff > 0.4 ? projCoverTeam : null;
+
+  const betTeam = filteredBetTeam ?? weightedFilteredBetTeam ?? nwfbTeam;
 
   let actCoverTeam: "away" | "home" | "push" | null = null;
   if (game.completed && game.away_points != null && game.home_points != null && vegasAwaySpread != null) {
@@ -235,6 +274,7 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     amountOff,
     absAmountOff,
     relativeOff,
+    sigmaOff,
     projWinPct,
     projMoneyline,
     vegasMoneyline,
@@ -243,6 +283,8 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     projCoverTeam,
     filteredBetTeam,
     weightedFilteredBetTeam,
+    nwfbTeam,
+    betTeam,
     wtfTeam,
     actCoverTeam,
     totalResult,
