@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
+import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, hypotheticalNwfbChecks, type MatchupComputed } from "../lib/matchupsCompute";
 import SortHeader from "../components/SortHeader";
+
+// Deliberately dense — this table is for actually placing bets, not for
+// looking pretty, so it overrides the shared .matchups-* classes' default
+// padding with something tighter (inline, so the public Matchups page is
+// completely unaffected).
+const CP: CSSProperties = {
+  padding: "0.3rem 0.5rem",
+  fontSize: "0.78rem",
+  borderBottom: "1px solid rgba(255,255,255,0.05)",
+  whiteSpace: "nowrap",
+};
 
 function pctLabel(w: number, l: number) {
   const decided = w + l;
@@ -291,46 +302,82 @@ function MatchupsRow({
     : "–";
 
   if (mode === "spreads") {
+    const hyp =
+      !nwfbTeam
+        ? hypotheticalNwfbChecks(projAwaySpread, vegasAwaySpread, 15.7, 0.4).filter((h) => h.wouldFlag)
+        : [];
+
     return (
       <tr>
-        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+        <td style={{ ...CP, textAlign: "center" }}>
           {betTeam || projCoverTeam ? (
             <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(computed)} />
           ) : (
             "–"
           )}
         </td>
-        <td className="game-date-cell">{dateLabel}</td>
-        <TeamNameCell team={awayTeam} name={game.away_team} />
-        <TeamNameCell team={homeTeam} name={game.home_team} />
-        <td className="matchups-projected-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
+        <td style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
+        <td style={CP}>
+          {awayTeam ? (
+            <>
+              {awayTeam.team} <span style={{ color: "var(--chalk-dim)" }}>{awayTeam.rating.toFixed(1)}</span>
+            </>
+          ) : (
+            game.away_team
+          )}
+        </td>
+        <td style={CP}>
+          {homeTeam ? (
+            <>
+              {homeTeam.team} <span style={{ color: "var(--chalk-dim)" }}>{homeTeam.rating.toFixed(1)}</span>
+            </>
+          ) : (
+            game.home_team
+          )}
+        </td>
+        <td style={{ ...CP, textAlign: "right", ...(vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : {}) }}>
           {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
         </td>
-        <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
+        <td style={{ ...CP, textAlign: "right", ...(projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : {}) }}>
           {projAwaySpread != null ? `${projAwaySpread > 0 ? "+" : ""}${projAwaySpread.toFixed(1)}` : "–"}
         </td>
-        <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
-        <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
-        <td className="matchups-winner-cell">{teamNameFor(computed, projCoverTeam)}</td>
-        <td className="matchups-winner-cell">
-          {betTeam ? `${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}` : "–"}
-        </td>
-        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+        <td style={{ ...CP, textAlign: "right" }}>{game.away_points ?? "–"}</td>
+        <td style={{ ...CP, textAlign: "right" }}>{game.home_points ?? "–"}</td>
+        <td style={CP}>{teamNameFor(computed, projCoverTeam)}</td>
+        <td style={{ ...CP, fontWeight: 700 }}>{betTeam ? `${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}` : "–"}</td>
+        <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!filteredBetTeam} />
         </td>
-        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+        <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!weightedFilteredBetTeam} />
         </td>
-        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+        <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!nwfbTeam} />
         </td>
-        <td className="matchups-winner-cell" style={wtfTeam ? { color: "#c45c52", fontWeight: 700 } : undefined}>
+        <td style={{ ...CP, textAlign: "center" }} title={hyp.length > 0 ? `Would flag NWFB at: ${hyp.map((h) => (h.line > 0 ? "+" : "") + h.line.toFixed(1)).join(", ")}` : undefined}>
+          {hyp.length > 0 ? <span style={{ color: "#ffc857", fontWeight: 700 }}>👀</span> : "–"}
+        </td>
+        <td style={{ ...CP, ...(wtfTeam ? { color: "#c45c52", fontWeight: 700 } : {}) }}>
           {wtfTeam ? `${teamNameFor(computed, wtfTeam)}${betTeamSpreadLabel(computed, wtfTeam)} ⚠️` : "–"}
         </td>
-        <td className="matchups-winner-cell">{teamNameFor(computed, actCoverTeam)}</td>
-        <td className="matchups-empty-cell">{absAmountOff != null ? absAmountOff.toFixed(1) : "–"}</td>
-        <td className="matchups-empty-cell">{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
-        <td className="matchups-empty-cell">{sigmaOff != null ? sigmaOff.toFixed(2) : "–"}</td>
+        <td style={CP}>
+          {actCoverTeam ? (
+            <>
+              {teamNameFor(computed, actCoverTeam)}{" "}
+              {actCoverTeam !== "push" &&
+                (projCoverTeam === actCoverTeam ? (
+                  <span style={{ color: "#8fd39a", fontWeight: 700 }}>✓</span>
+                ) : (
+                  <span style={{ color: "#c45c52", fontWeight: 700 }}>✗</span>
+                ))}
+            </>
+          ) : (
+            "–"
+          )}
+        </td>
+        <td style={{ ...CP, textAlign: "right" }}>{absAmountOff != null ? absAmountOff.toFixed(1) : "–"}</td>
+        <td style={{ ...CP, textAlign: "right" }}>{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
+        <td style={{ ...CP, textAlign: "right" }}>{sigmaOff != null ? sigmaOff.toFixed(2) : "–"}</td>
       </tr>
     );
   }
@@ -430,6 +477,10 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
         return c.weightedFilteredBetTeam ? 1 : null;
       case "nwfb":
         return c.nwfbTeam ? 1 : null;
+      case "watch":
+        return !c.nwfbTeam && hypotheticalNwfbChecks(c.projAwaySpread, c.vegasAwaySpread, 15.7, 0.4).some((h) => h.wouldFlag)
+          ? 1
+          : null;
       case "wtf":
         return c.wtfTeam ? teamNameFor(c, c.wtfTeam) : null;
       case "actCover":
@@ -707,6 +758,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Watch 👀" sortKey="watch" active={sortKey === "watch"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={handleSort} align="right" />
