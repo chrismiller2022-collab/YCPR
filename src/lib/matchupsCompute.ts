@@ -170,6 +170,36 @@ export function computeErrorStats(rows: MatchupComputed[]): ErrorStatsBundle {
   return bundleErrors(ycErrors, vegasErrors);
 }
 
+export interface HypotheticalCheck {
+  line: number; // the hypothetical Vegas line (away-perspective), if the market moved here
+  delta: number; // how far from the current line, in points
+  sigma: number;
+  wouldFlag: boolean;
+}
+
+/**
+ * "If the line moves a bit, would this game become an NWFB bet?" Checks
+ * the current line ± 0.5 and ± 1.0 points — that span covers every
+ * realistic half-point move around a key number (2.5→3 is +0.5, 2.5→3.5
+ * is +1, -3.5→-3 is +0.5, -3.5→-2.5 is +1, and so on for 7). Only
+ * meaningful for games NOT already NWFB — the point is surfacing near
+ * misses, not re-confirming what's already flagged.
+ */
+export function hypotheticalNwfbChecks(
+  projAwaySpread: number | null,
+  currentVegasAwaySpread: number | null,
+  sigmaDivisor: number,
+  sigmaThreshold: number
+): HypotheticalCheck[] {
+  if (projAwaySpread == null || currentVegasAwaySpread == null || sigmaDivisor === 0) return [];
+  const deltas = [-1, -0.5, 0.5, 1];
+  return deltas.map((delta) => {
+    const line = currentVegasAwaySpread + delta;
+    const sigma = Math.abs(projAwaySpread - line) / sigmaDivisor;
+    return { line, delta, sigma, wouldFlag: sigma > sigmaThreshold };
+  });
+}
+
 export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>): MatchupComputed {
   const line = pickLine(game.lines);
   const awayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
