@@ -60,22 +60,24 @@ function StatsBlock({
   compact,
 }: {
   title: string;
-  overall: RecordTally;
-  byWeek: Map<number, RecordTally>;
+  overall: RecordTally | undefined;
+  byWeek: Map<number, RecordTally> | undefined;
   compact?: boolean;
 }) {
-  const weeks = Array.from(byWeek.keys()).sort((a, b) => a - b);
+  const safeOverall: RecordTally = overall ?? { w: 0, l: 0, push: 0 };
+  const safeByWeek = byWeek ?? new Map<number, RecordTally>();
+  const weeks = Array.from(safeByWeek.keys()).sort((a, b) => a - b);
 
   if (compact) {
     return (
       <div>
         <div style={{ display: "flex", gap: "1.5rem", alignItems: "baseline", marginBottom: "0.5rem" }}>
           <div>
-            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(overall)}</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(safeOverall)}</div>
             <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Record</div>
           </div>
           <div>
-            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(overall)}</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(safeOverall)}</div>
             <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Win %</div>
           </div>
         </div>
@@ -93,7 +95,7 @@ function StatsBlock({
                 </thead>
                 <tbody>
                   {weeks.map((w) => {
-                    const t = byWeek.get(w)!;
+                    const t = safeByWeek.get(w)!;
                     return (
                       <tr key={w}>
                         <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
@@ -135,11 +137,11 @@ function StatsBlock({
         </div>
         <div style={{ display: "flex", gap: "2.5rem", alignItems: "baseline", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(overall)}</div>
+            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(safeOverall)}</div>
             <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Record</div>
           </div>
           <div>
-            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(overall)}</div>
+            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(safeOverall)}</div>
             <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Win %</div>
           </div>
         </div>
@@ -161,7 +163,7 @@ function StatsBlock({
               </thead>
               <tbody>
                 {weeks.map((w) => {
-                  const t = byWeek.get(w)!;
+                  const t = safeByWeek.get(w)!;
                   return (
                     <tr key={w}>
                       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
@@ -540,7 +542,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
   function toWeekMap(agg: typeof plainAgg, which: "everyBet" | "filteredBet" | "weightedFilteredBet" | "nwfb") {
     const m = new Map<number, RecordTally>();
-    for (const [w, v] of agg.byWeek) m.set(w, v[which]);
+    for (const [w, v] of agg.byWeek) m.set(w, v[which] ?? { w: 0, l: 0, push: 0 });
     return m;
   }
 
@@ -694,7 +696,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
                   />
                 </label>
               </div>
-              <StatsBlock title="" overall={customAgg.overall.nwfb} byWeek={toWeekMap(customAgg, "nwfb")} compact />
+              <StatsBlock title="" overall={customAgg.overall.nwfb ?? { w: 0, l: 0, push: 0 }} byWeek={toWeekMap(customAgg, "nwfb")} compact />
             </ParamGroup>
           </div>
 
