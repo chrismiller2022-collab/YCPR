@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import { aggregatePlain, filterRecords, winPct, computeErrorStatsFromBetHistory, type RecordTally, type BetHistoryFilters } from "../lib/betHistory";
+import { fetchBetsMade, type AdminBetRow } from "../lib/api/adminBets";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 
 const SEASONS = [2024, 2025, 2026];
 
@@ -79,6 +81,153 @@ function StatsBlock({ title, overall, byWeek }: { title: string; overall: Record
         </div>
         </details>
       )}
+    </div>
+  );
+}
+
+type BetGrade = "win" | "loss" | "push" | "pending";
+
+// bet_spread is stored from the bet_team's OWN perspective (the real bet
+// slip number) — convert to away-perspective to grade against the final
+// score, matching the site's standard cover-margin convention used
+// everywhere else (matchupsCompute.ts, betHistory.ts). Grades against the
+// spread AT THE TIME OF THE BET, not whatever the current live line is —
+// that's the whole point of storing it.
+function gradeBet(bet: AdminBetRow, games: GameWithLines[]): BetGrade {
+  const game = games.find((g) => g.week === bet.week && g.away_team === bet.away_team && g.home_team === bet.home_team);
+  if (!game || !game.completed || game.away_points == null || game.home_points == null) return "pending";
+
+  const betIsAway = bet.bet_team === bet.away_team;
+  const betSpreadAwayPerspective = betIsAway ? bet.bet_spread : -bet.bet_spread;
+  const actualAwayMargin = game.away_points - game.home_points;
+  const coverMargin = actualAwayMargin + betSpreadAwayPerspective;
+
+  if (coverMargin === 0) return "push";
+  const awayCovered = coverMargin > 0;
+  return (betIsAway && awayCovered) || (!betIsAway && !awayCovered) ? "win" : "loss";
+}
+
+function gradeBadge(grade: BetGrade) {
+  const colors: Record<BetGrade, string> = { win: "#8fd39a", loss: "#c45c52", push: "var(--chalk-dim)", pending: "var(--chalk-dim)" };
+  const labels: Record<BetGrade, string> = { win: "Win", loss: "Loss", push: "Push", pending: "Pending" };
+  return <span style={{ color: colors[grade], fontWeight: 700 }}>{labels[grade]}</span>;
+}
+
+function BetsMadeBlock({ season }: { season: number }) {
+  const [bets, setBets] = useState<AdminBetRow[]>([]);
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    Promise.all([fetchBetsMade(season), fetchGamesWithLines(season)])
+      .then(([betsData, gamesData]) => {
+        setBets(betsData);
+        setGames(gamesData);
+      })
+      .catch((err) => setError(err.message ?? "Failed to load bets"))
+      .finally(() => setLoading(false));
+  }, [season]);
+
+  if (loading) return null;
+  if (error) return <p style={{ color: "crimson", fontSize: "0.85rem" }}>{error}</p>;
+  if (bets.length === 0) return null;
+
+  const graded = bets.map((b) => ({ bet: b, grade: gradeBet(b, games) }));
+  const w = graded.filter((g) => g.grade === "win").length;
+  const l = graded.filter((g) => g.grade === "loss").length;
+  const push = graded.filter((g) => g.grade === "push").length;
+  const pending = graded.filter((g) => g.grade === "pending").length;
+  const decided = w + l;
+  const winPctLabel = decided === 0 ? "–" : `${((w / decided) * 100).toFixed(1)}%`;
+
+  return (
+    <div style={{ marginBottom: "2rem" }}>
+      <div className="section-label">Bets Made</div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: "2rem",
+          alignItems: "baseline",
+          padding: "0.9rem 1.1rem",
+          background: "var(--turf-panel)",
+          border: "1px solid var(--hash)",
+          borderRadius: 8,
+          marginBottom: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>
+            {w}-{l}
+            {push > 0 ? `-${push}` : ""}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Record</div>
+        </div>
+        <div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{winPctLabel}</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Win %</div>
+        </div>
+        {pending > 0 && (
+          <div>
+            <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--chalk-dim)" }}>{pending}</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Pending</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+          <thead>
+            <tr>
+              <th className="th">Placed</th>
+              <th className="th">Week</th>
+              <th className="th">Matchup</th>
+              <th className="th">Bet</th>
+              <th className="th">Filtered</th>
+              <th className="th">WFB</th>
+              <th className="th">NWFB</th>
+              <th className="th">Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {graded.map(({ bet: b, grade }) => (
+              <tr key={b.id}>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>
+                  {new Date(b.placed_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}{" "}
+                  {new Date(b.placed_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{b.week}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {b.away_team} @ {b.home_team}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", fontWeight: 700 }}>
+                  {b.bet_team} ({b.bet_spread > 0 ? "+" : ""}
+                  {b.bet_spread})
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "center" }}>
+                  {b.is_filtered ? "✓" : "–"}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "center" }}>
+                  {b.is_wfb ? "✓" : "–"}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "center" }}>
+                  {b.is_nwfb ? "✓" : "–"}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{gradeBadge(grade)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", marginTop: "0.5rem" }}>
+        A live log of bets actually placed from the Admin Matchups page, timestamped as
+        they're saved and graded against each game's actual final score using the spread
+        at the time the bet was made, not whatever the line has since moved to.
+      </p>
     </div>
   );
 }
@@ -328,6 +477,8 @@ export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => 
           style={{ minWidth: 160 }}
         />
       </div>
+
+      {lockedYear === 2026 && <BetsMadeBlock season={2026} />}
 
       {BET_HISTORY.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>

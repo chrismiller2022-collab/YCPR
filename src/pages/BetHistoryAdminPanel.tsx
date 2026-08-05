@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
@@ -26,8 +26,91 @@ function fmtPct(t: RecordTally) {
   return `${winPct(t).toFixed(1)}%`;
 }
 
-function StatsBlock({ title, overall, byWeek }: { title: string; overall: RecordTally; byWeek: Map<number, RecordTally> }) {
+function ParamGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div
+      style={{
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: 10,
+        padding: "1.1rem 1.2rem",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.8rem",
+          fontWeight: 700,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: "var(--gold)",
+          marginBottom: "0.75rem",
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatsBlock({
+  title,
+  overall,
+  byWeek,
+  compact,
+}: {
+  title: string;
+  overall: RecordTally;
+  byWeek: Map<number, RecordTally>;
+  compact?: boolean;
+}) {
   const weeks = Array.from(byWeek.keys()).sort((a, b) => a - b);
+
+  if (compact) {
+    return (
+      <div>
+        <div style={{ display: "flex", gap: "1.5rem", alignItems: "baseline", marginBottom: "0.5rem" }}>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(overall)}</div>
+            <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Record</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(overall)}</div>
+            <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Win %</div>
+          </div>
+        </div>
+        {weeks.length > 0 && (
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: "0.76rem", color: "var(--chalk-dim)" }}>Weekly breakdown</summary>
+            <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 6, marginTop: "0.4rem" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem" }}>
+                <thead>
+                  <tr>
+                    <th className="th">Week</th>
+                    <th className="th th-right">Record</th>
+                    <th className="th th-right">Win %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeks.map((w) => {
+                    const t = byWeek.get(w)!;
+                    return (
+                      <tr key={w}>
+                        <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
+                        <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(t)}</td>
+                        <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(t)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ marginBottom: "1.75rem" }}>
       <div
@@ -455,7 +538,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
   const weeksAvailable = Array.from(new Set(filtered.map((r) => r.week))).sort((a, b) => a - b);
 
-  function toWeekMap(agg: typeof plainAgg, which: "everyBet" | "filteredBet" | "weightedFilteredBet") {
+  function toWeekMap(agg: typeof plainAgg, which: "everyBet" | "filteredBet" | "weightedFilteredBet" | "nwfb") {
     const m = new Map<number, RecordTally>();
     for (const [w, v] of agg.byWeek) m.set(w, v[which]);
     return m;
@@ -506,61 +589,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
       />
 
       {tab === "custom" && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "1rem",
-            marginBottom: "1.5rem",
-            padding: "0.9rem",
-            background: "var(--turf-panel)",
-            border: "1px solid var(--hash)",
-            borderRadius: 8,
-            alignItems: "center",
-          }}
-        >
-          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
-            Filtered Bet threshold (abs amount off &gt;){" "}
-            <input
-              type="number"
-              step="0.5"
-              value={params.filterThreshold}
-              onChange={(e) => setParam("filterThreshold", parseFloat(e.target.value) || 0)}
-              style={{ width: 70 }}
-            />
-          </label>
-          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
-            Min abs betting line (&gt;, no pick'ems){" "}
-            <input
-              type="number"
-              step="0.5"
-              value={params.minAbsLine}
-              onChange={(e) => setParam("minAbsLine", parseFloat(e.target.value) || 0)}
-              style={{ width: 70 }}
-            />
-          </label>
-          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
-            Relative-off positive threshold (&gt;){" "}
-            <input
-              type="number"
-              step="0.1"
-              value={params.posThreshold}
-              onChange={(e) => setParam("posThreshold", parseFloat(e.target.value) || 0)}
-              style={{ width: 70 }}
-            />
-          </label>
-          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
-            Relative-off negative threshold (&lt;){" "}
-            <input
-              type="number"
-              step="0.1"
-              value={params.negThreshold}
-              onChange={(e) => setParam("negThreshold", parseFloat(e.target.value) || 0)}
-              style={{ width: 70 }}
-            />
-          </label>
+        <div style={{ marginBottom: "0.75rem", display: "flex", justifyContent: "flex-end" }}>
           <button className="menu-btn" onClick={() => setParams({ ...DEFAULT_CUSTOM_PARAMS })} disabled={isDefault}>
-            Reset to defaults
+            Reset all to defaults
           </button>
         </div>
       )}
@@ -584,17 +615,89 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </>
       ) : (
         <>
-          <StatsBlock title="Every Game Bet" overall={customAgg.overall.everyBet} byWeek={toWeekMap(customAgg, "everyBet")} />
-          <StatsBlock
-            title={`Filtered Bet (abs amount off > ${params.filterThreshold})`}
-            overall={customAgg.overall.filteredBet}
-            byWeek={toWeekMap(customAgg, "filteredBet")}
-          />
-          <StatsBlock
-            title={`Weighted Filtered Bet (line > ${params.minAbsLine}, relative off > ${params.posThreshold} or < ${params.negThreshold})`}
-            overall={customAgg.overall.weightedFilteredBet}
-            byWeek={toWeekMap(customAgg, "weightedFilteredBet")}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "1.5rem" }}>
+            <ParamGroup title="Every Game Bet">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>No threshold — every game gets a lean.</p>
+              <StatsBlock title="" overall={customAgg.overall.everyBet} byWeek={toWeekMap(customAgg, "everyBet")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="Filtered Bet">
+              <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", display: "block", marginBottom: "0.75rem" }}>
+                Abs amount off &gt;{" "}
+                <input
+                  type="number"
+                  step="0.5"
+                  value={params.filterThreshold}
+                  onChange={(e) => setParam("filterThreshold", parseFloat(e.target.value) || 0)}
+                  style={{ width: 70 }}
+                />
+              </label>
+              <StatsBlock title="" overall={customAgg.overall.filteredBet} byWeek={toWeekMap(customAgg, "filteredBet")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="WFB (Weighted Filtered Bet)">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+                  Min abs betting line &gt; (no pick'ems){" "}
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={params.minAbsLine}
+                    onChange={(e) => setParam("minAbsLine", parseFloat(e.target.value) || 0)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+                  Relative-off positive threshold &gt;{" "}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={params.posThreshold}
+                    onChange={(e) => setParam("posThreshold", parseFloat(e.target.value) || 0)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+                  Relative-off negative threshold &lt;{" "}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={params.negThreshold}
+                    onChange={(e) => setParam("negThreshold", parseFloat(e.target.value) || 0)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+              </div>
+              <StatsBlock title="" overall={customAgg.overall.weightedFilteredBet} byWeek={toWeekMap(customAgg, "weightedFilteredBet")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="NWFB">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+                  Sigma divisor (abs amount off ÷ this){" "}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={params.sigmaDivisor}
+                    onChange={(e) => setParam("sigmaDivisor", parseFloat(e.target.value) || 0)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+                  Sigma Off must exceed{" "}
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={params.sigmaThreshold}
+                    onChange={(e) => setParam("sigmaThreshold", parseFloat(e.target.value) || 0)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+              </div>
+              <StatsBlock title="" overall={customAgg.overall.nwfb} byWeek={toWeekMap(customAgg, "nwfb")} compact />
+            </ParamGroup>
+          </div>
+
           <ErrorStatsBlock errorStats={errorStats} />
           <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} />

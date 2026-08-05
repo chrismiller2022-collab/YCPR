@@ -16,7 +16,7 @@ function recordLabel(w: number, l: number, push?: number) {
 function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: string }) {
   const stats = useMemo(() => computeMatchupStats(rows), [rows]);
   const errorStats = useMemo(() => computeErrorStats(rows), [rows]);
-  const { straightUp, ats } = stats;
+  const { straightUp, ats, filtered, wfb, nwfb } = stats;
 
   const fmtNum = (v: number | null, digits = 2) => (v == null ? "–" : v.toFixed(digits));
   const fmtDelta = (v: number | null, digits = 2) => (v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`);
@@ -163,6 +163,39 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
         </div>
       </div>
 
+      <div style={{ marginBottom: "1rem" }}>
+        <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--gold)", marginBottom: "0.4rem" }}>
+          ATS by Bet Type (season)
+        </div>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+          <thead>
+            <tr>
+              <th className="th"></th>
+              <th className="th th-right">Every Game</th>
+              <th className="th th-right">Filtered</th>
+              <th className="th th-right">WFB</th>
+              <th className="th th-right">NWFB</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ padding: "0.3rem 0.6rem" }}>Record</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{recordLabel(ats.yc.w, ats.yc.l, ats.yc.push)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{recordLabel(filtered.w, filtered.l, filtered.push)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{recordLabel(wfb.w, wfb.l, wfb.push)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right" }}>{recordLabel(nwfb.w, nwfb.l, nwfb.push)}</td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.3rem 0.6rem", fontWeight: 700 }}>Win %</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>{pctLabel(ats.yc.w, ats.yc.l)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>{pctLabel(filtered.w, filtered.l)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>{pctLabel(wfb.w, wfb.l)}</td>
+              <td style={{ padding: "0.3rem 0.6rem", textAlign: "right", fontWeight: 700 }}>{pctLabel(nwfb.w, nwfb.l)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", margin: 0 }}>
         The ATS "Breakeven Baseline" is bankroll math, not a model comparison: at standard
         -110 spread odds, you need to win 52.4% of your decided bets just to break even
@@ -209,7 +242,25 @@ function betTeamSpreadLabel(c: MatchupComputed, side: "away" | "home" | null): s
   return ` (${sideSpread > 0 ? "+" : ""}${sideSpread.toFixed(1)})`;
 }
 
-function MatchupsRow({ computed, mode }: { computed: MatchupComputed; mode: string }) {
+function CheckIcon({ on }: { on: boolean }) {
+  return (
+    <span style={{ color: on ? "#8fd39a" : "var(--chalk-dim)", opacity: on ? 1 : 0.3, fontWeight: 700 }}>
+      {on ? "✓" : "–"}
+    </span>
+  );
+}
+
+function MatchupsRow({
+  computed,
+  mode,
+  selected,
+  onToggleSelect,
+}: {
+  computed: MatchupComputed;
+  mode: string;
+  selected?: boolean;
+  onToggleSelect?: (computed: MatchupComputed) => void;
+}) {
   const {
     game,
     line,
@@ -217,16 +268,19 @@ function MatchupsRow({ computed, mode }: { computed: MatchupComputed; mode: stri
     homeTeam,
     projAwaySpread,
     vegasAwaySpread,
-    amountOff,
+    absAmountOff,
     relativeOff,
+    sigmaOff,
     projWinPct,
     projMoneyline,
     vegasMoneyline,
     vegasWinPct,
     ev,
     projCoverTeam,
+    betTeam,
     filteredBetTeam,
     weightedFilteredBetTeam,
+    nwfbTeam,
     wtfTeam,
     actCoverTeam,
     totalResult,
@@ -239,6 +293,13 @@ function MatchupsRow({ computed, mode }: { computed: MatchupComputed; mode: stri
   if (mode === "spreads") {
     return (
       <tr>
+        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+          {betTeam || projCoverTeam ? (
+            <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(computed)} />
+          ) : (
+            "–"
+          )}
+        </td>
         <td className="game-date-cell">{dateLabel}</td>
         <TeamNameCell team={awayTeam} name={game.away_team} />
         <TeamNameCell team={homeTeam} name={game.home_team} />
@@ -248,31 +309,34 @@ function MatchupsRow({ computed, mode }: { computed: MatchupComputed; mode: stri
         <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
           {projAwaySpread != null ? `${projAwaySpread > 0 ? "+" : ""}${projAwaySpread.toFixed(1)}` : "–"}
         </td>
-        <td className="matchups-empty-cell">{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
-        <td className="matchups-empty-cell">{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
         <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
         <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
+        <td className="matchups-winner-cell">{teamNameFor(computed, projCoverTeam)}</td>
         <td className="matchups-winner-cell">
-          {teamNameFor(computed, projCoverTeam)}
-          {betTeamSpreadLabel(computed, projCoverTeam)}
+          {betTeam ? `${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}` : "–"}
         </td>
-        <td className="matchups-winner-cell">
-          {teamNameFor(computed, filteredBetTeam)}
-          {betTeamSpreadLabel(computed, filteredBetTeam)}
+        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+          <CheckIcon on={!!filteredBetTeam} />
         </td>
-        <td className="matchups-winner-cell">
-          {teamNameFor(computed, weightedFilteredBetTeam)}
-          {betTeamSpreadLabel(computed, weightedFilteredBetTeam)}
+        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+          <CheckIcon on={!!weightedFilteredBetTeam} />
+        </td>
+        <td className="matchups-empty-cell" style={{ textAlign: "center" }}>
+          <CheckIcon on={!!nwfbTeam} />
         </td>
         <td className="matchups-winner-cell" style={wtfTeam ? { color: "#c45c52", fontWeight: 700 } : undefined}>
           {wtfTeam ? `${teamNameFor(computed, wtfTeam)}${betTeamSpreadLabel(computed, wtfTeam)} ⚠️` : "–"}
         </td>
         <td className="matchups-winner-cell">{teamNameFor(computed, actCoverTeam)}</td>
+        <td className="matchups-empty-cell">{absAmountOff != null ? absAmountOff.toFixed(1) : "–"}</td>
+        <td className="matchups-empty-cell">{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
+        <td className="matchups-empty-cell">{sigmaOff != null ? sigmaOff.toFixed(2) : "–"}</td>
       </tr>
     );
   }
 
   if (mode === "moneyline") {
+
     const winner = projAwaySpread != null ? (projAwaySpread < 0 ? game.away_team : projAwaySpread > 0 ? game.home_team : "Pick'em") : "–";
     const actualWinner =
       game.away_points != null && game.home_points != null
@@ -351,15 +415,21 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
       case "projSpread":
         return c.projAwaySpread;
       case "amountOff":
-        return c.amountOff;
+        return c.absAmountOff;
       case "relativeOff":
         return c.relativeOff;
+      case "sigmaOff":
+        return c.sigmaOff;
       case "projCover":
         return c.projCoverTeam ? teamNameFor(c, c.projCoverTeam) : null;
+      case "bet":
+        return c.betTeam ? teamNameFor(c, c.betTeam) : null;
       case "filteredBet":
-        return c.filteredBetTeam ? teamNameFor(c, c.filteredBetTeam) : null;
-      case "weightedFiltered":
-        return c.weightedFilteredBetTeam ? teamNameFor(c, c.weightedFilteredBetTeam) : null;
+        return c.filteredBetTeam ? 1 : null;
+      case "wfb":
+        return c.weightedFilteredBetTeam ? 1 : null;
+      case "nwfb":
+        return c.nwfbTeam ? 1 : null;
       case "wtf":
         return c.wtfTeam ? teamNameFor(c, c.wtfTeam) : null;
       case "actCover":
@@ -432,6 +502,10 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [selectedGameIds, setSelectedGameIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   useEffect(() => {
@@ -487,6 +561,61 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     } else {
       setSortKey(key);
       setSortDir("asc");
+    }
+  }
+
+  function toggleSelect(c: MatchupComputed) {
+    setSelectedGameIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(c.game.id)) next.delete(c.game.id);
+      else next.add(c.game.id);
+      return next;
+    });
+  }
+
+  const selectedRows = useMemo(
+    () => sortedRows.filter((c) => selectedGameIds.has(c.game.id)),
+    [sortedRows, selectedGameIds]
+  );
+
+  async function handleSaveBets() {
+    if (selectedRows.length === 0) return;
+    const password = window.prompt("Admin password:");
+    if (!password) return;
+
+    setSaving(true);
+    setSaveMessage(null);
+    try {
+      const bets = selectedRows.map((c) => {
+        const team = c.betTeam ?? c.projCoverTeam!;
+        const spread = team === "away" ? c.vegasAwaySpread : c.vegasAwaySpread != null ? -c.vegasAwaySpread : null;
+        return {
+          season,
+          week: c.game.week,
+          awayTeam: c.game.away_team,
+          homeTeam: c.game.home_team,
+          betTeam: team === "away" ? c.game.away_team : c.game.home_team,
+          betSpread: spread,
+          isFiltered: !!c.filteredBetTeam,
+          isWfb: !!c.weightedFilteredBetTeam,
+          isNwfb: !!c.nwfbTeam,
+        };
+      });
+
+      const res = await fetch("/api/admin-bets-save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, action: "saveBets", bets }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+
+      setSaveMessage(`Saved ${data.saved} bet${data.saved === 1 ? "" : "s"}.`);
+      setSelectedGameIds(new Set());
+    } catch (err: any) {
+      setSaveMessage(`Error: ${err.message ?? "Save failed"}`);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -565,20 +694,24 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                 <thead>
                   {mode === "spreads" && (
                     <tr>
+                      <th className="th">Bet?</th>
                       <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Projected Spread" sortKey="projSpread" active={sortKey === "projSpread"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Relative Off" sortKey="relativeOff" active={sortKey === "relativeOff"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Proj. Cover Team" sortKey="projCover" active={sortKey === "projCover"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Bet" sortKey="bet" active={sortKey === "bet"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Weighted Filtered" sortKey="weightedFiltered" active={sortKey === "weightedFiltered"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Relative Off" sortKey="relativeOff" active={sortKey === "relativeOff"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Sigma Off" sortKey="sigmaOff" active={sortKey === "sigmaOff"} dir={sortDir} onClick={handleSort} align="right" />
                     </tr>
                   )}
                   {mode === "moneyline" && (
@@ -613,10 +746,41 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                 </thead>
                 <tbody>
                   {sortedRows.map((c) => (
-                    <MatchupsRow key={c.game.id} computed={c} mode={mode} />
+                    <MatchupsRow
+                      key={c.game.id}
+                      computed={c}
+                      mode={mode}
+                      selected={selectedGameIds.has(c.game.id)}
+                      onToggleSelect={toggleSelect}
+                    />
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {mode === "spreads" && selectedRows.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "1rem",
+                margin: "1rem 0",
+                padding: "0.9rem 1.1rem",
+                background: "var(--turf-panel)",
+                border: "1px solid var(--gold)",
+                borderRadius: 8,
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>
+                {selectedRows.length} game{selectedRows.length === 1 ? "" : "s"} selected
+              </span>
+              <button className="menu-btn" onClick={handleSaveBets} disabled={saving}>
+                {saving ? "Saving…" : `Save ${selectedRows.length} Bet${selectedRows.length === 1 ? "" : "s"}`}
+              </button>
+              <button className="menu-btn" onClick={() => setSelectedGameIds(new Set())} disabled={saving}>
+                Clear
+              </button>
+              {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{saveMessage}</span>}
             </div>
           )}
           {!loading && sortedRows.length > 0 && (
