@@ -200,6 +200,23 @@ export function normalize(value: number | null, allValues: (number | null)[], hi
   return 1 + directed * 9;
 }
 
+// bestLoss/worstLoss can only be null for one reason: the team has no
+// losses at all (see computeBestWorst — there's no other way to get
+// null here). Having zero losses is strictly better than any possible
+// "quality of loss," so it should score the maximum (10), not get
+// excluded from the average like a genuinely missing value would.
+export const NULL_MEANS_BEST: (keyof RawResumeMetrics)[] = ["bestLoss", "worstLoss"];
+
+export function normalizeMetric(
+  key: keyof RawResumeMetrics,
+  value: number | null,
+  allValues: (number | null)[],
+  higherIsBetter: boolean
+): number | null {
+  if (value == null && NULL_MEANS_BEST.includes(key)) return 10;
+  return normalize(value, allValues, higherIsBetter);
+}
+
 export type ResumeWeights = Record<string, number>;
 
 export const DEFAULT_RESUME_WEIGHTS: ResumeWeights = Object.fromEntries(METRIC_KEYS.map((k) => [k, 1]));

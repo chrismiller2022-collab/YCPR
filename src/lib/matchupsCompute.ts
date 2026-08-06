@@ -170,34 +170,58 @@ export function computeErrorStats(rows: MatchupComputed[]): ErrorStatsBundle {
   return bundleErrors(ycErrors, vegasErrors);
 }
 
-export interface HypotheticalCheck {
-  line: number; // the hypothetical Vegas line (away-perspective), if the market moved here
-  delta: number; // how far from the current line, in points
-  sigma: number;
-  wouldFlag: boolean;
-}
+// Exact starting lines (from the PROJ COVER TEAM's own perspective —
+// positive = that team is the underdog, negative = favored, matching a
+// real bet slip) and their nearest-first target checks. Deliberately
+// literal, not a generic +/-0.5/+/-1 sweep — only these four starting
+// numbers are checked, and only against these specific targets.
+const WATCH_TARGETS: Record<string, number[]> = {
+  "2.5": [3, 3.5],
+  "6.5": [7, 7.5],
+  "-3.5": [-3, -2.5],
+  "-7.5": [-7, -6.5],
+};
 
 /**
- * "If the line moves a bit, would this game become an NWFB bet?" Checks
- * the current line ± 0.5 and ± 1.0 points — that span covers every
- * realistic half-point move around a key number (2.5→3 is +0.5, 2.5→3.5
- * is +1, -3.5→-3 is +0.5, -3.5→-2.5 is +1, and so on for 7). Only
- * meaningful for games NOT already NWFB — the point is surfacing near
- * misses, not re-confirming what's already flagged.
+ * "If the line moves to a key number, would this game become a bet
+ * (Filtered, WFB, or NWFB) that it isn't already?" Only fires for games
+ * currently on none of the three lists, and only for the four specific
+ * starting lines above — everything else is ignored, even if a nearby
+ * move would technically cross a threshold. Returns a display string
+ * like "Need +3", or null if nothing applies.
  */
-export function hypotheticalNwfbChecks(
+export function computeWatchSignal(
   projAwaySpread: number | null,
-  currentVegasAwaySpread: number | null,
-  sigmaDivisor: number,
-  sigmaThreshold: number
-): HypotheticalCheck[] {
-  if (projAwaySpread == null || currentVegasAwaySpread == null || sigmaDivisor === 0) return [];
-  const deltas = [-1, -0.5, 0.5, 1];
-  return deltas.map((delta) => {
-    const line = currentVegasAwaySpread + delta;
-    const sigma = Math.abs(projAwaySpread - line) / sigmaDivisor;
-    return { line, delta, sigma, wouldFlag: sigma > sigmaThreshold };
-  });
+  vegasAwaySpread: number | null,
+  projCoverTeam: "away" | "home" | null,
+  alreadyFlagged: boolean
+): string | null {
+  if (alreadyFlagged || projAwaySpread == null || vegasAwaySpread == null || projCoverTeam == null) return null;
+
+  const betTeamLine = projCoverTeam === "away" ? vegasAwaySpread : -vegasAwaySpread;
+  const targets = WATCH_TARGETS[String(betTeamLine)];
+  if (!targets) return null;
+
+  for (const target of targets) {
+    const hypotheticalVegasAwaySpread = projCoverTeam === "away" ? target : -target;
+    const hypotheticalAmountOff = Math.abs(projAwaySpread - hypotheticalVegasAwaySpread);
+    const hypotheticalAbsLine = Math.abs(hypotheticalVegasAwaySpread);
+    const hypotheticalRelativeOff =
+      hypotheticalVegasAwaySpread !== 0 ? hypotheticalAmountOff / hypotheticalVegasAwaySpread : 0;
+    const hypotheticalSigma = hypotheticalAmountOff / 15.7;
+
+    const filteredTriggers = hypotheticalAmountOff > DEFAULT_CUSTOM_PARAMS.filterThreshold;
+    const wfbTriggers =
+      hypotheticalAbsLine > DEFAULT_CUSTOM_PARAMS.minAbsLine &&
+      (hypotheticalRelativeOff > DEFAULT_CUSTOM_PARAMS.posThreshold || hypotheticalRelativeOff < DEFAULT_CUSTOM_PARAMS.negThreshold);
+    const nwfbTriggers = hypotheticalSigma > 0.4;
+
+    if (filteredTriggers || wfbTriggers || nwfbTriggers) {
+      return `Need ${target > 0 ? "+" : ""}${target}`;
+    }
+  }
+
+  return null;
 }
 
 export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>): MatchupComputed {
