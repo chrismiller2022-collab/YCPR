@@ -540,7 +540,10 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
   const weeksAvailable = Array.from(new Set(filtered.map((r) => r.week))).sort((a, b) => a - b);
 
-  function toWeekMap(agg: typeof plainAgg, which: "everyBet" | "filteredBet" | "weightedFilteredBet" | "nwfb") {
+  function toWeekMap(
+    agg: typeof plainAgg,
+    which: "everyBet" | "filteredBet" | "weightedFilteredBet" | "nwfb" | "anyBet" | "matchAll3" | "filteredAndWfb" | "wfbAndNwfb" | "filteredAndNwfb"
+  ) {
     const m = new Map<number, RecordTally>();
     for (const [w, v] of agg.byWeek) m.set(w, v[which] ?? { w: 0, l: 0, push: 0 });
     return m;
@@ -617,12 +620,33 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "1.5rem" }}>
+          <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+            "Any Bet" and the match/combo tiles below don't have their own thresholds — they're
+            derived from the same six inputs used by Filtered / WFB / NWFB.
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.25rem", marginBottom: "1.25rem" }}>
             <ParamGroup title="Every Game Bet">
               <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>No threshold — every game gets a lean.</p>
               <StatsBlock title="" overall={customAgg.overall.everyBet} byWeek={toWeekMap(customAgg, "everyBet")} compact />
             </ParamGroup>
 
+            <ParamGroup title="Any Bet">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>
+                Filtered OR WFB OR NWFB signals — counted once per game, not once per matching category.
+              </p>
+              <StatsBlock title="" overall={customAgg.overall.anyBet} byWeek={toWeekMap(customAgg, "anyBet")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="Match Bet (All 3)">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>
+                Filtered AND WFB AND NWFB all signal simultaneously — the strongest agreement.
+              </p>
+              <StatsBlock title="" overall={customAgg.overall.matchAll3} byWeek={toWeekMap(customAgg, "matchAll3")} compact />
+            </ParamGroup>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.25rem", marginBottom: "1.25rem" }}>
             <ParamGroup title="Filtered Bet">
               <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", display: "block", marginBottom: "0.75rem" }}>
                 Abs amount off &gt;{" "}
@@ -680,7 +704,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
                   <input
                     type="number"
                     step="0.1"
-                    value={params.sigmaDivisor}
+                    value={params.sigmaDivisor ?? 15.7}
                     onChange={(e) => setParam("sigmaDivisor", parseFloat(e.target.value) || 0)}
                     style={{ width: 70 }}
                   />
@@ -690,13 +714,30 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
                   <input
                     type="number"
                     step="0.1"
-                    value={params.sigmaThreshold}
+                    value={params.sigmaThreshold ?? 0.4}
                     onChange={(e) => setParam("sigmaThreshold", parseFloat(e.target.value) || 0)}
                     style={{ width: 70 }}
                   />
                 </label>
               </div>
               <StatsBlock title="" overall={customAgg.overall.nwfb ?? { w: 0, l: 0, push: 0 }} byWeek={toWeekMap(customAgg, "nwfb")} compact />
+            </ParamGroup>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.25rem", marginBottom: "1.5rem" }}>
+            <ParamGroup title="Filtered + WFB Match">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>Both Filtered and WFB signal on this game.</p>
+              <StatsBlock title="" overall={customAgg.overall.filteredAndWfb} byWeek={toWeekMap(customAgg, "filteredAndWfb")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="WFB + NWFB Match">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>Both WFB and NWFB signal on this game.</p>
+              <StatsBlock title="" overall={customAgg.overall.wfbAndNwfb} byWeek={toWeekMap(customAgg, "wfbAndNwfb")} compact />
+            </ParamGroup>
+
+            <ParamGroup title="Filtered + NWFB Match">
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.75rem" }}>Both Filtered and NWFB signal on this game.</p>
+              <StatsBlock title="" overall={customAgg.overall.filteredAndNwfb} byWeek={toWeekMap(customAgg, "filteredAndNwfb")} compact />
             </ParamGroup>
           </div>
 

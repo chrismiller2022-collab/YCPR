@@ -3,6 +3,7 @@ import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
+import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
@@ -211,7 +212,8 @@ type AdminView =
   | "cfbdpickem"
   | "cbspickem"
   | "survivorpooladmin"
-  | "bethistory";
+  | "bethistory"
+  | "resumerating";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -434,6 +436,11 @@ function AdminDashboard({
           label="Bet History"
           description="ATS track record with adjustable HFA mode and filter threshold."
           onClick={() => onNavigateView("bethistory")}
+        />
+        <MenuTile
+          label="Resume Rating"
+          description="Adjustable-weight conglomerate score from 16 normalized resume metrics."
+          onClick={() => onNavigateView("resumerating")}
         />
         <MenuTile
           label="Games & Lines"
@@ -671,7 +678,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   }
 
   return (
-    <div className="page" style={{ maxWidth: view === "matchups" ? "none" : 1000, margin: "2rem auto", padding: "0 1rem" }}>
+    <div className="page" style={{ maxWidth: view === "matchups" || view === "resumerating" ? "none" : 1000, margin: "2rem auto", padding: "0 1rem" }}>
       {view === "home" && (
         <p style={{ marginTop: 0 }}>
           <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
@@ -705,6 +712,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
 
       {view === "matchups" && <AdminMatchupsPanel onBack={() => setView("home")} />}
+      {view === "resumerating" && <ResumeRatingAdminPanel onBack={() => setView("home")} />}
 
       {view === "pools" && (
         <PoolsMenuPanel onBack={() => setView("home")} onSelectPool={(pool) => setView(pool as AdminView)} />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
@@ -10,6 +10,8 @@ import { computeRadarMetrics } from "../lib/percentiles";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 
 function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -161,6 +163,101 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
 }
 
 
+function BestWorstCell({
+  candidate,
+  isProj,
+  emptyLabel,
+  onNavigateTeam,
+}: {
+  candidate: BestWorstCandidate | null;
+  isProj: boolean;
+  emptyLabel: string;
+  onNavigateTeam: any;
+}) {
+  if (!candidate) {
+    return (
+      <div style={{ padding: "0.9rem 1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 10 }}>
+        <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+          {isProj ? "Projected" : "Actual"}
+        </div>
+        <div style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>{emptyLabel}</div>
+      </div>
+    );
+  }
+
+  const { opponent, oppCurrentRating, week, projSpread, teamScore, oppScore } = candidate;
+
+  return (
+    <div style={{ padding: "0.9rem 1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 10 }}>
+      <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+        {isProj ? "Projected" : "Actual"} · Week {week}
+      </div>
+      <button className="team-link matchup-team-btn" onClick={() => onNavigateTeam(opponent)} style={{ fontSize: "0.95rem" }}>
+        <TeamLogo team={opponent} />
+        {opponent.team}
+      </button>
+      <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>
+        Current rating: <span style={{ color: oppCurrentRating < 0 ? "var(--gold)" : "var(--chalk-dim)" }}>
+          {oppCurrentRating > 0 ? "+" : ""}
+          {oppCurrentRating.toFixed(2)}
+        </span>
+      </div>
+      <div style={{ marginTop: "0.5rem", fontWeight: 700, color: isProj ? spreadColor(projSpread) : undefined }}>
+        {isProj
+          ? `${projSpread > 0 ? "+" : ""}${projSpread.toFixed(1)} proj.`
+          : `${teamScore}-${oppScore}`}
+      </div>
+    </div>
+  );
+}
+
+function BestWorstBlock({ team, onNavigateTeam }: { team: any; onNavigateTeam: any }) {
+  const season = new Date().getFullYear();
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  useEffect(() => {
+    setLoading(true);
+    fetchGamesWithLines(season)
+      .then(setGames)
+      .catch(() => setGames([]))
+      .finally(() => setLoading(false));
+  }, [season]);
+
+  const results = useMemo(() => computeBestWorst(team, games, liveByTeam), [team, games, liveByTeam]);
+
+  if (loading) return null;
+
+  const rows = [
+    { label: "Best Win", result: results.bestWin, emptyProj: "No projected wins", emptyActual: "No wins yet" },
+    { label: "Best Loss", result: results.bestLoss, emptyProj: "No projected losses", emptyActual: "No losses yet" },
+    { label: "Worst Loss", result: results.worstLoss, emptyProj: "No projected losses", emptyActual: "No losses yet" },
+  ];
+
+  return (
+    <div className="table-wrap">
+      <div className="section-label">{team.team} best/worst results</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        {rows.map((r) => (
+          <div key={r.label}>
+            <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--gold)", marginBottom: "0.5rem" }}>{r.label}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+              <BestWorstCell candidate={r.result.proj} isProj emptyLabel={r.emptyProj} onNavigateTeam={onNavigateTeam} />
+              <BestWorstCell candidate={r.result.actual} isProj={false} emptyLabel={r.emptyActual} onNavigateTeam={onNavigateTeam} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="footer-note" style={{ marginTop: "0.75rem" }}>
+        Opponent ratings shown are current (live, as of now) — not a snapshot from the week
+        each game was played. Projected uses each game's model spread; Actual only considers
+        completed games.
+      </div>
+    </div>
+  );
+}
+
 export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
@@ -246,6 +343,8 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           </div>
         )}
       </div>
+
+      <BestWorstBlock team={team} onNavigateTeam={onNavigateTeam} />
 
       <div className="table-wrap">
         <div className="section-label">{team.conf} standings</div>

@@ -34,10 +34,28 @@ export interface TripleTally {
   everyBet: RecordTally;
   filteredBet: RecordTally;
   weightedFilteredBet: RecordTally;
+  nwfb: RecordTally; // always empty for Plain History (no such column was uploaded) — real for Custom
+  // Combination categories — all always empty for Plain History (these
+  // concepts don't exist in the uploaded CSV), real for Custom only.
+  anyBet: RecordTally; // filtered OR wfb OR nwfb signals (counted once, not double-counted — they're always the same team)
+  matchAll3: RecordTally; // filtered AND wfb AND nwfb all signal simultaneously
+  filteredAndWfb: RecordTally;
+  wfbAndNwfb: RecordTally;
+  filteredAndNwfb: RecordTally;
 }
 
 function emptyTripleTally(): TripleTally {
-  return { everyBet: emptyTally(), filteredBet: emptyTally(), weightedFilteredBet: emptyTally() };
+  return {
+    everyBet: emptyTally(),
+    filteredBet: emptyTally(),
+    weightedFilteredBet: emptyTally(),
+    nwfb: emptyTally(),
+    anyBet: emptyTally(),
+    matchAll3: emptyTally(),
+    filteredAndWfb: emptyTally(),
+    wfbAndNwfb: emptyTally(),
+    filteredAndNwfb: emptyTally(),
+  };
 }
 
 export interface TripleAggregate {
@@ -57,11 +75,13 @@ export function aggregatePlain(records: BetHistoryRecord[]): TripleAggregate {
     tallyAdd(overall.everyBet, picks.everyBet.result);
     if (picks.filteredBet.team != null) tallyAdd(overall.filteredBet, picks.filteredBet.result);
     if (picks.weightedFilteredBet.team != null) tallyAdd(overall.weightedFilteredBet, picks.weightedFilteredBet.result);
+    if (picks.nwfb.team != null) tallyAdd(overall.nwfb, picks.nwfb.result);
 
     const wk = byWeek.get(r.week) ?? emptyTripleTally();
     tallyAdd(wk.everyBet, picks.everyBet.result);
     if (picks.filteredBet.team != null) tallyAdd(wk.filteredBet, picks.filteredBet.result);
     if (picks.weightedFilteredBet.team != null) tallyAdd(wk.weightedFilteredBet, picks.weightedFilteredBet.result);
+    if (picks.nwfb.team != null) tallyAdd(wk.nwfb, picks.nwfb.result);
     byWeek.set(r.week, wk);
   }
 
@@ -76,6 +96,8 @@ export interface CustomParams {
   minAbsLine: number; // default 1 — games at/below this absolute line are excluded from Weighted Filtered (avoids blowup near pick'em)
   posThreshold: number; // default 1.7 — relative-off must exceed this (positive side) to qualify as Weighted Filtered
   negThreshold: number; // default -1 — relative-off must be below this (negative side) to qualify as Weighted Filtered
+  sigmaDivisor: number; // default 15.7 — the site's game-outcome stddev; absAmountOff / sigmaDivisor = "Sigma Off"
+  sigmaThreshold: number; // default 0.4 — Sigma Off must exceed this to qualify as NWFB
 }
 
 export const DEFAULT_CUSTOM_PARAMS: CustomParams = {
@@ -83,6 +105,8 @@ export const DEFAULT_CUSTOM_PARAMS: CustomParams = {
   minAbsLine: 1,
   posThreshold: 1.7,
   negThreshold: -1,
+  sigmaDivisor: 15.7,
+  sigmaThreshold: 0.4,
 };
 
 export interface CustomGraded {
@@ -91,12 +115,15 @@ export interface CustomGraded {
   absAmountOff: number;
   absBettingLine: number;
   relativeAmountOff: number;
+  sigmaOff: number | null;
   filteredBetTeam: string | null;
   weightedFilteredBetTeam: string | null;
+  nwfbTeam: string | null;
   actualCoverTeam: string | null;
   everyBetResult: BetPick;
   filteredBetResult: BetPick;
   weightedFilteredBetResult: BetPick;
+  nwfbResult: BetPick;
 }
 
 export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams): CustomGraded {
@@ -123,6 +150,9 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
   const passesRelative = relativeAmountOff > params.posThreshold || relativeAmountOff < params.negThreshold;
   const weightedFilteredBetTeam = passesLine && passesRelative ? everyBetTeam : null;
 
+  const sigmaOff = params.sigmaDivisor !== 0 ? absAmountOff / params.sigmaDivisor : null;
+  const nwfbTeam = sigmaOff != null && sigmaOff > params.sigmaThreshold ? everyBetTeam : null;
+
   const coverMargin = r.awayScore - r.homeScore - spread;
   const actualCoverTeam = coverMargin > 0 ? r.awayTeam : coverMargin < 0 ? r.homeTeam : null; // null = exact push
 
@@ -135,6 +165,7 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
   const everyBetResult = grade(everyBetTeam);
   const filteredBetResult = filteredBetTeam != null ? grade(filteredBetTeam) : null;
   const weightedFilteredBetResult = weightedFilteredBetTeam != null ? grade(weightedFilteredBetTeam) : null;
+  const nwfbResult = nwfbTeam != null ? grade(nwfbTeam) : null;
 
   return {
     everyBetTeam,
@@ -142,12 +173,15 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
     absAmountOff,
     absBettingLine,
     relativeAmountOff,
+    sigmaOff,
     filteredBetTeam,
     weightedFilteredBetTeam,
+    nwfbTeam,
     actualCoverTeam,
     everyBetResult,
     filteredBetResult,
     weightedFilteredBetResult,
+    nwfbResult,
   };
 }
 
@@ -155,16 +189,39 @@ export function aggregateCustom(records: BetHistoryRecord[], params: CustomParam
   const overall = emptyTripleTally();
   const byWeek = new Map<number, TripleTally>();
 
+  function addCombos(t: TripleTally, g: CustomGraded) {
+    tallyAdd(t.everyBet, g.everyBetResult);
+    if (g.filteredBetTeam != null) tallyAdd(t.filteredBet, g.filteredBetResult);
+    if (g.weightedFilteredBetTeam != null) tallyAdd(t.weightedFilteredBet, g.weightedFilteredBetResult);
+    if (g.nwfbTeam != null) tallyAdd(t.nwfb, g.nwfbResult);
+
+    // Any Bet: at least one of the three signals. They're always the same
+    // team when non-null (all derived from everyBetTeam under different
+    // thresholds), so grading with everyBetResult is correct either way —
+    // this counts the game once, not once per matching category.
+    if (g.filteredBetTeam != null || g.weightedFilteredBetTeam != null || g.nwfbTeam != null) {
+      tallyAdd(t.anyBet, g.everyBetResult);
+    }
+    if (g.filteredBetTeam != null && g.weightedFilteredBetTeam != null && g.nwfbTeam != null) {
+      tallyAdd(t.matchAll3, g.everyBetResult);
+    }
+    if (g.filteredBetTeam != null && g.weightedFilteredBetTeam != null) {
+      tallyAdd(t.filteredAndWfb, g.everyBetResult);
+    }
+    if (g.weightedFilteredBetTeam != null && g.nwfbTeam != null) {
+      tallyAdd(t.wfbAndNwfb, g.everyBetResult);
+    }
+    if (g.filteredBetTeam != null && g.nwfbTeam != null) {
+      tallyAdd(t.filteredAndNwfb, g.everyBetResult);
+    }
+  }
+
   for (const r of records) {
     const g = computeCustomGrading(r, params);
-    tallyAdd(overall.everyBet, g.everyBetResult);
-    if (g.filteredBetTeam != null) tallyAdd(overall.filteredBet, g.filteredBetResult);
-    if (g.weightedFilteredBetTeam != null) tallyAdd(overall.weightedFilteredBet, g.weightedFilteredBetResult);
+    addCombos(overall, g);
 
     const wk = byWeek.get(r.week) ?? emptyTripleTally();
-    tallyAdd(wk.everyBet, g.everyBetResult);
-    if (g.filteredBetTeam != null) tallyAdd(wk.filteredBet, g.filteredBetResult);
-    if (g.weightedFilteredBetTeam != null) tallyAdd(wk.weightedFilteredBet, g.weightedFilteredBetResult);
+    addCombos(wk, g);
     byWeek.set(r.week, wk);
   }
 
@@ -228,6 +285,7 @@ interface ThreeCategoryPicks {
   everyBet: CategoryPick;
   filteredBet: CategoryPick;
   weightedFilteredBet: CategoryPick;
+  nwfb: CategoryPick;
 }
 
 /** True push: the actual result landed exactly on the spread, so the pick (whichever side) neither won nor lost. */
@@ -245,6 +303,7 @@ function picksFromPlain(r: BetHistoryRecord): ThreeCategoryPicks {
     everyBet: withPush(r.everyBetTeam, r.everyBetResult),
     filteredBet: withPush(r.filteredBetTeam, r.filteredBetResult),
     weightedFilteredBet: withPush(r.weightedFilteredBetTeam, r.weightedFilteredBetResult),
+    nwfb: { team: null, result: null }, // no such column in the uploaded CSV — Plain History has nothing to show here
   };
 }
 
@@ -254,6 +313,7 @@ function picksFromCustom(r: BetHistoryRecord, params: CustomParams): ThreeCatego
     everyBet: { team: g.everyBetTeam, result: g.everyBetResult },
     filteredBet: { team: g.filteredBetTeam, result: g.filteredBetResult },
     weightedFilteredBet: { team: g.weightedFilteredBetTeam, result: g.weightedFilteredBetResult },
+    nwfb: { team: g.nwfbTeam, result: g.nwfbResult },
   };
 }
 
@@ -261,6 +321,7 @@ export interface BreakdownTriple {
   everyBet: Map<string, RecordTally>;
   filteredBet: Map<string, RecordTally>;
   weightedFilteredBet: Map<string, RecordTally>;
+  nwfb: Map<string, RecordTally>;
 }
 
 function breakdownGeneric(
@@ -271,6 +332,7 @@ function breakdownGeneric(
   const everyBet = new Map<string, RecordTally>();
   const filteredBet = new Map<string, RecordTally>();
   const weightedFilteredBet = new Map<string, RecordTally>();
+  const nwfb = new Map<string, RecordTally>();
 
   function addTo(map: Map<string, RecordTally>, pick: CategoryPick) {
     if (pick.team == null) return;
@@ -286,9 +348,10 @@ function breakdownGeneric(
     addTo(everyBet, picks.everyBet);
     addTo(filteredBet, picks.filteredBet);
     addTo(weightedFilteredBet, picks.weightedFilteredBet);
+    addTo(nwfb, picks.nwfb);
   }
 
-  return { everyBet, filteredBet, weightedFilteredBet };
+  return { everyBet, filteredBet, weightedFilteredBet, nwfb };
 }
 
 export function breakdownByConference(
