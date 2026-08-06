@@ -1,8 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Saves bets placed from the Admin Matchups page into admin_bets. Mirrors
-// the existing action-dispatched, password-gated pattern used by
-// brit-save.ts and friends.
+// Handles more than just bets now — saveBets (Admin Matchups) and
+// saveResumeWeights (Admin Resume Rating) share this one function
+// deliberately, to avoid adding a new serverless function on Vercel
+// Hobby's 12-function cap. Same action-dispatched, password-gated
+// pattern as brit-save.ts and friends.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
@@ -54,6 +56,22 @@ export default async function handler(req: any, res: any) {
       if (error) throw error;
 
       res.status(200).json({ ok: true, saved: rows.length });
+      return;
+    }
+
+    if (action === "saveResumeWeights") {
+      const { season, weights } = req.body;
+      if (typeof season !== "number" || typeof weights !== "object" || weights == null) {
+        res.status(400).json({ error: "season and weights are required" });
+        return;
+      }
+
+      const { error } = await supabaseAdmin
+        .from("resume_rating_weights")
+        .upsert({ season, weights, updated_at: new Date().toISOString() }, { onConflict: "season" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true });
       return;
     }
 
