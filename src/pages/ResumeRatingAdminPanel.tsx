@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import SortHeader from "../components/SortHeader";
-import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
+import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
+import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { fetchResumeWeights } from "../lib/api/resumeWeights";
 import {
   computeRawResumeMetrics,
-  normalize,
+  normalizeMetric,
   computeConglomerateScore,
   METRIC_KEYS,
   METRIC_LABELS,
@@ -20,6 +21,7 @@ import {
 
 export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void }) {
   const [division, setDivision] = useState<"FBS" | "FCS">("FBS");
+  const [conference, setConference] = useState("All");
   const season = new Date().getFullYear();
 
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -49,7 +51,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
       .finally(() => setLoading(false));
   }, [season]);
 
-  const teams = useMemo(() => TEAMS.filter((t) => t.div === division), [division]);
+  const teams = useMemo(
+    () => TEAMS.filter((t) => t.div === division && teamMatchesConferenceFilter(t.team, t.conf, conference)),
+    [division, conference]
+  );
 
   const rawByTeam = useMemo(() => {
     const map = new Map<string, RawResumeMetrics>();
@@ -70,7 +75,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
       const raw = rawByTeam.get(t.team);
       const norm: Partial<Record<keyof RawResumeMetrics, number | null>> = {};
       for (const key of METRIC_KEYS) {
-        norm[key] = normalize(raw?.[key] ?? null, pools[key]!, METRIC_HIGHER_IS_BETTER[key]);
+        norm[key] = normalizeMetric(key, raw?.[key] ?? null, pools[key]!, METRIC_HIGHER_IS_BETTER[key]);
       }
       result.set(t.team, norm);
     }
@@ -159,13 +164,33 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         yet and always show "–" until they do.
       </p>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
-        <button className={`mode-btn ${division === "FBS" ? "mode-btn-active" : ""}`} onClick={() => setDivision("FBS")}>
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1.25rem" }}>
+        <button
+          className={`mode-btn ${division === "FBS" ? "mode-btn-active" : ""}`}
+          onClick={() => {
+            setDivision("FBS");
+            setConference("All");
+          }}
+        >
           FBS
         </button>
-        <button className={`mode-btn ${division === "FCS" ? "mode-btn-active" : ""}`} onClick={() => setDivision("FCS")}>
+        <button
+          className={`mode-btn ${division === "FCS" ? "mode-btn-active" : ""}`}
+          onClick={() => {
+            setDivision("FCS");
+            setConference("All");
+          }}
+        >
           FCS
         </button>
+        <select className="filter" value={conference} onChange={(e) => setConference(e.target.value)}>
+          <option value="All">All conferences</option>
+          {conferenceFilterOptions(division, conferencesForDivision("FBS"), conferencesForDivision("FCS")).map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}

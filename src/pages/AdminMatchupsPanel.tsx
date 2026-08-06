@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, hypotheticalNwfbChecks, type MatchupComputed } from "../lib/matchupsCompute";
+import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, type MatchupComputed } from "../lib/matchupsCompute";
 import SortHeader from "../components/SortHeader";
 
 // Deliberately dense — this table is for actually placing bets, not for
@@ -302,10 +302,12 @@ function MatchupsRow({
     : "–";
 
   if (mode === "spreads") {
-    const hyp =
-      !nwfbTeam
-        ? hypotheticalNwfbChecks(projAwaySpread, vegasAwaySpread, 15.7, 0.4).filter((h) => h.wouldFlag)
-        : [];
+    const watchSignal = computeWatchSignal(
+      projAwaySpread,
+      vegasAwaySpread,
+      projCoverTeam,
+      !!filteredBetTeam || !!weightedFilteredBetTeam || !!nwfbTeam
+    );
 
     return (
       <tr>
@@ -354,8 +356,8 @@ function MatchupsRow({
         <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!nwfbTeam} />
         </td>
-        <td style={{ ...CP, textAlign: "center" }} title={hyp.length > 0 ? `Would flag NWFB at: ${hyp.map((h) => (h.line > 0 ? "+" : "") + h.line.toFixed(1)).join(", ")}` : undefined}>
-          {hyp.length > 0 ? <span style={{ color: "#ffc857", fontWeight: 700 }}>👀</span> : "–"}
+        <td style={{ ...CP, textAlign: "center", ...(watchSignal ? { color: "#ffc857", fontWeight: 700 } : {}) }}>
+          {watchSignal ?? "–"}
         </td>
         <td style={{ ...CP, ...(wtfTeam ? { color: "#c45c52", fontWeight: 700 } : {}) }}>
           {wtfTeam ? `${teamNameFor(computed, wtfTeam)}${betTeamSpreadLabel(computed, wtfTeam)} ⚠️` : "–"}
@@ -478,9 +480,12 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
       case "nwfb":
         return c.nwfbTeam ? 1 : null;
       case "watch":
-        return !c.nwfbTeam && hypotheticalNwfbChecks(c.projAwaySpread, c.vegasAwaySpread, 15.7, 0.4).some((h) => h.wouldFlag)
-          ? 1
-          : null;
+        return computeWatchSignal(
+          c.projAwaySpread,
+          c.vegasAwaySpread,
+          c.projCoverTeam,
+          !!c.filteredBetTeam || !!c.weightedFilteredBetTeam || !!c.nwfbTeam
+        );
       case "wtf":
         return c.wtfTeam ? teamNameFor(c, c.wtfTeam) : null;
       case "actCover":
@@ -758,7 +763,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Watch 👀" sortKey="watch" active={sortKey === "watch"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Watch" sortKey="watch" active={sortKey === "watch"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={handleSort} align="right" />

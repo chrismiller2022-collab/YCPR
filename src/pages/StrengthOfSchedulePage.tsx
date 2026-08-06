@@ -3,7 +3,8 @@ import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
 import { SOS_BY_TEAM } from "../data/sor";
-import { CONFERENCES, TEAMS, conferencesForDivision } from "../data/teams";
+import { TEAMS, conferencesForDivision } from "../data/teams";
+import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats, useWeeklyChange } from "../lib/api/weeklyStats";
 
@@ -95,7 +96,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
     return TEAMS.filter((t) => (forceDivision ? t.div === forceDivision : sosFor(t.team) != null))
       .filter((t) => {
         if (division !== "All" && t.div !== division) return false;
-        if (conference !== "All" && t.conf !== conference) return false;
+        if (conference !== "All" && !teamMatchesConferenceFilter(t.team, t.conf, conference)) return false;
         if (query && !t.team.toLowerCase().includes(query.toLowerCase())) return false;
         return true;
       })
@@ -126,8 +127,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
         <h1 className="title matchup-title">{forceDivision === "FCS" ? "FCS SOS · LIVE" : "SOS · LIVE"}</h1>
         <p className="subtitle team-subtitle">
           SOS is Strength of Schedule, based on a number of things — including but not limited
-          to average opponent power rating. This value is <strong>positive → harder</strong>,{" "}
-          <strong>negative → easier</strong>, the opposite sign convention from power ratings.
+          to average opponent power rating.
         </p>
         {forceDivision === "FCS" ? (
           <p style={{ fontSize: "0.8rem", color: "#666" }}>
@@ -159,7 +159,11 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
         )}
         <select className="filter" value={conference} onChange={(e) => setConference(e.target.value)}>
           <option value="All">All conferences</option>
-          {(forceDivision ? conferencesForDivision(forceDivision) : CONFERENCES).map((c) => (
+          {conferenceFilterOptions(
+            division as "FBS" | "FCS" | "All",
+            conferencesForDivision("FBS"),
+            conferencesForDivision("FCS")
+          ).map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -170,7 +174,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       <div className="table-wrap" style={{ maxWidth: 1400 }}>
         <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
           <SosTable
-            title="Hardest → Easiest"
+            title="Hardest"
             rows={leftRows}
             changeByTeam={changeByTeam}
             onNavigateTeam={onNavigateTeam}
@@ -178,7 +182,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
             rankOffset={0}
           />
           <SosTable
-            title="Easiest → Hardest"
+            title="Easiest"
             rows={rightRows}
             changeByTeam={changeByTeam}
             onNavigateTeam={onNavigateTeam}
@@ -190,8 +194,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
 
       <div className="footer-note">
         SOS is Strength of Schedule, based on a number of things — including but not limited to
-        average opponent power rating. Positive means a harder schedule, negative means an
-        easier one — the opposite sign convention from power ratings, where negative is better.
+        average opponent power rating.
       </div>
     </div>
   );
