@@ -4,7 +4,6 @@ import SortHeader from "../components/SortHeader";
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { fetchResumeWeights } from "../lib/api/resumeWeights";
 import {
   computeRawResumeMetrics,
@@ -24,7 +23,6 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const season = new Date().getFullYear();
 
   const [games, setGames] = useState<GameWithLines[]>([]);
-  const [confChampByTeam, setConfChampByTeam] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -41,18 +39,9 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
-    Promise.all([
-      fetchGamesWithLines(season),
-      fetchMonteCarloRuns(season).then((runs) => (runs.length > 0 ? fetchMonteCarloRun(runs[0].id) : null)),
-      fetchResumeWeights(season),
-    ])
-      .then(([gamesData, mcRun, savedWeights]) => {
+    Promise.all([fetchGamesWithLines(season), fetchResumeWeights(season)])
+      .then(([gamesData, savedWeights]) => {
         setGames(gamesData);
-        const champMap: Record<string, number> = {};
-        for (const r of mcRun?.results ?? []) {
-          if ((r as any).confTitlePct != null) champMap[(r as any).team] = (r as any).confTitlePct;
-        }
-        setConfChampByTeam(champMap);
         if (savedWeights) setWeights({ ...DEFAULT_RESUME_WEIGHTS, ...savedWeights });
         setWeightsLoaded(true);
       })
@@ -65,10 +54,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const rawByTeam = useMemo(() => {
     const map = new Map<string, RawResumeMetrics>();
     for (const t of teams) {
-      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, confChampByTeam[t.team] ?? null));
+      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam));
     }
     return map;
-  }, [teams, games, liveByTeam, confChampByTeam]);
+  }, [teams, games, liveByTeam]);
 
   const normalizedByTeam = useMemo(() => {
     const pools: Partial<Record<keyof RawResumeMetrics, (number | null)[]>> = {};
@@ -164,7 +153,8 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         Each metric is normalized 1-10 within {division} (min-max, direction-aware — for metrics
         where a lower raw value is actually better, the scale flips so 10 always means "best").
         The conglomerate score is a weighted average of whichever normalized metrics have a
-        non-zero weight — set a weight to 0 to drop a metric entirely. Metrics marked{" "}
+        non-zero weight, times 10 — so the final score runs roughly 10-100, not 1-10. Set a
+        weight to 0 to drop a metric entirely. Metrics marked{" "}
         <span style={{ color: "var(--chalk-dim)" }}>(pending)</span> have no data source wired up
         yet and always show "–" until they do.
       </p>
@@ -263,10 +253,15 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
       )}
 
       <div className="footer-note">
-        Best/Best/Worst Loss use the ACTUAL result (not projected) — opponent's current rating,
-        same computation as the Team Page. SOS pulls from the site's existing Strength of
-        Schedule field. Weights persist to Supabase per season, ready for a future public Resume
-        Ratings page to read the same numbers.
+        Best Win/Best Loss/Worst Loss use PROJECTED results (not actual) for now — opponent's
+        current rating, same computation as the Team Page. Avg. Projected Line and Avg.
+        Opponent PR are season-wide (every game, played or not); everything else that needs a
+        real result (Actual Wins, Losses, MOV, Avg. Actual Line, ATS Margin) is completed games
+        only. Lower opponent rating (a better team) always scores higher for Best/Best/Worst
+        Loss — beating or nearly-losing-respectably-to a good team is the better outcome either
+        way. SOS pulls from the site's existing Strength of Schedule field. Weights persist to
+        Supabase per season, ready for a future public Resume Ratings page to read the same
+        numbers.
       </div>
     </div>
   );
