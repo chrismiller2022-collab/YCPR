@@ -1,6 +1,6 @@
 import { TEAMS_BY_NAME } from "../data/teams";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
-import { hfaFor } from "./odds";
+import { hfaFor, spreadToWinPct } from "./odds";
 import { pickLine } from "./matchupsCompute";
 import { computeBestWorst } from "./bestWorst";
 import { type GameWithLines } from "./api/gamesLines";
@@ -9,6 +9,9 @@ export interface RawResumeMetrics {
   expWins: number | null;
   actWins: number;
   losses: number;
+  projWins: number;
+  projLosses: number;
+  winLossDiff: number;
   confChampWinPct: number | null;
   powerRating: number;
   srs: number | null;
@@ -28,6 +31,9 @@ export const METRIC_KEYS: (keyof RawResumeMetrics)[] = [
   "expWins",
   "actWins",
   "losses",
+  "projWins",
+  "projLosses",
+  "winLossDiff",
   "confChampWinPct",
   "powerRating",
   "srs",
@@ -47,6 +53,9 @@ export const METRIC_LABELS: Record<keyof RawResumeMetrics, string> = {
   expWins: "Exp. Wins (PGWE)",
   actWins: "Actual Wins",
   losses: "Losses",
+  projWins: "Projected Wins (Rest of Season)",
+  projLosses: "Projected Losses (Rest of Season)",
+  winLossDiff: "W-L",
   confChampWinPct: "Conf. Champ Win %",
   powerRating: "Power Rating",
   srs: "SRS",
@@ -72,6 +81,9 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
   expWins: true,
   actWins: true,
   losses: false,
+  projWins: true,
+  projLosses: false,
+  winLossDiff: true,
   confChampWinPct: true,
   powerRating: false,
   srs: false,
@@ -107,6 +119,12 @@ export function computeRawResumeMetrics(
   // Avg Projected Line and Avg Opponent PR are season-wide — every game
   // on the schedule, played or not, using each opponent's CURRENT rating.
   //
+  // Projected Wins/Losses is a rest-of-season blend: completed games
+  // count as their real result (1 win or 1 loss), remaining games count
+  // as that game's current win probability — so this starts the season
+  // equal to a pure preseason projection and gradually converges toward
+  // the real record as games are played.
+  //
   // MOV is a TEMPORARY stand-in for now, per instruction: sum (not
   // average) of each game's projected margin of victory, across the
   // whole season — a rough proxy while there aren't enough real results
@@ -117,6 +135,8 @@ export function computeRawResumeMetrics(
   let sumOppPR = 0;
   let oppPRN = 0;
   let sumProjMov = 0;
+  let projWins = 0;
+  let projLosses = 0;
 
   for (const g of teamGames) {
     const isHome = g.home_team === team.team;
@@ -133,6 +153,18 @@ export function computeRawResumeMetrics(
     sumOppPR += oppRating;
     oppPRN++;
     sumProjMov += -projLine; // negative spread = favored, so -projLine = this game's expected margin
+
+    const isCompleted = g.completed && g.home_points != null && g.away_points != null;
+    if (isCompleted) {
+      const teamScore = isHome ? g.home_points! : g.away_points!;
+      const oppScore = isHome ? g.away_points! : g.home_points!;
+      if (teamScore > oppScore) projWins += 1;
+      else if (teamScore < oppScore) projLosses += 1;
+    } else {
+      const winPct = spreadToWinPct(projLine);
+      projWins += winPct;
+      projLosses += 1 - winPct;
+    }
   }
 
   // Everything else here needs a real result, so completed games only.
@@ -172,6 +204,9 @@ export function computeRawResumeMetrics(
     expWins: null,
     actWins,
     losses,
+    projWins,
+    projLosses,
+    winLossDiff: actWins - losses,
     confChampWinPct: liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null,
     powerRating: teamRating,
     srs: null,
