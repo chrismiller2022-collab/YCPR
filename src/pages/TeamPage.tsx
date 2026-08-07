@@ -19,10 +19,16 @@ function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
   const opp = TEAMS_BY_NAME[oppName];
   if (!opp) return null;
 
+  // Live-preferred, matching every other live number on the site — this
+  // was previously using the static preseason rating directly for both
+  // sides, silently going stale the moment a weekly upload landed.
+  const teamRating = liveByTeam[team.team]?.rating ?? team.rating;
+  const oppRating = liveByTeam[oppName]?.rating ?? opp.rating;
+
   // Spread from this team's perspective: negative = this team favored.
   const spread = isHome
-    ? team.rating - opp.rating - hfaFor(team.team, liveByTeam)
-    : team.rating - opp.rating + hfaFor(oppName, liveByTeam);
+    ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
+    : teamRating - oppRating + hfaFor(oppName, liveByTeam);
   const winPct = spreadToWinPct(spread);
   const result = spread < 0 ? "Win" : spread > 0 ? "Loss" : "Even";
 
@@ -48,11 +54,11 @@ function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
         </button>
         <span
           className={`matchup-rating ${
-            opp.rating < 0 ? "rating-good" : "rating-bad"
+            oppRating < 0 ? "rating-good" : "rating-bad"
           }`}
         >
-          {opp.rating > 0 ? "+" : ""}
-          {opp.rating.toFixed(2)}
+          {oppRating > 0 ? "+" : ""}
+          {oppRating.toFixed(2)}
         </span>
       </td>
       <td
