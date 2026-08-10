@@ -42,6 +42,18 @@ const STAT_FIELDS = [
   "ats_rank",
   "hfa",
 ];
+// Mirrors WEEK_OPTIONS in AdminPage.tsx exactly — "preseason" and
+// "week1".."week16", nothing else, since the dropdown only ever sends
+// one of these. Used to derive week_number, the column that actually
+// decides "which week is latest" (see fetchAvailableWeeks in
+// weeklyStats.ts) — deliberately NOT based on when a row was written,
+// so correcting an older week can never make it look current again.
+function weekToNumber(week: string): number {
+  if (week === "preseason") return 0;
+  const m = /^week(\d+)$/.exec(week);
+  return m ? parseInt(m[1], 10) : -1;
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -98,8 +110,9 @@ export default async function handler(req: any, res: any) {
   // breaks "latest" everywhere, since an upsert UPDATE never changes a
   // row's id, which was the old (broken) way "latest" was determined.
   const nowIso = new Date().toISOString();
+  const weekNumber = weekToNumber(week);
   const cleanRows = rows.map((r: any) => {
-    const cleaned: Record<string, any> = { week, updated_at: nowIso };
+    const cleaned: Record<string, any> = { week, week_number: weekNumber, updated_at: nowIso };
     for (const field of STAT_FIELDS) {
       cleaned[field] = r[field] ?? null;
     }
