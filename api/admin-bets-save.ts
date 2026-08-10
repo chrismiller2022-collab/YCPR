@@ -75,6 +75,39 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    if (action === "saveGameTotalsSettings") {
+      const { season, settings } = req.body;
+      if (typeof season !== "number" || typeof settings !== "object" || settings == null) {
+        res.status(400).json({ error: "season and settings are required" });
+        return;
+      }
+
+      const { error } = await supabaseAdmin
+        .from("game_totals_settings")
+        .upsert({ season, settings, updated_at: new Date().toISOString() }, { onConflict: "season" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (action === "importTeamStatsCsv") {
+      const { rows } = req.body;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "No rows to import" });
+        return;
+      }
+
+      const statRows = rows.map((r: any) => ({ ...r, updated_at: new Date().toISOString() }));
+      const { error, count } = await supabaseAdmin
+        .from("team_season_stats")
+        .upsert(statRows, { onConflict: "season,team", count: "exact" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true, imported: count ?? statRows.length });
+      return;
+    }
+
     res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "Save failed" });

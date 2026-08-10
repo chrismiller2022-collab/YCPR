@@ -12,11 +12,6 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const CFBD_BASE = "https://api.collegefootballdata.com";
 
-// Division filter: keep any game where at least one side is FBS or FCS.
-// This lets FBS-vs-FBS, FBS-vs-FCS, FCS-vs-FCS, and FCS-vs-other-division
-// games through, but drops games where BOTH sides are below FCS (e.g. a
-// Division II vs Division II game), since neither team in that matchup
-// is one we track ratings for anyway.
 const TRACKED_CLASSIFICATIONS = new Set(["fbs", "fcs"]);
 
 function isTrackedGame(g: any): boolean {
@@ -58,10 +53,7 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  // `week` is now optional — omit it (or send null) to pull the entire
-  // season in one call, matching how CFBD's own /games and /lines
-  // endpoints behave when week is left off the query string.
-  const { password, year, week, seasonType } = req.body ?? {};
+  const { password, year, week, seasonType, syncStats } = req.body ?? {};
 
   if (password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: "Incorrect password" });
@@ -126,8 +118,6 @@ export default async function handler(req: any, res: any) {
     const lineRows: any[] = [];
     for (const entry of cfbdLines ?? []) {
       const gameId = String(entry.id);
-      // Only keep lines for games we actually kept above — a game filtered
-      // out by division shouldn't end up with orphaned lines rows.
       if (!trackedGameIds.has(gameId)) continue;
       for (const line of entry.lines ?? []) {
         lineRows.push({
@@ -137,8 +127,17 @@ export default async function handler(req: any, res: any) {
           provider: line.provider ?? "unknown",
           spread: line.spread != null ? Number(line.spread) : null,
           over_under: line.overUnder != null ? Number(line.overUnder) : null,
-          home_moneyline: line.homeMoneyline != null ? Number(line.homeMoneyline) : null,
-          away_moneyline: line.awayMoneyline != null ? Number(line.awayMoneyline) : null,
+          // Opening lines — NOT previously captured at all. CFBD's field
+          // names here are inferred as "spreadOpen"/"overUnderOpen"
+          // (camelCase "Open" suffix, matching their convention
+          // elsewhere) but haven't been confirmed against a live
+          // response — worth checking the first real sync's stored
+          // values against collegefootballdata.com's own game page to
+          // make sure these landed correctly, since a silent null here
+          // would just make Composite 3-6 fall back to "live" forever
+          // without an obvious error.
+          opening_spread: line.spreadOpen != null ? Number(line.spreadOpen) : null,
+          opening_over_under: line.overUnderOpen != null ? Number(line.overUnderOpen) : null,
           pulled_at: new Date().toISOString(),
         });
       }
@@ -156,6 +155,83 @@ export default async function handler(req: any, res: any) {
       linesUpserted = count ?? lineRows.length;
     }
 
+    // --- Team season stats (only when explicitly requested — separate
+    // concern from games/lines, and a much bigger payload) ---
+    let statsTeamsUpserted = 0;
+    if (syncStats) {
+      // /stats/season is long-format: one row per {team, statName,
+      // statValue}. Pivot into one wide row per team, keeping only the
+      // fields the Game Totals engine actually uses.
+      const basicStats = await cfbdFetch(`/stats/season?year=${year}`);
+      const WANTED_STATS: Record<string, string> = {
+        rushingAttempts: "rushing_attempts",
+        rushingYards: "rushing_yards",
+        rushingAttemptsOpponent: "rushing_attempts_opponent",
+        rushingYardsOpponent: "rushing_yards_opponent",
+        passAttempts: "pass_attempts",
+        netPassingYards: "net_passing_yards",
+        passAttemptsOpponent: "pass_attempts_opponent",
+        netPassingYardsOpponent: "net_passing_yards_opponent",
+        totalYards: "total_yards",
+        totalYardsOpponent: "total_yards_opponent",
+        games: "games",
+        possessionTime: "possession_time",
+        possessionTimeOpponent: "possession_time_opponent",
+      };
+
+      // CFBD returns possessionTime as MM:SS — converted to seconds so
+      // it's a plain number to do math on later.
+      function toSeconds(v: any): number | null {
+        if (v == null) return null;
+        if (typeof v === "number") return v;
+        const parts = String(v).split(":");
+        if (parts.length !== 2) return Number(v) || null;
+        const [m, s] = parts.map(Number);
+        return m * 60 + s;
+      }
+
+      const byTeam = new Map<string, any>();
+      for (const row of basicStats ?? []) {
+        const col = WANTED_STATS[row.statName];
+        if (!col) continue;
+        const key = row.team;
+        const entry = byTeam.get(key) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
+        entry[col] = col === "possession_time" || col === "possession_time_opponent" ? toSeconds(row.statValue) : Number(row.statValue);
+        byTeam.set(key, entry);
+      }
+
+      // /stats/season/advanced — nested offense/defense objects, per
+      // established CFBD API convention (matches how the CSV exporter's
+      // "Offense Plays"/"Defense Plays" columns are flattened from
+      // offense.plays/defense.plays). NOT verified against a live
+      // response yet — worth checking the first real sync's stored
+      // offense_plays/defense_plays values against the exporter CSV to
+      // confirm these landed, since a wrong nesting assumption here
+      // would silently store nulls rather than error.
+      const advancedStats = await cfbdFetch(`/stats/season/advanced?year=${year}`);
+      for (const row of advancedStats ?? []) {
+        const entry = byTeam.get(row.team) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
+        entry.offense_plays = row.offense?.plays ?? null;
+        entry.offense_drives = row.offense?.drives ?? null;
+        entry.defense_plays = row.defense?.plays ?? null;
+        entry.defense_drives = row.defense?.drives ?? null;
+        byTeam.set(row.team, entry);
+      }
+
+      const statRows = Array.from(byTeam.values()).map((e) => ({ ...e, updated_at: new Date().toISOString() }));
+
+      if (statRows.length > 0) {
+        const { error: statsError, count } = await supabaseAdmin
+          .from("team_season_stats")
+          .upsert(statRows, { onConflict: "season,team", count: "exact" });
+        if (statsError) {
+          res.status(500).json({ error: `Saving team season stats failed: ${statsError.message}` });
+          return;
+        }
+        statsTeamsUpserted = count ?? statRows.length;
+      }
+    }
+
     res.status(200).json({
       ok: true,
       year,
@@ -165,6 +241,7 @@ export default async function handler(req: any, res: any) {
       gamesSkippedByDivision: (cfbdGames ?? []).length - trackedGames.length,
       gamesUpserted,
       linesUpserted,
+      statsTeamsUpserted,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "CFBD sync failed" });
