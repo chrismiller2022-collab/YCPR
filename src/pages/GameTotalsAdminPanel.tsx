@@ -175,8 +175,11 @@ export function SystemInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
             <th style={{ ...CP, textAlign: "right" }}>Off Pts/Drive</th>
             <th style={{ ...CP, textAlign: "right" }}>Off Drives/Gm</th>
             <th style={{ ...CP, textAlign: "right" }}>Def Pts/Drive Allow</th>
+            <th style={{ ...CP, textAlign: "right" }}>Def Drives/Gm Faced</th>
             <th style={{ ...CP, textAlign: "right" }}>Off Pts/Play</th>
             <th style={{ ...CP, textAlign: "right" }}>Off Plays/Gm</th>
+            <th style={{ ...CP, textAlign: "right" }}>Def Pts/Play Allow</th>
+            <th style={{ ...CP, textAlign: "right" }}>Def Plays/Gm Faced</th>
             <th style={{ ...CP, textAlign: "right" }}>Off YPP</th>
             <th style={{ ...CP, textAlign: "right" }}>Off Yds/Pt</th>
             <th style={{ ...CP, textAlign: "right" }}>Off Pass YPA</th>
@@ -194,8 +197,11 @@ export function SystemInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPtsPerDrive)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offDrivesPerGame)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPtsPerDriveAllowed)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defDrivesPerGameFaced)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPtsPerPlay)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPlaysPerGame)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPtsPerPlayAllowed)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPlaysPerGameFaced)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offYpp)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offYardsPerPoint)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPassYpa)}</td>
@@ -210,8 +216,11 @@ export function SystemInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPtsPerDrive)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offDrivesPerGame)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPtsPerDriveAllowed)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defDrivesPerGameFaced)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPtsPerPlay)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPlaysPerGame)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPtsPerPlayAllowed)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPlaysPerGameFaced)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offYpp)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offYardsPerPoint)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPassYpa)}</td>
