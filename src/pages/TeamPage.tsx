@@ -142,20 +142,24 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
   const nextSpread = next?.spread ?? null;
 
   const [cardView, setCardView] = useState("basic");
-  const { basic, betting } = computeGraphicCardStats(team, liveByTeam);
-  const stats = cardView === "basic" ? basic : betting;
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [gamesLoaded, setGamesLoaded] = useState(false);
   const season = new Date().getFullYear();
 
+  // Fetched unconditionally now (not just for the Value tab) — Live
+  // Wins/Losses, Live Win Proj, Live Conf Win Proj, and ATS on the Basic
+  // tab all need real game results and lines too now.
   useEffect(() => {
-    if (cardView !== "value" || gamesLoaded) return;
+    if (gamesLoaded) return;
     fetchGamesWithLines(season)
       .then(setGames)
       .catch(() => setGames([]))
       .finally(() => setGamesLoaded(true));
-  }, [cardView, season, gamesLoaded]);
+  }, [season, gamesLoaded]);
+
+  const { basic, betting } = computeGraphicCardStats(team, liveByTeam, games);
+  const stats = cardView === "basic" ? basic : betting;
 
   const valueStats = cardView === "value" ? computeValueTabStats(team, games, liveByTeam) : null;
   const vegasWinTotal = TEAM_WIN_TOTALS[team.team]?.vegasTotal ?? null;
