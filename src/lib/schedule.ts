@@ -5,6 +5,7 @@ import { SOS_BY_TEAM } from "../data/sor";
 import { TEAMS, TEAMS_BY_NAME, teamsForConference } from "../data/teams";
 import { HFA, hfaFor, spreadBg, spreadColor, spreadToWinPct } from "./odds";
 import { TEAM_WIN_TOTALS, SOR_RANK_BY_TEAM, buildRankMap } from "./ranks";
+import { pickLine } from "./matchupsCompute";
 
 export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam) {
   const games = gamesForTeam(scheduleTeamName);
@@ -54,16 +55,13 @@ function rankWithinConference(team, liveByTeam, metricFor) {
   return idx === -1 ? null : idx + 1;
 }
 
-export function computeGraphicCardStats(team, liveByTeam = {}) {
+export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = []) {
   const ratingColor = spreadColor(team.rating);
   const ratingBg = spreadBg(team.rating, 0.16);
   const goldBg = "rgba(255, 200, 87, 0.12)";
 
   const futuresData = CONF_FUTURES_BY_TEAM[team.team];
   const live = liveByTeam[team.team];
-
-  const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total;
-  const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[team.team]?.confTotal;
 
   const schedule = gamesForTeam(team.team);
   const totalGames = schedule.length;
@@ -72,20 +70,83 @@ export function computeGraphicCardStats(team, liveByTeam = {}) {
     return TEAMS_BY_NAME[oppName]?.conf === team.conf;
   }).length;
 
-  const projRecord =
-    winTotal != null
-      ? `${winTotal.toFixed(1)}-${Math.max(0, totalGames - winTotal).toFixed(1)}`
-      : undefined;
+  // Live Wins/Losses, Live Win Proj, Live Conf Win Proj, and ATS
+  // Wins/Losses are now all computed here from real synced data —
+  // completed games/scores for actual records, current model spreads
+  // (via win probability) for projected records, and CFBD line data
+  // for ATS — instead of reading an uploaded weekly snapshot. Ratings
+  // are live-preferred throughout, matching the rest of the site.
+  const ratingFor = (name, fallback) => liveByTeam[name]?.rating ?? fallback;
+  const teamRating = ratingFor(team.team, team.rating);
 
-  const confProjRecord =
-    confWinTotal != null
-      ? `${confWinTotal.toFixed(1)}-${Math.max(0, confGames - confWinTotal).toFixed(1)}`
-      : undefined;
+  const teamGames = seasonGames.filter((g) => g.home_team === team.team || g.away_team === team.team);
 
-  // Actual conference-only results aren't tracked separately from overall
-  // results yet (only total live_wins/live_losses exist) — TBD until that
-  // exists, same as every other "not wired up yet" card on this site.
-  const confActualRecord = undefined;
+  let liveWins = 0;
+  let liveLosses = 0;
+  let confLiveWins = 0;
+  let confLiveLosses = 0;
+  let projWinsSum = 0;
+  let projLossesSum = 0;
+  let confProjWinsSum = 0;
+  let confProjLossesSum = 0;
+  let atsWins = 0;
+  let atsLosses = 0;
+
+  for (const g of teamGames) {
+    const isHome = g.home_team === team.team;
+    const oppName = isHome ? g.away_team : g.home_team;
+    const opp = TEAMS_BY_NAME[oppName];
+    const isConf = !!g.conference_game;
+    const isCompleted = g.completed && g.home_points != null && g.away_points != null;
+
+    if (isCompleted) {
+      const teamScore = isHome ? g.home_points : g.away_points;
+      const oppScore = isHome ? g.away_points : g.home_points;
+      if (teamScore > oppScore) {
+        liveWins++;
+        projWinsSum += 1;
+        if (isConf) {
+          confLiveWins++;
+          confProjWinsSum += 1;
+        }
+      } else if (teamScore < oppScore) {
+        liveLosses++;
+        projLossesSum += 1;
+        if (isConf) {
+          confLiveLosses++;
+          confProjLossesSum += 1;
+        }
+      }
+
+      const line = pickLine(g.lines ?? []);
+      if (line?.spread != null) {
+        const teamLine = isHome ? line.spread : -line.spread;
+        const margin = teamScore - oppScore;
+        const coverMargin = margin + teamLine;
+        if (coverMargin > 0) atsWins++;
+        else if (coverMargin < 0) atsLosses++;
+        // coverMargin === 0 is a push — counted in neither.
+      }
+    } else if (opp) {
+      const oppRating = ratingFor(oppName, opp.rating);
+      const spread = isHome
+        ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
+        : teamRating - oppRating + hfaFor(oppName, liveByTeam);
+      const winPct = spreadToWinPct(spread);
+      projWinsSum += winPct;
+      projLossesSum += 1 - winPct;
+      if (isConf) {
+        confProjWinsSum += winPct;
+        confProjLossesSum += 1 - winPct;
+      }
+    }
+  }
+
+  const overallRecord = teamGames.length > 0 ? `${liveWins}-${liveLosses}` : undefined;
+  const confActualRecord = teamGames.length > 0 ? `${confLiveWins}-${confLiveLosses}` : undefined;
+  const projRecord = teamGames.length > 0 ? `${projWinsSum.toFixed(1)}-${projLossesSum.toFixed(1)}` : undefined;
+  const confProjRecord = teamGames.length > 0 ? `${confProjWinsSum.toFixed(1)}-${confProjLossesSum.toFixed(1)}` : undefined;
+  const atsRecord = atsWins + atsLosses > 0 ? `${atsWins}-${atsLosses}` : undefined;
 
   // Who's projected to have the best conference win total in this conference.
   const confWinsRank = rankWithinConference(
@@ -121,16 +182,6 @@ export function computeGraphicCardStats(team, liveByTeam = {}) {
     (t) => [t.team, liveByTeam[t.team].natty_odds]
   );
   const myNattyRankMap = buildRankMap(liveNattyEntries, true);
-
-  const overallRecord =
-    live?.live_wins != null && live?.live_losses != null
-      ? `${live.live_wins}-${live.live_losses}`
-      : undefined;
-
-  const atsRecord =
-    live?.ats_wins != null && live?.ats_losses != null
-      ? `${live.ats_wins}-${live.ats_losses}`
-      : undefined;
 
   // Not tracked anywhere yet — separate from ATS record, needs its own
   // weekly data source before this can populate.
