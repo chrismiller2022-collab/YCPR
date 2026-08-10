@@ -41,10 +41,15 @@ export interface WeeklyTeamStats {
 
 /** All weeks that currently have at least one row saved, most recent first. */
 export async function fetchAvailableWeeks(): Promise<string[]> {
+  // Ordered by updated_at, NOT id — id only reflects when a row was
+  // first INSERTed. An upsert that UPDATEs an existing (team, week) row
+  // never changes its id, so re-uploading under a previously-used week
+  // label used to silently resolve "latest" to the wrong (older) week
+  // site-wide, even though the write itself succeeded.
   const { data, error } = await supabase
     .from("weekly_team_stats")
-    .select("week")
-    .order("id", { ascending: false });
+    .select("week, updated_at")
+    .order("updated_at", { ascending: false });
   if (error) throw error;
   const seen = new Set<string>();
   const weeks: string[] = [];
@@ -89,14 +94,19 @@ export interface LastUpload {
  * saved yet at all.
  */
 export async function fetchLastUpload(): Promise<LastUpload | null> {
+  // updated_at, not inserted_at — inserted_at only stamps on the row's
+  // first-ever INSERT and is never touched by a later UPDATE, so this
+  // had the identical blind spot as fetchAvailableWeeks did: a
+  // re-upload under a previously-used week label would leave the Admin
+  // dashboard's "Last upload date" card showing a stale date.
   const { data, error } = await supabase
     .from("weekly_team_stats")
-    .select("week, inserted_at")
-    .order("inserted_at", { ascending: false })
+    .select("week, updated_at")
+    .order("updated_at", { ascending: false })
     .limit(1);
   if (error) throw error;
   if (!data || data.length === 0) return null;
-  return { week: data[0].week, insertedAt: data[0].inserted_at };
+  return { week: data[0].week, insertedAt: data[0].updated_at };
 }
 
 interface UseWeeklyStatsResult {
