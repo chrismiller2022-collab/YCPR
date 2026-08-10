@@ -41,15 +41,19 @@ export interface WeeklyTeamStats {
 
 /** All weeks that currently have at least one row saved, most recent first. */
 export async function fetchAvailableWeeks(): Promise<string[]> {
-  // Ordered by updated_at, NOT id — id only reflects when a row was
-  // first INSERTed. An upsert that UPDATEs an existing (team, week) row
-  // never changes its id, so re-uploading under a previously-used week
-  // label used to silently resolve "latest" to the wrong (older) week
-  // site-wide, even though the write itself succeeded.
+  // Ordered by week_number — the actual chronological week, derived
+  // server-side from the exact "preseason"/"week1".."week16" values the
+  // dropdown sends (see weekToNumber in admin-save.ts). NOT updated_at:
+  // that answers "when was this row last written," which briefly seemed
+  // like the right fix for a different bug, but breaks the moment an
+  // OLDER week gets corrected after newer weeks already exist — its
+  // fresh timestamp would outrank weeks that are chronologically later.
+  // week_number can't have that problem, since editing Week 1 never
+  // changes the fact that it's numbered 1.
   const { data, error } = await supabase
     .from("weekly_team_stats")
-    .select("week, updated_at")
-    .order("updated_at", { ascending: false });
+    .select("week, week_number")
+    .order("week_number", { ascending: false });
   if (error) throw error;
   const seen = new Set<string>();
   const weeks: string[] = [];
