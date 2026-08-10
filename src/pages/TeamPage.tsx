@@ -109,12 +109,12 @@ function computeValueTabStats(team: any, games: GameWithLines[], liveByTeam: Rec
       : teamRating - oppRating + hfaFor(oppName, liveByTeam);
     const isConfGame = !!g.conference_game;
 
-    if (spread < 0) {
-      projW++;
-      if (isConfGame) confProjW++;
-    } else if (spread > 0) {
-      projL++;
-      if (isConfGame) confProjL++;
+    const winPct = spreadToWinPct(spread);
+    projW += winPct;
+    projL += 1 - winPct;
+    if (isConfGame) {
+      confProjW += winPct;
+      confProjL += 1 - winPct;
     }
 
     if (g.completed && g.home_points != null && g.away_points != null) {
@@ -279,16 +279,16 @@ function ValueTabGrid({ valueStats, vegasWinTotal, gamesLoaded }: any) {
     myConfOdds,
   } = valueStats;
 
-  const fmtRecord = (w: number, l: number) => `${w}-${l}`;
+  const fmtRecord = (w: number, l: number, decimals = 0) => `${w.toFixed(decimals)}-${l.toFixed(decimals)}`;
   const fmtPctVal = (v: number | null) => (v != null ? `${(v * 100).toFixed(1)}%` : "–");
 
   return (
     <div className="graphic-card-grid">
-      <ValueCell label="Proj. Record" value={fmtRecord(projW, projL)} />
+      <ValueCell label="Proj. Record" value={fmtRecord(projW, projL, 1)} />
       <ValueCell label="Actual Record" value={fmtRecord(actW, actL)} />
       <ValueCell label="Vegas Win Total" value={vegasWinTotal != null ? vegasWinTotal.toFixed(1) : "– (not synced yet)"} />
 
-      <ValueCell label="Proj. Conf. Record" value={fmtRecord(confProjW, confProjL)} />
+      <ValueCell label="Proj. Conf. Record" value={fmtRecord(confProjW, confProjL, 1)} />
       <ValueCell label="Actual Conf. Record" value={fmtRecord(confActW, confActL)} />
       <ValueCell label="Vegas Conf. Win Total" value="– (not synced yet)" />
 
