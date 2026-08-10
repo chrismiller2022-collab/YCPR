@@ -4,6 +4,8 @@ import SurvivorPanel from "./SurvivorPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
+import GameTotalsAdminPanel from "./GameTotalsAdminPanel";
+import TeamTotalsAdminPanel from "./TeamTotalsAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
@@ -213,7 +215,9 @@ type AdminView =
   | "cbspickem"
   | "survivorpooladmin"
   | "bethistory"
-  | "resumerating";
+  | "resumerating"
+  | "gametotals"
+  | "teamtotals";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -464,9 +468,13 @@ function AdminDashboard({
         />
         <MenuTile
           label="Game Totals"
-          description="Projected spreads and totals from power ratings."
-          comingSoon
+          description="5-system points model, 6 composites, and bet tracking from CFBD stats."
           onClick={() => onNavigateView("gametotals")}
+        />
+        <MenuTile
+          label="Team Totals"
+          description="Same engine, split into home/away team totals with bet tracking."
+          onClick={() => onNavigateView("teamtotals")}
         />
       </div>
     </div>
@@ -678,7 +686,14 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   }
 
   return (
-    <div className="page" style={{ maxWidth: view === "matchups" || view === "resumerating" ? "none" : 1000, margin: "2rem auto", padding: "0 1rem" }}>
+    <div
+      className="page"
+      style={{
+        maxWidth: ["matchups", "resumerating", "gametotals", "teamtotals"].includes(view) ? "none" : 1000,
+        margin: "2rem auto",
+        padding: "0 1rem",
+      }}
+    >
       {view === "home" && (
         <p style={{ marginTop: 0 }}>
           <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
@@ -734,9 +749,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
       {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 
-      {view === "gametotals" && (
-        <AdminComingSoon title="Game Totals" onBack={() => setView("home")} />
-      )}
+      {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
+      {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}
     </div>
   );
 }
