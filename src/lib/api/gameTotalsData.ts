@@ -59,6 +59,8 @@ export interface GameForTotals {
   week: number;
   homeTeam: string;
   awayTeam: string;
+  homeClassification: string | null;
+  awayClassification: string | null;
   completed: boolean;
   homePoints: number | null;
   awayPoints: number | null;
@@ -70,7 +72,7 @@ export interface GameForTotals {
 export async function fetchGamesForTotals(season: number): Promise<GameForTotals[]> {
   const { data: games, error: gamesError } = await supabase
     .from("games")
-    .select("id, week, home_team, away_team, completed, home_points, away_points")
+    .select("id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points")
     .eq("season", season);
   if (gamesError) throw gamesError;
 
@@ -94,6 +96,8 @@ export async function fetchGamesForTotals(season: number): Promise<GameForTotals
       week: g.week,
       homeTeam: g.home_team,
       awayTeam: g.away_team,
+      homeClassification: g.home_classification ?? null,
+      awayClassification: g.away_classification ?? null,
       completed: !!g.completed,
       homePoints: g.home_points,
       awayPoints: g.away_points,
