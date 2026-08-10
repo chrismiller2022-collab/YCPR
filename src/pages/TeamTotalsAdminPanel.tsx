@@ -9,7 +9,7 @@ import {
 } from "../lib/gameTotalsEngine";
 import { resolveSplitSpread, splitTeamTotal } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
-import { RawDataTab, SystemInputsTab, SeasonPicker, SyncControl, CsvImportControl } from "./GameTotalsAdminPanel";
+import { RawDataTab, SystemInputsTab, SeasonPicker, SyncControl, CsvImportControl, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 const TABS = ["raw", "inputs", "composites", "bets", "filtered", "performance"] as const;
@@ -266,7 +266,9 @@ function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; setti
 
 export default function TeamTotalsAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const { rows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
+  const [division, setDivision] = useState("FBS");
+  const { rows: allRows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
+  const rows = filterRowsByDivision(allRows, division);
   const [tab, setTab] = useState<Tab>("composites");
 
   return (
@@ -276,7 +278,11 @@ export default function TeamTotalsAdminPanel({ onBack }: { onBack: () => void })
       </button>
       <h2 style={{ marginTop: 0 }}>Team Totals</h2>
 
-      <SeasonPicker season={season} setSeason={setSeason} />
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        <SeasonPicker season={season} setSeason={setSeason} />
+        <DivisionPicker division={division} setDivision={setDivision} />
+      </div>
+
       <CsvImportControl season={season} />
       <details style={{ marginBottom: "1rem" }}>
         <summary style={{ cursor: "pointer", fontSize: "0.78rem", color: "var(--chalk-dim)" }}>

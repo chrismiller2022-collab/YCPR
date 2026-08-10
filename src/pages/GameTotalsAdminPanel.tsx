@@ -508,9 +508,26 @@ export function SeasonPicker({ season, setSeason }: { season: number; setSeason:
   );
 }
 
+export function DivisionPicker({ division, setDivision }: { division: string; setDivision: (d: string) => void }) {
+  return (
+    <select className="filter" value={division} onChange={(e) => setDivision(e.target.value)} style={{ marginBottom: "1rem" }}>
+      <option value="All">All divisions</option>
+      <option value="FBS">FBS only (both teams)</option>
+      <option value="FCS">FCS only (both teams)</option>
+    </select>
+  );
+}
+
+export function filterRowsByDivision(rows: EnrichedGameRow[], division: string): EnrichedGameRow[] {
+  if (division === "All") return rows;
+  return rows.filter((r) => r.game.homeClassification === division.toLowerCase() && r.game.awayClassification === division.toLowerCase());
+}
+
 export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const { rows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
+  const [division, setDivision] = useState("FBS");
+  const { rows: allRows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
+  const rows = filterRowsByDivision(allRows, division);
   const [tab, setTab] = useState<Tab>("composites");
 
   return (
@@ -520,7 +537,10 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
       </button>
       <h2 style={{ marginTop: 0 }}>Game Totals</h2>
 
-      <SeasonPicker season={season} setSeason={setSeason} />
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        <SeasonPicker season={season} setSeason={setSeason} />
+        <DivisionPicker division={division} setDivision={setDivision} />
+      </div>
       <CsvImportControl season={season} />
       <details style={{ marginBottom: "1rem" }}>
         <summary style={{ cursor: "pointer", fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
