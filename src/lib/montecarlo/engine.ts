@@ -234,7 +234,14 @@ export function runMonteCarlo(
   liveByTeam: Record<string, any>,
   numTrials: number
 ): SimulationResult {
-  const fbsTeams = TEAMS.filter((t) => t.div === "FBS");
+  // Resolved once so every downstream lookup (conference title games,
+  // bracket seeding/simulation) uses each team's live weekly rating
+  // instead of the frozen preseason snapshot, matching computeMySpread's
+  // per-game use of ratingFor below.
+  const fbsTeams = TEAMS.filter((t) => t.div === "FBS").map((t) => ({
+    ...t,
+    rating: ratingFor(t.team, liveByTeam) ?? t.rating,
+  }));
   const indexByName = new Map(fbsTeams.map((t, i) => [t.team, i]));
   const n = fbsTeams.length;
   const syntheticSubFcsRating = computeFcsMedianRating(liveByTeam) + 28;
