@@ -295,10 +295,18 @@ function MatchupsRow({
     wtfTeam,
     actCoverTeam,
     totalResult,
+    betCategory,
+    betSizePct,
   } = computed;
 
   const dateLabel = game.start_date
-    ? new Date(game.start_date).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" })
+    ? new Date(game.start_date).toLocaleString(undefined, {
+        weekday: "short",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
     : "–";
 
   if (mode === "spreads") {
@@ -347,6 +355,9 @@ function MatchupsRow({
         <td style={{ ...CP, textAlign: "right" }}>{game.home_points ?? "–"}</td>
         <td style={CP}>{teamNameFor(computed, projCoverTeam)}</td>
         <td style={{ ...CP, fontWeight: 700 }}>{betTeam ? `${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}` : "–"}</td>
+        <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: betSizePct != null ? "var(--gold)" : undefined }} title={betCategory ?? undefined}>
+          {betSizePct != null ? `${(betSizePct * 100).toFixed(1)}%` : "–"}
+        </td>
         <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!filteredBetTeam} />
         </td>
@@ -473,6 +484,8 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
         return c.projCoverTeam ? teamNameFor(c, c.projCoverTeam) : null;
       case "bet":
         return c.betTeam ? teamNameFor(c, c.betTeam) : null;
+      case "betSize":
+        return c.betSizePct;
       case "filteredBet":
         return c.filteredBetTeam ? 1 : null;
       case "wfb":
@@ -687,6 +700,10 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         columns show real values where the public page only shows dashes. Team rows without
         a bolded rating mean the CFBD team name didn't match a name in data/teams.ts. Click
         any column header to sort — text columns push every non-blank pick to the top.
+        Bet Size is 1/10 Kelly, capped at 5% of bankroll, using each bet category's
+        historical win rate at standard -110 odds: Bet 1 alone 59.5%, Bet 2 or 3 alone
+        60.9%, Bets 2 & 3 both firing 70.0%, Bets 1 & 2 both firing (the strongest signal)
+        73.0% — hover a Bet Size value to see which category it used.
       </p>
 
       <div className="controls matchups-controls">
@@ -760,6 +777,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Proj. Cover Team" sortKey="projCover" active={sortKey === "projCover"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Bet" sortKey="bet" active={sortKey === "bet"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Bet Size" sortKey="betSize" active={sortKey === "betSize"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={handleSort} />

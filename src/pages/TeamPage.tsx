@@ -82,59 +82,6 @@ function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
 }
 
 
-function computeValueTabStats(team: any, games: GameWithLines[], liveByTeam: Record<string, any>) {
-  const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
-  const teamRating = ratingFor(team.team, team.rating);
-
-  let projW = 0;
-  let projL = 0;
-  let actW = 0;
-  let actL = 0;
-  let confProjW = 0;
-  let confProjL = 0;
-  let confActW = 0;
-  let confActL = 0;
-
-  const teamGames = games.filter((g) => g.home_team === team.team || g.away_team === team.team);
-
-  for (const g of teamGames) {
-    const isHome = g.home_team === team.team;
-    const oppName = isHome ? g.away_team : g.home_team;
-    const opp = TEAMS_BY_NAME[oppName];
-    if (!opp) continue;
-
-    const oppRating = ratingFor(oppName, opp.rating);
-    const spread = isHome
-      ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
-      : teamRating - oppRating + hfaFor(oppName, liveByTeam);
-    const isConfGame = !!g.conference_game;
-
-    const winPct = spreadToWinPct(spread);
-    projW += winPct;
-    projL += 1 - winPct;
-    if (isConfGame) {
-      confProjW += winPct;
-      confProjL += 1 - winPct;
-    }
-
-    if (g.completed && g.home_points != null && g.away_points != null) {
-      const teamScore = isHome ? g.home_points : g.away_points;
-      const oppScore = isHome ? g.away_points : g.home_points;
-      if (teamScore > oppScore) {
-        actW++;
-        if (isConfGame) confActW++;
-      } else if (teamScore < oppScore) {
-        actL++;
-        if (isConfGame) confActL++;
-      }
-    }
-  }
-
-  const myConfOdds = liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null;
-
-  return { projW, projL, actW, actL, confProjW, confProjL, confActW, confActL, myConfOdds };
-}
-
 function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
   const next = computeNextOpponent(team, liveByTeam);
   const nextOpp = next?.opp ?? null;
@@ -160,9 +107,6 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
 
   const { basic, betting } = computeGraphicCardStats(team, liveByTeam, games);
   const stats = cardView === "basic" ? basic : betting;
-
-  const valueStats = cardView === "value" ? computeValueTabStats(team, games, liveByTeam) : null;
-  const vegasWinTotal = TEAM_WIN_TOTALS[team.team]?.vegasTotal ?? null;
 
   return (
     <div className="graphic-card">
@@ -212,91 +156,30 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
         >
           Betting
         </button>
-        <button
-          className={`graphic-card-toggle-btn ${cardView === "value" ? "active" : ""}`}
-          onClick={() => setCardView("value")}
-        >
-          Value
-        </button>
       </div>
 
-      {cardView !== "value" ? (
-        <div className="graphic-card-grid">
-          {stats.map((s) => (
-            <div className="graphic-card-cell" key={s.label}>
-              <div className="graphic-card-cell-label">{s.label}</div>
-              {s.real ? (
-                <div
-                  className="graphic-card-cell-value"
-                  style={{ background: s.bg }}
-                >
-                  <span style={{ color: s.color }}>{s.value}</span>
-                  {s.sub && (
-                    <span className="graphic-card-cell-sub">{s.sub}</span>
-                  )}
-                </div>
-              ) : (
-                <div className="graphic-card-cell-value graphic-card-cell-empty">
-                  <span className="graphic-card-tbd">TBD</span>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <ValueTabGrid valueStats={valueStats} vegasWinTotal={vegasWinTotal} gamesLoaded={gamesLoaded} />
-      )}
-    </div>
-  );
-}
-
-function ValueCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="graphic-card-cell">
-      <div className="graphic-card-cell-label">{label}</div>
-      <div className="graphic-card-cell-value">
-        <span>{value}</span>
-        {sub && <span className="graphic-card-cell-sub">{sub}</span>}
+      <div className="graphic-card-grid">
+        {stats.map((s) => (
+          <div className="graphic-card-cell" key={s.label}>
+            <div className="graphic-card-cell-label">{s.label}</div>
+            {s.real ? (
+              <div
+                className="graphic-card-cell-value"
+                style={{ background: s.bg }}
+              >
+                <span style={{ color: s.color }}>{s.value}</span>
+                {s.sub && (
+                  <span className="graphic-card-cell-sub">{s.sub}</span>
+                )}
+              </div>
+            ) : (
+              <div className="graphic-card-cell-value graphic-card-cell-empty">
+                <span className="graphic-card-tbd">TBD</span>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
-    </div>
-  );
-}
-
-function ValueTabGrid({ valueStats, vegasWinTotal, gamesLoaded }: any) {
-  if (!gamesLoaded || !valueStats) {
-    return <div className="graphic-card-grid" style={{ padding: "1.5rem", textAlign: "center", color: "var(--chalk-dim)" }}>Loading…</div>;
-  }
-
-  const {
-    projW,
-    projL,
-    actW,
-    actL,
-    confProjW,
-    confProjL,
-    confActW,
-    confActL,
-    myConfOdds,
-  } = valueStats;
-
-  const fmtRecord = (w: number, l: number, decimals = 0) => `${w.toFixed(decimals)}-${l.toFixed(decimals)}`;
-  const fmtPctVal = (v: number | null) => (v != null ? `${(v * 100).toFixed(1)}%` : "–");
-
-  return (
-    <div className="graphic-card-grid">
-      <ValueCell label="Proj. Record" value={fmtRecord(projW, projL, 1)} />
-      <ValueCell label="Actual Record" value={fmtRecord(actW, actL)} />
-      <ValueCell label="Vegas Win Total" value={vegasWinTotal != null ? vegasWinTotal.toFixed(1) : "– (not synced yet)"} />
-
-      <ValueCell label="Proj. Conf. Record" value={fmtRecord(confProjW, confProjL, 1)} />
-      <ValueCell label="Actual Conf. Record" value={fmtRecord(confActW, confActL)} />
-      <ValueCell label="Vegas Conf. Win Total" value="– (not synced yet)" />
-
-      <ValueCell label="My Conf. Odds" value={fmtPctVal(myConfOdds)} />
-      <ValueCell label="Vegas Conf. Odds" value="– (not synced yet)" />
-
-      <ValueCell label="My Natty Odds" value="– (see Proj Title Odds on Basic tab)" />
-      <ValueCell label="Vegas Natty Odds" value="– (not synced yet)" />
     </div>
   );
 }

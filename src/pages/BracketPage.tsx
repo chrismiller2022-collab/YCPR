@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { BRACKET_SEED_NAMES, NATTY_BY_TEAM } from "../data/nattyOdds";
@@ -85,11 +86,21 @@ function NattyRow({ team, onNavigateTeam }: any) {
 
 
 export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
-  const seeds = useMemo(
+  const exportRef = useRef<HTMLDivElement>(null);
+  const staticSeeds = useMemo(
     () => BRACKET_SEED_NAMES.map((name) => TEAMS_BY_NAME[name]).filter(Boolean),
     []
   );
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Resolve every seed's rating to its live weekly value (falling back to
+  // the static preseason rating) exactly once, here — everything below
+  // (round matchups, semis, natty odds table) reads from this resolved
+  // list, so live ratings flow through the whole bracket automatically.
+  const seeds = useMemo(
+    () => staticSeeds.map((t) => ({ ...t, rating: liveByTeam[t.team]?.rating ?? t.rating })),
+    [staticSeeds, liveByTeam]
+  );
 
   if (seeds.length < 12) {
     return (
@@ -174,9 +185,9 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
   );
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">FBS Playoff Bracket · {subLabel}</div>
@@ -187,6 +198,10 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
           higher seed; quarterfinals, semifinals, and championship are all
           projected at a neutral site.
         </p>
+      </div>
+
+      <div className="export-toolbar" data-export-exclude="true">
+        <ExportPngButton targetRef={exportRef} filename={`fbs-bracket-${subLabel}`.toLowerCase().replace(/\s+/g, "-")} />
       </div>
 
       <div className="bracket-body">
@@ -288,7 +303,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Natty odds are projected only for the 12 teams in this bracket
         field. The highlighted team in each game is our projected winner.
       </div>

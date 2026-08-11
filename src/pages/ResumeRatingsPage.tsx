@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { CONFERENCES, TEAMS } from "../data/teams";
-import { useWeeklyChange } from "../lib/api/weeklyStats";
+import { useWeeklyChange, useWeeklyStats } from "../lib/api/weeklyStats";
 
 function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }: any) {
-  const r = RESUME_BY_TEAM[team.team];
+  const rating = team.rating;
+  const resumeRank = team.resumeRank;
+  const resumeRating = team.resumeRating;
   return (
     <tr>
       <td>
@@ -23,12 +26,12 @@ function ResumeRatingsRow({ team, change, onNavigateTeam, onNavigateConference }
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
+      <td className={`rating-cell ${rating < 0 ? "rating-good" : "rating-bad"}`}>
+        {rating > 0 ? "+" : ""}
+        {rating.toFixed(2)}
       </td>
-      <td className="wintotals-total-cell">{r ? r.rank : "–"}</td>
-      <td className="wintotals-total-cell">{r ? r.rating.toFixed(2) : "–"}</td>
+      <td className="wintotals-total-cell">{resumeRank != null ? resumeRank : "–"}</td>
+      <td className="wintotals-total-cell">{resumeRating != null ? resumeRating.toFixed(2) : "–"}</td>
       <ChangeCell change={change} />
     </tr>
   );
@@ -41,10 +44,12 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("resumeRank");
   const [sortDir, setSortDir] = useState("asc");
+  const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: changeByTeam } = useWeeklyChange("resume_rating");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => RESUME_BY_TEAM[t.team])
+    let list = TEAMS.filter((t) => RESUME_BY_TEAM[t.team] || liveByTeam[t.team]?.resume_rating != null)
       .filter((t) => {
         if (division !== "All" && t.div !== division) return false;
         if (conference !== "All" && t.conf !== conference) return false;
@@ -54,8 +59,9 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
       })
       .map((t) => ({
         ...t,
-        resumeRank: RESUME_BY_TEAM[t.team]?.rank ?? null,
-        resumeRating: RESUME_BY_TEAM[t.team]?.rating ?? null,
+        rating: liveByTeam[t.team]?.rating ?? t.rating,
+        resumeRank: liveByTeam[t.team]?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
+        resumeRating: liveByTeam[t.team]?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
       }));
 
     list = [...list].sort((a, b) => {
@@ -73,7 +79,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir]);
+  }, [query, division, conference, sortKey, sortDir, liveByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -85,9 +91,9 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
   };
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Resume Ratings</div>
@@ -99,7 +105,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
         </p>
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input
           className="search"
           placeholder="Search for a team…"
@@ -127,6 +133,7 @@ export default function ResumeRatingsPage({ onNavigateTeam, onNavigateConference
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename="resume-ratings" />
       </div>
 
       <div className="table-wrap">

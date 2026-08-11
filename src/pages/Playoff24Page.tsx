@@ -9,8 +9,19 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fmtOdds } from "../lib/format";
 
 export default function Playoff24Page({ onNavigateTeam, onNavigateConference, onHome }: any) {
-  const field = useMemo(() => buildPlayoff24Field(), []);
+  const staticField = useMemo(() => buildPlayoff24Field(), []);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Resolve every field entry's rating to its live weekly value once, so
+  // seeding math, BracketGame spreads, and the field table below all agree.
+  const field = useMemo(
+    () =>
+      staticField.map((f) => ({
+        ...f,
+        team: { ...f.team, rating: liveByTeam[f.team.team]?.rating ?? f.team.rating },
+      })),
+    [staticField, liveByTeam]
+  );
 
   if (field.length < 24) {
     return (
@@ -77,6 +88,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -93,6 +105,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -109,6 +122,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -125,6 +139,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -140,6 +155,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                 seedB={champPair.away.seed}
                 teamB={champPair.away.team}
                 neutral
+                liveByTeam={liveByTeam}
                 onNavigateTeam={onNavigateTeam}
               />
             </div>

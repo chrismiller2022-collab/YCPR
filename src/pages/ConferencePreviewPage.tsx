@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { TEAMS } from "../data/teams";
@@ -18,6 +19,7 @@ function DiffCell({ value }: any) {
 
 function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigateTeam }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
+  const rating = live?.rating ?? team.rating;
   const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total ?? 0;
   const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[team.team]?.confTotal ?? 0;
   const seasonWinLine = live?.season_win_line ?? null;
@@ -40,9 +42,9 @@ function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigat
           {team.team}
         </button>
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
+      <td className={`rating-cell ${rating < 0 ? "rating-good" : "rating-bad"}`}>
+        {rating > 0 ? "+" : ""}
+        {rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{winTotal.toFixed(2)}</td>
       <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
@@ -67,6 +69,7 @@ function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigat
 }
 
 export default function ConferencePreviewPage({ conference, onNavigateTeam, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const rows = useMemo(() => {
@@ -74,7 +77,11 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
     return [...list].sort((a, b) => {
       const pa = liveByTeam[a.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[a.team]?.confWinPct;
       const pb = liveByTeam[b.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[b.team]?.confWinPct;
-      if (pa == null && pb == null) return a.rating - b.rating;
+      if (pa == null && pb == null) {
+        const ra = liveByTeam[a.team]?.rating ?? a.rating;
+        const rb = liveByTeam[b.team]?.rating ?? b.rating;
+        return ra - rb;
+      }
       if (pa == null) return 1;
       if (pb == null) return -1;
       return pb - pa;
@@ -92,9 +99,9 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
   const showVegasWinLines = rows[0]?.div !== "FCS";
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Conference Preview</div>
@@ -104,6 +111,10 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
           conference price{showVegasWinLines ? ", and the market's lines" : ""} for
           every {conference} team.
         </p>
+      </div>
+
+      <div className="export-toolbar" data-export-exclude="true">
+        <ExportPngButton targetRef={exportRef} filename={`${conference.toLowerCase().replace(/\s+/g, "-")}-preview`} />
       </div>
 
       <div className="table-wrap">
@@ -150,7 +161,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
         )}
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Conference Odds bar reflects our model's probability to win the
         conference. Vegas Conference Odds is the market's current price.
         Fair Conference Odds is our model's own fair American-odds price to

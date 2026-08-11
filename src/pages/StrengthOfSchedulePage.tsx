@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { SOS_BY_TEAM } from "../data/sor";
 import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
@@ -134,6 +135,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
   const [division, setDivision] = useState(forceDivision ?? "All");
   const [conference, setConference] = useState("All");
   const [mode, setMode] = useState("sos");
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const { byTeam: liveByTeam, loading: liveLoading, error: liveError } = useWeeklyStats("latest");
   const { byTeam: changeByTeam } = useWeeklyChange("sor");
@@ -190,7 +192,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       if (division === "All") return true;
       return t.div === division;
     })
-      .map((t) => ({ ...t, sos: sosFor(t.team) }))
+      .map((t) => ({ ...t, rating: ratingFor(t.team, t.rating), sos: sosFor(t.team) }))
       .filter((t) => (forceDivision ? true : t.sos != null));
 
     if (mode === "sos") {
@@ -227,9 +229,9 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
   const rightRows = displayedRows.filter((t) => t.trueRank > trueHalf);
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">{forceDivision === "FCS" ? "FCS · " : ""}Strength of Schedule</div>
@@ -261,7 +263,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       </div>
 
       {!forceDivision && (
-        <div className="mode-toggle">
+        <div className="mode-toggle" data-export-exclude="true">
           {MODES.map((m) => (
             <button key={m.key} className={`mode-btn ${mode === m.key ? "mode-btn-active" : ""}`} onClick={() => setMode(m.key)}>
               {m.label}
@@ -270,7 +272,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
         </div>
       )}
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} />
         {!forceDivision && (
           <select
@@ -298,6 +300,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename={`sos-${mode}`} />
       </div>
 
       <div className="table-wrap" style={{ maxWidth: 1400 }}>
@@ -325,7 +328,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
         )}
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         {mode === "sos"
           ? "SOS is Strength of Schedule, based on a number of things — including but not limited to average opponent power rating."
           : "This substitutes only the subject team's own rating with the #12 FBS team's current rating — opponents keep their real ratings, home/away, and home-field advantage. Expected wins are a sum of each game's win probability, the same underlying method used for the site's other win-total projections."}

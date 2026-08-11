@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
@@ -46,6 +47,7 @@ export default function ConferenceWinTotalsPage({ onNavigateTeam, onNavigateConf
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("team");
   const [sortDir, setSortDir] = useState("asc");
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(() => {
     let list = TEAMS.filter((t) => CONF_FUTURES_BY_TEAM[t.team])
@@ -97,9 +99,9 @@ export default function ConferenceWinTotalsPage({ onNavigateTeam, onNavigateConf
   };
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Futures</div>
@@ -110,7 +112,7 @@ export default function ConferenceWinTotalsPage({ onNavigateTeam, onNavigateConf
         </p>
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input
           className="search"
           placeholder="Search for a team…"
@@ -138,6 +140,7 @@ export default function ConferenceWinTotalsPage({ onNavigateTeam, onNavigateConf
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename="conference-win-totals" />
       </div>
 
       <div className="table-wrap">
@@ -172,7 +175,7 @@ export default function ConferenceWinTotalsPage({ onNavigateTeam, onNavigateConf
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Dif = our Conf Proj. Wins minus the market's Conf Line. Bet and Edge
         only populate when the difference clears our threshold.
       </div>

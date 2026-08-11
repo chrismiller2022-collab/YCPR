@@ -3,6 +3,8 @@ import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { TEAMS, conferencesForDivision } from "../data/teams";
+import { buildRankMap } from "../lib/ranks";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 const FCS_CONFERENCES = conferencesForDivision("FCS");
 
@@ -38,14 +40,33 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Rank here means "rank among FCS teams" (1-N), not the site-wide
+  // national rank that FCS teams also carry (which runs into the
+  // hundreds, since it's computed across FBS+FCS combined) — computed
+  // from the FULL FCS roster with live ratings resolved, so search/
+  // conference filters below never change what a team's rank means.
+  const fcsRankByTeam = useMemo(() => {
+    const resolved = TEAMS.filter((t) => t.div === "FCS").map(
+      (t) => [t.team, liveByTeam[t.team]?.rating ?? t.rating] as [string, number]
+    );
+    return buildRankMap(resolved, false);
+  }, [liveByTeam]);
 
   const rows = useMemo(() => {
-    let list = TEAMS.filter((t) => t.div === "FCS").filter((t) => {
-      if (conference !== "All" && t.conf !== conference) return false;
-      if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
-        return false;
-      return true;
-    });
+    let list = TEAMS.filter((t) => t.div === "FCS")
+      .filter((t) => {
+        if (conference !== "All" && t.conf !== conference) return false;
+        if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
+          return false;
+        return true;
+      })
+      .map((t) => ({
+        ...t,
+        rating: liveByTeam[t.team]?.rating ?? t.rating,
+        rank: fcsRankByTeam[t.team],
+      }));
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
@@ -59,7 +80,7 @@ export default function FCSRatingsPage({ onNavigateTeam, onNavigateConference, o
     });
 
     return list;
-  }, [query, conference, sortKey, sortDir]);
+  }, [query, conference, sortKey, sortDir, liveByTeam, fcsRankByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {

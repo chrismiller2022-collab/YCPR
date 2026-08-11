@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { CONFERENCES, TEAMS } from "../data/teams";
-import { TEAM_WIN_TOTALS } from "../lib/ranks";
+import { TEAM_WIN_TOTALS, buildRankMap } from "../lib/ranks";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
-  const wt = TEAM_WIN_TOTALS[team.team] || { total: 0, vegasTotal: null };
-  const diff = wt.vegasTotal != null ? wt.total - wt.vegasTotal : null;
+  const wt = { total: team.winTotal, vegasTotal: team.vegasTotal };
+  const diff = team.diff;
   return (
     <tr>
       <td>
@@ -58,6 +60,23 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
+  const exportRef = useRef<HTMLDivElement>(null);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // When viewing a single division, "rank" should mean rank within that
+  // division (1-N), not the site-wide national rank FBS+FCS combined —
+  // otherwise the FCS view shows rank numbers in the hundreds instead of
+  // a clean 1-138. Computed from the full division roster (before the
+  // conference/search filters below) so filtering never changes what a
+  // team's rank number means. "All" keeps the national rank, same as the
+  // Home Page.
+  const divisionRankByTeam = useMemo(() => {
+    if (division === "All") return null;
+    const pool = TEAMS.filter((t) => t.div === division).map(
+      (t) => [t.team, liveByTeam[t.team]?.rating ?? t.rating] as [string, number]
+    );
+    return buildRankMap(pool, false);
+  }, [division, liveByTeam]);
 
   const rows = useMemo(() => {
     let list = TEAMS.filter((t) => {
@@ -66,15 +85,19 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
       if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
-    }).map((t) => ({
-      ...t,
-      winTotal: TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-      vegasTotal: TEAM_WIN_TOTALS[t.team]?.vegasTotal ?? null,
-      diff:
-        TEAM_WIN_TOTALS[t.team]?.vegasTotal != null
-          ? (TEAM_WIN_TOTALS[t.team]?.total ?? 0) - TEAM_WIN_TOTALS[t.team]!.vegasTotal
-          : null,
-    }));
+    }).map((t) => {
+      const live = liveByTeam[t.team];
+      const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0;
+      const vegasTotal = live?.season_win_line ?? null;
+      return {
+        ...t,
+        rating: live?.rating ?? t.rating,
+        rank: divisionRankByTeam ? divisionRankByTeam[t.team] : live?.rank ?? t.rank,
+        winTotal,
+        vegasTotal,
+        diff: vegasTotal != null ? winTotal - vegasTotal : null,
+      };
+    });
 
     list = [...list].sort((a, b) => {
       let av = a[sortKey];
@@ -91,7 +114,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir]);
+  }, [query, division, conference, sortKey, sortDir, liveByTeam, divisionRankByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -103,9 +126,9 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
   };
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Win Totals</div>
@@ -116,7 +139,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
         </p>
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input
           className="search"
           placeholder="Search for a team…"
@@ -144,6 +167,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename={`win-totals-${division.toLowerCase()}`} />
       </div>
 
       <div className="table-wrap">
@@ -177,12 +201,11 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Win totals are projections based on current power ratings, not actual
         results — records will update once games are played. Vegas Win Total
-        currently shows "–" for every team — there's no synced source for
-        those lines yet, so the Difference column has nothing to compare
-        against until that's wired up.
+        and the Difference column populate once a week's upload includes a
+        Vegas win total line for that team.
       </div>
     </div>
   );

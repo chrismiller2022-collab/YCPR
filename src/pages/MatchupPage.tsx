@@ -15,12 +15,22 @@ export default function MatchupPage({ onHome }: any) {
 
   const [home, setHome] = useState("neutral");
 
-  const teamA = TEAMS.find((t) => t.team === teamAName) || null;
-  const teamB = TEAMS.find((t) => t.team === teamBName) || null;
-  const bothSelected = teamA && teamB;
-  const sameTeam = bothSelected && teamA.team === teamB.team;
+  const staticTeamA = TEAMS.find((t) => t.team === teamAName) || null;
+  const staticTeamB = TEAMS.find((t) => t.team === teamBName) || null;
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Resolve both teams' rating/rank to their live weekly value (falling
+  // back to the static preseason snapshot) once, here — every calculation
+  // and display below reads from these resolved objects.
+  const teamA = staticTeamA
+    ? { ...staticTeamA, rating: liveByTeam[staticTeamA.team]?.rating ?? staticTeamA.rating, rank: liveByTeam[staticTeamA.team]?.rank ?? staticTeamA.rank }
+    : null;
+  const teamB = staticTeamB
+    ? { ...staticTeamB, rating: liveByTeam[staticTeamB.team]?.rating ?? staticTeamB.rating, rank: liveByTeam[staticTeamB.team]?.rank ?? staticTeamB.rank }
+    : null;
+  const bothSelected = teamA && teamB;
+  const sameTeam = bothSelected && teamA.team === teamB.team;
 
   let spreadA = null;
   if (bothSelected && !sameTeam) {

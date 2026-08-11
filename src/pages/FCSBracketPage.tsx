@@ -6,8 +6,19 @@ import { buildFCS24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair 
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
-  const field = useMemo(() => buildFCS24Field(), []);
+  const staticField = useMemo(() => buildFCS24Field(), []);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Resolve every field entry's rating to its live weekly value once, so
+  // seeding math, BracketGame spreads, and the field table below all agree.
+  const field = useMemo(
+    () =>
+      staticField.map((f) => ({
+        ...f,
+        team: { ...f.team, rating: liveByTeam[f.team.team]?.rating ?? f.team.rating },
+      })),
+    [staticField, liveByTeam]
+  );
 
   if (field.length < 24) {
     return (
@@ -74,6 +85,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -90,6 +102,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -106,6 +119,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -122,6 +136,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                   teamA={p.host.team}
                   seedB={p.away.seed}
                   teamB={p.away.team}
+                  liveByTeam={liveByTeam}
                   onNavigateTeam={onNavigateTeam}
                 />
               ))}
@@ -137,6 +152,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
                 seedB={champPair.away.seed}
                 teamB={champPair.away.team}
                 neutral
+                liveByTeam={liveByTeam}
                 onNavigateTeam={onNavigateTeam}
               />
             </div>

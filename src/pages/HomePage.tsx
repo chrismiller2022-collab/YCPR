@@ -1,14 +1,15 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import ChangeCell from "../components/ChangeCell";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { SOS_BY_TEAM } from "../data/sor";
 import { CONFERENCES, TEAMS } from "../data/teams";
 import { spreadColor } from "../lib/odds";
-import { CONF_WIN_TOTAL_RANK_BY_TEAM, SOR_RANK_BY_TEAM, TEAM_WIN_TOTALS, WIN_TOTAL_RANK_BY_TEAM } from "../lib/ranks";
-import { useWeeklyChange } from "../lib/api/weeklyStats";
+import { TEAM_WIN_TOTALS, buildRankMap } from "../lib/ranks";
+import { useWeeklyChange, useWeeklyStats, weekLabel } from "../lib/api/weeklyStats";
 
 export default function HomePage({ onNavigateTeam, onNavigateConference }: any) {
   const [heroQuery, setHeroQuery] = useState("");
@@ -18,22 +19,63 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
+  const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: changeByTeam } = useWeeklyChange("rating");
+  const { byTeam: liveByTeam, resolvedWeek } = useWeeklyStats("latest");
+
+  // Resolve every team's live-preferred values ONCE, from the full
+  // unfiltered roster. Everything downstream (rank maps, the filtered/
+  // searched table, the hero search) reads from this same resolved list —
+  // that way filtering to one division/conference can never change what a
+  // team's rank number means, and live data (once a week is uploaded)
+  // takes over from the static preseason snapshot automatically.
+  const resolvedAll = useMemo(() => {
+    return TEAMS.map((t) => {
+      const live = liveByTeam[t.team];
+      return {
+        ...t,
+        rating: live?.rating ?? t.rating,
+        rank: live?.rank ?? t.rank,
+        winTotal: live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
+        confWinTotal: live?.conf_proj_wins ?? TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
+        sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
+        resumeRating: live?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
+        resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
+      };
+    });
+  }, [liveByTeam]);
+
+  // Rank badges for Win Total / Conf Win Total / SOR, computed from the
+  // FULL resolved roster (every division, every conference) — not from
+  // whatever subset happens to be visible after filtering/searching.
+  // Building these from a filtered list was tried and reverted: it would
+  // have silently shown ranks like 1-16 instead of real national ranks
+  // the moment someone filtered down to a single conference.
+  const winTotalRankByTeam = useMemo(
+    () => buildRankMap(resolvedAll.map((t) => [t.team, t.winTotal]), true),
+    [resolvedAll]
+  );
+  const confWinTotalRankByTeam = useMemo(
+    () => buildRankMap(resolvedAll.map((t) => [t.team, t.confWinTotal]), true),
+    [resolvedAll]
+  );
+  const sorRankByTeam = useMemo(
+    () =>
+      buildRankMap(
+        resolvedAll.filter((t) => t.sos != null).map((t) => [t.team, t.sos]),
+        false
+      ),
+    [resolvedAll]
+  );
 
   const filtered = useMemo(() => {
-    let rows = TEAMS.filter((t) => {
+    let rows = resolvedAll.filter((t) => {
       if (division !== "All" && t.div !== division) return false;
       if (conference !== "All" && t.conf !== conference) return false;
       if (query && !t.team.toLowerCase().includes(query.toLowerCase()))
         return false;
       return true;
-    }).map((t) => ({
-      ...t,
-      winTotal: TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-      confWinTotal: TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
-      resumeRating: RESUME_BY_TEAM[t.team]?.rating ?? null,
-      sos: SOS_BY_TEAM[t.team] ?? null,
-    }));
+    });
 
     rows = [...rows].sort((a, b) => {
       let av = a[sortKey];
@@ -50,7 +92,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
     });
 
     return rows;
-  }, [query, division, conference, sortKey, sortDir]);
+  }, [resolvedAll, query, division, conference, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -62,12 +104,13 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   };
 
   const fbsCount = TEAMS.filter((t) => t.div === "FBS").length;
-  const top = TEAMS[0];
   const heroMatches =
     heroQuery.trim().length > 0
-      ? TEAMS.filter((t) =>
-          t.team.toLowerCase().includes(heroQuery.trim().toLowerCase())
-        ).slice(0, 6)
+      ? resolvedAll
+          .filter((t) =>
+            t.team.toLowerCase().includes(heroQuery.trim().toLowerCase())
+          )
+          .slice(0, 6)
       : [];
   const showCutlines =
     sortKey === "rank" &&
@@ -76,10 +119,12 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
     division === "All" &&
     conference === "All";
 
+  const weekEyebrow = weekLabel(resolvedWeek);
+
   return (
-    <>
+    <div ref={exportRef}>
 <div className="hero">
-        <div className="eyebrow">Preseason · Power Ratings</div>
+        <div className="eyebrow">{weekEyebrow} · Power Ratings</div>
         <h1 className="title">
           YC <span>POWER</span> RATINGS
         </h1>
@@ -87,7 +132,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
           Power Ratings derived from stats, vibes and other stuff like that
         </p>
 
-        <div className="hero-search-wrap">
+        <div className="hero-search-wrap" data-export-exclude="true">
           <input
             className="hero-search"
             placeholder="Jump to a team page…"
@@ -128,7 +173,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
         </div>
       </div>
 
-      <div className="controls">
+      <div className="controls" data-export-exclude="true">
         <input
           className="search"
           placeholder="Search for a team…"
@@ -156,6 +201,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename="yc-power-ratings" />
       </div>
 
       <div className="table-wrap">
@@ -197,18 +243,18 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
                     {t.rating.toFixed(2)}
                   </td>
                   <td className="wintotals-total-cell">
-                    <span className="mini-rank-flag">{WIN_TOTAL_RANK_BY_TEAM[t.team]}</span>
+                    <span className="mini-rank-flag">{winTotalRankByTeam[t.team]}</span>
                     {t.winTotal.toFixed(2)}
                   </td>
                   <td className="wintotals-total-cell">
-                    <span className="mini-rank-flag">{CONF_WIN_TOTAL_RANK_BY_TEAM[t.team]}</span>
+                    <span className="mini-rank-flag">{confWinTotalRankByTeam[t.team]}</span>
                     {t.confWinTotal.toFixed(2)}
                   </td>
                   <td className="wintotals-total-cell">
-                    {RESUME_BY_TEAM[t.team] ? (
+                    {t.resumeRating != null ? (
                       <>
-                        <span className="mini-rank-flag">{RESUME_BY_TEAM[t.team].rank}</span>
-                        {RESUME_BY_TEAM[t.team].rating.toFixed(2)}
+                        <span className="mini-rank-flag">{t.resumeRank}</span>
+                        {t.resumeRating.toFixed(2)}
                       </>
                     ) : (
                       "–"
@@ -217,15 +263,15 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
                   <td
                     className="wintotals-total-cell"
                     style={
-                      SOS_BY_TEAM[t.team] != null
-                        ? { color: spreadColor(SOS_BY_TEAM[t.team]) }
+                      t.sos != null
+                        ? { color: spreadColor(t.sos) }
                         : undefined
                     }
                   >
-                    {SOS_BY_TEAM[t.team] != null ? (
+                    {t.sos != null ? (
                       <>
-                        <span className="mini-rank-flag">{SOR_RANK_BY_TEAM[t.team]}</span>
-                        {(SOS_BY_TEAM[t.team] > 0 ? "+" : "") + SOS_BY_TEAM[t.team].toFixed(2)}
+                        <span className="mini-rank-flag">{sorRankByTeam[t.team]}</span>
+                        {(t.sos > 0 ? "+" : "") + t.sos.toFixed(2)}
                       </>
                     ) : (
                       "–"
@@ -261,10 +307,10 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         This site is not a betting site and is purely for informational
         purposes.
       </div>
-    </>
+    </div>
   );
 }

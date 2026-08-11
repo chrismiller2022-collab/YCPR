@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { NATTY_BY_TEAM } from "../data/nattyOdds";
@@ -7,8 +8,9 @@ import { TEAMS } from "../data/teams";
 import { fmtPct } from "../lib/format";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
-function NattyOddsRow({ team, myOdds, vegasOdds, onNavigateTeam, onNavigateConference }: any) {
+function NattyOddsRow({ team, live, myOdds, vegasOdds, onNavigateTeam, onNavigateConference }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
+  const rating = live?.rating ?? team.rating;
   return (
     <tr>
       <td>
@@ -20,9 +22,9 @@ function NattyOddsRow({ team, myOdds, vegasOdds, onNavigateTeam, onNavigateConfe
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
+      <td className={`rating-cell ${rating < 0 ? "rating-good" : "rating-bad"}`}>
+        {rating > 0 ? "+" : ""}
+        {rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">
         {f ? `${(f.confWinPct * 100).toFixed(1)}%` : "–"}
@@ -34,6 +36,7 @@ function NattyOddsRow({ team, myOdds, vegasOdds, onNavigateTeam, onNavigateConfe
 }
 
 export default function NattyOddsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const rows = useMemo(() => {
@@ -55,9 +58,9 @@ export default function NattyOddsPage({ onNavigateTeam, onNavigateConference, on
   }, [liveByTeam]);
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Futures</div>
@@ -67,6 +70,10 @@ export default function NattyOddsPage({ onNavigateTeam, onNavigateConference, on
           teams in our national championship field, since that's the field
           our model actually simulates.
         </p>
+      </div>
+
+      <div className="export-toolbar" data-export-exclude="true">
+        <ExportPngButton targetRef={exportRef} filename="natty-odds" />
       </div>
 
       <div className="table-wrap">
@@ -92,6 +99,7 @@ export default function NattyOddsPage({ onNavigateTeam, onNavigateConference, on
                   <NattyOddsRow
                     key={t.team}
                     team={t}
+                    live={liveByTeam[t.team]}
                     myOdds={liveByTeam[t.team]?.natty_odds ?? NATTY_BY_TEAM[t.team]}
                     vegasOdds={liveByTeam[t.team]?.draftkings_natty_odds}
                     onNavigateTeam={onNavigateTeam}
@@ -104,7 +112,7 @@ export default function NattyOddsPage({ onNavigateTeam, onNavigateConference, on
         )}
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         My Natty Odds is our model's own projection. Vegas Natty Odds is the
         market's current price (currently only available once saved through
         the weekly upload).

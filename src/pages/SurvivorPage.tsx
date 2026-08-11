@@ -16,6 +16,7 @@ import {
   allUsedTeams,
   isOpponentEligible,
 } from "../lib/survivor";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 const STORAGE_KEY = "survivor_picks_v1";
 const AUTH_KEY = "survivor_authed";
@@ -107,6 +108,7 @@ export default function SurvivorPage({
   const [hideUsed, setHideUsed] = useState(false);
   const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   useEffect(() => {
     if (sessionStorage.getItem(AUTH_KEY) === "1") setAuthed(true);
@@ -137,7 +139,7 @@ export default function SurvivorPage({
       const game = gameForTeamInWeek(team.team, week.dataWeek);
       const opp = game ? opponentOf(game, team.team) : undefined;
       const eligible = game && opp && isOpponentEligible(opp, selectedConfs);
-      const spread = eligible ? teamSpread(team, opp!, game!) : null;
+      const spread = eligible ? teamSpread(team, opp!, game!, liveByTeam) : null;
       return { team, spread };
     });
 
@@ -149,7 +151,7 @@ export default function SurvivorPage({
     );
 
     return [...withValue, ...withoutValue].map((t) => t.team);
-  }, [baseTeams, sortWeekKey, sortDir, selectedConfs]);
+  }, [baseTeams, sortWeekKey, sortDir, selectedConfs, liveByTeam]);
 
   function toggleConf(conf: string) {
     setSelectedConfs((prev) => {
@@ -204,7 +206,7 @@ export default function SurvivorPage({
         const game = team ? gameForTeamInWeek(team.team, week.dataWeek) : undefined;
         const opp = game && team ? opponentOf(game, team.team) : undefined;
         const isHome = game && team ? game.home === team.team : false;
-        const spread = game && team && opp ? teamSpread(team, opp, game) : null;
+        const spread = game && team && opp ? teamSpread(team, opp, game, liveByTeam) : null;
         rows.push([
           week.label,
           teamName,
@@ -228,6 +230,7 @@ export default function SurvivorPage({
       const usedSoFar = allUsedTeams(picks);
       const available = rowTeams(selectedConfs)
         .filter((t) => !usedSoFar.has(t.team))
+        .map((t) => ({ ...t, rating: liveByTeam[t.team]?.rating ?? t.rating }))
         .sort((a, b) => a.rating - b.rating);
 
       const afterY = (doc as any).lastAutoTable.finalY + 24;
@@ -485,7 +488,7 @@ export default function SurvivorPage({
                     }
 
                     const isHome = game.home === team.team;
-                    const spread = opp ? teamSpread(team, opp, game) : null;
+                    const spread = opp ? teamSpread(team, opp, game, liveByTeam) : null;
                     const clickable = status === "open" || status === "selected";
 
                     const bg =

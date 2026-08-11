@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ExportPngButton from "../components/ExportPngButton";
 import TeamCell from "../components/TeamCell";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -360,6 +361,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
   const [hideNoLine, setHideNoLine] = useState(true);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(false);
@@ -413,9 +415,9 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   }, [isAll, visibleRows]);
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Weekly Matchups</div>
@@ -429,7 +431,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         </p>
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <select className="filter" value={matchupType} onChange={(e) => setMatchupType(e.target.value)}>
           <option value="All">All matchups</option>
@@ -441,9 +443,10 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
           <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
           Hide games with no Vegas line
         </label>
+        <ExportPngButton targetRef={exportRef} filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")} />
       </div>
 
-      <div className="mode-toggle">
+      <div className="mode-toggle" data-export-exclude="true">
         {MATCHUPS_MODES.map((m) => (
           <button key={m.key} className={`mode-btn ${mode === m.key ? "mode-btn-active" : ""}`} onClick={() => setMode(m.key)}>
             {m.label}
@@ -484,7 +487,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
           {!loading && isAll && visibleRows.length > 0 && <BettingStatsBlock rows={visibleRows} title="Season Betting Stats" />}
         </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Projections use each team's current power rating and do not yet account for injuries,
         weather, or other game-specific factors. Vegas lines are synced from CollegeFootballData
         and may not be available for every game, especially further out.

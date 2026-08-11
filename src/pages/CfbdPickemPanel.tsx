@@ -52,7 +52,9 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         // home.rating - away.rating - hfa(home). Lower rating = better on
         // this site, so a well-rated home team produces a negative number
         // here, matching CFBD.
-        const margin = homeTeam.rating - awayTeam.rating - hfaFor(r.home, liveByTeam);
+        const homeRating = liveByTeam[r.home]?.rating ?? homeTeam.rating;
+        const awayRating = liveByTeam[r.away]?.rating ?? awayTeam.rating;
+        const margin = homeRating - awayRating - hfaFor(r.home, liveByTeam);
         predicted = String(Math.round(margin));
       } else {
         if (!homeTeam) missing.add(r.home);

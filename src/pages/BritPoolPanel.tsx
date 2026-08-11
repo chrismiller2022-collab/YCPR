@@ -236,8 +236,14 @@ function PickingStep({
               const g = p.game;
               if (!g) return null;
               const line = pickLine(p.lines);
-              const awayTeam = TEAMS_BY_NAME[g.away_team];
-              const homeTeam = TEAMS_BY_NAME[g.home_team];
+              const staticAwayTeam = TEAMS_BY_NAME[g.away_team];
+              const staticHomeTeam = TEAMS_BY_NAME[g.home_team];
+              const awayTeam = staticAwayTeam
+                ? { ...staticAwayTeam, rating: liveByTeam[g.away_team]?.rating ?? staticAwayTeam.rating }
+                : null;
+              const homeTeam = staticHomeTeam
+                ? { ...staticHomeTeam, rating: liveByTeam[g.home_team]?.rating ?? staticHomeTeam.rating }
+                : null;
               const projAwaySpread =
                 awayTeam && homeTeam
                   ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam)

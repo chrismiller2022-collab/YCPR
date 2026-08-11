@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
+import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
@@ -44,6 +45,7 @@ export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConfer
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("value");
   const [sortDir, setSortDir] = useState("desc");
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(() => {
     let list = TEAMS.filter((t) => CONF_FUTURES_BY_TEAM[t.team])
@@ -93,9 +95,9 @@ export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConfer
   };
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Futures</div>
@@ -106,7 +108,7 @@ export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConfer
         </p>
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <input
           className="search"
           placeholder="Search for a team…"
@@ -134,6 +136,7 @@ export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConfer
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename="conference-win-odds" />
       </div>
 
       <div className="table-wrap">
@@ -166,7 +169,7 @@ export default function ConferenceWinOddsPage({ onNavigateTeam, onNavigateConfer
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Fair Price/Conf Win % come from our model. Implied %/Odds are the
         market's price. Value is the edge between the two.
       </div>
