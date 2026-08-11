@@ -135,7 +135,9 @@ export function weekMatchups(
       const home = teamsByName[g.home];
       if (!away || !home) return null;
       if (away.div !== division || home.div !== division) return null;
-      const awaySpread = away.rating - home.rating + hfaFor(g.home, liveByTeam);
+      const awayRating = liveByTeam[g.away]?.rating ?? away.rating;
+      const homeRating = liveByTeam[g.home]?.rating ?? home.rating;
+      const awaySpread = awayRating - homeRating + hfaFor(g.home, liveByTeam);
       const homeSpread = -awaySpread;
       const awayWinPct = spreadToWinPct(awaySpread);
       return {

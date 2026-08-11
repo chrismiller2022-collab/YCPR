@@ -84,12 +84,16 @@ export function opponentOf(game: Game, teamName: string): Team | undefined {
 }
 
 // Spread from `team`'s own perspective — negative means `team` is favored.
-// Mirrors the convention already used on TeamPage.tsx.
-export function teamSpread(team: Team, opp: Team, game: Game): number {
+// Mirrors the convention already used on TeamPage.tsx. Ratings are
+// live-preferred (falling back to each team's static preseason rating)
+// when a liveByTeam map is passed.
+export function teamSpread(team: Team, opp: Team, game: Game, liveByTeam?: Record<string, any>): number {
   const isHome = game.home === team.team;
+  const teamRating = liveByTeam?.[team.team]?.rating ?? team.rating;
+  const oppRating = liveByTeam?.[opp.team]?.rating ?? opp.rating;
   return isHome
-    ? team.rating - opp.rating - hfaFor(team.team, undefined)
-    : team.rating - opp.rating + hfaFor(opp.team, undefined);
+    ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
+    : teamRating - oppRating + hfaFor(opp.team, liveByTeam);
 }
 
 // ---------------------------------------------------------------------

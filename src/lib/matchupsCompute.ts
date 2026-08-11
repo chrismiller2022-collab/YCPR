@@ -61,6 +61,68 @@ export interface MatchupComputed {
   wtfTeam: "away" | "home" | null;
   actCoverTeam: "away" | "home" | "push" | null;
   totalResult: "Over" | "Under" | "Push" | null;
+  betCategory: BetCategory | null;
+  betSizePct: number | null; // 1/10 Kelly stake, as a fraction of bankroll (0.015 = 1.5%), capped at 0.05
+}
+
+// ---------------------------------------------------------------------
+// Bet sizing — 1/10 Kelly, using historical win rates per bet category
+// rather than a per-game probability, since the categories themselves
+// (Bet 1/Filtered, Bet 2/WFB, Bet 3/NWFB, and their overlaps) are already
+// the site's backtested signal buckets. Standard -110 odds are assumed
+// throughout (matches the ATS_BREAKEVEN_PCT convention used elsewhere in
+// this file) since that's the typical price being bet against.
+//
+// Categories are resolved by priority — strongest signal wins, so a game
+// where all three bet flags happen to fire still lands in the best-known
+// tier (Bets 1 & 2) rather than falling through unclassified:
+//   1. Bet 1 AND Bet 2 both fire  -> 73.0% historical win rate
+//   2. Bet 2 AND Bet 3 both fire  -> 70.0%
+//   3. Bet 1 fires (alone)        -> 59.5%
+//   4. Bet 2 or Bet 3 fires alone -> 60.9%
+// ---------------------------------------------------------------------
+export type BetCategory = "Bets 1 & 2" | "Bets 2 & 3" | "Bet 1" | "Bet 2 or 3";
+
+export const BET_CATEGORY_WIN_PCT: Record<BetCategory, number> = {
+  "Bets 1 & 2": 0.73,
+  "Bets 2 & 3": 0.7,
+  "Bet 1": 0.595,
+  "Bet 2 or 3": 0.609,
+};
+
+const KELLY_FRACTION = 1 / 10; // 1/10 Kelly
+const KELLY_ODDS = -110; // standard vig-adjusted spread/ATS price
+const KELLY_CAP = 0.05; // never stake more than 5% of bankroll, regardless of category
+
+export function resolveBetCategory(
+  filteredBetTeam: "away" | "home" | null,
+  weightedFilteredBetTeam: "away" | "home" | null,
+  nwfbTeam: "away" | "home" | null
+): BetCategory | null {
+  const b1 = filteredBetTeam != null;
+  const b2 = weightedFilteredBetTeam != null;
+  const b3 = nwfbTeam != null;
+  if (b1 && b2) return "Bets 1 & 2";
+  if (b2 && b3) return "Bets 2 & 3";
+  if (b1) return "Bet 1";
+  if (b2 || b3) return "Bet 2 or 3";
+  return null;
+}
+
+/** 1/10 Kelly stake, as a fraction of bankroll (0.015 = 1.5%), for a bet
+ * at `winProb` win probability facing `odds` (American, e.g. -110). */
+export function kellyStakePct(winProb: number, odds: number = KELLY_ODDS, fraction: number = KELLY_FRACTION): number {
+  const decimalOdds = odds < 0 ? 1 + 100 / Math.abs(odds) : 1 + odds / 100;
+  const b = decimalOdds - 1; // net odds
+  const q = 1 - winProb;
+  const fullKelly = winProb - q / b;
+  const stake = fullKelly * fraction;
+  return Math.max(0, Math.min(stake, KELLY_CAP));
+}
+
+export function betSizeFor(category: BetCategory | null): number | null {
+  if (!category) return null;
+  return kellyStakePct(BET_CATEGORY_WIN_PCT[category]);
 }
 
 export interface Tally {
@@ -226,8 +288,18 @@ export function computeWatchSignal(
 
 export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>): MatchupComputed {
   const line = pickLine(game.lines);
-  const awayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
-  const homeTeam = TEAMS_BY_NAME[game.home_team] ?? null;
+  const staticAwayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
+  const staticHomeTeam = TEAMS_BY_NAME[game.home_team] ?? null;
+  // Ratings are live-preferred (falling back to each team's static
+  // preseason rating) so projected spreads move with the season instead
+  // of staying frozen at preseason numbers — matches the pattern used
+  // everywhere else on the site.
+  const awayTeam = staticAwayTeam
+    ? { ...staticAwayTeam, rating: liveByTeam[game.away_team]?.rating ?? staticAwayTeam.rating }
+    : null;
+  const homeTeam = staticHomeTeam
+    ? { ...staticHomeTeam, rating: liveByTeam[game.home_team]?.rating ?? staticHomeTeam.rating }
+    : null;
 
   const projAwaySpread =
     awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(game.home_team, liveByTeam) : null;
@@ -318,6 +390,9 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     totalResult = actualTotal > line.over_under ? "Over" : actualTotal < line.over_under ? "Under" : "Push";
   }
 
+  const betCategory = resolveBetCategory(filteredBetTeam, weightedFilteredBetTeam, nwfbTeam);
+  const betSizePct = betSizeFor(betCategory);
+
   return {
     game,
     line,
@@ -342,5 +417,7 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     wtfTeam,
     actCoverTeam,
     totalResult,
+    betCategory,
+    betSizePct,
   };
 }

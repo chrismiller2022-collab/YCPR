@@ -7,18 +7,20 @@ import { HFA, hfaFor, spreadBg, spreadColor, spreadToWinPct } from "./odds";
 import { TEAM_WIN_TOTALS, SOR_RANK_BY_TEAM, buildRankMap } from "./ranks";
 import { pickLine } from "./matchupsCompute";
 
-export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam) {
+export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam = {}) {
   const games = gamesForTeam(scheduleTeamName);
+  const ownRating = liveByTeam[ratingTeam.team]?.rating ?? ratingTeam.rating;
   let winSum = 0;
   const rows = [];
   games.forEach((g) => {
     const isHome = g.home === scheduleTeamName;
     const oppName = isHome ? g.away : g.home;
-    const opp = TEAMS_BY_NAME[oppName];
-    if (!opp) return;
+    const staticOpp = TEAMS_BY_NAME[oppName];
+    if (!staticOpp) return;
+    const opp = { ...staticOpp, rating: liveByTeam[oppName]?.rating ?? staticOpp.rating };
     const spread = isHome
-      ? ratingTeam.rating - opp.rating - hfaFor(scheduleTeamName, liveByTeam)
-      : ratingTeam.rating - opp.rating + hfaFor(oppName, liveByTeam);
+      ? ownRating - opp.rating - hfaFor(scheduleTeamName, liveByTeam)
+      : ownRating - opp.rating + hfaFor(oppName, liveByTeam);
     const winPct = spreadToWinPct(spread);
     winSum += winPct;
     rows.push({ game: g, opp, isHome, spread, winPct });
@@ -27,17 +29,19 @@ export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam) {
 }
 
 
-export function computeNextOpponent(team, liveByTeam) {
+export function computeNextOpponent(team, liveByTeam = {}) {
   const schedule = gamesForTeam(team.team);
   const nextGame = schedule[0] || null;
   if (!nextGame) return null;
   const isHome = nextGame.home === team.team;
   const oppName = isHome ? nextGame.away : nextGame.home;
-  const opp = TEAMS_BY_NAME[oppName];
-  if (!opp) return null;
+  const staticOpp = TEAMS_BY_NAME[oppName];
+  if (!staticOpp) return null;
+  const opp = { ...staticOpp, rating: liveByTeam[oppName]?.rating ?? staticOpp.rating };
+  const teamRating = liveByTeam[team.team]?.rating ?? team.rating;
   const spread = isHome
-    ? team.rating - opp.rating - hfaFor(team.team, liveByTeam)
-    : team.rating - opp.rating + hfaFor(oppName, liveByTeam);
+    ? teamRating - opp.rating - hfaFor(team.team, liveByTeam)
+    : teamRating - opp.rating + hfaFor(oppName, liveByTeam);
   return { opp, loc: isHome ? "H" : "A", spread };
 }
 
@@ -56,8 +60,9 @@ function rankWithinConference(team, liveByTeam, metricFor) {
 }
 
 export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = []) {
-  const ratingColor = spreadColor(team.rating);
-  const ratingBg = spreadBg(team.rating, 0.16);
+  const liveTeamRating = liveByTeam[team.team]?.rating ?? team.rating;
+  const ratingColor = spreadColor(liveTeamRating);
+  const ratingBg = spreadBg(liveTeamRating, 0.16);
   const goldBg = "rgba(255, 200, 87, 0.12)";
 
   const futuresData = CONF_FUTURES_BY_TEAM[team.team];
@@ -78,6 +83,7 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
   // are live-preferred throughout, matching the rest of the site.
   const ratingFor = (name, fallback) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
+  const teamRank = liveByTeam[team.team]?.rank ?? team.rank;
 
   const teamGames = seasonGames.filter((g) => g.home_team === team.team || g.away_team === team.team);
 
@@ -196,8 +202,8 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
   const powerRatingCard = {
     label: "Power Rating + Rank",
     real: true,
-    value: `${team.rating > 0 ? "+" : ""}${team.rating.toFixed(2)}`,
-    sub: `#${team.rank}`,
+    value: `${teamRating > 0 ? "+" : ""}${teamRating.toFixed(2)}`,
+    sub: `#${teamRank}`,
     color: ratingColor,
     bg: ratingBg,
   };
