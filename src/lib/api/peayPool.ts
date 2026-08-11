@@ -74,8 +74,10 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
     const line = pickLine(linesByGame.get(g.id) ?? []);
     const awayTeam = TEAMS_BY_NAME[g.away_team];
     const homeTeam = TEAMS_BY_NAME[g.home_team];
+    const awayRating = awayTeam ? liveByTeam[g.away_team]?.rating ?? awayTeam.rating : null;
+    const homeRating = homeTeam ? liveByTeam[g.home_team]?.rating ?? homeTeam.rating : null;
     const myProjAwaySpread =
-      awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam) : null;
+      awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
     const vegasAwaySpread = line?.spread != null ? -line.spread : null;
 
     const saved = peayByGame.get(g.id);

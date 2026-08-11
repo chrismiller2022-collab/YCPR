@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { fetchAllRows } from "./fetchAll";
 import type { SimGame, TeamSimResult } from "../montecarlo/engine";
 
 export interface SeasonGame extends SimGame {
@@ -7,12 +8,13 @@ export interface SeasonGame extends SimGame {
 
 /** Every game for a season (any classification) — the engine itself filters by FBS/FCS as needed. */
 export async function fetchSeasonGames(season: number): Promise<SeasonGame[]> {
-  const { data, error } = await supabase
-    .from("games")
-    .select("week, home_team, away_team, neutral_site, conference_game, completed, home_points, away_points")
-    .eq("season", season);
-  if (error) throw error;
-  return data ?? [];
+  return fetchAllRows<SeasonGame>((from, to) =>
+    supabase
+      .from("games")
+      .select("week, home_team, away_team, neutral_site, conference_game, completed, home_points, away_points")
+      .eq("season", season)
+      .range(from, to)
+  );
 }
 
 export interface MonteCarloRunSummary {

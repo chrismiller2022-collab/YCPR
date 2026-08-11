@@ -118,6 +118,10 @@ interface UseWeeklyStatsResult {
   byTeam: Record<string, WeeklyTeamStats>;
   loading: boolean;
   error: string | null;
+  /** The actual week these rows belong to — e.g. "preseason" or "week3".
+   * Useful when the caller passed "latest" and wants to know what it
+   * resolved to (for an eyebrow/label, say). Null until resolved. */
+  resolvedWeek: string | null;
 }
 
 /**
@@ -128,6 +132,7 @@ export function useWeeklyStats(week: string): UseWeeklyStatsResult {
   const [rows, setRows] = useState<WeeklyTeamStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resolvedWeek, setResolvedWeek] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +147,10 @@ export function useWeeklyStats(week: string): UseWeeklyStatsResult {
           targetWeek = weeks[0] ?? "preseason";
         }
         const data = await fetchWeeklyStats(targetWeek);
-        if (!cancelled) setRows(data);
+        if (!cancelled) {
+          setRows(data);
+          setResolvedWeek(targetWeek);
+        }
       } catch (err: any) {
         if (!cancelled) setError(err.message ?? "Failed to load weekly stats");
       } finally {
@@ -156,7 +164,17 @@ export function useWeeklyStats(week: string): UseWeeklyStatsResult {
   }, [week]);
 
   const byTeam = Object.fromEntries(rows.map((r) => [r.team, r]));
-  return { rows, byTeam, loading, error };
+  return { rows, byTeam, loading, error, resolvedWeek };
+}
+
+/** Turns a stored week value ("preseason", "week1".."week16") into a
+ * display label ("Preseason", "Week 1".."Week 16"). Mirrors the dropdown
+ * labels in AdminPage.tsx. */
+export function weekLabel(week: string | null): string {
+  if (!week) return "Preseason";
+  if (week === "preseason") return "Preseason";
+  const m = /^week(\d+)$/.exec(week);
+  return m ? `Week ${m[1]}` : week;
 }
 
 interface WeeklyChangeEntry {

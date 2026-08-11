@@ -88,8 +88,10 @@ export async function fetchEspnSpreadPicksForWeek(
 
     const awayTeam = g ? TEAMS_BY_NAME[g.away_team] : null;
     const homeTeam = g ? TEAMS_BY_NAME[g.home_team] : null;
+    const awayRating = awayTeam ? liveByTeam[g!.away_team]?.rating ?? awayTeam.rating : null;
+    const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
     const myProjAwaySpread =
-      g && awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam) : null;
+      g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
 
     return {
       ...p,

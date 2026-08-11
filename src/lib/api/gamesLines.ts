@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { fetchAllRows } from "./fetchAll";
 
 export interface GameRow {
   id: string;
@@ -43,30 +44,27 @@ export interface GameWithLines extends GameRow {
  * week to filter to just that week, or omit it to pull the whole season.
  */
 export async function fetchGamesWithLines(season: number, week?: number): Promise<GameWithLines[]> {
-  let gamesQuery = supabase.from("games").select("*").eq("season", season);
-  let linesQuery = supabase.from("betting_lines").select("*").eq("season", season);
-
-  if (week != null) {
-    gamesQuery = gamesQuery.eq("week", week);
-    linesQuery = linesQuery.eq("week", week);
-  }
-
-  const [{ data: games, error: gamesError }, { data: lines, error: linesError }] = await Promise.all([
-    gamesQuery.order("start_date", { ascending: true }),
-    linesQuery,
+  const [games, lines] = await Promise.all([
+    fetchAllRows<GameRow>((from, to) => {
+      let q = supabase.from("games").select("*").eq("season", season);
+      if (week != null) q = q.eq("week", week);
+      return q.order("start_date", { ascending: true }).range(from, to);
+    }),
+    fetchAllRows<BettingLineRow>((from, to) => {
+      let q = supabase.from("betting_lines").select("*").eq("season", season);
+      if (week != null) q = q.eq("week", week);
+      return q.range(from, to);
+    }),
   ]);
 
-  if (gamesError) throw gamesError;
-  if (linesError) throw linesError;
-
   const linesByGame = new Map<string, BettingLineRow[]>();
-  for (const line of lines ?? []) {
+  for (const line of lines) {
     const list = linesByGame.get(line.game_id) ?? [];
     list.push(line);
     linesByGame.set(line.game_id, list);
   }
 
-  return (games ?? []).map((g) => ({
+  return games.map((g) => ({
     ...g,
     lines: linesByGame.get(g.id) ?? [],
   }));
@@ -74,16 +72,18 @@ export async function fetchGamesWithLines(season: number, week?: number): Promis
 
 /** Distinct (season, week) pairs currently in the games table, most recent first. */
 export async function fetchSyncedWeeks(): Promise<{ season: number; week: number }[]> {
-  const { data, error } = await supabase
-    .from("games")
-    .select("season, week")
-    .order("season", { ascending: false })
-    .order("week", { ascending: false });
-  if (error) throw error;
+  const data = await fetchAllRows<{ season: number; week: number }>((from, to) =>
+    supabase
+      .from("games")
+      .select("season, week")
+      .order("season", { ascending: false })
+      .order("week", { ascending: false })
+      .range(from, to)
+  );
 
   const seen = new Set<string>();
   const result: { season: number; week: number }[] = [];
-  for (const row of data ?? []) {
+  for (const row of data) {
     const key = `${row.season}-${row.week}`;
     if (!seen.has(key)) {
       seen.add(key);

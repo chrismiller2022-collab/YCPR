@@ -1,18 +1,21 @@
 import { supabase } from "../supabaseClient";
+import { fetchAllRows } from "./fetchAll";
 import { type TeamSeasonInputs } from "../gameTotals";
 
 export async function fetchTeamSeasonInputs(season: number): Promise<Record<string, TeamSeasonInputs>> {
-  const [{ data: statsRows, error: statsError }, { data: gameRows, error: gamesError }] = await Promise.all([
-    supabase.from("team_season_stats").select("*").eq("season", season),
-    supabase
-      .from("games")
-      .select("home_team, away_team, home_points, away_points, completed")
-      .eq("season", season)
-      .eq("completed", true),
+  const [statsRows, gameRows] = await Promise.all([
+    fetchAllRows<any>((from, to) =>
+      supabase.from("team_season_stats").select("*").eq("season", season).range(from, to)
+    ),
+    fetchAllRows<any>((from, to) =>
+      supabase
+        .from("games")
+        .select("home_team, away_team, home_points, away_points, completed")
+        .eq("season", season)
+        .eq("completed", true)
+        .range(from, to)
+    ),
   ]);
-
-  if (statsError) throw statsError;
-  if (gamesError) throw gamesError;
 
   // Points aren't in CFBD's stats endpoints (confirmed earlier against
   // the actual CSV columns) — aggregated here from completed games
@@ -70,20 +73,24 @@ export interface GameForTotals {
 }
 
 export async function fetchGamesForTotals(season: number): Promise<GameForTotals[]> {
-  const { data: games, error: gamesError } = await supabase
-    .from("games")
-    .select("id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points")
-    .eq("season", season);
-  if (gamesError) throw gamesError;
+  const games = await fetchAllRows<any>((from, to) =>
+    supabase
+      .from("games")
+      .select("id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points")
+      .eq("season", season)
+      .range(from, to)
+  );
 
-  const { data: lines, error: linesError } = await supabase
-    .from("betting_lines")
-    .select("game_id, spread, over_under, opening_spread, opening_over_under, provider")
-    .eq("season", season);
-  if (linesError) throw linesError;
+  const lines = await fetchAllRows<any>((from, to) =>
+    supabase
+      .from("betting_lines")
+      .select("game_id, spread, over_under, opening_spread, opening_over_under, provider")
+      .eq("season", season)
+      .range(from, to)
+  );
 
   const lineByGame = new Map<string, any>();
-  for (const l of lines ?? []) {
+  for (const l of lines) {
     // Prefer a consensus/first-seen line per game — last write wins here,
     // fine for now since most games only have one provider synced.
     lineByGame.set(l.game_id, l);
