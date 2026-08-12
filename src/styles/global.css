@@ -954,15 +954,15 @@
         .spread-cards {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 1.25rem;
+          gap: 1.5rem;
         }
 
         .spread-card {
           text-align: center;
           background: var(--turf-panel);
           border: 1px solid var(--hash);
-          border-radius: 10px;
-          padding: 1.5rem 1rem;
+          border-radius: 14px;
+          padding: 2.25rem 1.5rem;
         }
 
         .spread-favored {
@@ -973,8 +973,8 @@
         .spread-team {
           font-weight: 700;
           color: var(--chalk);
-          font-size: 0.95rem;
-          margin-bottom: 0.6rem;
+          font-size: 1.4rem;
+          margin-bottom: 0.85rem;
         }
 
         .spread-context {
@@ -982,32 +982,32 @@
           align-items: center;
           justify-content: center;
           gap: 0.5rem;
-          margin-bottom: 1rem;
+          margin-bottom: 1.1rem;
         }
 
         .spread-context-rating {
-          font-size: 0.75rem;
+          font-size: 0.85rem;
           color: var(--chalk-dim);
           font-variant-numeric: tabular-nums;
         }
 
         .spread-value {
           font-family: 'Anton', sans-serif;
-          font-size: 2.4rem;
+          font-size: 3.4rem;
           letter-spacing: 0.02em;
         }
 
         .spread-tag {
-          margin-top: 0.4rem;
-          font-size: 0.68rem;
+          margin-top: 0.5rem;
+          font-size: 0.75rem;
           text-transform: uppercase;
           letter-spacing: 0.14em;
           color: var(--chalk-dim);
         }
 
         .spread-winpct {
-          margin-top: 0.5rem;
-          font-size: 0.85rem;
+          margin-top: 0.6rem;
+          font-size: 1rem;
           font-weight: 700;
         }
 
@@ -1358,6 +1358,44 @@
         }
 
         select.filter:focus { border-color: var(--gold-dim); }
+
+        .export-png-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+          background: var(--turf-panel);
+          border: 1px solid var(--hash);
+          border-radius: 6px;
+          padding: 0.7rem 1rem;
+          color: var(--chalk);
+          font-family: 'Inter', sans-serif;
+          font-size: 0.85rem;
+          font-weight: 600;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .export-png-btn:hover:not(:disabled) {
+          border-color: var(--gold-dim);
+          color: var(--gold);
+        }
+
+        .export-png-btn:disabled {
+          opacity: 0.6;
+          cursor: default;
+        }
+
+        .export-toolbar {
+          max-width: 980px;
+          margin: 1.5rem auto 0;
+          padding: 0 1.5rem;
+          display: flex;
+          justify-content: flex-end;
+        }
+
+        .matchups-page .export-toolbar {
+          max-width: 1100px;
+        }
 
         .table-wrap {
           max-width: 980px;
