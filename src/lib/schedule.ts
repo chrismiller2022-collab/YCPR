@@ -83,7 +83,18 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
   // are live-preferred throughout, matching the rest of the site.
   const ratingFor = (name, fallback) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
-  const teamRank = liveByTeam[team.team]?.rank ?? team.rank;
+  // Not liveByTeam[team.team]?.rank — the stored `rank` column from the
+  // weekly upload is currently broken (every team comes back rank 1, a bug
+  // in that upload's own rank calculation, not something safe to trust
+  // here). Recompute the true national rank from scratch off the full
+  // live-resolved roster instead, the same way the ranking pages elsewhere
+  // on the site do. Lower rating = better, same convention as everywhere
+  // else.
+  const nationalRankMap = buildRankMap(
+    TEAMS.map((t) => [t.team, liveByTeam[t.team]?.rating ?? t.rating]),
+    false
+  );
+  const teamRank = nationalRankMap[team.team] ?? team.rank;
 
   const teamGames = seasonGames.filter((g) => g.home_team === team.team || g.away_team === team.team);
 
