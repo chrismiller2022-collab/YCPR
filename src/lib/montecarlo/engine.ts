@@ -20,6 +20,13 @@ export interface TeamSimResult {
   totalGames: number;
   meanWins: number;
   winDistribution: number[]; // index = win count (0..15), value = trial count
+  // Regular-season win total only — the conference championship game is
+  // NOT included here (by design, not oversight). It's tracked separately
+  // via madeConfChampPct/confTitlePct below, since it's an extra 13th game
+  // that only some teams even play, not a normal part of every team's win
+  // total.
+  ci95Low: number; // 95% confidence interval on regular-season win total
+  ci95High: number;
   madeConfChampPct: number; // odds to MAKE the conference championship game
   confTitlePct: number; // odds to WIN the conference championship
   playoffPct: number;
@@ -100,6 +107,33 @@ function invNorm(p: number): number {
 export function drawMarginNoise(): number {
   const raw = MARGIN_STDDEV * invNorm(Math.random());
   return Math.max(-MARGIN_CLIP, Math.min(MARGIN_CLIP, raw));
+}
+
+// 95% confidence interval on a win-total distribution — the win count at
+// the 2.5th percentile and at the 97.5th percentile of the trials, read
+// straight off the same bucketed distribution already being tallied per
+// trial (no separate pass needed).
+function winTotalCI(winDistribution: number[], numTrials: number): { low: number; high: number } {
+  if (numTrials === 0) return { low: 0, high: 0 };
+  const lowerP = 0.025;
+  const upperP = 0.975;
+  let cum = 0;
+  let low = 0;
+  let high = winDistribution.length - 1;
+  let lowSet = false;
+  for (let w = 0; w < winDistribution.length; w++) {
+    cum += winDistribution[w];
+    const frac = cum / numTrials;
+    if (!lowSet && frac >= lowerP) {
+      low = w;
+      lowSet = true;
+    }
+    if (frac >= upperP) {
+      high = w;
+      break;
+    }
+  }
+  return { low, high };
 }
 
 // ---------------------------------------------------------------------
@@ -405,6 +439,7 @@ export function runMonteCarlo(
 
   const teamResults: TeamSimResult[] = fbsTeams.map((t, i) => {
     const winsSum = winDistribution[i].reduce((sum, count, wins) => sum + count * wins, 0);
+    const ci = winTotalCI(winDistribution[i], numTrials);
     return {
       team: t.team,
       conf: t.conf,
@@ -413,6 +448,8 @@ export function runMonteCarlo(
       totalGames: totalGames[i],
       meanWins: winsSum / numTrials,
       winDistribution: winDistribution[i],
+      ci95Low: ci.low,
+      ci95High: ci.high,
       madeConfChampPct: (madeConfChampCount[i] / numTrials) * 100,
       confTitlePct: (confTitleCount[i] / numTrials) * 100,
       playoffPct: (playoffCount[i] / numTrials) * 100,
@@ -422,6 +459,220 @@ export function runMonteCarlo(
   });
 
   return { teamResults, unmatchedTeams: Array.from(unmatchedTeams) };
+}
+
+// ---------------------------------------------------------------------
+// SRS (Simple Rating System) — the site owner's own spreadsheet method,
+// built on top of a single simulated-season realization (simulateSingleSeason
+// above). Unlike the power ratings elsewhere on this site, HIGHER is
+// better here — that's the standard SRS convention, and matches the
+// spreadsheet this was ported from.
+//
+// Computed in passes, each strictly using only values already finalized
+// by an earlier pass — nothing here is circular:
+//   Pass 1: per-team Wins/Losses/WinMOV/LoseMOV/Total MOV, straight off
+//           that team's own simulated results.
+//   Pass 2: per-team SOS — for each of a team's wins, add the *opponent's*
+//           own LoseMOV (pass 1); for each loss, add the opponent's own
+//           WinMOV (pass 1). SRS = SOS + Total MOV, minus 21 for FCS teams
+//           (keeps FCS SRS on a comparable numeric scale to FBS).
+//   Pass 3: rank every team by SRS, separately within FBS and within FCS.
+// ---------------------------------------------------------------------
+export interface SrsTeamRow {
+  team: string;
+  conf: string;
+  div: "FBS" | "FCS";
+  rating: number; // current power rating (live-preferred), for reference
+  wins: number;
+  losses: number;
+  winMOV: number;
+  loseMOV: number;
+  totalMOV: number;
+  sos: number;
+  sosRank: number; // within division, 1 = best (highest SOS)
+  srs: number;
+  srsRank: number; // within division, 1 = best (highest SRS) — for display
+  winBonus: number;
+  lossPenalty: number;
+  totalWinBonus: number;
+  totalLossPenalty: number;
+  victoryPoints: number;
+  vsrs: number;
+  vsrsRank: number; // within division, 1 = best (highest VSRS)
+}
+
+// Standard-normal inverse CDF, reusing the same Acklam's-algorithm port
+// drawMarginNoise() uses above.
+const WIN_BONUS_EPS = 1e-10;
+
+export function computeSrsStats(rows: ScheduleRow[], liveByTeam: Record<string, any>): SrsTeamRow[] {
+  interface GameEntry {
+    opponent: string;
+    isWin: boolean;
+    margin: number;
+  }
+  const gamesByTeam = new Map<string, GameEntry[]>();
+  function record(team: string, entry: GameEntry) {
+    const list = gamesByTeam.get(team) ?? [];
+    list.push(entry);
+    gamesByTeam.set(team, list);
+  }
+  for (const r of rows) {
+    if (r.winner == null || r.loser == null || r.margin == null) continue;
+    record(r.winner, { opponent: r.loser, isWin: true, margin: r.margin });
+    record(r.loser, { opponent: r.winner, isWin: false, margin: r.margin });
+  }
+
+  // Pass 1: MOV.
+  interface MovAgg {
+    wins: number;
+    losses: number;
+    winMOV: number;
+    loseMOV: number;
+    totalMOV: number;
+  }
+  const movByTeam = new Map<string, MovAgg>();
+  for (const [team, games] of gamesByTeam) {
+    let wins = 0,
+      losses = 0,
+      winMOV = 0,
+      loseMOV = 0;
+    for (const g of games) {
+      if (g.isWin) {
+        wins++;
+        winMOV += g.margin;
+      } else {
+        losses++;
+        loseMOV += g.margin;
+      }
+    }
+    const totalMOV = wins + losses > 0 ? (winMOV - loseMOV) / (wins + losses) : 0;
+    movByTeam.set(team, { wins, losses, winMOV, loseMOV, totalMOV });
+  }
+
+  // Pass 2: SOS + SRS, only for teams tracked on the site (skips
+  // untracked buy-game opponents as output rows, but their MOV values
+  // above still get used as inputs to real teams' SOS, same as the
+  // spreadsheet).
+  const results: SrsTeamRow[] = [];
+  for (const [team, games] of gamesByTeam) {
+    const staticTeam = TEAMS_BY_NAME[team];
+    if (!staticTeam) continue;
+    const agg = movByTeam.get(team)!;
+
+    // Uses each opponent's own already-averaged Total MOV (not their raw
+    // multi-game summed WinMOV/LoseMOV) — summing a RAW sum from every one
+    // of ~12 opponents (each already a sum across ~5-9 of their own games)
+    // compounds into a number roughly games-squared in scale, which swamps
+    // Total MOV entirely once added together for SRS. Total MOV is already
+    // a single per-team scalar on the same scale as one game's margin, so
+    // summing 12 of those and dividing by 12 below keeps SOS and Total MOV
+    // on comparable scales, the way an additive SRS = SOS + Total MOV is
+    // meant to work.
+    let sumLoserMOVforSOS = 0;
+    let sumWinnerMOVforSOS = 0;
+    for (const g of games) {
+      const oppAgg = movByTeam.get(g.opponent);
+      if (!oppAgg) continue;
+      if (g.isWin) sumLoserMOVforSOS += oppAgg.totalMOV;
+      else sumWinnerMOVforSOS += oppAgg.totalMOV;
+    }
+    const denom = agg.wins + agg.losses;
+    const sos = denom > 0 ? (sumLoserMOVforSOS + sumWinnerMOVforSOS) / denom : 0;
+    const srs = sos + agg.totalMOV - (staticTeam.div === "FCS" ? 21 : 0);
+
+    results.push({
+      team,
+      conf: staticTeam.conf,
+      div: staticTeam.div,
+      rating: ratingFor(team, liveByTeam) ?? staticTeam.rating,
+      wins: agg.wins,
+      losses: agg.losses,
+      winMOV: agg.winMOV,
+      loseMOV: agg.loseMOV,
+      totalMOV: agg.totalMOV,
+      sos,
+      sosRank: 0,
+      srs,
+      srsRank: 0,
+      winBonus: 0,
+      lossPenalty: 0,
+      totalWinBonus: 0,
+      totalLossPenalty: 0,
+      victoryPoints: 0,
+      vsrs: 0,
+      vsrsRank: 0,
+    });
+  }
+
+  // Pass 3: rank within division, higher SRS/SOS = better = rank 1 (the
+  // conventional, human-readable convention used everywhere else on the
+  // site, e.g. Power Rating Rank, Resume Rank).
+  const divisionCounts: Record<"FBS" | "FCS", number> = { FBS: 0, FCS: 0 };
+  for (const div of ["FBS", "FCS"] as const) {
+    const pool = results.filter((r) => r.div === div);
+    divisionCounts[div] = pool.length;
+    [...pool].sort((a, b) => b.srs - a.srs).forEach((r, i) => (r.srsRank = i + 1));
+    [...pool].sort((a, b) => b.sos - a.sos).forEach((r, i) => (r.sosRank = i + 1));
+  }
+
+  // Pass 4: Win Bonus / Loss Penalty. This is the spreadsheet's
+  // "FO4" formula, confirmed by the site owner to mean each team's own SRS
+  // rank, on an ASCENDING scale (1 = worst team in the division, N = best) —
+  // the opposite of the descending "SRS Rank" display field above. Convert
+  // algebraically rather than re-ranking: ascendingRank = N - srsRank + 1,
+  // where srsRank=1 (best, descending) maps to ascendingRank=N (best,
+  // ascending), and srsRank=N (worst) maps to ascendingRank=1 (worst).
+  // Team-count denominator (N) is computed dynamically from the division's
+  // actual roster size, not hardcoded (per "*change 126 to new # of fbs
+  // teams" instruction) — currently 138 FBS / 128 FCS, matching the site
+  // owner's own numbers.
+  const winBonusFor = (r: SrsTeamRow): number => {
+    const n = divisionCounts[r.div];
+    if (n <= 1) return 0;
+    const fo4 = n - r.srsRank + 1; // ascending rank, 1=worst, n=best
+    const p = Math.max(WIN_BONUS_EPS, Math.min(1 - WIN_BONUS_EPS, (fo4 - 1) / (n - 1)));
+    return invNorm(p) + 3;
+  };
+  const winBonusByTeam = new Map<string, number>();
+  const lossPenaltyByTeam = new Map<string, number>();
+  for (const r of results) {
+    const wb = winBonusFor(r);
+    r.winBonus = wb;
+    r.lossPenalty = 6 - wb;
+    winBonusByTeam.set(r.team, wb);
+    lossPenaltyByTeam.set(r.team, r.lossPenalty);
+  }
+
+  // Pass 5: Total Win Bonus (sum of each beaten opponent's own Win Bonus)
+  // and Total Loss Penalty (sum of each team-that-beat-you's own Loss
+  // Penalty), then Victory Points and VSRS.
+  for (const r of results) {
+    const games = gamesByTeam.get(r.team) ?? [];
+    let totalWinBonus = 0;
+    let totalLossPenalty = 0;
+    for (const g of games) {
+      if (g.isWin) {
+        const oppWinBonus = winBonusByTeam.get(g.opponent);
+        if (oppWinBonus != null) totalWinBonus += oppWinBonus;
+      } else {
+        const oppLossPenalty = lossPenaltyByTeam.get(g.opponent);
+        if (oppLossPenalty != null) totalLossPenalty += oppLossPenalty;
+      }
+    }
+    r.totalWinBonus = totalWinBonus;
+    r.totalLossPenalty = totalLossPenalty;
+    r.victoryPoints = totalWinBonus - totalLossPenalty;
+    r.vsrs = r.victoryPoints + r.srs;
+  }
+
+  // Pass 6: VSRS rank within division, same descending convention as SRS Rank.
+  for (const div of ["FBS", "FCS"] as const) {
+    const pool = results.filter((r) => r.div === div);
+    [...pool].sort((a, b) => b.vsrs - a.vsrs).forEach((r, i) => (r.vsrsRank = i + 1));
+  }
+
+  return results;
 }
 
 // Mirrors BracketPage.tsx's fixed 12-team CFP bracket shape: round 1 is
