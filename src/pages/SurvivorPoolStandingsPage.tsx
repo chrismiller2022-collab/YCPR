@@ -146,25 +146,30 @@ export default function SurvivorPoolStandingsPage({
           edge.
           {viewerEntrantId != null && " Your own picks are shown early here, before the deadline — only yours."}
         </p>
-        {onHome && (
-          <p>
-            <a
-              href="#"
-              onClick={(e) => {
-                e.preventDefault();
-                onHome();
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+          {viewerSlug && (
+            <button
+              className="menu-btn"
+              onClick={() => {
+                window.location.hash = `survivorpool-${viewerSlug}`;
               }}
+              style={{ fontSize: "0.82rem" }}
             >
-              ← Back to site
-            </a>
-          </p>
-        )}
+              ← Back to my picks
+            </button>
+          )}
+          {onHome && (
+            <button className="menu-btn" onClick={onHome} style={{ fontSize: "0.82rem" }}>
+              ← Back to main site
+            </button>
+          )}
+        </div>
       </div>
 
       {entrants.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No entrants in this pool yet.</p>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div className="table-scroll">
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
             <thead>
               <tr>

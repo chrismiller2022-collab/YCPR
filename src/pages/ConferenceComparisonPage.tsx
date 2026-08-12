@@ -147,7 +147,7 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
     liveByTeam[teamName]?.sor ?? SOS_BY_TEAM[teamName] ?? null;
 
   const resumeFor = (teamName: string) =>
-    liveByTeam[teamName]?.resume ?? RESUME_BY_TEAM[teamName] ?? null;
+    liveByTeam[teamName]?.resume_rating ?? RESUME_BY_TEAM[teamName]?.rating ?? null;
 
   // Sorted best-to-worst by LIVE rating (not just whatever order
   // teamsForConference happened to return) — this is the fix for the

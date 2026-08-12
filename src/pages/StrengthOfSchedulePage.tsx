@@ -226,7 +226,13 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
   }, [rankedPool, conference, query]);
 
   const leftRows = displayedRows.filter((t) => t.trueRank <= trueHalf);
-  const rightRows = displayedRows.filter((t) => t.trueRank > trueHalf);
+  // The left "Hardest" column reads top-to-bottom from hardest to easiest
+  // (ascending trueRank). The right "Easiest" column should read the
+  // opposite direction — easiest schedule at the top, working back down
+  // toward the midpoint at the bottom — so reverse it here rather than
+  // just continuing the same trueRank order, which was showing the least
+  // easy team of the bunch at the top instead of the actual easiest.
+  const rightRows = displayedRows.filter((t) => t.trueRank > trueHalf).reverse();
 
   return (
     <div className="matchups-page" ref={exportRef}>

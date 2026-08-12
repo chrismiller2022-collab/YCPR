@@ -475,7 +475,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           the pool's conferences yet.
         </p>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div className="table-scroll">
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
             <thead>
               <tr>

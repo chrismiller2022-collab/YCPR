@@ -144,13 +144,6 @@ export default function MatchupPage({ onHome }: any) {
               >
                 <div className="spread-team">{teamA.team}</div>
                 <div className="spread-context">
-                  <span
-                    className={`rank-flag ${
-                      teamA.rank <= 4 ? "top4" : teamA.rank <= 12 ? "top12" : ""
-                    }`}
-                  >
-                    {teamA.rank}
-                  </span>
                   <span className="spread-context-rating">
                     {teamA.rating > 0 ? "+" : ""}
                     {teamA.rating.toFixed(2)} rating
@@ -175,13 +168,6 @@ export default function MatchupPage({ onHome }: any) {
               >
                 <div className="spread-team">{teamB.team}</div>
                 <div className="spread-context">
-                  <span
-                    className={`rank-flag ${
-                      teamB.rank <= 4 ? "top4" : teamB.rank <= 12 ? "top12" : ""
-                    }`}
-                  >
-                    {teamB.rank}
-                  </span>
                   <span className="spread-context-rating">
                     {teamB.rating > 0 ? "+" : ""}
                     {teamB.rating.toFixed(2)} rating
