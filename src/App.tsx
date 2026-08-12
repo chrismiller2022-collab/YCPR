@@ -5,6 +5,8 @@ import TeamPage from "./pages/TeamPage";
 import MatchupPage from "./pages/MatchupPage";
 import ScheduleSwapPage from "./pages/ScheduleSwapPage";
 import ResumeComparisonPage from "./pages/ResumeComparisonPage";
+import ConferenceComparisonPage from "./pages/ConferenceComparisonPage";
+import ToughestStretchPage from "./pages/ToughestStretchPage";
 import MatchupsPage from "./pages/MatchupsPage";
 import LiveWinTotalsPage from "./pages/LiveWinTotalsPage";
 import ResumeRatingsPage from "./pages/ResumeRatingsPage";
@@ -414,6 +416,18 @@ export default function App() {
 
       {page.type === "resumecompare" && (
         <ResumeComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "confcompare" && (
+        <ConferenceComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
+      )}
+
+      {page.type === "tougheststretch" && (
+        <ToughestStretchPage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
       )}
 
       {page.type === "playoff24" && (
