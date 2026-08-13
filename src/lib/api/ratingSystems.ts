@@ -24,12 +24,17 @@ export async function fetchRatingWeights(): Promise<Record<string, number>> {
   return out;
 }
 
-function authedPost(url: string, body: Record<string, any>) {
+// All ratings-related server calls go through one consolidated endpoint
+// (api/ratings.ts), dispatched by an `action` field — Vercel's Hobby plan
+// caps a deployment at 12 serverless functions (one per file in /api),
+// and 5 separate files here would have pushed the project over that
+// limit. Same behavior as before, just fewer files.
+function authedPost(action: string, body: Record<string, any>) {
   const password = sessionStorage.getItem("admin_password") ?? "";
-  return fetch(url, {
+  return fetch("/api/ratings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, ...body }),
+    body: JSON.stringify({ password, action, ...body }),
   }).then(async (res) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? "Request failed");
@@ -38,15 +43,15 @@ function authedPost(url: string, body: Record<string, any>) {
 }
 
 export function saveRatingWeights(weights: Record<string, number>) {
-  return authedPost("/api/ratings-weights-save", { weights });
+  return authedPost("weightsSave", { weights });
 }
 
 export function syncCfbdRatings(year: number) {
-  return authedPost("/api/ratings-sync", { year });
+  return authedPost("sync", { year });
 }
 
 export async function fetchPublishedSheetCsv(): Promise<string> {
-  const data = await authedPost("/api/ratings-sheet-proxy", {});
+  const data = await authedPost("sheetProxy", {});
   return data.csv as string;
 }
 
@@ -58,11 +63,11 @@ export interface RatingSaveRow {
 }
 
 export function saveRatingRows(rows: RatingSaveRow[]) {
-  return authedPost("/api/ratings-save", { rows });
+  return authedPost("save", { rows });
 }
 
 export function saveRatingWeek(season: number, week: number, rows: RatingSaveRow[]) {
-  return authedPost("/api/ratings-week-save", { season, week, rows });
+  return authedPost("weekSave", { season, week, rows });
 }
 
 export interface WeeklyPowerRatingRow {
