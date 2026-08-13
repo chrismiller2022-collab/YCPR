@@ -5,6 +5,9 @@ import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPU
 import { matchTeamRows } from "../lib/teamNameMatch";
 import { parseSheetCsv, parseMcilleceCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, type ConglomeratedRow } from "../lib/ratingConglomerate";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchGamesWithLines } from "../lib/api/gamesLines";
+import { buildRatingsByTeam, computeMultiSystemRow, aggregateSystemPerformance, winPct } from "../lib/multiRatingMatchups";
 import {
   fetchRatingPulls,
   fetchRatingWeights,
@@ -14,6 +17,7 @@ import {
   saveRatingRows,
   saveRatingWeek,
   fetchSavedRatingWeeks,
+  fetchWeeklyPowerRatings,
   type RatingPullRow,
   type RatingSaveRow,
 } from "../lib/api/ratingSystems";
@@ -113,10 +117,14 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     try {
       const csv = await fetchPublishedSheetCsv();
       const parsed = parseSheetCsv(csv);
+      if (parsed.length === 0) {
+        setLog("Parsed 0 rows from the sheet — check that it still has Team/Division columns with the expected headers.");
+        return;
+      }
       const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
       const result = await saveRatingRows(rows);
-      setLog(`Sheet pull — saved ${result.saved} values across ${matched.length} teams.`);
+      setLog(`Sheet pull — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} values.`);
       if (um.length > 0) setUnmatched({ source: "Google Sheet", names: um.map((r) => r.team) });
       else setUnmatched(null);
       onDataChanged();
@@ -133,10 +141,14 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     try {
       const text = await file.text();
       const parsed = parseMcilleceCsv(text);
+      if (parsed.length === 0) {
+        setLog("Parsed 0 rows from this file — check that it still has \"Team\" and \"Power\" columns with those exact headers.");
+        return;
+      }
       const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { mcillece: m.row.value } }));
       const result = await saveRatingRows(rows);
-      setLog(`McIllece upload — saved ${result.saved} teams.`);
+      setLog(`McIllece upload — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} teams.`);
       if (um.length > 0) setUnmatched({ source: "McIllece CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);
       onDataChanged();
@@ -153,11 +165,17 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     try {
       const text = await file.text();
       const raw = parseMasseyCsv(text);
+      if (raw.length === 0) {
+        setLog("Parsed 0 rows from this file — check that it still has \"Team\" and \"Pwr\" columns with those exact headers.");
+        return;
+      }
       const normalized = normalizeMasseyRows(raw);
       const { matched, unmatched: um } = matchTeamRows(normalized, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { massey: m.row.value } }));
       const result = await saveRatingRows(rows);
-      setLog(`Massey upload — saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).`);
+      setLog(
+        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).`
+      );
       if (um.length > 0) setUnmatched({ source: "Massey CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);
       onDataChanged();
@@ -220,6 +238,102 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
           {unmatched.names.join(", ")}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Per-system win % — same grading engine as the Rating Systems Matchups
+// page's Results tab (Every Bet / Filtered Bet / NWFB), season-to-date.
+// Shown here too, right next to the weight editor, since seeing each
+// system's live win % is exactly what's useful for deciding weights —
+// legitimately 0-0 (0%) until a week gets saved and games complete.
+// ---------------------------------------------------------------------
+function SystemPerformanceSummary({ season }: { season: number }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [perf, setPerf] = useState<Record<string, ReturnType<typeof aggregateSystemPerformance>[string]> | null>(null);
+
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all([fetchGamesWithLines(season), fetchWeeklyPowerRatings(season)])
+      .then(([games, weekly]) => {
+        if (cancelled) return;
+        const byWeek = new Map<number, typeof weekly>();
+        for (const r of weekly) {
+          const list = byWeek.get(r.week) ?? [];
+          list.push(r);
+          byWeek.set(r.week, list);
+        }
+        const ratingsByWeek = new Map<number, Record<string, Record<string, number>>>();
+        for (const [wk, rowsForWeek] of byWeek) ratingsByWeek.set(wk, buildRatingsByTeam(rowsForWeek));
+
+        const graded = [];
+        for (const g of games) {
+          const ratingsByTeam = ratingsByWeek.get(g.week);
+          if (!ratingsByTeam) continue; // no saved snapshot for this game's week yet
+          graded.push(computeMultiSystemRow(g, ratingsByTeam, liveByTeam));
+        }
+        setPerf(aggregateSystemPerformance(graded));
+      })
+      .catch((err) => !cancelled && setError(err.message ?? "Failed to load performance"))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [season, liveByTeam]);
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        Win % by system ({season} season-to-date)
+      </div>
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {loading ? (
+        <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Loading…</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
+            <thead>
+              <tr>
+                <th className="th">System</th>
+                <th className="th th-right">Every Bet</th>
+                <th className="th th-right">Filtered</th>
+                <th className="th th-right">NWFB</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RATING_SYSTEMS.map((s) => {
+                const p = perf?.[s.key];
+                const fmtRec = (r?: { w: number; l: number; push: number }) =>
+                  r ? `${r.w}-${r.l}${r.push ? `-${r.push}` : ""} (${winPct(r).toFixed(1)}%)` : "0-0 (0.0%)";
+                return (
+                  <tr key={s.key}>
+                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{s.label}</td>
+                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      {fmtRec(p?.everyBet)}
+                    </td>
+                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      {fmtRec(p?.filteredBet)}
+                    </td>
+                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      {fmtRec(p?.nwfb)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: "0.5rem", marginBottom: 0 }}>
+        Only weeks with a saved snapshot (Save As Week, below) count toward these records — everything reads 0-0
+        until at least one week is saved and its games complete.
+      </p>
     </div>
   );
 }
@@ -429,6 +543,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
       ) : (
         <>
           <SyncControls onDataChanged={loadAll} />
+          <SystemPerformanceSummary season={new Date().getFullYear()} />
           <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
           <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
           <ConglomeratedTable rows={conglomerated} />
