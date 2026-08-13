@@ -17,6 +17,8 @@ import CbsPickemPanel from "./CbsPickemPanel";
 import SurvivorPoolAdminPanel from "./SurvivorPoolAdminPanel";
 import BetHistoryAdminPanel from "./BetHistoryAdminPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
+import RatingSystemsPanel from "./RatingSystemsPanel";
+import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 
 // Maps flexible/human column headers (however you happen to label them when
@@ -217,7 +219,9 @@ type AdminView =
   | "bethistory"
   | "resumerating"
   | "gametotals"
-  | "teamtotals";
+  | "teamtotals"
+  | "ratingsystems"
+  | "ratingmatchups";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -467,6 +471,16 @@ function AdminDashboard({
           onClick={() => onNavigateView("montecarlo")}
         />
         <MenuTile
+          label="Rating Systems"
+          description="Conglomerate FPI/SP+/SRS/Core, your published sheet, and McIllece/Massey into YC + Consensus."
+          onClick={() => onNavigateView("ratingsystems")}
+        />
+        <MenuTile
+          label="Rating Systems Matchups"
+          description="Per-system projected spreads, cover teams, filtered bets, NWFB, and results."
+          onClick={() => onNavigateView("ratingmatchups")}
+        />
+        <MenuTile
           label="Game Totals"
           description="5-system points model, 6 composites, and bet tracking from CFBD stats."
           onClick={() => onNavigateView("gametotals")}
@@ -689,7 +703,9 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
     <div
       className="page"
       style={{
-        maxWidth: ["matchups", "resumerating", "gametotals", "teamtotals"].includes(view) ? "none" : 1000,
+        maxWidth: ["matchups", "resumerating", "gametotals", "teamtotals", "ratingsystems", "ratingmatchups"].includes(view)
+          ? "none"
+          : 1000,
         margin: "2rem auto",
         padding: "0 1rem",
       }}
@@ -748,6 +764,9 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
 
       {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
+
+      {view === "ratingsystems" && <RatingSystemsPanel onBack={() => setView("home")} />}
+      {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
 
       {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
       {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}

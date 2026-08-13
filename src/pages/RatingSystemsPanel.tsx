@@ -1,0 +1,439 @@
+import { useEffect, useMemo, useState } from "react";
+import SortHeader from "../components/SortHeader";
+import { CONFERENCES } from "../data/teams";
+import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "../lib/ratingSystems";
+import { matchTeamRows } from "../lib/teamNameMatch";
+import { parseSheetCsv, parseMcilleceCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
+import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, type ConglomeratedRow } from "../lib/ratingConglomerate";
+import {
+  fetchRatingPulls,
+  fetchRatingWeights,
+  saveRatingWeights,
+  syncCfbdRatings,
+  fetchPublishedSheetCsv,
+  saveRatingRows,
+  saveRatingWeek,
+  fetchSavedRatingWeeks,
+  type RatingPullRow,
+  type RatingSaveRow,
+} from "../lib/api/ratingSystems";
+
+function fmtNum(v: number | null, digits = 2) {
+  if (v == null) return "–";
+  return `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
+}
+
+// ---------------------------------------------------------------------
+// Weight editor.
+// ---------------------------------------------------------------------
+function WeightsEditor({
+  weights,
+  onSave,
+}: {
+  weights: Record<string, number>;
+  onSave: (w: Record<string, number>) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<Record<string, number>>(weights);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => setDraft(weights), [weights]);
+
+  const editableKeys = [...YC_INPUT_SYSTEMS]; // includes "consensus"
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await onSave(draft);
+      setMsg("Weights saved.");
+    } catch (err: any) {
+      setMsg(err.message ?? "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        YC weights (weighted average across every system below, including Consensus)
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
+        {editableKeys.map((key) => (
+          <label key={key} style={{ display: "flex", flexDirection: "column", fontSize: "0.75rem", gap: "0.2rem" }}>
+            {RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
+            <input
+              type="number"
+              step="0.05"
+              value={draft[key] ?? 0}
+              onChange={(e) => setDraft((d) => ({ ...d, [key]: parseFloat(e.target.value) || 0 }))}
+              style={{ width: 70 }}
+            />
+          </label>
+        ))}
+      </div>
+      <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.75rem" }}>
+        {saving ? "Saving…" : "Save weights"}
+      </button>
+      {msg && <span style={{ marginLeft: "0.75rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>{msg}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Sync / upload controls.
+// ---------------------------------------------------------------------
+function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [log, setLog] = useState<string | null>(null);
+  const [unmatched, setUnmatched] = useState<{ source: string; names: string[] } | null>(null);
+
+  async function handleCfbdSync() {
+    setBusy("cfbd");
+    setLog(null);
+    try {
+      const data = await syncCfbdRatings(year);
+      const parts = Object.entries(data.results).map(
+        ([key, r]: [string, any]) => `${key}: ${r.error ? `error (${r.error})` : `${r.saved}/${r.fetched}`}`
+      );
+      setLog(`CFBD sync — ${parts.join(", ")}`);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "CFBD sync failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleSheetSync() {
+    setBusy("sheet");
+    setLog(null);
+    try {
+      const csv = await fetchPublishedSheetCsv();
+      const parsed = parseSheetCsv(csv);
+      const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
+      const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
+      const result = await saveRatingRows(rows);
+      setLog(`Sheet pull — saved ${result.saved} values across ${matched.length} teams.`);
+      if (um.length > 0) setUnmatched({ source: "Google Sheet", names: um.map((r) => r.team) });
+      else setUnmatched(null);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "Sheet sync failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleMcilleceUpload(file: File) {
+    setBusy("mcillece");
+    setLog(null);
+    try {
+      const text = await file.text();
+      const parsed = parseMcilleceCsv(text);
+      const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
+      const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { mcillece: m.row.value } }));
+      const result = await saveRatingRows(rows);
+      setLog(`McIllece upload — saved ${result.saved} teams.`);
+      if (um.length > 0) setUnmatched({ source: "McIllece CSV", names: um.map((r) => r.team) });
+      else setUnmatched(null);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "McIllece upload failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleMasseyUpload(file: File) {
+    setBusy("massey");
+    setLog(null);
+    try {
+      const text = await file.text();
+      const raw = parseMasseyCsv(text);
+      const normalized = normalizeMasseyRows(raw);
+      const { matched, unmatched: um } = matchTeamRows(normalized, (r) => r.team);
+      const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { massey: m.row.value } }));
+      const result = await saveRatingRows(rows);
+      setLog(`Massey upload — saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).`);
+      if (um.length > 0) setUnmatched({ source: "Massey CSV", names: um.map((r) => r.team) });
+      else setUnmatched(null);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "Massey upload failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        Pull / upload ratings
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
+        <label>
+          Year{" "}
+          <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || year)} style={{ width: 80 }} />
+        </label>
+        <button onClick={handleCfbdSync} disabled={busy != null}>
+          {busy === "cfbd" ? "Syncing…" : "Sync CFBD (FPI/SP+/SRS/Core)"}
+        </button>
+        <button onClick={handleSheetSync} disabled={busy != null}>
+          {busy === "sheet" ? "Pulling…" : "Pull Google Sheet"}
+        </button>
+        <label className="menu-btn" style={{ cursor: "pointer" }}>
+          {busy === "mcillece" ? "Uploading…" : "Upload McIllece CSV"}
+          <input
+            type="file"
+            accept=".csv"
+            style={{ display: "none" }}
+            disabled={busy != null}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleMcilleceUpload(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <label className="menu-btn" style={{ cursor: "pointer" }}>
+          {busy === "massey" ? "Uploading…" : "Upload Massey CSV"}
+          <input
+            type="file"
+            accept=".csv"
+            style={{ display: "none" }}
+            disabled={busy != null}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleMasseyUpload(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0 }}>{log}</p>}
+      {unmatched && (
+        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.5rem" }}>
+          {unmatched.source}: {unmatched.names.length} team name(s) couldn't be matched and were skipped —{" "}
+          {unmatched.names.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Save As Week.
+// ---------------------------------------------------------------------
+function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season: number }) {
+  const [week, setWeek] = useState(1);
+  const [savedWeeks, setSavedWeeks] = useState<number[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSavedRatingWeeks(season)
+      .then(setSavedWeeks)
+      .catch(() => {});
+  }, [season, msg]);
+
+  const willOverwrite = savedWeeks.includes(week);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const saveRows = conglomeratedRowsToSaveFormat(rows);
+      const result = await saveRatingWeek(season, week, saveRows);
+      setMsg(`Saved ${result.saved} values for ${season} week ${week}.`);
+    } catch (err: any) {
+      setMsg(err.message ?? "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        Save as week
+      </div>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <label>
+          Week{" "}
+          <input type="number" value={week} onChange={(e) => setWeek(parseInt(e.target.value, 10) || 1)} style={{ width: 70 }} />
+        </label>
+        <button onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : willOverwrite ? `Overwrite week ${week}` : `Save as week ${week}`}
+        </button>
+        {savedWeeks.length > 0 && (
+          <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+            Weeks already saved for {season}: {savedWeeks.join(", ")}
+          </span>
+        )}
+      </div>
+      {willOverwrite && !saving && (
+        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.4rem" }}>
+          Week {week} already has a saved snapshot — saving again will overwrite it.
+        </p>
+      )}
+      {msg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "0.4rem" }}>{msg}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Conglomerated table.
+// ---------------------------------------------------------------------
+function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
+  const [sortKey, setSortKey] = useState("yc");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc"); // negative-is-better -> ascending shows best first
+  const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
+  const [confFilter, setConfFilter] = useState("");
+
+  function handleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const filtered = rows.filter((r) => {
+    if (divFilter !== "all" && r.div !== divFilter) return false;
+    if (confFilter && r.conf !== confFilter) return false;
+    return true;
+  });
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a: any, b: any) => {
+      const av = sortKey === "yc" || sortKey === "consensus" ? a[sortKey] : a.values[sortKey];
+      const bv = sortKey === "yc" || sortKey === "consensus" ? b[sortKey] : b.values[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [filtered, sortKey, sortDir]);
+
+  const systemCols = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus");
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+        {(["FBS", "FCS", "all"] as const).map((d) => (
+          <button key={d} className={`mode-btn ${divFilter === d ? "mode-btn-active" : ""}`} onClick={() => setDivFilter(d)}>
+            {d === "all" ? "All" : d}
+          </button>
+        ))}
+        <select value={confFilter} onChange={(e) => setConfFilter(e.target.value)}>
+          <option value="">All conferences</option>
+          {CONFERENCES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+          <thead>
+            <tr>
+              <SortHeader label="Div" sortKey="div" active={sortKey === "div"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="YC" sortKey="yc" active={sortKey === "yc"} dir={sortDir} onClick={handleSort} align="right" />
+              <SortHeader
+                label="Consensus"
+                sortKey="consensus"
+                active={sortKey === "consensus"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              {systemCols.map((s) => (
+                <SortHeader key={s.key} label={s.label} sortKey={s.key} active={sortKey === s.key} dir={sortDir} onClick={handleSort} align="right" />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.team}>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.div}</td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>
+                  {fmtNum(r.yc)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                  {fmtNum(r.consensus)}
+                </td>
+                {systemCols.map((s) => (
+                  <td key={s.key} style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtNum(r.values[s.key])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Top-level panel.
+// ---------------------------------------------------------------------
+export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
+  const [pulls, setPulls] = useState<RatingPullRow[]>([]);
+  const [weights, setWeights] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  function loadAll() {
+    setLoading(true);
+    setError(null);
+    Promise.all([fetchRatingPulls(), fetchRatingWeights()])
+      .then(([p, w]) => {
+        setPulls(p);
+        setWeights(w);
+      })
+      .catch((err) => setError(err.message ?? "Failed to load"))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(loadAll, []);
+
+  const conglomerated = useMemo(() => computeConglomeratedTable(pulls, weights), [pulls, weights]);
+
+  return (
+    <div>
+      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+        ‹ Admin
+      </button>
+
+      <h2 style={{ marginTop: 0 }}>Rating Systems</h2>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+        Pull FPI/SP+/SRS/Core from CFBD, pull the published sheet, and upload McIllece/Massey weekly. YC is a
+        customizable weighted average across every system (including Consensus, itself a simple average of the
+        source systems). Save the current table to a specific week once you're happy with it.
+      </p>
+
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {loading ? (
+        <p>Loading…</p>
+      ) : (
+        <>
+          <SyncControls onDataChanged={loadAll} />
+          <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
+          <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
+          <ConglomeratedTable rows={conglomerated} />
+        </>
+      )}
+    </div>
+  );
+}

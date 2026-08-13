@@ -16,7 +16,10 @@ export const NAV: any[] = [
   {
     key: "confpreviews",
     label: "Conference Previews",
-    subs: conferencesForDivision("FBS").map((c) => ({ key: c, label: c })),
+    subs: [
+      { key: "overview", label: "Conference Comparison", pageType: "confoverview" },
+      ...conferencesForDivision("FBS").map((c) => ({ key: c, label: c })),
+    ],
   },
   {
     key: "tools",

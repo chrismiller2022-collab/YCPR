@@ -16,6 +16,7 @@ import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
 import NattyOddsPage from "./pages/NattyOddsPage";
 import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
 import ConferencePreviewPage from "./pages/ConferencePreviewPage";
+import ConferenceOverviewPage from "./pages/ConferenceOverviewPage";
 import BracketPage from "./pages/BracketPage";
 import FCSBracketPage from "./pages/FCSBracketPage";
 import FCSRatingsPage from "./pages/FCSRatingsPage";
@@ -421,6 +422,8 @@ export default function App() {
       {page.type === "confcompare" && (
         <ConferenceComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
       )}
+
+      {page.type === "confoverview" && <ConferenceOverviewPage onHome={handleHome} />}
 
       {page.type === "tougheststretch" && (
         <ToughestStretchPage
