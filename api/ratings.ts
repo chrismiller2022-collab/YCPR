@@ -37,6 +37,21 @@ interface IncomingSaveRow {
   values: Record<string, number | null>;
 }
 
+// Postgres's upsert rejects a batch that hits the same conflict key twice
+// ("ON CONFLICT DO UPDATE command cannot affect row a second time") —
+// which happens here whenever the fuzzy team-name matcher maps two
+// different raw CSV names onto the same canonical team (seen for real:
+// McIllece's "UAB"/"LSU"/"Missouri State" and Massey's "LSU"/"Northwestern"
+// each appeared twice under slightly different raw spellings). Rather than
+// erroring the whole upload out, keep the LAST occurrence for each
+// conflict key and drop the earlier duplicate silently — last-in-file
+// wins, same as a plain object key overwrite would.
+function dedupeByKey<T>(rows: T[], keyOf: (row: T) => string): T[] {
+  const byKey = new Map<string, T>();
+  for (const row of rows) byKey.set(keyOf(row), row);
+  return Array.from(byKey.values());
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -93,38 +108,53 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    const pullers: Record<string, () => Promise<{ team: string; conference: string | null; value: number }[]>> = {
-      fpi: async () => {
-        const data = await cfbdFetch(`/ratings/fpi?year=${year}`);
+    // Each puller takes the year to fetch for — pullWithFallback below
+    // tries `year` first and, if CFBD has nothing for it yet (empty
+    // array — this is normal early in a season before a given rating
+    // system has published its first update), retries with `year - 1` so
+    // the pull isn't just silently empty.
+    const pullers: Record<string, (y: number) => Promise<{ team: string; conference: string | null; value: number }[]>> = {
+      fpi: async (y) => {
+        const data = await cfbdFetch(`/ratings/fpi?year=${y}`);
         return (data ?? [])
           .filter((r: any) => r.fpi != null)
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.fpi }));
       },
-      sp: async () => {
-        const data = await cfbdFetch(`/ratings/sp?year=${year}`);
+      sp: async (y) => {
+        const data = await cfbdFetch(`/ratings/sp?year=${y}`);
         return (data ?? [])
           .filter((r: any) => r.rating != null)
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.rating }));
       },
-      srs: async () => {
-        const data = await cfbdFetch(`/ratings/srs?year=${year}`);
+      srs: async (y) => {
+        const data = await cfbdFetch(`/ratings/srs?year=${y}`);
         return (data ?? [])
           .filter((r: any) => r.rating != null)
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.rating }));
       },
-      core: async () => {
-        const data = await cfbdFetch(`/ratings/core?year=${year}`);
+      core: async (y) => {
+        const data = await cfbdFetch(`/ratings/core?year=${y}`);
         return (data ?? [])
           .filter((r: any) => (r.rating ?? r.core ?? null) != null)
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -(r.rating ?? r.core) }));
       },
     };
 
-    const results: Record<string, { fetched: number; saved: number; error?: string }> = {};
+    async function pullWithFallback(pull: (y: number) => Promise<any[]>, primaryYear: number) {
+      let rows = await pull(primaryYear);
+      let yearUsed = primaryYear;
+      if (rows.length === 0) {
+        rows = await pull(primaryYear - 1);
+        yearUsed = primaryYear - 1;
+      }
+      return { rows, yearUsed };
+    }
+
+    const results: Record<string, { fetched: number; saved: number; yearUsed?: number; error?: string }> = {};
     for (const [systemKey, pull] of Object.entries(pullers)) {
       try {
-        const rows = await pull();
-        results[systemKey] = { fetched: rows.length, saved: 0 };
+        const { rows, yearUsed } = await pullWithFallback(pull, year);
+        results[systemKey] = { fetched: rows.length, saved: 0, yearUsed };
         if (rows.length === 0) continue;
 
         const upsertRows = rows.map((r) => ({
@@ -184,14 +214,16 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    const deduped = dedupeByKey(upsertRows, (r) => `${r.system_key}::${r.team}`);
+
     const { error, count } = await supabaseAdmin
       .from("rating_pulls")
-      .upsert(upsertRows, { onConflict: "system_key,team", count: "exact" });
+      .upsert(deduped, { onConflict: "system_key,team", count: "exact" });
     if (error) {
       res.status(500).json({ error: error.message });
       return;
     }
-    res.status(200).json({ ok: true, saved: count ?? upsertRows.length });
+    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length });
     return;
   }
 
@@ -232,14 +264,16 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    const deduped = dedupeByKey(upsertRows, (r) => `${r.season}::${r.week}::${r.team}::${r.system_key}`);
+
     const { error, count } = await supabaseAdmin
       .from("weekly_power_ratings")
-      .upsert(upsertRows, { onConflict: "season,week,team,system_key", count: "exact" });
+      .upsert(deduped, { onConflict: "season,week,team,system_key", count: "exact" });
     if (error) {
       res.status(500).json({ error: error.message });
       return;
     }
-    res.status(200).json({ ok: true, saved: count ?? upsertRows.length });
+    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length });
     return;
   }
 
