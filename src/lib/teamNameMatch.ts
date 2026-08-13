@@ -147,16 +147,11 @@ const ALIASES: Record<string, string> = {
   "se louisiana": "SE Louisiana",
   "charleston so": "Charleston Southern",
   "west florida": "West Florida",
-  "east texas a&m": "East Texas A&M",
   "prairie view": "Prairie View A&M",
-  "prairie view a&m": "Prairie View A&M",
   "nc central": "North Carolina Central",
   "north carolina central": "North Carolina Central",
-  "nc a&t": "North Carolina A&T",
-  "north carolina a&t": "North Carolina A&T",
   "tx southern": "Texas Southern",
   "texas southern": "Texas Southern",
-  "alabama a&m": "Alabama A&M",
   "ark pine bluff": "Arkansas-Pine Bluff",
   "arkansas pine bluff": "Arkansas-Pine Bluff",
   "houston chr": "Houston Christian",
@@ -175,14 +170,40 @@ const ALIASES: Record<string, string> = {
   "albany": "UAlbany",
   "citadel": "The Citadel",
   "the citadel": "The Citadel",
-  "william & mary": "William & Mary",
   "william and mary": "William & Mary",
   "penn": "Pennsylvania",
   "pennsylvania": "Pennsylvania",
   "mcneese st": "McNeese",
   "mcneese": "McNeese",
+  "mcneese state": "McNeese",
   "nicholls st": "Nicholls",
   "nicholls": "Nicholls",
+  "nicholls state": "Nicholls",
+
+  // Found via a real McIllece/Massey upload producing wrong fuzzy matches
+  // or going unmatched — each of these is a genuine distinct school, not
+  // a guess (verified against TEAMS_BY_NAME before adding).
+  "cal": "California",
+  "etsu": "East Tennessee State",
+  "se missouri state": "Southeast Missouri State",
+  "northwestern la": "Northwestern State",
+  "pitt": "Pittsburgh",
+  "jax state": "Jacksonville State",
+  "umass": "Massachusetts",
+  "stonehill college": "Stonehill",
+  "southern university": "Southern",
+  "southern univ": "Southern",
+  "kent": "Kent State",
+  "miami oh": "Miami (OH)",
+
+  // "&"-abbreviated names (A&T, A&M) — see normalize()'s space-padding
+  // around "&" below; these keys spell out the post-normalization form
+  // ("a and t") rather than a literal "&", which never matches.
+  "nc a and t": "North Carolina A&T",
+  "north carolina a and t": "North Carolina A&T",
+  "east texas a and m": "East Texas A&M",
+  "prairie view a and m": "Prairie View A&M",
+  "alabama a and m": "Alabama A&M",
 };
 
 function normalize(name: string): string {
@@ -191,7 +212,11 @@ function normalize(name: string): string {
     .replace(/[̀-ͯ]/g, "") // strip accents (José -> Jose)
     .toLowerCase()
     .replace(/[.'’]/g, "")
-    .replace(/[&]/g, "and")
+    // Pad "&" with spaces before converting to "and" — "A&T" (no
+    // surrounding spaces in the raw text) and "A & T" both need to land
+    // on the same normalized "a and t", or an alias keyed on one form
+    // silently never matches the other.
+    .replace(/&/g, " and ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -258,15 +283,24 @@ export function matchTeamName(input: string): TeamMatchResult {
     if (NORMALIZED_CANONICAL[expanded]) return { input, matched: NORMALIZED_CANONICAL[expanded], confidence: "alias" };
   }
 
-  // Fuzzy fallback — nearest canonical name by edit distance, only accepted
-  // if it's close relative to the name's length (avoids matching two
-  // short, unrelated names that happen to differ by 1-2 characters).
+  // Fuzzy fallback — nearest canonical name by edit distance. Skipped
+  // entirely for short names (< 6 characters after normalization):
+  // college nickname/abbreviation soup is full of short strings that are
+  // textually close but completely different schools (real cases hit
+  // during testing: "ETSU" matched "LSU" at distance 2, "Cal" matched
+  // "UAB" at distance 2) — for anything that short, distance-2 is not a
+  // meaningful signal of similarity, so it's alias-or-nothing instead.
+  // Longer names use a tighter ratio than before (15% of length, was
+  // 20%) for the same reason at a smaller scale.
+  if (norm.length < 6) {
+    return { input, matched: null, confidence: "none" };
+  }
   let best: { team: string; dist: number } | null = null;
   for (const t of TEAMS) {
     const d = levenshtein(norm, normalize(t.team));
     if (best == null || d < best.dist) best = { team: t.team, dist: d };
   }
-  if (best && best.dist <= Math.max(2, Math.floor(norm.length * 0.2))) {
+  if (best && best.dist <= Math.max(1, Math.floor(norm.length * 0.15))) {
     return { input, matched: best.team, confidence: "fuzzy" };
   }
   return { input, matched: null, confidence: "none" };
