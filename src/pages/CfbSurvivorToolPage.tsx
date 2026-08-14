@@ -417,11 +417,20 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
                       const clickable = cell.eligible && !usedElsewhere && !weekFull;
                       const dimmed = !cell.eligible || (plannedTeams.has(team) && !isPlanned);
                       const isCurrentWeek = week === currentWeek;
+                      const tip = !cell.eligible
+                        ? "Opponent's conference isn't selected"
+                        : usedElsewhere
+                        ? "Already planned in another week"
+                        : weekFull
+                        ? "Both picks already planned for this week"
+                        : undefined;
 
                       return (
                         <td
                           key={week}
                           onClick={() => clickable && handleCellClick(team, week, cell)}
+                          className={tip ? "cell-tip" : undefined}
+                          data-tip={tip}
                           style={{
                             textAlign: "center",
                             padding: "0.35rem 0.4rem",
@@ -430,15 +439,6 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
                             opacity: dimmed ? 0.4 : 1,
                             cursor: clickable ? "pointer" : "default",
                           }}
-                          title={
-                            !cell.eligible
-                              ? "Opponent's conference isn't selected"
-                              : usedElsewhere
-                              ? "Already planned in another week"
-                              : weekFull
-                              ? "Both picks already planned for this week"
-                              : undefined
-                          }
                         >
                           <div style={{ fontWeight: 600 }}>
                             {cell.isHome ? "" : "@"}

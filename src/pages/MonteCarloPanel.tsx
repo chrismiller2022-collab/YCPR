@@ -19,6 +19,7 @@ import {
   type MonteCarloRunSummary,
   type TeamRunHistoryEntry,
 } from "../lib/api/monteCarlo";
+import { saveRatingRows } from "../lib/api/ratingSystems";
 
 const TRIAL_OPTIONS = [1000, 5000, 10000, 20000];
 
@@ -574,7 +575,31 @@ function SrsTab() {
   const [subTab, setSubTab] = useState<"stats" | "games">("stats");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendMsg, setSendMsg] = useState<string | null>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  async function sendToRatingSystems() {
+    setSending(true);
+    setSendMsg(null);
+    try {
+      // Sign-flip: this engine's srs has higher = better, this site's
+      // rating_pulls convention (matching every other tracked system) is
+      // negative = better.
+      const rows = srsStats.map((r) => ({
+        team: r.team,
+        conference: r.conf,
+        division: r.div,
+        values: { yc_srs: -r.srs },
+      }));
+      const result = await saveRatingRows(rows);
+      setSendMsg(`Sent ${rows.length} teams to Rating Systems as "YC SRS" (saved ${result.saved}).`);
+    } catch (err: any) {
+      setSendMsg(err.message ?? "Failed to send to Rating Systems");
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function generate() {
     setLoading(true);
@@ -627,7 +652,13 @@ function SrsTab() {
             <button className={`mode-btn ${subTab === "games" ? "mode-btn-active" : ""}`} onClick={() => setSubTab("games")}>
               Games &amp; Results
             </button>
+            {subTab === "stats" && (
+              <button onClick={sendToRatingSystems} disabled={sending} style={{ marginLeft: "auto" }}>
+                {sending ? "Sending…" : "Send to Rating Systems (YC SRS)"}
+              </button>
+            )}
           </div>
+          {sendMsg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "-0.5rem" }}>{sendMsg}</p>}
 
           {subTab === "stats" && <SrsStatsTable stats={srsStats} />}
           {subTab === "games" && <SrsGamesTable rows={rows} />}

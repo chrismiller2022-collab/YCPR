@@ -398,6 +398,14 @@ export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => 
           filtered bets (a meaningful disagreement with the market), and weighted filtered
           bets (a stricter, relative-strength version of that same idea).
         </p>
+        <a
+          href="https://predictions.collegefootballdata.com/user/%40YCtheflea"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: "0.82rem", color: "var(--gold)" }}
+        >
+          View verified picks on CFBD ↗
+        </a>
       </div>
 
       <div

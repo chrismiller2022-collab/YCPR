@@ -498,19 +498,21 @@ export default function SurvivorPage({
                         ? "rgba(255,255,255,0.03)"
                         : "transparent";
 
+                    const tip =
+                      status === "ineligible"
+                        ? "Opponent's conference isn't selected"
+                        : status === "team-used"
+                        ? "Team already used in another week"
+                        : status === "week-locked"
+                        ? "Both picks already made for this week"
+                        : undefined;
+
                     return (
                       <td
                         key={week.key}
                         onClick={() => clickable && handleCellClick(team.team, week.key, status)}
-                        title={
-                          status === "ineligible"
-                            ? "Opponent's conference isn't selected"
-                            : status === "team-used"
-                            ? "Team already used in another week"
-                            : status === "week-locked"
-                            ? "Both picks already made for this week"
-                            : undefined
-                        }
+                        className={tip ? "cell-tip" : undefined}
+                        data-tip={tip}
                         style={{
                           textAlign: "center",
                           padding: "0.35rem 0.4rem",

@@ -35,7 +35,18 @@ function parseCsvLine(line: string): string[] {
 }
 
 function splitCsvLines(text: string): string[] {
-  return text.replace(/^﻿/, "").replace(/\r\n/g, "\n").split("\n").filter((l) => l.length > 0);
+  // Handle all three line-ending conventions (CRLF, LF, and bare CR — old
+  // Mac / some Excel exports use CR-only, which previously made the whole
+  // file read as a single "line" and silently return 0 parsed rows).
+  return text.replace(/^﻿/, "").split(/\r\n|\r|\n/).filter((l) => l.length > 0);
+}
+
+// Trim + case-insensitive header match — tolerates stray whitespace or
+// case drift in an export without weakening the "must have this column"
+// check itself.
+function findHeaderIdx(headers: string[], name: string): number {
+  const target = name.trim().toLowerCase();
+  return headers.findIndex((h) => h.trim().toLowerCase() === target);
 }
 
 // ---------------------------------------------------------------------
@@ -71,8 +82,8 @@ export function parseSheetCsv(text: string): SheetPullRow[] {
   const lines = splitCsvLines(text);
   if (lines.length === 0) return [];
   const headers = parseCsvLine(lines[0]);
-  const teamIdx = headers.indexOf("Team");
-  const divIdx = headers.indexOf("Division");
+  const teamIdx = findHeaderIdx(headers, "Team");
+  const divIdx = findHeaderIdx(headers, "Division");
   if (teamIdx === -1) return [];
 
   const wantedCols: { idx: number; systemKey: string }[] = [];
@@ -114,8 +125,8 @@ export function parseMcilleceCsv(text: string): McilleceRow[] {
   const lines = splitCsvLines(text);
   if (lines.length === 0) return [];
   const headers = parseCsvLine(lines[0]);
-  const teamIdx = headers.indexOf("Team");
-  const powerIdx = headers.indexOf("Power");
+  const teamIdx = findHeaderIdx(headers, "Team");
+  const powerIdx = findHeaderIdx(headers, "Power");
   if (teamIdx === -1 || powerIdx === -1) return [];
 
   const out: McilleceRow[] = [];
@@ -156,8 +167,8 @@ export function parseMasseyCsv(text: string): MasseyRawRow[] {
   const lines = splitCsvLines(text);
   if (lines.length === 0) return [];
   const headers = parseCsvLine(lines[0]);
-  const teamIdx = headers.indexOf("Team");
-  const pwrLabelIdx = headers.indexOf("Pwr");
+  const teamIdx = findHeaderIdx(headers, "Team");
+  const pwrLabelIdx = findHeaderIdx(headers, "Pwr");
   if (teamIdx === -1 || pwrLabelIdx === -1) return [];
   const pwrValueIdx = pwrLabelIdx + 1;
 

@@ -138,6 +138,13 @@ export default async function handler(req: any, res: any) {
           // without an obvious error.
           opening_spread: line.spreadOpen != null ? Number(line.spreadOpen) : null,
           opening_over_under: line.overUnderOpen != null ? Number(line.overUnderOpen) : null,
+          // Confirmed against CFBD's OpenAPI spec: homeMoneyline/awayMoneyline
+          // (camelCase). The betting_lines columns for these already existed
+          // and are read elsewhere (matchupsCompute.ts, espnMlPool.ts), but
+          // nothing ever actually wrote them — this was a silent gap, not a
+          // wrong field name.
+          home_moneyline: line.homeMoneyline != null ? Number(line.homeMoneyline) : null,
+          away_moneyline: line.awayMoneyline != null ? Number(line.awayMoneyline) : null,
           pulled_at: new Date().toISOString(),
         });
       }

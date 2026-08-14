@@ -2,6 +2,28 @@
 
         * { box-sizing: border-box; }
 
+        /* Custom hover tooltip for table cells — always renders BELOW the
+           hovered cell (never above), so it can never overlap a sticky
+           header row the way a native `title` attribute tooltip can when
+           hovering a cell in the first visible row. */
+        .cell-tip { position: relative; }
+        .cell-tip[data-tip]:hover::after {
+          content: attr(data-tip);
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          margin-top: 4px;
+          background: #14152b;
+          color: #f4f2ea;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 0.7rem;
+          white-space: nowrap;
+          z-index: 60;
+          pointer-events: none;
+        }
+
         .page {
           --turf: #1f2041;
           --turf-panel: #292a52;

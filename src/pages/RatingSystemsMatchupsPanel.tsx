@@ -148,6 +148,236 @@ function GamesTable({
 }
 
 // ---------------------------------------------------------------------
+// Spread Chart tab — dot plot of every system's projected away-oriented
+// spread (negative = away favored, so "away wins by 7" plots at -7, same
+// convention as projAwaySpread everywhere else in this file), alongside a
+// black tick for the Vegas line and a green tick for the actual result once
+// the game's final. YC gets a star-in-circle marker instead of a plain dot
+// so it stands out among ~20 systems. Every row in the current filtered
+// view shares one x-axis domain/scale so spreads are visually comparable
+// game to game — one tick header, stacked rows underneath, left identity
+// column pinned while the chart scrolls.
+// ---------------------------------------------------------------------
+const CHART_WIDTH = 900;
+const CHART_ROW_HEIGHT = 40;
+const TICK_STEP = 7;
+
+function actualAwaySpread(game: GameWithLines): number | null {
+  if (!game.completed || game.away_points == null || game.home_points == null) return null;
+  return game.home_points - game.away_points; // away wins by X -> -X, same convention as projAwaySpread
+}
+
+interface ChartDomain {
+  min: number;
+  max: number;
+  ticks: number[];
+}
+
+function computeDomain(rows: MultiSystemGameRow[]): ChartDomain {
+  const values: number[] = [];
+  for (const r of rows) {
+    if (r.vegasAwaySpread != null) values.push(r.vegasAwaySpread);
+    const act = actualAwaySpread(r.game);
+    if (act != null) values.push(act);
+    for (const s of RATING_SYSTEMS) {
+      const v = r.systems[s.key]?.projAwaySpread;
+      if (v != null) values.push(v);
+    }
+  }
+  if (values.length === 0) return { min: -7, max: 7, ticks: [7, 0, -7] };
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const min = Math.floor((rawMin - TICK_STEP) / TICK_STEP) * TICK_STEP;
+  const max = Math.ceil((rawMax + TICK_STEP) / TICK_STEP) * TICK_STEP;
+  const ticks: number[] = [];
+  for (let t = max; t >= min; t -= TICK_STEP) ticks.push(t);
+  return { min, max, ticks };
+}
+
+// Left = domain.max (positive / away underdog), right = domain.min
+// (negative / away favorite) — matches the reference chart's orientation.
+function xPct(value: number, domain: ChartDomain): number {
+  const span = domain.max - domain.min;
+  if (span <= 0) return 50;
+  return ((domain.max - value) / span) * 100;
+}
+
+function SpreadChartHeader({ domain }: { domain: ChartDomain }) {
+  return (
+    <div style={{ position: "relative", height: 24, minWidth: CHART_WIDTH, borderBottom: "1px solid var(--hash)" }}>
+      {domain.ticks.map((t) => (
+        <div
+          key={t}
+          style={{
+            position: "absolute",
+            left: `${xPct(t, domain)}%`,
+            transform: "translateX(-50%)",
+            fontSize: "0.68rem",
+            color: "var(--chalk-dim)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {t.toFixed(1)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: ChartDomain }) {
+  const act = actualAwaySpread(row.game);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: CHART_ROW_HEIGHT,
+        minWidth: CHART_WIDTH,
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
+      }}
+    >
+      {domain.ticks.map((t) => (
+        <div
+          key={t}
+          style={{
+            position: "absolute",
+            left: `${xPct(t, domain)}%`,
+            top: 0,
+            bottom: 0,
+            borderLeft: t === 0 ? "1px dashed rgba(255,255,255,0.25)" : "1px dashed rgba(255,255,255,0.08)",
+          }}
+        />
+      ))}
+
+      {row.vegasAwaySpread != null && (
+        <div
+          className="cell-tip"
+          data-tip={`Vegas: ${fmtSpread(row.vegasAwaySpread)}`}
+          style={{
+            position: "absolute",
+            left: `${xPct(row.vegasAwaySpread, domain)}%`,
+            top: 4,
+            bottom: 4,
+            width: 2,
+            background: "#14152b",
+            transform: "translateX(-50%)",
+          }}
+        />
+      )}
+
+      {act != null && (
+        <div
+          className="cell-tip"
+          data-tip={`Result: ${fmtSpread(act)}`}
+          style={{
+            position: "absolute",
+            left: `${xPct(act, domain)}%`,
+            top: 4,
+            bottom: 4,
+            width: 2,
+            background: "#3ecf5e",
+            transform: "translateX(-50%)",
+          }}
+        />
+      )}
+
+      {RATING_SYSTEMS.map((s, i) => {
+        const v = row.systems[s.key]?.projAwaySpread;
+        if (v == null) return null;
+        const isYc = s.key === "yc";
+        const jitter = ((i % 5) - 2) * 4;
+        return (
+          <div
+            key={s.key}
+            className="cell-tip"
+            data-tip={`${s.label}: ${fmtSpread(v)}`}
+            style={{
+              position: "absolute",
+              left: `${xPct(v, domain)}%`,
+              top: `calc(50% + ${jitter}px)`,
+              transform: "translate(-50%, -50%)",
+              zIndex: isYc ? 5 : 1,
+            }}
+          >
+            {isYc ? (
+              <div
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: "50%",
+                  background: "var(--gold)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "1px solid #14152b",
+                  fontSize: "0.65rem",
+                  lineHeight: 1,
+                  color: "#14152b",
+                }}
+              >
+                ★
+              </div>
+            ) : (
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.6)",
+                  border: "1px solid rgba(0,0,0,0.4)",
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SpreadChartTab({ rows }: { rows: MultiSystemGameRow[] }) {
+  const domain = useMemo(() => computeDomain(rows), [rows]);
+
+  return (
+    <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+      <div style={{ display: "flex", minWidth: 300 + CHART_WIDTH }}>
+        <div style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--turf-panel)", minWidth: 300 }}>
+          <div style={{ height: 24, borderBottom: "1px solid var(--hash)" }} />
+          {rows.map((r) => (
+            <div
+              key={r.game.id}
+              style={{
+                height: CHART_ROW_HEIGHT,
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0 0.5rem",
+                borderBottom: "1px solid rgba(255,255,255,0.05)",
+                fontSize: "0.76rem",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ color: "var(--chalk-dim)" }}>Wk {r.game.week}</span>
+              <span style={{ color: "var(--chalk-dim)" }}>{fmtDateTime(r.game.start_date)}</span>
+              <span>{r.game.away_team}</span>
+              <span style={{ color: "var(--chalk-dim)" }}>@</span>
+              <span>{r.game.home_team}</span>
+            </div>
+          ))}
+          {rows.length === 0 && <div style={{ padding: "0.5rem", fontSize: "0.8rem" }}>No games match these filters.</div>}
+        </div>
+        <div>
+          <SpreadChartHeader domain={domain} />
+          {rows.map((r) => (
+            <SpreadChartRow key={r.game.id} row={r} domain={domain} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Results tab — per-system Every Bet / Filtered Bet / NWFB records, week
 // and season, with live win % prominent.
 // ---------------------------------------------------------------------
@@ -199,7 +429,7 @@ function ResultsTable({ weekRows, seasonRows }: { weekRows: MultiSystemGameRow[]
 export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
-  const [tab, setTab] = useState<"spreads" | "cover" | "filtered" | "nwfb" | "results">("spreads");
+  const [tab, setTab] = useState<"spreads" | "spreadchart" | "cover" | "filtered" | "nwfb" | "results">("spreads");
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
   const [confFilter, setConfFilter] = useState("");
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -282,6 +512,9 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <button className={`mode-btn ${tab === "spreads" ? "mode-btn-active" : ""}`} onClick={() => setTab("spreads")}>
           Proj Spreads
         </button>
+        <button className={`mode-btn ${tab === "spreadchart" ? "mode-btn-active" : ""}`} onClick={() => setTab("spreadchart")}>
+          Spread Chart
+        </button>
         <button className={`mode-btn ${tab === "cover" ? "mode-btn-active" : ""}`} onClick={() => setTab("cover")}>
           Proj Cover Team
         </button>
@@ -314,6 +547,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
       ) : (
         <>
           {tab === "spreads" && <GamesTable rows={weekRows} cell={(r, key) => fmtSpread(r.systems[key]?.projAwaySpread ?? null)} />}
+          {tab === "spreadchart" && <SpreadChartTab rows={weekRows} />}
           {tab === "cover" && (
             <GamesTable rows={weekRows} cell={(r, key) => teamName(r.game, r.systems[key]?.projCoverTeam ?? null)} />
           )}

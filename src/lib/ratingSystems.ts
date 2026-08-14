@@ -20,12 +20,17 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // Computed by this app, not pulled from anywhere.
   { key: "yc", label: "YC", source: "computed" },
   { key: "consensus", label: "Consensus", source: "computed" },
+  // Sent here from the Monte Carlo SRS tab's "Send to Rating Systems" button —
+  // this app's own SRS computation (Monte Carlo engine's computeSrsStats),
+  // distinct from the CFBD-sourced "srs" system below.
+  { key: "yc_srs", label: "YC SRS", source: "computed" },
 
   // CFBD API.
   { key: "fpi", label: "FPI", source: "cfbd_api" },
   { key: "sp", label: "SP+", source: "cfbd_api" },
-  { key: "srs", label: "SRS", source: "cfbd_api" },
+  { key: "srs", label: "CFBD SRS", source: "cfbd_api" },
   { key: "core", label: "Core", source: "cfbd_api" },
+  { key: "elo", label: "Elo", source: "cfbd_api" }, // raw CFBD scale (~1200-1900, higher = better) — not sign-flipped, defaults to weight 0
 
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },

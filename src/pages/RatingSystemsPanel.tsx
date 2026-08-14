@@ -197,7 +197,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
           <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || year)} style={{ width: 80 }} />
         </label>
         <button onClick={handleCfbdSync} disabled={busy != null}>
-          {busy === "cfbd" ? "Syncing…" : "Sync CFBD (FPI/SP+/SRS/Core)"}
+          {busy === "cfbd" ? "Syncing…" : "Sync CFBD (FPI/SP+/SRS/Core/Elo)"}
         </button>
         <button onClick={handleSheetSync} disabled={busy != null}>
           {busy === "sheet" ? "Pulling…" : "Pull Google Sheet"}
@@ -532,7 +532,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
 
       <h2 style={{ marginTop: 0 }}>Rating Systems</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Pull FPI/SP+/SRS/Core from CFBD, pull the published sheet, and upload McIllece/Massey weekly. YC is a
+        Pull FPI/SP+/SRS/Core/Elo from CFBD, pull the published sheet, and upload McIllece/Massey weekly. YC is a
         customizable weighted average across every system (including Consensus, itself a simple average of the
         source systems). Save the current table to a specific week once you're happy with it.
       </p>

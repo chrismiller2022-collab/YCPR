@@ -127,7 +127,14 @@ export default async function handler(req: any, res: any) {
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.rating }));
       },
       srs: async (y) => {
-        const data = await cfbdFetch(`/ratings/srs?year=${y}`);
+        let data = await cfbdFetch(`/ratings/srs?year=${y}`);
+        // The plain endpoint has, in practice, come back empty in cases where
+        // /ratings/srs/expanded (same schema + a classification field, and
+        // documented to additionally include FCS) has data — fall back to it
+        // before giving up on this year.
+        if (!data || data.length === 0) {
+          data = await cfbdFetch(`/ratings/srs/expanded?year=${y}`);
+        }
         return (data ?? [])
           .filter((r: any) => r.rating != null)
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.rating }));
@@ -135,8 +142,20 @@ export default async function handler(req: any, res: any) {
       core: async (y) => {
         const data = await cfbdFetch(`/ratings/core?year=${y}`);
         return (data ?? [])
-          .filter((r: any) => (r.rating ?? r.core ?? null) != null)
-          .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -(r.rating ?? r.core) }));
+          .filter((r: any) => r.overall != null)
+          .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.overall }));
+      },
+      // Elo is on a completely different raw scale (~1200-1900, higher = better)
+      // than every other system here (all point-spread scale, negative = better).
+      // Stored RAW — not sign-flipped, not rescaled — since there's no principled
+      // way to map Elo onto a spread scale. Defaults to weight 0 in YC/Consensus
+      // (same as every other unweighted system) so it won't corrupt those averages
+      // unless the admin deliberately dials in a weight knowing the scale mismatch.
+      elo: async (y) => {
+        const data = await cfbdFetch(`/ratings/elo?year=${y}`);
+        return (data ?? [])
+          .filter((r: any) => r.elo != null)
+          .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: r.elo }));
       },
     };
 
@@ -297,6 +316,28 @@ export default async function handler(req: any, res: any) {
       return;
     }
     res.status(200).json({ ok: true, saved: rows.length });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "checklistToggle" — admin_weekly_checklist upsert, one row
+  // per (week, item_key). Backs the weekly checklist widget on the admin
+  // dashboard home view.
+  // -----------------------------------------------------------------
+  if (action === "checklistToggle") {
+    const { week, itemKey, checked } = req.body ?? {};
+    if (!week || typeof week !== "string" || !itemKey || typeof itemKey !== "string" || typeof checked !== "boolean") {
+      res.status(400).json({ error: "Missing or invalid 'week'/'itemKey'/'checked'" });
+      return;
+    }
+    const { error } = await supabaseAdmin
+      .from("admin_weekly_checklist")
+      .upsert({ week, item_key: itemKey, checked, updated_at: new Date().toISOString() }, { onConflict: "week,item_key" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true });
     return;
   }
 
