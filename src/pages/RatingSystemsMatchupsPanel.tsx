@@ -259,7 +259,7 @@ function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: Char
             top: 4,
             bottom: 4,
             width: 2,
-            background: "#14152b",
+            background: "#f4f2ea",
             transform: "translateX(-50%)",
           }}
         />
@@ -335,42 +335,56 @@ function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: Char
   );
 }
 
-function SpreadChartTab({ rows }: { rows: MultiSystemGameRow[] }) {
+function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
+  const [linesOnly, setLinesOnly] = useState(false);
+  const rows = useMemo(
+    () => (linesOnly ? allRows.filter((r) => r.vegasAwaySpread != null) : allRows),
+    [allRows, linesOnly]
+  );
   const domain = useMemo(() => computeDomain(rows), [rows]);
 
   return (
-    <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-      <div style={{ display: "flex", minWidth: 300 + CHART_WIDTH }}>
-        <div style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--turf-panel)", minWidth: 300 }}>
-          <div style={{ height: 24, borderBottom: "1px solid var(--hash)" }} />
-          {rows.map((r) => (
-            <div
-              key={r.game.id}
-              style={{
-                height: CHART_ROW_HEIGHT,
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                padding: "0 0.5rem",
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                fontSize: "0.76rem",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span style={{ color: "var(--chalk-dim)" }}>Wk {r.game.week}</span>
-              <span style={{ color: "var(--chalk-dim)" }}>{fmtDateTime(r.game.start_date)}</span>
-              <span>{r.game.away_team}</span>
-              <span style={{ color: "var(--chalk-dim)" }}>@</span>
-              <span>{r.game.home_team}</span>
-            </div>
-          ))}
-          {rows.length === 0 && <div style={{ padding: "0.5rem", fontSize: "0.8rem" }}>No games match these filters.</div>}
-        </div>
-        <div>
-          <SpreadChartHeader domain={domain} />
-          {rows.map((r) => (
-            <SpreadChartRow key={r.game.id} row={r} domain={domain} />
-          ))}
+    <div>
+      <div style={{ marginBottom: "0.75rem" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
+          <input type="checkbox" checked={linesOnly} onChange={(e) => setLinesOnly(e.target.checked)} />
+          Vegas lines only (hide games with no line)
+        </label>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div style={{ display: "flex", minWidth: 340 + CHART_WIDTH }}>
+          <div style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--turf-panel)", minWidth: 340 }}>
+            <div style={{ height: 24, borderBottom: "1px solid var(--hash)" }} />
+            {rows.map((r) => (
+              <div
+                key={r.game.id}
+                style={{
+                  height: CHART_ROW_HEIGHT,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0 0.5rem",
+                  borderBottom: "1px solid rgba(255,255,255,0.05)",
+                  fontSize: "0.76rem",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ color: "var(--chalk-dim)" }}>Wk {r.game.week}</span>
+                <span style={{ color: "var(--chalk-dim)" }}>{fmtDateTime(r.game.start_date)}</span>
+                <span>{r.game.away_team}</span>
+                <span style={{ color: "var(--chalk-dim)" }}>@</span>
+                <span>{r.game.home_team}</span>
+                <span style={{ color: "var(--chalk-dim)" }}>Vegas {fmtSpread(r.vegasAwaySpread)}</span>
+              </div>
+            ))}
+            {rows.length === 0 && <div style={{ padding: "0.5rem", fontSize: "0.8rem" }}>No games match these filters.</div>}
+          </div>
+          <div>
+            <SpreadChartHeader domain={domain} />
+            {rows.map((r) => (
+              <SpreadChartRow key={r.game.id} row={r} domain={domain} />
+            ))}
+          </div>
         </div>
       </div>
     </div>

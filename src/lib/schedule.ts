@@ -6,6 +6,7 @@ import { TEAMS, TEAMS_BY_NAME, teamsForConference } from "../data/teams";
 import { HFA, hfaFor, spreadBg, spreadColor, spreadToWinPct } from "./odds";
 import { TEAM_WIN_TOTALS, SOR_RANK_BY_TEAM, buildRankMap } from "./ranks";
 import { pickLine } from "./matchupsCompute";
+import { computeOverUnderRecord, fmtOuRecord } from "./ouRecord";
 
 export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam = {}) {
   const games = gamesForTeam(scheduleTeamName);
@@ -200,9 +201,10 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
   );
   const myNattyRankMap = buildRankMap(liveNattyEntries, true);
 
-  // Not tracked anywhere yet — separate from ATS record, needs its own
-  // weekly data source before this can populate.
-  const overUnderRecord = undefined;
+  // Vegas total (over_under) vs actual combined score, from completed
+  // games with a line only. Symmetric grading — this team gets credited
+  // with an over/under regardless of which side of the matchup it's on.
+  const overUnderRecord = fmtOuRecord(computeOverUnderRecord(team.team, teamGames));
 
   const myNattyOdds = live?.natty_odds ?? NATTY_BY_TEAM[team.team];
   const vegasNattyOdds = live?.draftkings_natty_odds;

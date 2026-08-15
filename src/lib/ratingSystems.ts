@@ -30,7 +30,7 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "sp", label: "SP+", source: "cfbd_api" },
   { key: "srs", label: "CFBD SRS", source: "cfbd_api" },
   { key: "core", label: "Core", source: "cfbd_api" },
-  { key: "elo", label: "Elo", source: "cfbd_api" }, // raw CFBD scale (~1200-1900, higher = better) — not sign-flipped, defaults to weight 0
+  { key: "elo", label: "Elo", source: "cfbd_api" }, // min-max normalized to [-30, +55] and sign-flipped, same treatment as Massey
 
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },
@@ -54,10 +54,23 @@ export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fro
   RATING_SYSTEMS.map((s) => [s.key, s])
 );
 
-/** Every system that's an input to the YC weighted average (i.e. NOT yc itself). */
-export const YC_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc").map((s) => s.key);
+// F+ and Pi aren't fully rated across every team yet — temporarily
+// excluded from both YC and Consensus so a handful of missing/partial
+// pulls don't skew the aggregates, while still showing up as their own
+// column in the systems table (and still saved into a week snapshot) so
+// progress on filling them in stays visible. Remove from this list once
+// they're fully rated to fold them back into both aggregates.
+export const AGGREGATE_EXCLUDED_SYSTEMS = ["f_plus", "pi"];
 
-/** Every system that's an input to Consensus (a simple average — every pulled system, excluding YC and Consensus itself). */
-export const CONSENSUS_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map(
-  (s) => s.key
-);
+/** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
+export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);
+
+/** Every system that's an input to the YC weighted average (i.e. NOT yc itself, minus AGGREGATE_EXCLUDED_SYSTEMS). */
+export const YC_INPUT_SYSTEMS = RATING_SYSTEMS.filter(
+  (s) => s.key !== "yc" && !AGGREGATE_EXCLUDED_SYSTEMS.includes(s.key)
+).map((s) => s.key);
+
+/** Every system that's an input to Consensus (a simple average — every pulled system, excluding YC/Consensus themselves and AGGREGATE_EXCLUDED_SYSTEMS). */
+export const CONSENSUS_INPUT_SYSTEMS = RATING_SYSTEMS.filter(
+  (s) => s.key !== "yc" && s.key !== "consensus" && !AGGREGATE_EXCLUDED_SYSTEMS.includes(s.key)
+).map((s) => s.key);

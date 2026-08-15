@@ -6,6 +6,7 @@ import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/con
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { fetchResumeWeights } from "../lib/api/resumeWeights";
+import { fetchRatingPulls } from "../lib/api/ratingSystems";
 import {
   computeRawResumeMetrics,
   normalizeMetric,
@@ -27,6 +28,8 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [srsByTeam, setSrsByTeam] = useState<Record<string, number | null>>({});
+  const [vsrsByTeam, setVsrsByTeam] = useState<Record<string, number | null>>({});
 
   const [weights, setWeights] = useState<ResumeWeights>({ ...DEFAULT_RESUME_WEIGHTS });
   const [weightsLoaded, setWeightsLoaded] = useState(false);
@@ -41,11 +44,20 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
-    Promise.all([fetchGamesWithLines(season), fetchResumeWeights(season)])
-      .then(([gamesData, savedWeights]) => {
+    Promise.all([fetchGamesWithLines(season), fetchResumeWeights(season), fetchRatingPulls()])
+      .then(([gamesData, savedWeights, pulls]) => {
         setGames(gamesData);
         if (savedWeights) setWeights({ ...DEFAULT_RESUME_WEIGHTS, ...savedWeights });
         setWeightsLoaded(true);
+
+        const srsMap: Record<string, number | null> = {};
+        const vsrsMap: Record<string, number | null> = {};
+        for (const p of pulls) {
+          if (p.system_key === "yc_srs") srsMap[p.team] = p.value;
+          else if (p.system_key === "yc_vsrs") vsrsMap[p.team] = p.value;
+        }
+        setSrsByTeam(srsMap);
+        setVsrsByTeam(vsrsMap);
       })
       .catch((err) => setLoadError(err.message ?? "Failed to load data"))
       .finally(() => setLoading(false));
@@ -59,10 +71,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const rawByTeam = useMemo(() => {
     const map = new Map<string, RawResumeMetrics>();
     for (const t of teams) {
-      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam));
+      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, srsByTeam, vsrsByTeam));
     }
     return map;
-  }, [teams, games, liveByTeam]);
+  }, [teams, games, liveByTeam, srsByTeam, vsrsByTeam]);
 
   const normalizedByTeam = useMemo(() => {
     const pools: Partial<Record<keyof RawResumeMetrics, (number | null)[]>> = {};
@@ -284,9 +296,11 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         real result (Actual Wins, Losses, MOV, Avg. Actual Line, ATS Margin) is completed games
         only. Lower opponent rating (a better team) always scores higher for Best/Best/Worst
         Loss — beating or nearly-losing-respectably-to a good team is the better outcome either
-        way. SOS pulls from the site's existing Strength of Schedule field. Weights persist to
-        Supabase per season, ready for a future public Resume Ratings page to read the same
-        numbers.
+        way. SOS pulls from the site's existing Strength of Schedule field. SRS/VSRS pull from
+        the "YC SRS" snapshot in Rating Systems — hit "Send to Rating Systems (YC SRS)" on the
+        Monte Carlo SRS tab to refresh both; they won't change on their own between refreshes.
+        Weights persist to Supabase per season, ready for a future public Resume Ratings page to
+        read the same numbers.
       </div>
     </div>
   );

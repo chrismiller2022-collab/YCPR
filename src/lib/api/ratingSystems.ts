@@ -50,6 +50,49 @@ export function syncCfbdRatings(year: number) {
   return authedPost("sync", { year });
 }
 
+/** Writes YC into weekly_team_stats.rating for the given week (site-wide "live rating" source), without touching any other column on those rows. */
+export function pushYcToLiveRatings(week: string, teamRatings: { team: string; rating: number }[]) {
+  return authedPost("pushYc", { week, teamRatings });
+}
+
+/** Snapshots the SOS admin page's computed rows into team_sos, keyed by (season, team) — see src/pages/SosAdminPanel.tsx for the row shape. */
+export function saveSosToSite(season: number, rows: any[]) {
+  return authedPost("saveSos", { season, rows });
+}
+
+export interface TeamSosRow {
+  season: number;
+  team: string;
+  updated_at: string;
+  avg_opp_pr_total: number | null;
+  avg_opp_pr_conference: number | null;
+  sos_srs_total: number | null;
+  sos_srs_conference: number | null;
+  num_srs_runs: number | null;
+  best_win_pr_total: number | null;
+  best_win_pr_total_opp: string | null;
+  best_win_pr_conference: number | null;
+  best_win_pr_conference_opp: string | null;
+  best_loss_pr_total: number | null;
+  best_loss_pr_total_opp: string | null;
+  best_loss_pr_conference: number | null;
+  best_loss_pr_conference_opp: string | null;
+  worst_loss_pr_total: number | null;
+  worst_loss_pr_total_opp: string | null;
+  worst_loss_pr_conference: number | null;
+  worst_loss_pr_conference_opp: string | null;
+}
+
+/** Public read of the SOS admin page's last saved snapshot for a season — team -> row. */
+export async function fetchTeamSos(season: number): Promise<Record<string, TeamSosRow>> {
+  const rows = await fetchAllRows<TeamSosRow>((from, to) =>
+    supabase.from("team_sos").select("*").eq("season", season).range(from, to)
+  );
+  const out: Record<string, TeamSosRow> = {};
+  for (const r of rows) out[r.team] = r;
+  return out;
+}
+
 export async function fetchPublishedSheetCsv(): Promise<string> {
   const data = await authedPost("sheetProxy", {});
   return data.csv as string;

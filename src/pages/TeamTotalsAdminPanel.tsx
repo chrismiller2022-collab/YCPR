@@ -9,14 +9,14 @@ import {
 } from "../lib/gameTotalsEngine";
 import { resolveSplitSpread, splitTeamTotal } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
-import { RawDataTab, SystemInputsTab, SeasonPicker, SyncControl, CsvImportControl, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
+import { RawDataTab, EfficiencyInputsTab, SeasonPicker, SyncControl, CsvImportControl, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 const TABS = ["raw", "inputs", "composites", "bets", "filtered", "performance"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   raw: "Raw Data",
-  inputs: "System Inputs",
+  inputs: "Efficiency Inputs",
   composites: "Team Composites",
   bets: "Bets",
   filtered: "Filtered Bets",
@@ -311,7 +311,7 @@ export default function TeamTotalsAdminPanel({ onBack }: { onBack: () => void })
       ) : (
         <>
           {tab === "raw" && <RawDataTab rows={rows} />}
-          {tab === "inputs" && <SystemInputsTab rows={rows} />}
+          {tab === "inputs" && <EfficiencyInputsTab rows={rows} />}
           {tab === "composites" && <TeamCompositesTab rows={rows} settings={settings} />}
           {tab === "bets" && <TeamBetsTab rows={rows} settings={settings} filteredOnly={false} />}
           {tab === "filtered" && <TeamBetsTab rows={rows} settings={settings} filteredOnly />}

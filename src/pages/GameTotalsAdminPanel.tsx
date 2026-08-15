@@ -8,6 +8,7 @@ import {
   type CompositeKey,
   type EnrichedGameRow,
 } from "../lib/gameTotalsEngine";
+import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
@@ -15,7 +16,7 @@ const TABS = ["raw", "inputs", "composites", "bets", "filtered", "performance"] 
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   raw: "Raw Data",
-  inputs: "System Inputs",
+  inputs: "Efficiency Inputs",
   composites: "Composites",
   bets: "Bets",
   filtered: "Filtered Bets",
@@ -69,23 +70,23 @@ function SettingsBar({ settings, setSettings, season }: any) {
         marginBottom: "1rem",
       }}
     >
-      <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-        Composite 2 weights [S1, S2, S3, S4+S5]{" "}
-        {settings.weights.map((w: number, i: number) => (
-          <input
-            key={i}
-            type="number"
-            step="0.5"
-            value={w}
-            onChange={(e) => {
-              const next = [...settings.weights];
-              next[i] = parseFloat(e.target.value) || 0;
-              setSettings({ ...settings, weights: next });
-            }}
-            style={{ width: 50, marginLeft: 4 }}
-          />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", alignItems: "center" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Composite 2 weights:</span>
+        {SYSTEM_KEYS.map((k) => (
+          <label key={k} style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+            {SYSTEM_LABELS[k]}{" "}
+            <input
+              type="number"
+              step="0.5"
+              value={settings.weights[k] ?? 0}
+              onChange={(e) => {
+                setSettings({ ...settings, weights: { ...settings.weights, [k]: parseFloat(e.target.value) || 0 } });
+              }}
+              style={{ width: 50 }}
+            />
+          </label>
         ))}
-      </label>
+      </div>
       <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
         Composite 3 regression %{" "}
         <input
@@ -164,7 +165,7 @@ export function RawDataTab({ rows }: { rows: EnrichedGameRow[] }) {
   );
 }
 
-export function SystemInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
+export function EfficiencyInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
   return (
     <div className="table-scroll">
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -172,59 +173,59 @@ export function SystemInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
           <tr>
             <th style={CP}>Wk</th>
             <th style={CP}>Team</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Pts/Drive</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Drives/Gm</th>
-            <th style={{ ...CP, textAlign: "right" }}>Def Pts/Drive Allow</th>
-            <th style={{ ...CP, textAlign: "right" }}>Def Drives/Gm Faced</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Pts/Play</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Plays/Gm</th>
-            <th style={{ ...CP, textAlign: "right" }}>Def Pts/Play Allow</th>
-            <th style={{ ...CP, textAlign: "right" }}>Def Plays/Gm Faced</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off YPP</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Yds/Pt</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Pass YPA</th>
-            <th style={{ ...CP, textAlign: "right" }}>Off Rush YPA</th>
+            <th style={{ ...CP, textAlign: "right" }}>Blended Plays</th>
+            <th style={{ ...CP, textAlign: "right" }}>Blended Drives</th>
+            <th style={{ ...CP, textAlign: "right" }}>Blended Rush Att</th>
+            <th style={{ ...CP, textAlign: "right" }}>Blended Pass Att</th>
+            <th style={{ ...CP, textAlign: "right" }}>PPA Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Success Rate Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Explosiveness Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Pts/Opp Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Rush PPA Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Rush SR Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Pass PPA Factor</th>
+            <th style={{ ...CP, textAlign: "right" }}>Pass SR Factor</th>
             <th style={{ ...CP, textAlign: "right" }}>Vegas O/U</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
             <>
-              {r.homeSystemInputs && (
+              {r.homeEfficiencyInputs && (
                 <tr key={r.game.id + "-h"}>
                   <td style={CP}>{r.game.week}</td>
                   <td style={CP}>{r.game.homeTeam} (H)</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPtsPerDrive)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offDrivesPerGame)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPtsPerDriveAllowed)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defDrivesPerGameFaced)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPtsPerPlay)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPlaysPerGame)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPtsPerPlayAllowed)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.defPlaysPerGameFaced)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offYpp)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offYardsPerPoint)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offPassYpa)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeSystemInputs.offRushYpa)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedPlays)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedDrives)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedRushAttempts)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedPassAttempts)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.ppaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.successRateFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.explosivenessFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.pointsPerOppFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.rushPpaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.rushSuccessRateFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.passPpaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.passSuccessRateFactor)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.vegasTotal, 1)}</td>
                 </tr>
               )}
-              {r.awaySystemInputs && (
+              {r.awayEfficiencyInputs && (
                 <tr key={r.game.id + "-a"}>
                   <td style={CP}>{r.game.week}</td>
                   <td style={CP}>{r.game.awayTeam} (A)</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPtsPerDrive)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offDrivesPerGame)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPtsPerDriveAllowed)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defDrivesPerGameFaced)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPtsPerPlay)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPlaysPerGame)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPtsPerPlayAllowed)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.defPlaysPerGameFaced)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offYpp)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offYardsPerPoint)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offPassYpa)}</td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awaySystemInputs.offRushYpa)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedPlays)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedDrives)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedRushAttempts)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedPassAttempts)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.ppaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.successRateFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.explosivenessFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.pointsPerOppFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.rushPpaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.rushSuccessRateFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.passPpaFactor)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.passSuccessRateFactor)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.vegasTotal, 1)}</td>
                 </tr>
               )}
@@ -244,10 +245,11 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
           <tr>
             <th style={CP}>Wk</th>
             <th style={CP}>Matchup</th>
-            <th style={{ ...CP, textAlign: "right" }}>S1</th>
-            <th style={{ ...CP, textAlign: "right" }}>S2</th>
-            <th style={{ ...CP, textAlign: "right" }}>S3</th>
-            <th style={{ ...CP, textAlign: "right" }}>S4+S5</th>
+            {SYSTEM_KEYS.map((k) => (
+              <th key={k} style={{ ...CP, textAlign: "right" }}>
+                {SYSTEM_LABELS[k]}
+              </th>
+            ))}
             <th style={{ ...CP, textAlign: "right" }}>Comp 1</th>
             <th style={{ ...CP, textAlign: "right" }}>Comp 2</th>
             <th style={{ ...CP, textAlign: "right" }}>Comp 3</th>
@@ -269,10 +271,11 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
                 <td style={CP}>
                   {r.game.awayTeam} @ {r.game.homeTeam}
                 </td>
-                <td style={{ ...CP, textAlign: "right" }}>{h && a ? fmt(h.s1 + a.s1) : "–"}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{h && a ? fmt(h.s2 + a.s2) : "–"}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{h && a ? fmt(h.s3 + a.s3) : "–"}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{h && a ? fmt(h.s45 + a.s45) : "–"}</td>
+                {SYSTEM_KEYS.map((k: SystemKey) => (
+                  <td key={k} style={{ ...CP, textAlign: "right" }}>
+                    {h && a ? fmt(h[k] + a[k]) : "–"}
+                  </td>
+                ))}
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite1)}</td>
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite2)}</td>
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite3)}</td>
@@ -575,7 +578,7 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
       ) : (
         <>
           {tab === "raw" && <RawDataTab rows={rows} />}
-          {tab === "inputs" && <SystemInputsTab rows={rows} />}
+          {tab === "inputs" && <EfficiencyInputsTab rows={rows} />}
           {tab === "composites" && <CompositesTab rows={rows} />}
           {tab === "bets" && <BetsTab rows={rows} settings={settings} filteredOnly={false} />}
           {tab === "filtered" && <BetsTab rows={rows} settings={settings} filteredOnly />}

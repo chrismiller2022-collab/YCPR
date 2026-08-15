@@ -5,7 +5,7 @@
 // per-system projections.
 
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
-import { CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "./ratingSystems";
+import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "./ratingSystems";
 import type { RatingPullRow } from "./api/ratingSystems";
 
 export interface ConglomeratedRow {
@@ -45,8 +45,12 @@ export function computeConglomeratedTable(
   return TEAMS.map((t) => {
     const pulled = byTeam.get(t.team) ?? {};
 
+    // Every pulled system's raw value, shown in the table / saved to a
+    // week snapshot regardless of whether it currently feeds YC or
+    // Consensus (those two aggregates use their own, possibly smaller,
+    // input lists below — see AGGREGATE_EXCLUDED_SYSTEMS).
     const values: Record<string, number | null> = {};
-    for (const key of CONSENSUS_INPUT_SYSTEMS) {
+    for (const key of ALL_PULLED_SYSTEMS) {
       values[key] = pulled[key] ?? null;
     }
 

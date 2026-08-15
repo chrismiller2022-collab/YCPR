@@ -18,9 +18,12 @@ import {
   saveRatingWeek,
   fetchSavedRatingWeeks,
   fetchWeeklyPowerRatings,
+  pushYcToLiveRatings,
   type RatingPullRow,
   type RatingSaveRow,
 } from "../lib/api/ratingSystems";
+import { fetchAvailableWeeks } from "../lib/api/weeklyStats";
+import { WEEK_OPTIONS } from "../lib/weekOptions";
 
 function fmtNum(v: number | null, digits = 2) {
   if (v == null) return "–";
@@ -399,6 +402,71 @@ function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season:
 }
 
 // ---------------------------------------------------------------------
+// Push YC to Live Ratings — writes YC into weekly_team_stats.rating (the
+// same table/column Data Upload writes, and what every other page's
+// "live rating" reads), for a chosen week. Only touches the rating (and
+// recomputed rank) column on each row — every other field Data Upload
+// populates (resume metrics, win totals, etc.) is left exactly as-is.
+// Teams YC has no value for (mostly small FCS schools the CFBD systems
+// don't cover) keep whatever rating they already had.
+// ---------------------------------------------------------------------
+function PushYcControl({ rows }: { rows: ConglomeratedRow[] }) {
+  const [week, setWeek] = useState<string>("preseason");
+  const [pushing, setPushing] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAvailableWeeks()
+      .then((weeks) => {
+        if (weeks.length > 0) setWeek(weeks[0]); // most recent by week_number
+      })
+      .catch(() => {});
+  }, []);
+
+  const ycCount = rows.filter((r) => r.yc != null).length;
+
+  async function handlePush() {
+    setPushing(true);
+    setMsg(null);
+    try {
+      const teamRatings = rows.filter((r) => r.yc != null).map((r) => ({ team: r.team, rating: r.yc as number }));
+      const result = await pushYcToLiveRatings(week, teamRatings);
+      setMsg(`Pushed YC for ${result.matched} teams into "${week}" live ratings (${result.saved} rows saved).`);
+    } catch (err: any) {
+      setMsg(err.message ?? "Push failed");
+    } finally {
+      setPushing(false);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        Push YC to live ratings
+      </div>
+      <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "0.6rem" }}>
+        Writes YC's current values into the same "rating" field Data Upload writes, for every site page that shows a
+        live power rating (Team Pages, Matchups, Survivor, Monte Carlo, etc.) — nothing else about that week's saved
+        stats changes. {ycCount} of {rows.length} teams currently have a YC value.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <select value={week} onChange={(e) => setWeek(e.target.value)}>
+          {WEEK_OPTIONS.map((w) => (
+            <option key={w} value={w}>
+              {w}
+            </option>
+          ))}
+        </select>
+        <button onClick={handlePush} disabled={pushing || ycCount === 0}>
+          {pushing ? "Pushing…" : `Push YC → ${week}`}
+        </button>
+      </div>
+      {msg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "0.4rem" }}>{msg}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Conglomerated table.
 // ---------------------------------------------------------------------
 function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
@@ -546,6 +614,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
           <SystemPerformanceSummary season={new Date().getFullYear()} />
           <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
           <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
+          <PushYcControl rows={conglomerated} />
           <ConglomeratedTable rows={conglomerated} />
         </>
       )}

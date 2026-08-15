@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
@@ -6,6 +6,7 @@ import { TEAMS } from "../data/teams";
 import { fmtNum, fmtOdds, fmtPct } from "../lib/format";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchTeamSos, type TeamSosRow } from "../lib/api/ratingSystems";
 
 function DiffCell({ value }: any) {
   if (value == null) return <td className="wintotals-total-cell">–</td>;
@@ -17,7 +18,7 @@ function DiffCell({ value }: any) {
   );
 }
 
-function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigateTeam }: any) {
+function ConferencePreviewRow({ team, live, sos, maxPct, showVegasWinLines, onNavigateTeam }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
   const rating = live?.rating ?? team.rating;
   const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total ?? 0;
@@ -56,6 +57,7 @@ function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigat
       </td>
       <td className="wintotals-total-cell">{fmtOdds(fairPrice)}</td>
       <td className="wintotals-total-cell">{fmtOdds(odds)}</td>
+      <td className="wintotals-total-cell">{sos != null ? sos.toFixed(2) : "–"}</td>
       {showVegasWinLines && (
         <>
           <td className="wintotals-total-cell">{fmtNum(seasonWinLine)}</td>
@@ -71,6 +73,15 @@ function ConferencePreviewRow({ team, live, maxPct, showVegasWinLines, onNavigat
 export default function ConferencePreviewPage({ conference, onNavigateTeam, onHome }: any) {
   const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  const season = new Date().getFullYear();
+  const [sosByTeam, setSosByTeam] = useState<Record<string, TeamSosRow>>({});
+
+  useEffect(() => {
+    fetchTeamSos(season)
+      .then(setSosByTeam)
+      .catch(() => setSosByTeam({}));
+  }, [season]);
 
   const rows = useMemo(() => {
     const list = TEAMS.filter((t) => t.conf === conference);
@@ -134,6 +145,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                   <th className="th">Conference Odds</th>
                   <th className="th th-right">Fair Conference Odds</th>
                   <th className="th th-right">Vegas Conference Odds</th>
+                  <th className="th th-right">In-Conference SOS</th>
                   {showVegasWinLines && (
                     <>
                       <th className="th th-right">Vegas Total Wins</th>
@@ -150,6 +162,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                     key={t.team}
                     team={t}
                     live={liveByTeam[t.team]}
+                    sos={sosByTeam[t.team]?.sos_srs_conference ?? null}
                     maxPct={maxPct}
                     showVegasWinLines={showVegasWinLines}
                     onNavigateTeam={onNavigateTeam}
@@ -165,7 +178,10 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
         Conference Odds bar reflects our model's probability to win the
         conference. Vegas Conference Odds is the market's current price.
         Fair Conference Odds is our model's own fair American-odds price to
-        win the conference.
+        win the conference. In-Conference SOS is from the admin Strength of
+        Schedule page's SRS engine, run only on conference games (not simply
+        an average of conference opponents' ratings) — it updates whenever
+        that page is re-run and saved.
         {showVegasWinLines &&
           " Diff columns are ours minus the market's line — positive means we're projecting more wins than the market."}
       </div>

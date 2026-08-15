@@ -6,6 +6,7 @@ import {
   buildMlRowsFromBetHistory,
   buildMlRowsFromLiveRatings,
   aggregateMlRows,
+  aggregateMlRowsFiltered,
   mlWinPct,
   type MlGameRow,
   type MlTally,
@@ -36,22 +37,23 @@ function fmtDateTime(iso: string | null) {
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function StakingModeSummary({ tally, mode }: { tally: MlTally; mode: "toWin1" | "flat1" }) {
+function StakingModeSummary({ tally, mode, compact }: { tally: MlTally; mode: "toWin1" | "flat1"; compact?: boolean }) {
   const units = mode === "toWin1" ? tally.toWin1Units : tally.flat1Units;
+  const size = compact ? "1.4rem" : "2rem";
   return (
-    <div style={{ display: "flex", gap: "2.5rem", alignItems: "baseline", flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: compact ? "1.5rem" : "2.5rem", alignItems: "baseline", flexWrap: "wrap" }}>
       <div>
-        <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>
+        <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1 }}>
           {tally.w}-{tally.l}
         </div>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Record</div>
       </div>
       <div>
-        <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{mlWinPct(tally).toFixed(1)}%</div>
+        <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1 }}>{mlWinPct(tally).toFixed(1)}%</div>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Win %</div>
       </div>
       <div>
-        <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1, color: units >= 0 ? "var(--gold)" : "#e05a5a" }}>
+        <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1, color: units >= 0 ? "var(--gold)" : "#e05a5a" }}>
           {fmtUnits(units)}
         </div>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>
@@ -66,6 +68,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [season, setSeason] = useState(2025);
   const [week, setWeek] = useState<"all" | number>("all");
   const [stakingMode, setStakingMode] = useState<"toWin1" | "flat1">("toWin1");
+  const [evThreshold, setEvThreshold] = useState(0);
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +104,12 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const { overall, byWeek } = useMemo(() => aggregateMlRows(weekRows), [weekRows]);
   const seasonAgg = useMemo(() => aggregateMlRows(allRows), [allRows]);
   const weeksSorted = Array.from(byWeek.keys()).sort((a, b) => a - b);
+
+  const { overall: filteredOverall, byWeek: filteredByWeek } = useMemo(
+    () => aggregateMlRowsFiltered(weekRows, evThreshold),
+    [weekRows, evThreshold]
+  );
+  const filteredSeasonAgg = useMemo(() => aggregateMlRowsFiltered(allRows, evThreshold), [allRows, evThreshold]);
 
   return (
     <div>
@@ -138,6 +147,20 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         <button className={`mode-btn ${stakingMode === "flat1" ? "mode-btn-active" : ""}`} onClick={() => setStakingMode("flat1")}>
           Flat-1
         </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Filtered Bet — only bet if EV above:</span>
+        <input
+          type="range"
+          min={0}
+          max={30}
+          step={0.5}
+          value={evThreshold}
+          onChange={(e) => setEvThreshold(parseFloat(e.target.value))}
+          style={{ width: 220 }}
+        />
+        <span style={{ fontSize: "0.85rem", fontWeight: 700, minWidth: 42 }}>{evThreshold.toFixed(1)}%</span>
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -185,15 +208,27 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                 marginBottom: "0.6rem",
               }}
             >
-              {week === "all" ? `${season} — Every Game` : `${season} Week ${week} — Every Game`}
+              {week === "all" ? `${season} — Every Bet` : `${season} Week ${week} — Every Bet`}
             </div>
             <StakingModeSummary tally={overall} mode={stakingMode} />
+
+            <div style={{ marginTop: "0.9rem", paddingTop: "0.9rem", borderTop: "1px solid var(--hash)" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+                Filtered Bet — EV &gt; {evThreshold.toFixed(1)}%
+              </div>
+              <StakingModeSummary tally={filteredOverall} mode={stakingMode} compact />
+            </div>
+
             {week !== "all" && (
               <div style={{ marginTop: "0.9rem", paddingTop: "0.9rem", borderTop: "1px solid var(--hash)" }}>
                 <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
-                  Full {season} season
+                  Full {season} season — Every Bet
                 </div>
-                <StakingModeSummary tally={seasonAgg.overall} mode={stakingMode} />
+                <StakingModeSummary tally={seasonAgg.overall} mode={stakingMode} compact />
+                <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.6rem 0 0.4rem" }}>
+                  Full {season} season — Filtered Bet (EV &gt; {evThreshold.toFixed(1)}%)
+                </div>
+                <StakingModeSummary tally={filteredSeasonAgg.overall} mode={stakingMode} compact />
               </div>
             )}
           </div>
@@ -207,12 +242,17 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Units</th>
+                    <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                      Filtered (rec / units)
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {weeksSorted.map((w) => {
                     const t = byWeek.get(w)!;
                     const units = stakingMode === "toWin1" ? t.toWin1Units : t.flat1Units;
+                    const ft = filteredByWeek.get(w);
+                    const filteredUnits = ft ? (stakingMode === "toWin1" ? ft.toWin1Units : ft.flat1Units) : 0;
                     return (
                       <tr key={w}>
                         <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>Week {w}</td>
@@ -232,6 +272,16 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                           }}
                         >
                           {fmtUnits(units)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "0.35rem 0.6rem",
+                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            textAlign: "right",
+                            color: filteredUnits >= 0 ? "var(--gold)" : "#e05a5a",
+                          }}
+                        >
+                          {ft && ft.w + ft.l > 0 ? `${fmtUnits(filteredUnits)} (${ft.w}-${ft.l})` : "–"}
                         </td>
                       </tr>
                     );
@@ -303,6 +353,15 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", fontWeight: 700 }}>
                         {r.betSide === "away" ? r.game.away_team : r.betSide === "home" ? r.game.home_team : "–"}
+                        {r.betEv != null && r.betEv > evThreshold && (
+                          <span
+                            className="cell-tip"
+                            data-tip={`Clears the ${evThreshold.toFixed(1)}% Filtered Bet threshold`}
+                            style={{ color: "var(--gold)", marginLeft: "0.3rem" }}
+                          >
+                            ✓
+                          </span>
+                        )}
                       </td>
                       <td
                         style={{

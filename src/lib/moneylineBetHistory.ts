@@ -264,4 +264,9 @@ export function aggregateMlRows(rows: MlGameRow[]): MlAggregate {
   return { overall, byWeek };
 }
 
+/** Only counts rows where the bet side's EV exceeds evThreshold (percentage points) — "Filtered Bet," same idea as the spread side's filter threshold. Every Bet (aggregateMlRows) stays threshold-agnostic: bets whichever side is positive at all. */
+export function aggregateMlRowsFiltered(rows: MlGameRow[], evThreshold: number): MlAggregate {
+  return aggregateMlRows(rows.filter((r) => r.betEv != null && r.betEv > evThreshold));
+}
+
 export { fairMoneylineFromWinPct };

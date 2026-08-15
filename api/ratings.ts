@@ -146,16 +146,22 @@ export default async function handler(req: any, res: any) {
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.overall }));
       },
       // Elo is on a completely different raw scale (~1200-1900, higher = better)
-      // than every other system here (all point-spread scale, negative = better).
-      // Stored RAW — not sign-flipped, not rescaled — since there's no principled
-      // way to map Elo onto a spread scale. Defaults to weight 0 in YC/Consensus
-      // (same as every other unweighted system) so it won't corrupt those averages
-      // unless the admin deliberately dials in a weight knowing the scale mismatch.
+      // than every other system here — min-max normalized across the pulled
+      // batch onto [-30, +55] (best -> -30, worst -> +55) and sign-flipped,
+      // same treatment as the Massey CSV upload's normalizeMasseyRows().
       elo: async (y) => {
         const data = await cfbdFetch(`/ratings/elo?year=${y}`);
-        return (data ?? [])
-          .filter((r: any) => r.elo != null)
-          .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: r.elo }));
+        const rows = (data ?? []).filter((r: any) => r.elo != null);
+        if (rows.length === 0) return [];
+        const values = rows.map((r: any) => r.elo);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const span = max - min;
+        return rows.map((r: any) => {
+          const t = span === 0 ? 0.5 : (r.elo - min) / span; // 0 = worst, 1 = best
+          const normalized = 55 + t * (-30 - 55); // worst -> +55, best -> -30
+          return { team: r.team, conference: r.conference ?? null, value: normalized };
+        });
       },
     };
 
@@ -176,14 +182,17 @@ export default async function handler(req: any, res: any) {
         results[systemKey] = { fetched: rows.length, saved: 0, yearUsed };
         if (rows.length === 0) continue;
 
-        const upsertRows = rows.map((r) => ({
-          system_key: systemKey,
-          team: r.team,
-          division: null,
-          conference: r.conference,
-          value: r.value,
-          pulled_at: new Date().toISOString(),
-        }));
+        const upsertRows = dedupeByKey(
+          rows.map((r) => ({
+            system_key: systemKey,
+            team: r.team,
+            division: null,
+            conference: r.conference,
+            value: r.value,
+            pulled_at: new Date().toISOString(),
+          })),
+          (r) => `${r.system_key}::${r.team}`
+        );
 
         const { error, count } = await supabaseAdmin
           .from("rating_pulls")
@@ -338,6 +347,138 @@ export default async function handler(req: any, res: any) {
       return;
     }
     res.status(200).json({ ok: true });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "pushYc" — writes YC into weekly_team_stats.rating (the same
+  // table/column Data Upload writes) for a given week, WITHOUT touching
+  // any other column on those rows (resume metrics, win totals, etc. stay
+  // whatever they already were). This is deliberately NOT admin-save.ts's
+  // upsert-a-full-row pattern — that would null out every field the
+  // caller didn't also send. Instead: read the week's existing rows,
+  // merge in just the new rating per team (leaving teams YC has no value
+  // for untouched), recompute rank across the resulting full set, upsert
+  // the merged rows back.
+  // -----------------------------------------------------------------
+  if (action === "pushYc") {
+    const { week, teamRatings } = req.body ?? {};
+    if (!week || typeof week !== "string") {
+      res.status(400).json({ error: "Missing or invalid 'week'" });
+      return;
+    }
+    if (!Array.isArray(teamRatings) || teamRatings.length === 0) {
+      res.status(400).json({ error: "Missing or empty 'teamRatings'" });
+      return;
+    }
+
+    const weekToNumber = (w: string): number => {
+      if (w === "preseason") return 0;
+      const m = /^week(\d+)$/.exec(w);
+      return m ? parseInt(m[1], 10) : -1;
+    };
+
+    const { data: existingRows, error: fetchError } = await supabaseAdmin
+      .from("weekly_team_stats")
+      .select("*")
+      .eq("week", week);
+    if (fetchError) {
+      res.status(500).json({ error: fetchError.message });
+      return;
+    }
+
+    const byTeam = new Map<string, any>();
+    for (const row of existingRows ?? []) byTeam.set(row.team, { ...row });
+
+    const nowIso = new Date().toISOString();
+    const weekNumber = weekToNumber(week);
+    let matched = 0;
+    for (const { team, rating } of teamRatings as { team: string; rating: number }[]) {
+      if (rating == null || Number.isNaN(rating)) continue;
+      const existing = byTeam.get(team);
+      if (existing) {
+        existing.rating = rating;
+        existing.updated_at = nowIso;
+      } else {
+        byTeam.set(team, { team, week, week_number: weekNumber, rating, updated_at: nowIso });
+      }
+      matched++;
+    }
+
+    // Recompute rank across every row now in this week (old + newly pushed
+    // alike) — negative = better, so ascending rating order = rank 1..N.
+    // Rows with no rating at all (never uploaded, YC has no value either)
+    // are left without a rank rather than guessed at.
+    const allRows = Array.from(byTeam.values());
+    const withRating = allRows.filter((r) => r.rating != null).sort((a, b) => a.rating - b.rating);
+    withRating.forEach((r, i) => {
+      r.rank = i + 1;
+    });
+
+    const { error: upsertError, count } = await supabaseAdmin
+      .from("weekly_team_stats")
+      .upsert(allRows, { onConflict: "team,week", count: "exact" });
+    if (upsertError) {
+      res.status(500).json({ error: upsertError.message });
+      return;
+    }
+
+    res.status(200).json({ ok: true, matched, saved: count ?? allRows.length, week });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "saveSos" — snapshots the SOS admin page's computed rows
+  // (Avg Opp PR, SOS from SRS, Best/Worst Win/Loss PR — total and
+  // in-conference) into team_sos, one row per (season, team). This is
+  // what lets public pages like Conference Previews show an in-conference
+  // SOS number without re-running the SRS Monte Carlo simulation client
+  // side on every page load.
+  // -----------------------------------------------------------------
+  if (action === "saveSos") {
+    const { season, rows } = req.body ?? {};
+    if (!season || typeof season !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'season'" });
+      return;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.status(400).json({ error: "Missing or empty 'rows'" });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const saveRows = rows.map((r: any) => ({
+      season,
+      team: r.team,
+      updated_at: nowIso,
+      avg_opp_pr_total: r.avgOppYcTotal ?? null,
+      avg_opp_pr_conference: r.avgOppYcConf ?? null,
+      sos_srs_total: r.sosSrsTotal ?? null,
+      sos_srs_conference: r.sosSrsConf ?? null,
+      num_srs_runs: r.numSrsRuns ?? null,
+      best_win_pr_total: r.bestWinTotal?.rating ?? null,
+      best_win_pr_total_opp: r.bestWinTotal?.opp ?? null,
+      best_win_pr_conference: r.bestWinConf?.rating ?? null,
+      best_win_pr_conference_opp: r.bestWinConf?.opp ?? null,
+      best_loss_pr_total: r.bestLossTotal?.rating ?? null,
+      best_loss_pr_total_opp: r.bestLossTotal?.opp ?? null,
+      best_loss_pr_conference: r.bestLossConf?.rating ?? null,
+      best_loss_pr_conference_opp: r.bestLossConf?.opp ?? null,
+      worst_loss_pr_total: r.worstLossTotal?.rating ?? null,
+      worst_loss_pr_total_opp: r.worstLossTotal?.opp ?? null,
+      worst_loss_pr_conference: r.worstLossConf?.rating ?? null,
+      worst_loss_pr_conference_opp: r.worstLossConf?.opp ?? null,
+    }));
+
+    const { error, count } = await supabaseAdmin
+      .from("team_sos")
+      .upsert(saveRows, { onConflict: "season,team", count: "exact" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    res.status(200).json({ ok: true, saved: count ?? saveRows.length });
     return;
   }
 

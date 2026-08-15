@@ -179,7 +179,7 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
   }
 
   return (
-    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: 1150, margin: "0 auto" }}>
+    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: "none", margin: "0 auto" }}>
       <div className="team-hero">
         {onHome && (
           <button className="back-link" onClick={onHome}>

@@ -583,17 +583,21 @@ function SrsTab() {
     setSending(true);
     setSendMsg(null);
     try {
-      // Sign-flip: this engine's srs has higher = better, this site's
-      // rating_pulls convention (matching every other tracked system) is
-      // negative = better.
+      // Sign-flip: this engine's srs/vsrs have higher = better, this
+      // site's rating_pulls convention (matching every other tracked
+      // system) is negative = better. yc_vsrs isn't a system on the
+      // Rating Systems conglomerate page (it's not in RATING_SYSTEMS) —
+      // it rides along in rating_pulls purely so Admin Resume Rating's
+      // SRS/VSRS metrics can read a stable, admin-refreshed snapshot
+      // instead of re-simulating live on every page load.
       const rows = srsStats.map((r) => ({
         team: r.team,
         conference: r.conf,
         division: r.div,
-        values: { yc_srs: -r.srs },
+        values: { yc_srs: -r.srs, yc_vsrs: -r.vsrs },
       }));
       const result = await saveRatingRows(rows);
-      setSendMsg(`Sent ${rows.length} teams to Rating Systems as "YC SRS" (saved ${result.saved}).`);
+      setSendMsg(`Sent ${rows.length} teams to Rating Systems as "YC SRS" (SRS + VSRS, saved ${result.saved}).`);
     } catch (err: any) {
       setSendMsg(err.message ?? "Failed to send to Rating Systems");
     } finally {

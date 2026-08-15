@@ -19,9 +19,11 @@ import BetHistoryAdminPanel from "./BetHistoryAdminPanel";
 import MoneylineBetHistoryPanel from "./MoneylineBetHistoryPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
 import RatingSystemsPanel from "./RatingSystemsPanel";
+import SosAdminPanel from "./SosAdminPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
+import { WEEK_OPTIONS } from "../lib/weekOptions";
 
 // Maps flexible/human column headers (however you happen to label them when
 // pasting from a spreadsheet) to the actual database column names. Keys are
@@ -146,11 +148,6 @@ const NUMERIC_FIELDS = new Set([
   ...PERCENT_FIELDS,
 ]);
 
-const WEEK_OPTIONS = [
-  "preseason",
-  ...Array.from({ length: 16 }, (_, i) => `week${i + 1}`),
-];
-
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -224,7 +221,8 @@ type AdminView =
   | "gametotals"
   | "teamtotals"
   | "ratingsystems"
-  | "ratingmatchups";
+  | "ratingmatchups"
+  | "sos";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -652,6 +650,11 @@ function AdminDashboard({
           description="Same engine, split into home/away team totals with bet tracking."
           onClick={() => onNavigateView("teamtotals")}
         />
+        <MenuTile
+          label="Strength of Schedule"
+          description="Avg Opp PR (YC), SOS from SRS in Monte Carlo, Best/Worst Win/Loss PR — total and in-conference."
+          onClick={() => onNavigateView("sos")}
+        />
       </div>
     </div>
   );
@@ -865,11 +868,10 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
     <div
       className="page"
       style={{
-        maxWidth: ["matchups", "resumerating", "gametotals", "teamtotals", "ratingsystems", "ratingmatchups", "mlbethistory"].includes(
-          view
-        )
-          ? "none"
-          : 1000,
+        // Full width everywhere — almost every admin view has a wide table
+        // somewhere, and a narrow outer cap just forces that table into its
+        // own horizontal scrollbar instead of using the space available.
+        maxWidth: "none",
         margin: "2rem auto",
         padding: "0 1rem",
       }}
@@ -933,6 +935,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
       {view === "ratingsystems" && <RatingSystemsPanel onBack={() => setView("home")} />}
       {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
+
+      {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
 
       {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
       {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}

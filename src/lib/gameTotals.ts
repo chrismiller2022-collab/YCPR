@@ -1,7 +1,34 @@
-// Game Totals engine — the 5-system points-projection model, 6
-// composites, and team-total splitting. Pure functions throughout, no
-// data-fetching here — the admin page owns pulling TeamSeasonInputs from
-// Supabase and passing them in.
+// Game Totals engine — REWRITTEN from scratch (the old 5-system
+// yards/plays/drives engine is gone entirely, per instruction). This
+// version follows an "efficiency > volume, relative/opponent-adjusted,
+// pace-explicit, split by pass/rush" framework built on CFBD's advanced
+// stats (PPA, success rate, explosiveness, points per opportunity),
+// rather than raw yardage. Still a hand-built formula, not a trained
+// model — this app has no Python/ML runtime, and a formula is what was
+// asked for ("a formula so to speak").
+//
+// Shape of the model, end to end:
+//   1. League averages are computed once per season from every loaded
+//      team (computeLeagueAverages) — the normalization baseline every
+//      relative ratio below is measured against.
+//   2. For a given offense-vs-defense matchup, each side's own value in a
+//      metric is expressed relative to league average, and multiplied by
+//      the specific opponent's own relative value in that same metric —
+//      that's "matchupFactor" below. 1.0 = an exactly league-average
+//      matchup in that dimension; >1 favors the offense, <1 favors the
+//      defense.
+//   3. Pace is explicit and separate from efficiency: blendedPlays/
+//      blendedDrives/etc. reuse the exact "own full pace + half-weighted
+//      opponent pace" shape the OLD engine's System 1/2 validated against
+//      a real spreadsheet example — that shape is kept because it was
+//      empirically confirmed, not because it's part of the old systems.
+//   4. Six systems (SYSTEM_KEYS below) each combine a pace term with one
+//      or two matchup factors, anchored to the league's real scoring
+//      rate (ptsPerPlay/ptsPerDrive) so every system's output is already
+//      on a points scale — no arbitrary calibration constants.
+//   5. Systems combine into composites exactly like before: unweighted
+//      average, admin-weighted average, and versions regressed toward /
+//      averaged with the market's total.
 
 export interface TeamSeasonInputs {
   team: string;
@@ -13,7 +40,7 @@ export interface TeamSeasonInputs {
   offenseDrives: number;
   defenseDrives: number;
   totalYards: number;
-  totalYardsOpponent: number; // yards this team's defense allowed
+  totalYardsOpponent: number;
   passAttempts: number;
   netPassingYards: number;
   passAttemptsOpponent: number;
@@ -22,146 +49,364 @@ export interface TeamSeasonInputs {
   rushingYards: number;
   rushingAttemptsOpponent: number;
   rushingYardsOpponent: number;
+
+  // Advanced (CFBD /stats/season/advanced) — all nullable since early
+  // season / FCS coverage is spottier than the basic box-score stats
+  // above. A null value makes its matchupFactor default to neutral (1.0)
+  // rather than killing the whole system — see matchupFactor() below.
+  offPpa: number | null;
+  offSuccessRate: number | null;
+  offExplosiveness: number | null;
+  offPointsPerOpportunity: number | null;
+  offPowerSuccess: number | null;
+  offStuffRate: number | null;
+  offLineYards: number | null;
+  offStandardDownsPpa: number | null;
+  offStandardDownsSuccessRate: number | null;
+  offStandardDownsExplosiveness: number | null;
+  offPassingDownsPpa: number | null;
+  offPassingDownsSuccessRate: number | null;
+  offPassingDownsExplosiveness: number | null;
+  offRushingPlaysPpa: number | null;
+  offRushingPlaysSuccessRate: number | null;
+  offRushingPlaysExplosiveness: number | null;
+  offPassingPlaysPpa: number | null;
+  offPassingPlaysSuccessRate: number | null;
+  offPassingPlaysExplosiveness: number | null;
+  offFieldPositionAvgStart: number | null;
+  offFieldPositionAvgPredictedPoints: number | null;
+  offHavocTotal: number | null;
+  offHavocFrontSeven: number | null;
+  offHavocDb: number | null;
+
+  defPpa: number | null;
+  defSuccessRate: number | null;
+  defExplosiveness: number | null;
+  defPointsPerOpportunity: number | null;
+  defPowerSuccess: number | null;
+  defStuffRate: number | null;
+  defLineYards: number | null;
+  defStandardDownsPpa: number | null;
+  defStandardDownsSuccessRate: number | null;
+  defStandardDownsExplosiveness: number | null;
+  defPassingDownsPpa: number | null;
+  defPassingDownsSuccessRate: number | null;
+  defPassingDownsExplosiveness: number | null;
+  defRushingPlaysPpa: number | null;
+  defRushingPlaysSuccessRate: number | null;
+  defRushingPlaysExplosiveness: number | null;
+  defPassingPlaysPpa: number | null;
+  defPassingPlaysSuccessRate: number | null;
+  defPassingPlaysExplosiveness: number | null;
+  defFieldPositionAvgStart: number | null;
+  defFieldPositionAvgPredictedPoints: number | null;
+  defHavocTotal: number | null;
+  defHavocFrontSeven: number | null;
+  defHavocDb: number | null;
 }
 
-function offenseYardsPerPoint(t: TeamSeasonInputs): number {
-  return t.totalYards / t.pointsFor;
-}
-function defenseYardsPerPoint(t: TeamSeasonInputs): number {
-  return t.totalYardsOpponent / t.pointsAgainst;
-}
-
-/**
- * System 1: Points per Drive x Drives per Game. Uses a BLENDED game-level
- * pace — average of the offense's own Drives/Gm and the defense's own
- * Drives/Gm faced — rather than each team's own pace multiplying back
- * into its own rate (which would just reconstruct Points/Games and add
- * nothing System 3 doesn't already capture). This is what makes pace
- * matchups (a fast offense against a slow, clock-eating defense) actually
- * move the number.
- */
-/**
- * System 1: Points per Drive x Drives per Game — offense term uses the
- * team's OWN full pace (unblended, unhalved); defense term uses the
- * OPPONENT's own defense pace, but halved, deliberately down-weighting
- * one specific opponent's defensive tendency relative to the team's own
- * scoring history.
- *
- * This shape was reverse-engineered from the real spreadsheet formula
- * (=(B*C)+(D*F)/2) and confirmed empirically: tested across a full
- * plausible range of the one missing input, it lands at 49.8-53.5 for
- * the same real example game the spreadsheet gives ~51 for. An earlier
- * "blended pace, no halving" version was tried and retracted — it
- * consistently overshot to 61-70 across the same test range.
- */
-function system1(offenseTeam: TeamSeasonInputs, defenseTeam: TeamSeasonInputs): number {
-  const offPtsPerDrive = offenseTeam.pointsFor / offenseTeam.offenseDrives;
-  const offDrivesPerGame = offenseTeam.offenseDrives / offenseTeam.games;
-
-  const defPtsPerDriveAllowed = defenseTeam.pointsAgainst / defenseTeam.defenseDrives;
-  const defDrivesPerGameFaced = defenseTeam.defenseDrives / defenseTeam.games;
-
-  return offPtsPerDrive * offDrivesPerGame + (defPtsPerDriveAllowed * defDrivesPerGameFaced) / 2;
+// ---------------------------------------------------------------------
+// League averages — the normalization baseline. ptsPerPlay/ptsPerDrive
+// are POOLED (sum of points / sum of plays across every team) rather
+// than an average of each team's own ratio, which is the statistically
+// correct way to combine rates with different denominators. The
+// efficiency-metric averages are simple means of whatever teams have a
+// non-null value, since those are already rate stats on a comparable
+// scale team to team.
+// ---------------------------------------------------------------------
+export interface LeagueAverages {
+  ptsPerPlay: number;
+  ptsPerDrive: number;
+  offPpa: number;
+  defPpaAllowed: number;
+  offSuccessRate: number;
+  defSuccessRateAllowed: number;
+  offExplosiveness: number;
+  defExplosivenessAllowed: number;
+  offPointsPerOpportunity: number;
+  defPointsPerOpportunityAllowed: number;
+  offRushPpa: number;
+  defRushPpaAllowed: number;
+  offRushSuccessRate: number;
+  defRushSuccessRateAllowed: number;
+  offPassPpa: number;
+  defPassPpaAllowed: number;
+  offPassSuccessRate: number;
+  defPassSuccessRateAllowed: number;
 }
 
-/** System 2: same shape as System 1, Plays instead of Drives. */
-function system2(offenseTeam: TeamSeasonInputs, defenseTeam: TeamSeasonInputs): number {
-  const offPtsPerPlay = offenseTeam.pointsFor / offenseTeam.offensePlays;
-  const offPlaysPerGame = offenseTeam.offensePlays / offenseTeam.games;
-
-  const defPtsPerPlayAllowed = defenseTeam.pointsAgainst / defenseTeam.defensePlays;
-  const defPlaysPerGameFaced = defenseTeam.defensePlays / defenseTeam.games;
-
-  return offPtsPerPlay * offPlaysPerGame + (defPtsPerPlayAllowed * defPlaysPerGameFaced) / 2;
+function meanOf(values: (number | null | undefined)[]): number {
+  const valid = values.filter((v): v is number => v != null && !Number.isNaN(v));
+  if (valid.length === 0) return 0;
+  return valid.reduce((s, v) => s + v, 0) / valid.length;
 }
 
-/**
- * System 3: Off YPP x Off Plays/Gm = New Yards/Gm, divided by Yards Per
- * Point. Kept exactly as originally specified — still telescopes to
- * Points/Games with clean season totals (Systems 1 and 2 no longer do,
- * after the blended-pace fix above, but System 3 was left untouched per
- * instruction).
- */
-function system3(offenseTeam: TeamSeasonInputs, defenseTeam: TeamSeasonInputs): number {
-  const offYpp = offenseTeam.totalYards / offenseTeam.offensePlays;
-  const offPlaysPerGame = offenseTeam.offensePlays / offenseTeam.games;
-  const offNewYardsPerGame = offYpp * offPlaysPerGame;
-  const off = offNewYardsPerGame / offenseYardsPerPoint(offenseTeam);
-
-  const defYppAllowed = defenseTeam.totalYardsOpponent / defenseTeam.defensePlays;
-  const defPlaysPerGame = defenseTeam.defensePlays / defenseTeam.games;
-  const defNewYardsPerGame = defYppAllowed * defPlaysPerGame;
-  const def = defNewYardsPerGame / defenseYardsPerPoint(defenseTeam);
-
-  return (off + def) / 2;
+function sumOf(values: (number | null | undefined)[]): number {
+  return values.reduce((s: number, v) => s + (v ?? 0), 0);
 }
 
-/** System 4: pass-only yardage, divided by the same OVERALL (not pass-specific) Yards Per Point. */
-function system4(offenseTeam: TeamSeasonInputs, defenseTeam: TeamSeasonInputs): number {
-  const offPassYpa = offenseTeam.netPassingYards / offenseTeam.passAttempts;
-  const offPassPlaysPerGame = offenseTeam.passAttempts / offenseTeam.games;
-  const offNewPassYardsPerGame = offPassYpa * offPassPlaysPerGame;
-  const off = offNewPassYardsPerGame / offenseYardsPerPoint(offenseTeam);
+export function computeLeagueAverages(teams: TeamSeasonInputs[]): LeagueAverages {
+  const totalPoints = sumOf(teams.map((t) => t.pointsFor));
+  const totalPlays = sumOf(teams.map((t) => t.offensePlays));
+  const totalDrives = sumOf(teams.map((t) => t.offenseDrives));
 
-  const defPassYpaAllowed = defenseTeam.netPassingYardsOpponent / defenseTeam.passAttemptsOpponent;
-  const defPassPlaysPerGameAllowed = defenseTeam.passAttemptsOpponent / defenseTeam.games;
-  const defNewPassYardsPerGame = defPassYpaAllowed * defPassPlaysPerGameAllowed;
-  const def = defNewPassYardsPerGame / defenseYardsPerPoint(defenseTeam);
-
-  return (off + def) / 2;
+  return {
+    ptsPerPlay: totalPlays > 0 ? totalPoints / totalPlays : 0,
+    ptsPerDrive: totalDrives > 0 ? totalPoints / totalDrives : 0,
+    offPpa: meanOf(teams.map((t) => t.offPpa)),
+    defPpaAllowed: meanOf(teams.map((t) => t.defPpa)),
+    offSuccessRate: meanOf(teams.map((t) => t.offSuccessRate)),
+    defSuccessRateAllowed: meanOf(teams.map((t) => t.defSuccessRate)),
+    offExplosiveness: meanOf(teams.map((t) => t.offExplosiveness)),
+    defExplosivenessAllowed: meanOf(teams.map((t) => t.defExplosiveness)),
+    offPointsPerOpportunity: meanOf(teams.map((t) => t.offPointsPerOpportunity)),
+    defPointsPerOpportunityAllowed: meanOf(teams.map((t) => t.defPointsPerOpportunity)),
+    offRushPpa: meanOf(teams.map((t) => t.offRushingPlaysPpa)),
+    defRushPpaAllowed: meanOf(teams.map((t) => t.defRushingPlaysPpa)),
+    offRushSuccessRate: meanOf(teams.map((t) => t.offRushingPlaysSuccessRate)),
+    defRushSuccessRateAllowed: meanOf(teams.map((t) => t.defRushingPlaysSuccessRate)),
+    offPassPpa: meanOf(teams.map((t) => t.offPassingPlaysPpa)),
+    defPassPpaAllowed: meanOf(teams.map((t) => t.defPassingPlaysPpa)),
+    offPassSuccessRate: meanOf(teams.map((t) => t.offPassingPlaysSuccessRate)),
+    defPassSuccessRateAllowed: meanOf(teams.map((t) => t.defPassingPlaysSuccessRate)),
+  };
 }
 
-/** System 5: rush-only yardage, same shape as System 4. */
-function system5(offenseTeam: TeamSeasonInputs, defenseTeam: TeamSeasonInputs): number {
-  const offRushYpa = offenseTeam.rushingYards / offenseTeam.rushingAttempts;
-  const offRushPlaysPerGame = offenseTeam.rushingAttempts / offenseTeam.games;
-  const offNewRushYardsPerGame = offRushYpa * offRushPlaysPerGame;
-  const off = offNewRushYardsPerGame / offenseYardsPerPoint(offenseTeam);
-
-  const defRushYpaAllowed = defenseTeam.rushingYardsOpponent / defenseTeam.rushingAttemptsOpponent;
-  const defRushPlaysPerGameAllowed = defenseTeam.rushingAttemptsOpponent / defenseTeam.games;
-  const defNewRushYardsPerGame = defRushYpaAllowed * defRushPlaysPerGameAllowed;
-  const def = defNewRushYardsPerGame / defenseYardsPerPoint(defenseTeam);
-
-  return (off + def) / 2;
+// ---------------------------------------------------------------------
+// Matchup factor: this team's own value in a metric, relative to league
+// average, times the SPECIFIC opponent's own value in that metric,
+// relative to league average. 1.0 = league-average matchup. A null input
+// (missing advanced-stat data) falls back to a neutral 1.0 ratio rather
+// than propagating null through the whole system — early-season or
+// sparsely-tracked teams still get a system output, it just leans more
+// on pace/pure scoring rate until their efficiency data fills in.
+// ---------------------------------------------------------------------
+function ratio(value: number | null, leagueAvg: number): number {
+  if (value == null || leagueAvg === 0) return 1;
+  return value / leagueAvg;
 }
 
-export interface SystemResults {
-  s1: number;
-  s2: number;
-  s3: number;
-  s4: number;
-  s5: number;
-  s45: number; // System 4 + System 5, summed — treated as one slot
+function matchupFactor(offValue: number | null, leagueOffAvg: number, defAllowedValue: number | null, leagueDefAvg: number): number {
+  return ratio(offValue, leagueOffAvg) * ratio(defAllowedValue, leagueDefAvg);
 }
 
-/** All 5 systems for one team, playing as "offense" against the given opponent's "defense." */
-export function computeSystemResults(team: TeamSeasonInputs, opponent: TeamSeasonInputs): SystemResults {
-  const s1 = system1(team, opponent);
-  const s2 = system2(team, opponent);
-  const s3 = system3(team, opponent);
-  const s4 = system4(team, opponent);
-  const s5 = system5(team, opponent);
-  return { s1, s2, s3, s4, s5, s45: s4 + s5 };
+// Geometric mean of two matchup factors — used when a system blends two
+// metrics (e.g. PPA x Success Rate: how VALUABLE plays are x how OFTEN
+// they succeed). A plain product would compound both factors' deviation
+// from 1.0 on top of each other (two +20% factors multiplying to +44%,
+// not +20%); the geometric mean keeps the combined swing on the same
+// scale as either factor alone while still rewarding alignment between
+// the two metrics over either one alone.
+function geoMean(a: number, b: number): number {
+  const product = a * b;
+  return product > 0 ? Math.sqrt(product) : (a + b) / 2;
 }
 
-/** Team total: plain average of [S1, S2, S3, (S4+S5)] — a 4-item average. */
+// ---------------------------------------------------------------------
+// Blended pace — reused verbatim from the old engine's empirically
+// validated shape (own full per-game rate + HALF the specific opponent's
+// own per-game rate). This shape isn't part of "the old systems" being
+// ditched; it's a pace primitive that was reverse-engineered from a real
+// spreadsheet example and confirmed against it, so it's kept as the
+// pace foundation for every new system below.
+// ---------------------------------------------------------------------
+function perGame(total: number, games: number): number {
+  return games > 0 ? total / games : 0;
+}
+
+function blendedPlays(offense: TeamSeasonInputs, defense: TeamSeasonInputs): number {
+  return perGame(offense.offensePlays, offense.games) + perGame(defense.defensePlays, defense.games) / 2;
+}
+function blendedDrives(offense: TeamSeasonInputs, defense: TeamSeasonInputs): number {
+  return perGame(offense.offenseDrives, offense.games) + perGame(defense.defenseDrives, defense.games) / 2;
+}
+function blendedRushAttempts(offense: TeamSeasonInputs, defense: TeamSeasonInputs): number {
+  return perGame(offense.rushingAttempts, offense.games) + perGame(defense.rushingAttemptsOpponent, defense.games) / 2;
+}
+function blendedPassAttempts(offense: TeamSeasonInputs, defense: TeamSeasonInputs): number {
+  return perGame(offense.passAttempts, offense.games) + perGame(defense.passAttemptsOpponent, defense.games) / 2;
+}
+
+// ---------------------------------------------------------------------
+// The six systems. Each projects ONE team's points, playing offense
+// against a specific opponent's defense. Rush/Pass use the OVERALL
+// league ptsPerPlay (not a rush-specific or pass-specific scoring rate)
+// as their point-scale anchor — same choice the old engine's System 4/5
+// made for pass/rush yardage (dividing by the overall, not split, yards
+// per point), kept here for the same reason: it keeps every system's
+// output on one consistent, comparable scale.
+// ---------------------------------------------------------------------
+function systemPpaSuccessRate(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const plays = blendedPlays(offense, defense);
+  const ppaFactor = matchupFactor(offense.offPpa, league.offPpa, defense.defPpa, league.defPpaAllowed);
+  const srFactor = matchupFactor(offense.offSuccessRate, league.offSuccessRate, defense.defSuccessRate, league.defSuccessRateAllowed);
+  return league.ptsPerPlay * plays * geoMean(ppaFactor, srFactor);
+}
+
+function systemSuccessRate(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const plays = blendedPlays(offense, defense);
+  const factor = matchupFactor(offense.offSuccessRate, league.offSuccessRate, defense.defSuccessRate, league.defSuccessRateAllowed);
+  return league.ptsPerPlay * plays * factor;
+}
+
+function systemExplosiveness(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const plays = blendedPlays(offense, defense);
+  const factor = matchupFactor(offense.offExplosiveness, league.offExplosiveness, defense.defExplosiveness, league.defExplosivenessAllowed);
+  return league.ptsPerPlay * plays * factor;
+}
+
+function systemPointsPerOpportunity(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const drives = blendedDrives(offense, defense);
+  const factor = matchupFactor(
+    offense.offPointsPerOpportunity,
+    league.offPointsPerOpportunity,
+    defense.defPointsPerOpportunity,
+    league.defPointsPerOpportunityAllowed
+  );
+  return league.ptsPerDrive * drives * factor;
+}
+
+function systemRush(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const attempts = blendedRushAttempts(offense, defense);
+  const ppaFactor = matchupFactor(offense.offRushingPlaysPpa, league.offRushPpa, defense.defRushingPlaysPpa, league.defRushPpaAllowed);
+  const srFactor = matchupFactor(
+    offense.offRushingPlaysSuccessRate,
+    league.offRushSuccessRate,
+    defense.defRushingPlaysSuccessRate,
+    league.defRushSuccessRateAllowed
+  );
+  return league.ptsPerPlay * attempts * geoMean(ppaFactor, srFactor);
+}
+
+function systemPass(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): number {
+  const attempts = blendedPassAttempts(offense, defense);
+  const ppaFactor = matchupFactor(offense.offPassingPlaysPpa, league.offPassPpa, defense.defPassingPlaysPpa, league.defPassPpaAllowed);
+  const srFactor = matchupFactor(
+    offense.offPassingPlaysSuccessRate,
+    league.offPassSuccessRate,
+    defense.defPassingPlaysSuccessRate,
+    league.defPassSuccessRateAllowed
+  );
+  return league.ptsPerPlay * attempts * geoMean(ppaFactor, srFactor);
+}
+
+export const SYSTEM_KEYS = ["ppaSr", "successRate", "explosiveness", "pointsPerOpp", "rush", "pass"] as const;
+export type SystemKey = (typeof SYSTEM_KEYS)[number];
+
+export const SYSTEM_LABELS: Record<SystemKey, string> = {
+  ppaSr: "PPA x Success Rate",
+  successRate: "Success Rate",
+  explosiveness: "Explosiveness",
+  pointsPerOpp: "Points per Opportunity",
+  rush: "Rush Efficiency",
+  pass: "Pass Efficiency",
+};
+
+export type SystemResults = Record<SystemKey, number>;
+
+/** All 6 systems for one team, playing as "offense" against the given opponent's "defense." */
+export function computeSystemResults(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): SystemResults {
+  return {
+    ppaSr: systemPpaSuccessRate(offense, defense, league),
+    successRate: systemSuccessRate(offense, defense, league),
+    explosiveness: systemExplosiveness(offense, defense, league),
+    pointsPerOpp: systemPointsPerOpportunity(offense, defense, league),
+    rush: systemRush(offense, defense, league),
+    pass: systemPass(offense, defense, league),
+  };
+}
+
+export type SystemWeights = Record<SystemKey, number>;
+export const DEFAULT_SYSTEM_WEIGHTS: SystemWeights = Object.fromEntries(SYSTEM_KEYS.map((k) => [k, 1])) as SystemWeights;
+
+/** Team total: plain average across all 6 systems. */
 export function teamTotal(r: SystemResults): number {
-  return (r.s1 + r.s2 + r.s3 + r.s45) / 4;
+  const vals = SYSTEM_KEYS.map((k) => r[k]);
+  return vals.reduce((s, v) => s + v, 0) / vals.length;
 }
 
-/** Team total, Composite-2 style: weighted average of [S1, S2, S3, (S4+S5)]. Default weights [2,2,1,1]. */
-export function teamTotalWeighted(r: SystemResults, weights: [number, number, number, number] = [2, 2, 1, 1]): number {
-  const [w1, w2, w3, w45] = weights;
-  const weightSum = w1 + w2 + w3 + w45;
-  return (r.s1 * w1 + r.s2 * w2 + r.s3 * w3 + r.s45 * w45) / weightSum;
+/** Team total, weighted average across all 6 systems. */
+export function teamTotalWeighted(r: SystemResults, weights: SystemWeights = DEFAULT_SYSTEM_WEIGHTS): number {
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (const k of SYSTEM_KEYS) {
+    const w = weights[k] ?? 0;
+    weightedSum += r[k] * w;
+    weightTotal += w;
+  }
+  return weightTotal > 0 ? weightedSum / weightTotal : 0;
 }
 
+// ---------------------------------------------------------------------
+// Efficiency Inputs — the matchup factors + blended pace terms feeding
+// the systems above, exposed on their own so the admin page can show the
+// "work" between raw advanced stats and final system outputs, the same
+// role the old engine's SystemInputs played.
+// ---------------------------------------------------------------------
+export interface EfficiencyInputs {
+  blendedPlays: number;
+  blendedDrives: number;
+  blendedRushAttempts: number;
+  blendedPassAttempts: number;
+  ppaFactor: number;
+  successRateFactor: number;
+  explosivenessFactor: number;
+  pointsPerOppFactor: number;
+  rushPpaFactor: number;
+  rushSuccessRateFactor: number;
+  passPpaFactor: number;
+  passSuccessRateFactor: number;
+}
+
+export function computeEfficiencyInputs(offense: TeamSeasonInputs, defense: TeamSeasonInputs, league: LeagueAverages): EfficiencyInputs {
+  return {
+    blendedPlays: blendedPlays(offense, defense),
+    blendedDrives: blendedDrives(offense, defense),
+    blendedRushAttempts: blendedRushAttempts(offense, defense),
+    blendedPassAttempts: blendedPassAttempts(offense, defense),
+    ppaFactor: matchupFactor(offense.offPpa, league.offPpa, defense.defPpa, league.defPpaAllowed),
+    successRateFactor: matchupFactor(offense.offSuccessRate, league.offSuccessRate, defense.defSuccessRate, league.defSuccessRateAllowed),
+    explosivenessFactor: matchupFactor(
+      offense.offExplosiveness,
+      league.offExplosiveness,
+      defense.defExplosiveness,
+      league.defExplosivenessAllowed
+    ),
+    pointsPerOppFactor: matchupFactor(
+      offense.offPointsPerOpportunity,
+      league.offPointsPerOpportunity,
+      defense.defPointsPerOpportunity,
+      league.defPointsPerOpportunityAllowed
+    ),
+    rushPpaFactor: matchupFactor(offense.offRushingPlaysPpa, league.offRushPpa, defense.defRushingPlaysPpa, league.defRushPpaAllowed),
+    rushSuccessRateFactor: matchupFactor(
+      offense.offRushingPlaysSuccessRate,
+      league.offRushSuccessRate,
+      defense.defRushingPlaysSuccessRate,
+      league.defRushSuccessRateAllowed
+    ),
+    passPpaFactor: matchupFactor(offense.offPassingPlaysPpa, league.offPassPpa, defense.defPassingPlaysPpa, league.defPassPpaAllowed),
+    passSuccessRateFactor: matchupFactor(
+      offense.offPassingPlaysSuccessRate,
+      league.offPassSuccessRate,
+      defense.defPassingPlaysSuccessRate,
+      league.defPassSuccessRateAllowed
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------
+// Odds / composites / bet grading / team-total splitting — UNCHANGED
+// from the old engine. None of this is a "system"; it's the generic
+// layer that combines whatever systems exist into a total, compares
+// against the market, and grades results. Still applies as-is to the
+// new 6-system pool above.
+// ---------------------------------------------------------------------
 export interface GameOdds {
-  vegasTotal: number | null; // current/closing over_under, falls back to opening if that's all that's synced
+  vegasTotal: number | null;
   vegasTotalIsOpeningFallback: boolean;
   openingTotal: number | null;
-  closingTotal: number | null; // "close or live" — whatever the most recent synced total is
+  closingTotal: number | null;
 }
 
 export function resolveGameOdds(currentOverUnder: number | null, openingOverUnder: number | null): GameOdds {
@@ -180,7 +425,7 @@ export interface CompositeResults {
   composite1: number; // team1 + team2, unweighted
   composite2: number; // team1 + team2, weighted
   composite3: number | null; // composite1 regressed toward Vegas total — null if no Vegas total synced
-  composite4: number | null; // avg[opening, closing, composite1] — null if neither opening nor closing exists
+  composite4: number | null; // avg[opening, closing, composite1]
   composite5: number | null; // avg[opening, closing, composite2]
   composite6: number | null; // avg[opening, closing, composite3]
 }
@@ -189,9 +434,9 @@ export function computeComposites(
   team1Results: SystemResults,
   team2Results: SystemResults,
   odds: GameOdds,
-  options: { weights?: [number, number, number, number]; regressPct?: number } = {}
+  options: { weights?: SystemWeights; regressPct?: number } = {}
 ): CompositeResults {
-  const weights = options.weights ?? [2, 2, 1, 1];
+  const weights = options.weights ?? DEFAULT_SYSTEM_WEIGHTS;
   const regressPct = options.regressPct ?? 0.3;
 
   const t1Total = teamTotal(team1Results);
@@ -202,9 +447,6 @@ export function computeComposites(
   const t2TotalW = teamTotalWeighted(team2Results, weights);
   const composite2 = t1TotalW + t2TotalW;
 
-  // Regress toward close/live when available, opening as fallback —
-  // per instruction. If neither exists, Composite 3 has nothing to
-  // regress toward and is left null (not silently treated as 0% blend).
   const regressTarget = odds.closingTotal ?? odds.openingTotal ?? null;
   const composite3 = regressTarget != null ? composite1 * (1 - regressPct) + regressTarget * regressPct : null;
 
@@ -221,14 +463,6 @@ export function computeComposites(
   return { composite1, composite2, composite3, composite4, composite5, composite6 };
 }
 
-// ---------------------------------------------------------------------
-// Team-total splitting: subtract the spread from the total, halve,
-// add the spread back to the favorite (the underdog is left as-is).
-// Spread convention here: from the FAVORITE team's own perspective it
-// would be negative — this function takes the spread as "points the
-// home team is favored by" (negative = home favored, matching the
-// site's vegasAwaySpread-flipped convention) and returns {home, away}.
-// ---------------------------------------------------------------------
 export interface TeamSplit {
   home: number | null;
   away: number | null;
@@ -236,7 +470,6 @@ export interface TeamSplit {
 
 export function splitTeamTotal(total: number | null, homeSpread: number | null): TeamSplit {
   if (total == null || homeSpread == null) return { home: null, away: null };
-  // homeSpread negative = home favored, positive = away favored.
   const half = (total - Math.abs(homeSpread)) / 2;
   const favoriteHalf = half + Math.abs(homeSpread);
   const homeIsFavorite = homeSpread < 0;
@@ -245,80 +478,12 @@ export function splitTeamTotal(total: number | null, homeSpread: number | null):
 
 export type SpreadSource = "vegas" | "mine" | "vegas-fill-mine";
 
-/**
- * Resolves which spread to use for team-total splitting, per the
- * 3-way toggle: all-Vegas (blank where no Vegas spread synced), all-mine
- * (own projected spread, never blank), or Vegas-where-available else
- * mine (hybrid, never blank). A missing spread only blanks the TEAM
- * SPLIT for that game — it never affects the game-level composite
- * totals, which don't need a spread at all.
- */
 export function resolveSplitSpread(mode: SpreadSource, vegasSpread: number | null, myProjSpread: number): number | null {
   if (mode === "vegas") return vegasSpread;
   if (mode === "mine") return myProjSpread;
   return vegasSpread ?? myProjSpread;
 }
 
-// ---------------------------------------------------------------------
-// System Inputs — the derived per-team rates/paces that feed the five
-// systems, exposed on their own so the admin page can show the "work"
-// between raw stats and final system outputs. Per-team, not per-matchup
-// (the blended pace itself IS per-matchup — computed at display time by
-// combining two teams' own paces from here).
-// ---------------------------------------------------------------------
-export interface SystemInputs {
-  offPtsPerDrive: number;
-  offDrivesPerGame: number;
-  defPtsPerDriveAllowed: number;
-  defDrivesPerGameFaced: number;
-  offPtsPerPlay: number;
-  offPlaysPerGame: number;
-  defPtsPerPlayAllowed: number;
-  defPlaysPerGameFaced: number;
-  offYpp: number;
-  offYardsPerPoint: number;
-  defYppAllowed: number;
-  defYardsPerPoint: number;
-  offPassYpa: number;
-  offPassPlaysPerGame: number;
-  defPassYpaAllowed: number;
-  defPassPlaysPerGameFaced: number;
-  offRushYpa: number;
-  offRushPlaysPerGame: number;
-  defRushYpaAllowed: number;
-  defRushPlaysPerGameFaced: number;
-}
-
-export function computeSystemInputs(t: TeamSeasonInputs): SystemInputs {
-  return {
-    offPtsPerDrive: t.pointsFor / t.offenseDrives,
-    offDrivesPerGame: t.offenseDrives / t.games,
-    defPtsPerDriveAllowed: t.pointsAgainst / t.defenseDrives,
-    defDrivesPerGameFaced: t.defenseDrives / t.games,
-    offPtsPerPlay: t.pointsFor / t.offensePlays,
-    offPlaysPerGame: t.offensePlays / t.games,
-    defPtsPerPlayAllowed: t.pointsAgainst / t.defensePlays,
-    defPlaysPerGameFaced: t.defensePlays / t.games,
-    offYpp: t.totalYards / t.offensePlays,
-    offYardsPerPoint: offenseYardsPerPoint(t),
-    defYppAllowed: t.totalYardsOpponent / t.defensePlays,
-    defYardsPerPoint: defenseYardsPerPoint(t),
-    offPassYpa: t.netPassingYards / t.passAttempts,
-    offPassPlaysPerGame: t.passAttempts / t.games,
-    defPassYpaAllowed: t.netPassingYardsOpponent / t.passAttemptsOpponent,
-    defPassPlaysPerGameFaced: t.passAttemptsOpponent / t.games,
-    offRushYpa: t.rushingYards / t.rushingAttempts,
-    offRushPlaysPerGame: t.rushingAttempts / t.games,
-    defRushYpaAllowed: t.rushingYardsOpponent / t.rushingAttemptsOpponent,
-    defRushPlaysPerGameFaced: t.rushingAttemptsOpponent / t.games,
-  };
-}
-
-// ---------------------------------------------------------------------
-// Bets, filtering, and grading — shared by both the Game Totals and
-// Team Totals admin pages (Team Totals just runs these twice per game,
-// once for each team's split total).
-// ---------------------------------------------------------------------
 export function stdDev(values: number[]): number {
   if (values.length === 0) return 0;
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
@@ -327,7 +492,7 @@ export function stdDev(values: number[]): number {
 }
 
 export interface BetCall {
-  amountOff: number | null; // signed: composite - vegasLine. Positive = composite likes the Over.
+  amountOff: number | null;
   call: "Over" | "Under" | null;
 }
 
@@ -338,14 +503,6 @@ export function determineBetCall(compositeValue: number | null, vegasLine: numbe
   return { amountOff, call: amountOff > 0 ? "Over" : "Under" };
 }
 
-/**
- * Filtered Bet: is this game's amount-off at least `thresholdMultiplier`
- * standard deviations away from the line, using the STD DEV OF THIS
- * COMPOSITE'S amount-off values ACROSS EVERY GAME in the current pool
- * (computed by the caller via stdDev() over all games' amountOff for
- * this composite, then passed in here per-game). Default threshold is
- * half a standard deviation; customizable.
- */
 export function isFilteredBet(amountOff: number | null, poolStdDev: number, thresholdMultiplier = 0.5): boolean {
   if (amountOff == null || poolStdDev === 0) return false;
   return Math.abs(amountOff) >= thresholdMultiplier * poolStdDev;
@@ -368,23 +525,21 @@ export function gradeBetCall(call: "Over" | "Under" | null, actualResult: OverUn
   return call.toLowerCase() === actualResult ? "win" : "loss";
 }
 
-// ---------------------------------------------------------------------
-// Full per-game bundle — ties everything above together for one game.
-// ---------------------------------------------------------------------
 export interface GameProjection {
-  homeResults: SystemResults; // home team's own 5 systems (home offense vs away defense)
-  awayResults: SystemResults; // away team's own 5 systems (away offense vs home defense)
+  homeResults: SystemResults;
+  awayResults: SystemResults;
   composites: CompositeResults;
 }
 
 export function computeGameProjection(
   home: TeamSeasonInputs,
   away: TeamSeasonInputs,
+  league: LeagueAverages,
   odds: GameOdds,
-  options: { weights?: [number, number, number, number]; regressPct?: number } = {}
+  options: { weights?: SystemWeights; regressPct?: number } = {}
 ): GameProjection {
-  const homeResults = computeSystemResults(home, away);
-  const awayResults = computeSystemResults(away, home);
+  const homeResults = computeSystemResults(home, away, league);
+  const awayResults = computeSystemResults(away, home, league);
   const composites = computeComposites(homeResults, awayResults, odds, options);
   return { homeResults, awayResults, composites };
 }

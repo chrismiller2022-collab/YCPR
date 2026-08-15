@@ -211,17 +211,75 @@ export default async function handler(req: any, res: any) {
       // established CFBD API convention (matches how the CSV exporter's
       // "Offense Plays"/"Defense Plays" columns are flattened from
       // offense.plays/defense.plays). NOT verified against a live
-      // response yet — worth checking the first real sync's stored
-      // offense_plays/defense_plays values against the exporter CSV to
-      // confirm these landed, since a wrong nesting assumption here
-      // would silently store nulls rather than error.
+      // response yet — every field below is read with optional chaining
+      // so a wrong nesting assumption produces nulls, not a thrown error;
+      // worth checking a real synced row against CFBD's docs/an actual
+      // response the first time this runs. This used to only keep
+      // plays/drives — the Game Totals engine now runs on the full
+      // efficiency set (PPA/success rate/explosiveness/points-per-
+      // opportunity/havoc/etc.), so everything CFBD gives us here gets
+      // stored instead of discarded.
       const advancedStats = await cfbdFetch(`/stats/season/advanced?year=${year}`);
       for (const row of advancedStats ?? []) {
         const entry = byTeam.get(row.team) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
-        entry.offense_plays = row.offense?.plays ?? null;
-        entry.offense_drives = row.offense?.drives ?? null;
-        entry.defense_plays = row.defense?.plays ?? null;
-        entry.defense_drives = row.defense?.drives ?? null;
+        const off = row.offense ?? {};
+        const def = row.defense ?? {};
+
+        entry.offense_plays = off.plays ?? null;
+        entry.offense_drives = off.drives ?? null;
+        entry.defense_plays = def.plays ?? null;
+        entry.defense_drives = def.drives ?? null;
+
+        entry.off_ppa = off.ppa ?? null;
+        entry.off_success_rate = off.successRate ?? null;
+        entry.off_explosiveness = off.explosiveness ?? null;
+        entry.off_points_per_opportunity = off.pointsPerOpportunity ?? null;
+        entry.off_power_success = off.powerSuccess ?? null;
+        entry.off_stuff_rate = off.stuffRate ?? null;
+        entry.off_line_yards = off.lineYards ?? null;
+        entry.off_standard_downs_ppa = off.standardDowns?.ppa ?? null;
+        entry.off_standard_downs_success_rate = off.standardDowns?.successRate ?? null;
+        entry.off_standard_downs_explosiveness = off.standardDowns?.explosiveness ?? null;
+        entry.off_passing_downs_ppa = off.passingDowns?.ppa ?? null;
+        entry.off_passing_downs_success_rate = off.passingDowns?.successRate ?? null;
+        entry.off_passing_downs_explosiveness = off.passingDowns?.explosiveness ?? null;
+        entry.off_rushing_plays_ppa = off.rushingPlays?.ppa ?? null;
+        entry.off_rushing_plays_success_rate = off.rushingPlays?.successRate ?? null;
+        entry.off_rushing_plays_explosiveness = off.rushingPlays?.explosiveness ?? null;
+        entry.off_passing_plays_ppa = off.passingPlays?.ppa ?? null;
+        entry.off_passing_plays_success_rate = off.passingPlays?.successRate ?? null;
+        entry.off_passing_plays_explosiveness = off.passingPlays?.explosiveness ?? null;
+        entry.off_field_position_avg_start = off.fieldPosition?.averageStart ?? null;
+        entry.off_field_position_avg_predicted_points = off.fieldPosition?.averagePredictedPoints ?? null;
+        entry.off_havoc_total = off.havoc?.total ?? null;
+        entry.off_havoc_front_seven = off.havoc?.frontSeven ?? null;
+        entry.off_havoc_db = off.havoc?.db ?? null;
+
+        entry.def_ppa = def.ppa ?? null;
+        entry.def_success_rate = def.successRate ?? null;
+        entry.def_explosiveness = def.explosiveness ?? null;
+        entry.def_points_per_opportunity = def.pointsPerOpportunity ?? null;
+        entry.def_power_success = def.powerSuccess ?? null;
+        entry.def_stuff_rate = def.stuffRate ?? null;
+        entry.def_line_yards = def.lineYards ?? null;
+        entry.def_standard_downs_ppa = def.standardDowns?.ppa ?? null;
+        entry.def_standard_downs_success_rate = def.standardDowns?.successRate ?? null;
+        entry.def_standard_downs_explosiveness = def.standardDowns?.explosiveness ?? null;
+        entry.def_passing_downs_ppa = def.passingDowns?.ppa ?? null;
+        entry.def_passing_downs_success_rate = def.passingDowns?.successRate ?? null;
+        entry.def_passing_downs_explosiveness = def.passingDowns?.explosiveness ?? null;
+        entry.def_rushing_plays_ppa = def.rushingPlays?.ppa ?? null;
+        entry.def_rushing_plays_success_rate = def.rushingPlays?.successRate ?? null;
+        entry.def_rushing_plays_explosiveness = def.rushingPlays?.explosiveness ?? null;
+        entry.def_passing_plays_ppa = def.passingPlays?.ppa ?? null;
+        entry.def_passing_plays_success_rate = def.passingPlays?.successRate ?? null;
+        entry.def_passing_plays_explosiveness = def.passingPlays?.explosiveness ?? null;
+        entry.def_field_position_avg_start = def.fieldPosition?.averageStart ?? null;
+        entry.def_field_position_avg_predicted_points = def.fieldPosition?.averagePredictedPoints ?? null;
+        entry.def_havoc_total = def.havoc?.total ?? null;
+        entry.def_havoc_front_seven = def.havoc?.frontSeven ?? null;
+        entry.def_havoc_db = def.havoc?.db ?? null;
+
         byTeam.set(row.team, entry);
       }
 

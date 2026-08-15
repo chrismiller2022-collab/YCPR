@@ -100,15 +100,24 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
 };
 
 // No real data source wired up yet. Weight sliders exist for these in the
-// UI, but the value is always null until the upstream data exists:
-// SRS/VSRS wait on the Monte Carlo SRS build, PGWE needs a CFBD sync
-// change to pull postgame win probability (neither built yet).
-export const STUBBED_METRICS: (keyof RawResumeMetrics)[] = ["expWins", "srs", "vsrs"];
+// UI, but the value is always null until the upstream data exists: PGWE
+// needs a CFBD sync change to pull postgame win probability (not built
+// yet). SRS/VSRS now pull from the "YC SRS" snapshot in rating_pulls (see
+// srsByTeam/vsrsByTeam below) — no longer stubbed.
+export const STUBBED_METRICS: (keyof RawResumeMetrics)[] = ["expWins"];
 
 export function computeRawResumeMetrics(
   team: any,
   seasonGames: GameWithLines[],
-  liveByTeam: Record<string, any>
+  liveByTeam: Record<string, any>,
+  // Sourced from rating_pulls' "yc_srs"/"yc_vsrs" system keys — the same
+  // sign-flipped (negative = better), admin-refreshed snapshot the Monte
+  // Carlo SRS tab's "Send to Rating Systems" button writes. Deliberately
+  // NOT a live per-page-load re-simulation: that engine draws fresh random
+  // margins for every uncompleted game, so a live number would jump around
+  // on every render instead of being a stable resume input.
+  srsByTeam: Record<string, number | null> = {},
+  vsrsByTeam: Record<string, number | null> = {}
 ): RawResumeMetrics {
   const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
@@ -209,8 +218,8 @@ export function computeRawResumeMetrics(
     winLossDiff: actWins - losses,
     confChampWinPct: liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null,
     powerRating: teamRating,
-    srs: null,
-    vsrs: null,
+    srs: srsByTeam[team.team] ?? null,
+    vsrs: vsrsByTeam[team.team] ?? null,
     avgProjLine: projLineN > 0 ? sumProjLine / projLineN : null,
     avgActLine: actLineN > 0 ? sumActLine / actLineN : null,
     mov: sumProjMov, // TEMPORARY: sum of projected margins for now — swap to real completed-games average margin once games start

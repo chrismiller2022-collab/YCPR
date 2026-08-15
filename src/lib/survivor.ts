@@ -147,3 +147,86 @@ export function allUsedTeams(picks: Record<string, string[]>): Set<string> {
   Object.values(picks).forEach((arr) => arr.forEach((t) => set.add(t)));
   return set;
 }
+
+// ---------------------------------------------------------------------
+// Spread ranks — for every (team, week) cell with an eligible opponent,
+// two ranks: where that spread falls among ALL teams' eligible games that
+// same week (1 = biggest favorite in the whole slate that week), and where
+// it falls among THIS team's own eligible games across the whole season
+// (1 = this team's single best matchup all year). "Eligible" here is
+// isOpponentEligible only (opponent FBS + in a selected conference) —
+// deliberately independent of whether a team/week is already used in the
+// in-progress picks, since this is about comparing matchup quality, not
+// current pick state. Used to flag "this is the biggest favorite this
+// week, but only their Nth-biggest all season — maybe save them."
+// ---------------------------------------------------------------------
+export interface SpreadRank {
+  weekRank: number;
+  weekPoolSize: number;
+  seasonRank: number;
+  seasonPoolSize: number;
+}
+
+export function computeSpreadRanks(
+  teams: Team[],
+  selectedConfs: Set<string>,
+  liveByTeam?: Record<string, any>
+): Map<string, SpreadRank> {
+  interface Entry {
+    team: string;
+    weekKey: string;
+    spread: number;
+  }
+  const entries: Entry[] = [];
+  for (const team of teams) {
+    for (const week of SURVIVOR_WEEKS) {
+      const game = gameForTeamInWeek(team.team, week.dataWeek);
+      if (!game) continue;
+      const opp = opponentOf(game, team.team);
+      if (!isOpponentEligible(opp, selectedConfs)) continue;
+      entries.push({ team: team.team, weekKey: week.key, spread: teamSpread(team, opp!, game, liveByTeam) });
+    }
+  }
+
+  const cellKey = (team: string, weekKey: string) => `${team}::${weekKey}`;
+
+  const byWeek = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const list = byWeek.get(e.weekKey) ?? [];
+    list.push(e);
+    byWeek.set(e.weekKey, list);
+  }
+  const weekRankOf = new Map<string, number>();
+  const weekPoolSizeOf = new Map<string, number>();
+  for (const [weekKey, list] of byWeek) {
+    const sorted = [...list].sort((a, b) => a.spread - b.spread); // most negative (biggest favorite) first
+    sorted.forEach((e, i) => weekRankOf.set(cellKey(e.team, e.weekKey), i + 1));
+    weekPoolSizeOf.set(weekKey, sorted.length);
+  }
+
+  const byTeam = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const list = byTeam.get(e.team) ?? [];
+    list.push(e);
+    byTeam.set(e.team, list);
+  }
+  const seasonRankOf = new Map<string, number>();
+  const seasonPoolSizeOf = new Map<string, number>();
+  for (const [team, list] of byTeam) {
+    const sorted = [...list].sort((a, b) => a.spread - b.spread);
+    sorted.forEach((e, i) => seasonRankOf.set(cellKey(e.team, e.weekKey), i + 1));
+    seasonPoolSizeOf.set(team, sorted.length);
+  }
+
+  const out = new Map<string, SpreadRank>();
+  for (const e of entries) {
+    const key = cellKey(e.team, e.weekKey);
+    out.set(key, {
+      weekRank: weekRankOf.get(key)!,
+      weekPoolSize: weekPoolSizeOf.get(e.weekKey)!,
+      seasonRank: seasonRankOf.get(key)!,
+      seasonPoolSize: seasonPoolSizeOf.get(e.team)!,
+    });
+  }
+  return out;
+}

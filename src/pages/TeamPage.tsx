@@ -12,6 +12,7 @@ import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
+import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
 
 function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -281,6 +282,73 @@ function BestWorstBlock({ team, onNavigateTeam }: { team: any; onNavigateTeam: a
   );
 }
 
+function fmtRecord(wins: number, losses: number, pushes?: number): string {
+  if (pushes) return `${wins}-${losses}-${pushes}`;
+  return `${wins}-${losses}`;
+}
+
+function SplitCard({ label, r }: { label: string; r: SplitRecord }) {
+  const gp = r.wins + r.losses;
+  const atsGp = r.atsWins + r.atsLosses + r.atsPushes;
+  const ouGp = r.overs + r.unders + r.ouPushes;
+  return (
+    <div style={{ padding: "0.9rem 1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 10 }}>
+      <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--chalk-dim)", marginBottom: "0.6rem" }}>
+        {label}
+      </div>
+      {gp === 0 ? (
+        <div style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No completed games</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>Record</span>
+            <span style={{ fontWeight: 700 }}>{fmtRecord(r.wins, r.losses)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>ATS Record</span>
+            <span style={{ fontWeight: 700 }}>{atsGp > 0 ? fmtRecord(r.atsWins, r.atsLosses, r.atsPushes) : "–"}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>O/U Record</span>
+            <span style={{ fontWeight: 700 }}>{ouGp > 0 ? fmtRecord(r.overs, r.unders, r.ouPushes) : "–"}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeRoadSplitsBlock({ team }: { team: any }) {
+  const season = new Date().getFullYear();
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchGamesWithLines(season)
+      .then(setGames)
+      .catch(() => setGames([]))
+      .finally(() => setLoading(false));
+  }, [season]);
+
+  const splits = useMemo(() => computeHomeRoadSplits(team.team, games), [team, games]);
+
+  if (loading) return null;
+
+  return (
+    <div className="table-wrap">
+      <div className="section-label">{team.team} home/road splits</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+        <SplitCard label="Home" r={splits.home} />
+        <SplitCard label="Away" r={splits.away} />
+      </div>
+      <div className="footer-note" style={{ marginTop: "0.75rem" }}>
+        Completed games only. Neutral-site games are excluded from both splits.
+      </div>
+    </div>
+  );
+}
+
 export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
@@ -366,6 +434,8 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           </div>
         )}
       </div>
+
+      <HomeRoadSplitsBlock team={team} />
 
       <BestWorstBlock team={team} onNavigateTeam={onNavigateTeam} />
 

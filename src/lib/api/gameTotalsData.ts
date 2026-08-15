@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
-import { type TeamSeasonInputs } from "../gameTotals";
+import { type TeamSeasonInputs, type SystemWeights, DEFAULT_SYSTEM_WEIGHTS } from "../gameTotals";
 
 export async function fetchTeamSeasonInputs(season: number): Promise<Record<string, TeamSeasonInputs>> {
   const [statsRows, gameRows] = await Promise.all([
@@ -52,6 +52,56 @@ export async function fetchTeamSeasonInputs(season: number): Promise<Record<stri
       rushingYards: row.rushing_yards ?? 0,
       rushingAttemptsOpponent: row.rushing_attempts_opponent ?? 0,
       rushingYardsOpponent: row.rushing_yards_opponent ?? 0,
+
+      offPpa: row.off_ppa ?? null,
+      offSuccessRate: row.off_success_rate ?? null,
+      offExplosiveness: row.off_explosiveness ?? null,
+      offPointsPerOpportunity: row.off_points_per_opportunity ?? null,
+      offPowerSuccess: row.off_power_success ?? null,
+      offStuffRate: row.off_stuff_rate ?? null,
+      offLineYards: row.off_line_yards ?? null,
+      offStandardDownsPpa: row.off_standard_downs_ppa ?? null,
+      offStandardDownsSuccessRate: row.off_standard_downs_success_rate ?? null,
+      offStandardDownsExplosiveness: row.off_standard_downs_explosiveness ?? null,
+      offPassingDownsPpa: row.off_passing_downs_ppa ?? null,
+      offPassingDownsSuccessRate: row.off_passing_downs_success_rate ?? null,
+      offPassingDownsExplosiveness: row.off_passing_downs_explosiveness ?? null,
+      offRushingPlaysPpa: row.off_rushing_plays_ppa ?? null,
+      offRushingPlaysSuccessRate: row.off_rushing_plays_success_rate ?? null,
+      offRushingPlaysExplosiveness: row.off_rushing_plays_explosiveness ?? null,
+      offPassingPlaysPpa: row.off_passing_plays_ppa ?? null,
+      offPassingPlaysSuccessRate: row.off_passing_plays_success_rate ?? null,
+      offPassingPlaysExplosiveness: row.off_passing_plays_explosiveness ?? null,
+      offFieldPositionAvgStart: row.off_field_position_avg_start ?? null,
+      offFieldPositionAvgPredictedPoints: row.off_field_position_avg_predicted_points ?? null,
+      offHavocTotal: row.off_havoc_total ?? null,
+      offHavocFrontSeven: row.off_havoc_front_seven ?? null,
+      offHavocDb: row.off_havoc_db ?? null,
+
+      defPpa: row.def_ppa ?? null,
+      defSuccessRate: row.def_success_rate ?? null,
+      defExplosiveness: row.def_explosiveness ?? null,
+      defPointsPerOpportunity: row.def_points_per_opportunity ?? null,
+      defPowerSuccess: row.def_power_success ?? null,
+      defStuffRate: row.def_stuff_rate ?? null,
+      defLineYards: row.def_line_yards ?? null,
+      defStandardDownsPpa: row.def_standard_downs_ppa ?? null,
+      defStandardDownsSuccessRate: row.def_standard_downs_success_rate ?? null,
+      defStandardDownsExplosiveness: row.def_standard_downs_explosiveness ?? null,
+      defPassingDownsPpa: row.def_passing_downs_ppa ?? null,
+      defPassingDownsSuccessRate: row.def_passing_downs_success_rate ?? null,
+      defPassingDownsExplosiveness: row.def_passing_downs_explosiveness ?? null,
+      defRushingPlaysPpa: row.def_rushing_plays_ppa ?? null,
+      defRushingPlaysSuccessRate: row.def_rushing_plays_success_rate ?? null,
+      defRushingPlaysExplosiveness: row.def_rushing_plays_explosiveness ?? null,
+      defPassingPlaysPpa: row.def_passing_plays_ppa ?? null,
+      defPassingPlaysSuccessRate: row.def_passing_plays_success_rate ?? null,
+      defPassingPlaysExplosiveness: row.def_passing_plays_explosiveness ?? null,
+      defFieldPositionAvgStart: row.def_field_position_avg_start ?? null,
+      defFieldPositionAvgPredictedPoints: row.def_field_position_avg_predicted_points ?? null,
+      defHavocTotal: row.def_havoc_total ?? null,
+      defHavocFrontSeven: row.def_havoc_front_seven ?? null,
+      defHavocDb: row.def_havoc_db ?? null,
     };
   }
   return result;
@@ -116,14 +166,14 @@ export async function fetchGamesForTotals(season: number): Promise<GameForTotals
 }
 
 export interface GameTotalsSettings {
-  weights: [number, number, number, number];
+  weights: SystemWeights;
   regressPct: number;
   filterThresholdMultiplier: number;
   spreadSource: "vegas" | "mine" | "vegas-fill-mine";
 }
 
 export const DEFAULT_GAME_TOTALS_SETTINGS: GameTotalsSettings = {
-  weights: [2, 2, 1, 1],
+  weights: { ...DEFAULT_SYSTEM_WEIGHTS },
   regressPct: 0.3,
   filterThresholdMultiplier: 0.5,
   spreadSource: "vegas-fill-mine",

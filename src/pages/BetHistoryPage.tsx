@@ -384,7 +384,7 @@ export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => 
   const weeksAvailable = Array.from(new Set(filtered.map((r) => r.week))).sort((a, b) => a - b);
 
   return (
-    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: 1000, margin: "0 auto" }}>
+    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: "none", margin: "0 auto" }}>
       <div className="team-hero">
         {onHome && (
           <button className="back-link" onClick={onHome}>

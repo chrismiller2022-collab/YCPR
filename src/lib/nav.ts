@@ -72,6 +72,10 @@ export const NAV: any[] = [
         key: "natty",
         label: "Natty",
       },
+      {
+        key: "pythagwins",
+        label: "Pythag Wins",
+      },
     ],
   },
   {

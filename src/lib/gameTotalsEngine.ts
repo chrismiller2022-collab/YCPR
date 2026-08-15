@@ -11,7 +11,8 @@ import {
 } from "./api/gameTotalsData";
 import {
   computeGameProjection,
-  computeSystemInputs,
+  computeEfficiencyInputs,
+  computeLeagueAverages,
   resolveGameOdds,
   stdDev,
   determineBetCall,
@@ -20,8 +21,10 @@ import {
   gradeBetCall,
   resolveSplitSpread,
   splitTeamTotal,
+  DEFAULT_SYSTEM_WEIGHTS,
   type TeamSeasonInputs,
-  type SystemInputs,
+  type EfficiencyInputs,
+  type LeagueAverages,
   type GameProjection,
   type GameOdds,
 } from "./gameTotals";
@@ -30,12 +33,21 @@ export interface EnrichedGameRow {
   game: GameForTotals;
   home: TeamSeasonInputs | null;
   away: TeamSeasonInputs | null;
-  homeSystemInputs: SystemInputs | null;
-  awaySystemInputs: SystemInputs | null;
+  homeEfficiencyInputs: EfficiencyInputs | null;
+  awayEfficiencyInputs: EfficiencyInputs | null;
   projection: GameProjection | null;
   odds: GameOdds;
   actualTotal: number | null;
   myHomeSpread: number | null;
+}
+
+// A saved settings row from before the ground-up rewrite would have
+// weights as a [n,n,n,n] tuple (the old 4-system shape) instead of the
+// new Record<SystemKey, number> — guard against that so a stale save
+// doesn't silently zero out every new system's weight.
+function normalizeWeights(weights: unknown): typeof DEFAULT_SYSTEM_WEIGHTS {
+  if (!weights || Array.isArray(weights) || typeof weights !== "object") return { ...DEFAULT_SYSTEM_WEIGHTS };
+  return { ...DEFAULT_SYSTEM_WEIGHTS, ...(weights as object) };
 }
 
 export function useGameTotalsEngine(season: number) {
@@ -51,14 +63,21 @@ export function useGameTotalsEngine(season: number) {
     Promise.all([fetchTeamSeasonInputs(season), fetchGamesForTotals(season), fetchGameTotalsSettings(season)])
       .then(([teamInputs, games, savedSettings]) => {
         setRawRows({ teamInputs, games });
-        if (savedSettings) setSettingsState({ ...DEFAULT_GAME_TOTALS_SETTINGS, ...savedSettings });
+        if (savedSettings) {
+          setSettingsState({ ...DEFAULT_GAME_TOTALS_SETTINGS, ...savedSettings, weights: normalizeWeights(savedSettings.weights) });
+        }
       })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }, [season]);
 
+  const league: LeagueAverages | null = useMemo(() => {
+    if (!rawRows) return null;
+    return computeLeagueAverages(Object.values(rawRows.teamInputs));
+  }, [rawRows]);
+
   const rows: EnrichedGameRow[] = useMemo(() => {
-    if (!rawRows) return [];
+    if (!rawRows || !league) return [];
     return rawRows.games.map((game) => {
       const home = rawRows.teamInputs[game.homeTeam] ?? null;
       const away = rawRows.teamInputs[game.awayTeam] ?? null;
@@ -72,24 +91,24 @@ export function useGameTotalsEngine(season: number) {
         homeRating != null && awayRating != null ? homeRating - awayRating - hfaFor(game.homeTeam, liveByTeam) : null;
 
       if (!home || !away) {
-        return { game, home, away, homeSystemInputs: null, awaySystemInputs: null, projection: null, odds, actualTotal, myHomeSpread };
+        return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
       }
 
-      const projection = computeGameProjection(home, away, odds, { weights: settings.weights, regressPct: settings.regressPct });
+      const projection = computeGameProjection(home, away, league, odds, { weights: settings.weights, regressPct: settings.regressPct });
 
       return {
         game,
         home,
         away,
-        homeSystemInputs: computeSystemInputs(home),
-        awaySystemInputs: computeSystemInputs(away),
+        homeEfficiencyInputs: computeEfficiencyInputs(home, away, league),
+        awayEfficiencyInputs: computeEfficiencyInputs(away, home, league),
         projection,
         odds,
         actualTotal,
         myHomeSpread,
       };
     });
-  }, [rawRows, liveByTeam, settings]);
+  }, [rawRows, league, liveByTeam, settings]);
 
   return { rows, settings, setSettings: setSettingsState, loading, error };
 }

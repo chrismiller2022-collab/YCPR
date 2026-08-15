@@ -11,6 +11,7 @@ import {
   cellStatus,
   teamsUsedElsewhere,
   allUsedTeams,
+  computeSpreadRanks,
 } from "../lib/survivor";
 
 const STORAGE_KEY = "survivor_picks_v1";
@@ -46,6 +47,12 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const allConfs = useMemo(() => availableConferences(), []);
   const teams = useMemo(() => rowTeams(selectedConfs), [selectedConfs]);
   const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
+  // Ranks computed over the full (unfiltered-by-hideUsed) team set for the
+  // current conference selection — same spread values already shown in the
+  // grid (no live ratings here, matching teamSpread() calls below), just
+  // ranked two ways: biggest favorite that week, and biggest favorite this
+  // team gets all season.
+  const spreadRanks = useMemo(() => computeSpreadRanks(teams, selectedConfs), [teams, selectedConfs]);
 
   const visibleTeams = useMemo(
     () => teams.filter((team) => !hideUsed || !usedTeams.has(team.team)),
@@ -298,6 +305,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                     const isHome = game.home === team.team;
                     const spread = opp ? teamSpread(team, opp, game) : null;
                     const clickable = status === "open" || status === "selected";
+                    const rank = spreadRanks.get(`${team.team}::${week.key}`);
 
                     const bg =
                       status === "selected"
@@ -306,19 +314,21 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                         ? "rgba(255,255,255,0.03)"
                         : "transparent";
 
+                    const tip =
+                      status === "ineligible"
+                        ? "Opponent's conference isn't selected"
+                        : status === "team-used"
+                        ? "Team already used in another week"
+                        : status === "week-locked"
+                        ? "Both picks already made for this week"
+                        : undefined;
+
                     return (
                       <td
                         key={week.key}
                         onClick={() => clickable && handleCellClick(team.team, week.key, status)}
-                        title={
-                          status === "ineligible"
-                            ? "Opponent's conference isn't selected"
-                            : status === "team-used"
-                            ? "Team already used in another week"
-                            : status === "week-locked"
-                            ? "Both picks already made for this week"
-                            : undefined
-                        }
+                        className={tip ? "cell-tip" : undefined}
+                        data-tip={tip}
                         style={{
                           textAlign: "center",
                           padding: "0.35rem 0.4rem",
@@ -338,6 +348,43 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                           <div style={{ fontSize: "0.68rem", opacity: 0.75 }}>
                             {spread > 0 ? "+" : ""}
                             {spread.toFixed(1)}
+                          </div>
+                        )}
+                        {rank && (
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "center",
+                              gap: "0.3rem",
+                              marginTop: "0.15rem",
+                              fontSize: "0.6rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            <span
+                              className="cell-tip"
+                              data-tip={`${rank.weekRank} biggest favorite of ${rank.weekPoolSize} pickable games this week`}
+                              style={{
+                                padding: "0.05rem 0.3rem",
+                                borderRadius: 999,
+                                background: "rgba(255,255,255,0.08)",
+                                color: "var(--chalk-dim)",
+                              }}
+                            >
+                              Wk #{rank.weekRank}
+                            </span>
+                            <span
+                              className="cell-tip"
+                              data-tip={`${team.team}'s ${rank.seasonRank} biggest favorite spread of ${rank.seasonPoolSize} pickable games this season`}
+                              style={{
+                                padding: "0.05rem 0.3rem",
+                                borderRadius: 999,
+                                background: rank.seasonRank === 1 ? "var(--gold-dim)" : "rgba(255,255,255,0.08)",
+                                color: rank.seasonRank === 1 ? "var(--chalk)" : "var(--chalk-dim)",
+                              }}
+                            >
+                              Yr #{rank.seasonRank}
+                            </span>
                           </div>
                         )}
                       </td>

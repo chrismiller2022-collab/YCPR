@@ -14,6 +14,7 @@ import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
 import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
 import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
 import NattyOddsPage from "./pages/NattyOddsPage";
+import PythagWinsPage from "./pages/PythagWinsPage";
 import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
 import ConferencePreviewPage from "./pages/ConferencePreviewPage";
 import ConferenceOverviewPage from "./pages/ConferenceOverviewPage";
@@ -279,6 +280,16 @@ export default function App() {
           />
         )}
 
+      {page.type === "sub" &&
+        page.catKey === "futures" &&
+        page.subKey === "pythagwins" && (
+          <PythagWinsPage
+            onNavigateTeam={handleNavigateTeam}
+            onNavigateConference={handleNavigateConference}
+            onHome={handleHome}
+          />
+        )}
+
       {page.type === "sub" && page.catKey === "confpreviews" && (
         <ConferencePreviewPage
           conference={page.subKey}
@@ -395,7 +406,10 @@ export default function App() {
           (page.catKey === "fcsratings" || page.catKey === "fcssos")) &&
         !(
           page.catKey === "futures" &&
-          (page.subKey === "confwinodds" || page.subKey === "confwintotals" || page.subKey === "natty")
+          (page.subKey === "confwinodds" ||
+            page.subKey === "confwintotals" ||
+            page.subKey === "natty" ||
+            page.subKey === "pythagwins")
         ) &&
         !(page.catKey === "modelresults" && ["all", "2024", "2025", "2026"].includes(page.subKey)) && (
           <ComingSoon categoryLabel={page.catLabel} subLabel={page.subLabel} />
