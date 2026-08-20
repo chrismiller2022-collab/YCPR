@@ -1,6 +1,6 @@
 import { TEAMS, TEAMS_BY_NAME, type Team } from "../data/teams";
 import { GAMES, type Game } from "../data/games";
-import { hfaFor } from "./odds";
+import { hfaFor, spreadToWinPct } from "./odds";
 
 // ---------------------------------------------------------------------
 // Week configuration — matches the actual contest pick sheet (dates/
@@ -58,7 +58,8 @@ export function availableConferences(): string[] {
   return confs;
 }
 
-export const DEFAULT_CONFERENCES = new Set(["Big Ten", "Big 12", "SEC"]);
+// P4 (+ ACC, which was previously missing from this default set).
+export const DEFAULT_CONFERENCES = new Set(["SEC", "Big Ten", "Big 12", "ACC"]);
 
 // ---------------------------------------------------------------------
 // Row teams: any FBS team belonging to a currently-selected conference.
@@ -94,6 +95,11 @@ export function teamSpread(team: Team, opp: Team, game: Game, liveByTeam?: Recor
   return isHome
     ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
     : teamRating - oppRating + hfaFor(opp.team, liveByTeam);
+}
+
+/** `team`'s own fair win probability for this game, derived from teamSpread via the site's calibrated spread->win% curve. */
+export function teamWinPct(team: Team, opp: Team, game: Game, liveByTeam?: Record<string, any>): number {
+  return spreadToWinPct(teamSpread(team, opp, game, liveByTeam));
 }
 
 // ---------------------------------------------------------------------

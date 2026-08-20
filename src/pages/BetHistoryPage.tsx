@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
-import { aggregatePlain, filterRecords, winPct, computeErrorStatsFromBetHistory, type RecordTally, type BetHistoryFilters } from "../lib/betHistory";
+import {
+  aggregatePlain,
+  computeSplitsPlain,
+  filterRecords,
+  winPct,
+  computeErrorStatsFromBetHistory,
+  type RecordTally,
+  type BetHistoryFilters,
+  type CategorySplitTally,
+  type SplitBucket,
+} from "../lib/betHistory";
 import { fetchBetsMade, type AdminBetRow } from "../lib/api/adminBets";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 
@@ -81,6 +91,65 @@ function StatsBlock({ title, overall, byWeek }: { title: string; overall: Record
         </div>
         </details>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Home / Away / Favorite / Underdog splits — Every Game / Filtered / WFB
+// only (this page runs off Plain History, which has no NWFB column).
+// Combo cuts (e.g. home favorite) aren't broken out — too small a sample.
+// ---------------------------------------------------------------------
+function SplitCell({ t }: { t: RecordTally }) {
+  return (
+    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+      <div>{fmtRecord(t)}</div>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtPct(t)}</div>
+    </td>
+  );
+}
+
+const SPLIT_ROWS: { key: keyof CategorySplitTally; label: string }[] = [
+  { key: "everyBet", label: "Every Game" },
+  { key: "filteredBet", label: "Filtered Bet" },
+  { key: "weightedFilteredBet", label: "Weighted Filtered Bet" },
+];
+
+function SplitsSection({ splits }: { splits: CategorySplitTally }) {
+  return (
+    <div style={{ marginBottom: "1.75rem" }}>
+      <div className="section-label">Home / Away / Favorite / Underdog</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        Same bet categories above, sliced by which side was picked. Favorite/underdog comes from
+        the Vegas closing spread (true pick'ems excluded from that split).
+      </p>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <th className="th">Bet Type</th>
+              <th className="th th-right">Home</th>
+              <th className="th th-right">Away</th>
+              <th className="th th-right">Favorite</th>
+              <th className="th th-right">Underdog</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SPLIT_ROWS.map(({ key, label }) => {
+              const b: SplitBucket = splits[key];
+              return (
+                <tr key={key}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
+                  <SplitCell t={b.home} />
+                  <SplitCell t={b.away} />
+                  <SplitCell t={b.favorite} />
+                  <SplitCell t={b.underdog} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -371,6 +440,7 @@ export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => 
   );
   const { overall, byWeek } = useMemo(() => aggregatePlain(filtered), [filtered]);
   const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
+  const splits = useMemo(() => computeSplitsPlain(filtered), [filtered]);
 
   const everyBetByWeek = new Map<number, RecordTally>();
   const filteredBetByWeek = new Map<number, RecordTally>();
@@ -499,6 +569,7 @@ export default function BetHistoryPage({ onHome, lockedYear }: { onHome?: () => 
           <StatsBlock title="Every Game Bet" overall={overall.everyBet} byWeek={everyBetByWeek} />
           <StatsBlock title="Filtered Bets" overall={overall.filteredBet} byWeek={filteredBetByWeek} />
           <StatsBlock title="Weighted Filtered Bets" overall={overall.weightedFilteredBet} byWeek={weightedByWeek} />
+          <SplitsSection splits={splits.overall} />
           <ErrorStatsBlock errorStats={errorStats} />
         </>
       )}

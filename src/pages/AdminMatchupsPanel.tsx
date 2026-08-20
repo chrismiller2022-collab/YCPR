@@ -564,6 +564,11 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
   const [hideNoLine, setHideNoLine] = useState(true);
+  // Flat HFA (the site-wide 2.4 constant) vs each home team's own saved
+  // HFA value — an A/B comparison tool for live/current games only. The
+  // 2024/25 historical bet history has no per-team HFA history to
+  // recompute against, so this toggle doesn't touch that dataset at all.
+  const [hfaMode, setHfaMode] = useState<"team" | "flat">("team");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -607,7 +612,10 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     });
   }, [games, matchupType, query]);
 
-  const computedRows = useMemo(() => filteredGames.map((g) => computeRow(g, liveByTeam)), [filteredGames, liveByTeam]);
+  const computedRows = useMemo(
+    () => filteredGames.map((g) => computeRow(g, liveByTeam, hfaMode)),
+    [filteredGames, liveByTeam, hfaMode]
+  );
 
   const visibleRows = useMemo(() => {
     if (!hideNoLine) return computedRows;
@@ -738,6 +746,13 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
           Hide games with no Vegas {mode === "spreads" ? "line" : mode === "moneyline" ? "moneyline" : "total"}
+        </label>
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }} title="Live games only — doesn't affect the 2024/25 historical Bet History pages.">
+          HFA:{" "}
+          <select value={hfaMode} onChange={(e) => setHfaMode(e.target.value as "team" | "flat")}>
+            <option value="team">Team-specific</option>
+            <option value="flat">Flat 2.4</option>
+          </select>
         </label>
       </div>
 

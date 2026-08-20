@@ -10,11 +10,15 @@ import {
   filterRecords,
   winPct,
   computeErrorStatsFromBetHistory,
+  computeSplitsPlain,
+  computeSplitsCustom,
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
   type BetHistoryFilters,
   type CustomParams,
   type BreakdownTriple,
+  type CategorySplitTally,
+  type SplitBucket,
 } from "../lib/betHistory";
 
 const SEASONS = [2024, 2025, 2026];
@@ -408,6 +412,69 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
   );
 }
 
+// ---------------------------------------------------------------------
+// Home / Away / Favorite / Underdog splits — one row per bet category
+// (Every Game / Filtered / WFB / NWFB), one column per split. Combo cuts
+// (e.g. "home favorite") are deliberately left out — too small a sample
+// to be meaningful yet.
+// ---------------------------------------------------------------------
+function SplitCell({ t }: { t: RecordTally }) {
+  return (
+    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+      <div>{fmtRecord(t)}</div>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtPct(t)}</div>
+    </td>
+  );
+}
+
+const SPLIT_ROWS: { key: keyof CategorySplitTally; label: string }[] = [
+  { key: "everyBet", label: "Every Game" },
+  { key: "filteredBet", label: "Filtered Bet" },
+  { key: "weightedFilteredBet", label: "WFB" },
+  { key: "nwfb", label: "NWFB" },
+];
+
+function SplitsSection({ splits, hideNwfb }: { splits: CategorySplitTally; hideNwfb?: boolean }) {
+  const rows = hideNwfb ? SPLIT_ROWS.filter((r) => r.key !== "nwfb") : SPLIT_ROWS;
+  return (
+    <div style={{ marginBottom: "1.75rem" }}>
+      <div className="section-label">Home / Away / Favorite / Underdog</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        Same four bet categories above, sliced by which side was picked. Favorite/underdog comes
+        from the Vegas closing spread (true pick'ems excluded from that split). Combo cuts (e.g.
+        home favorite) aren't broken out separately yet — too small a sample size for now.
+      </p>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <th className="th">Bet Type</th>
+              <th className="th th-right">Home</th>
+              <th className="th th-right">Away</th>
+              <th className="th th-right">Favorite</th>
+              <th className="th th-right">Underdog</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ key, label }) => {
+              const b: SplitBucket = splits[key];
+              return (
+                <tr key={key}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
+                  <SplitCell t={b.home} />
+                  <SplitCell t={b.away} />
+                  <SplitCell t={b.favorite} />
+                  <SplitCell t={b.underdog} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function FilterBar({ years, toggleYear, week, setWeek, confFilters, toggleConf, teamQuery, setTeamQuery, weeksAvailable, allConfs }: any) {
   return (
     <div
@@ -532,6 +599,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
   const customAgg = useMemo(() => aggregateCustom(filtered, params), [filtered, params]);
   const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
+  const plainSplits = useMemo(() => computeSplitsPlain(filtered), [filtered]);
+  const customSplits = useMemo(() => computeSplitsCustom(filtered, params), [filtered, params]);
 
   const plainByConf = useMemo(() => breakdownByConference(filtered, "plain"), [filtered]);
   const plainByTeam = useMemo(() => breakdownByTeam(filtered, "plain"), [filtered]);
@@ -614,6 +683,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             overall={plainAgg.overall.weightedFilteredBet}
             byWeek={toWeekMap(plainAgg, "weightedFilteredBet")}
           />
+          <SplitsSection splits={plainSplits.overall} hideNwfb />
           <ErrorStatsBlock errorStats={errorStats} />
           <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
@@ -741,6 +811,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             </ParamGroup>
           </div>
 
+          <SplitsSection splits={customSplits.overall} />
           <ErrorStatsBlock errorStats={errorStats} />
           <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} />

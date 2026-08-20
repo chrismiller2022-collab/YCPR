@@ -65,12 +65,10 @@ export const NAV: any[] = [
         label: "Conference Win Totals",
       },
       {
-        key: "playoff",
-        label: "To Make Playoff",
-      },
-      {
-        key: "natty",
-        label: "Natty",
+        key: "otherfutures",
+        label: "Other Futures",
+        expandable: true,
+        subs: [...WEEKS, { key: "live", label: "Live" }],
       },
       {
         key: "pythagwins",

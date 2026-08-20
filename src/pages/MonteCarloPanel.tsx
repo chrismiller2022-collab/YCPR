@@ -6,6 +6,8 @@ import {
   simulateSingleSeason,
   computeSrsStats,
   getSubFcsRatingInfo,
+  winsAtLeastPct,
+  undefeatedPct,
   type TeamSimResult,
   type ScheduleRow,
   type SrsTeamRow,
@@ -20,6 +22,7 @@ import {
   type TeamRunHistoryEntry,
 } from "../lib/api/monteCarlo";
 import { saveRatingRows } from "../lib/api/ratingSystems";
+import { fairMoneylineFromWinPct } from "../lib/odds";
 
 const TRIAL_OPTIONS = [1000, 5000, 10000, 20000];
 
@@ -32,30 +35,54 @@ function fmtSpread(v: number | null) {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
+// Converts a Monte Carlo percentage (0-100 scale, as stored on TeamSimResult)
+// to a fair American moneyline via fairMoneylineFromWinPct, which expects a
+// decimal probability (0-1).
+function fmtML(pct: number | null | undefined) {
+  if (pct == null || Number.isNaN(pct)) return "–";
+  const ml = fairMoneylineFromWinPct(pct / 100);
+  if (ml == null) return "–";
+  return `${ml > 0 ? "+" : ""}${Math.round(ml)}`;
+}
+
 // ---------------------------------------------------------------------
 // Distribution breakdown — shown when a team row is expanded.
 // ---------------------------------------------------------------------
-function DistributionDetail({ result }: { result: TeamSimResult }) {
+function DistributionDetail({ result, colSpan, showMore }: { result: TeamSimResult; colSpan: number; showMore: boolean }) {
   const total = result.winDistribution.reduce((s, c) => s + c, 0);
   const buckets = result.winDistribution
     .map((count, wins) => ({ wins, losses: result.totalGames - wins, pct: (count / total) * 100 }))
     .filter((b) => b.pct > 0.05)
     .sort((a, b) => b.pct - a.pct);
 
+  const seedBuckets = (result.seedPct ?? [])
+    .map((pct, i) => ({ seed: i + 1, pct }))
+    .filter((s) => s.pct > 0.05);
+
   return (
     <tr>
-      <td colSpan={10} style={{ padding: "0.5rem 0.75rem", background: "rgba(255,255,255,0.03)", fontSize: "0.75rem" }}>
-        <strong>{result.team} win-total distribution:</strong>{" "}
-        {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
+      <td colSpan={colSpan} style={{ padding: "0.5rem 0.75rem", background: "rgba(255,255,255,0.03)", fontSize: "0.75rem" }}>
+        <div>
+          <strong>{result.team} win-total distribution:</strong>{" "}
+          {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
+        </div>
+        {showMore && seedBuckets.length > 0 && (
+          <div style={{ marginTop: "0.3rem" }}>
+            <strong>Seed distribution:</strong>{" "}
+            {seedBuckets.map((s) => `#${s.seed}: ${s.pct.toFixed(1)}%`).join("  ·  ")}
+          </div>
+        )}
       </td>
     </tr>
   );
 }
 
-function ResultsTable({ results }: { results: TeamSimResult[] }) {
+function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTrials: number }) {
   const [sortKey, setSortKey] = useState("nattyPct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showMore, setShowMore] = useState(false);
+  const colSpan = showMore ? 15 : 10;
 
   function handleSort(key: string) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -65,8 +92,16 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
     }
   }
 
+  const enriched = useMemo(() => {
+    return results.map((r) => ({
+      ...r,
+      bowlPct: winsAtLeastPct(r, numTrials, 6),
+      undefeatedPct: undefeatedPct(r, numTrials),
+    }));
+  }, [results, numTrials]);
+
   const sorted = useMemo(() => {
-    return [...results].sort((a: any, b: any) => {
+    return [...enriched].sort((a: any, b: any) => {
       const av = a[sortKey];
       const bv = b[sortKey];
       if (av == null && bv == null) return 0;
@@ -75,10 +110,16 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [results, sortKey, sortDir]);
+  }, [enriched, sortKey, sortDir]);
 
   return (
-    <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.4rem" }}>
+        <button className="menu-btn" style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem" }} onClick={() => setShowMore((s) => !s)}>
+          {showMore ? "Show fewer stats" : "Show more stats"}
+        </button>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
       <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
         <thead>
           <tr>
@@ -112,6 +153,50 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
             />
             <SortHeader label="Avg Seed" sortKey="avgSeed" active={sortKey === "avgSeed"} dir={sortDir} onClick={handleSort} align="right" />
             <SortHeader label="Natty %" sortKey="nattyPct" active={sortKey === "nattyPct"} dir={sortDir} onClick={handleSort} align="right" />
+            {showMore && (
+              <>
+                <SortHeader
+                  label="Bowl (6+) %"
+                  sortKey="bowlPct"
+                  active={sortKey === "bowlPct"}
+                  dir={sortDir}
+                  onClick={handleSort}
+                  align="right"
+                />
+                <SortHeader
+                  label="Undefeated %"
+                  sortKey="undefeatedPct"
+                  active={sortKey === "undefeatedPct"}
+                  dir={sortDir}
+                  onClick={handleSort}
+                  align="right"
+                />
+                <SortHeader
+                  label="Quarterfinal %"
+                  sortKey="quarterfinalPct"
+                  active={sortKey === "quarterfinalPct"}
+                  dir={sortDir}
+                  onClick={handleSort}
+                  align="right"
+                />
+                <SortHeader
+                  label="Semifinal %"
+                  sortKey="semifinalPct"
+                  active={sortKey === "semifinalPct"}
+                  dir={sortDir}
+                  onClick={handleSort}
+                  align="right"
+                />
+                <SortHeader
+                  label="NCG %"
+                  sortKey="nattyGamePct"
+                  active={sortKey === "nattyGamePct"}
+                  dir={sortDir}
+                  onClick={handleSort}
+                  align="right"
+                />
+              </>
+            )}
             <th className="th"></th>
           </tr>
         </thead>
@@ -147,18 +232,38 @@ function ResultsTable({ results }: { results: TeamSimResult[] }) {
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmtPct(r.nattyPct)}
                   </td>
+                  {showMore && (
+                    <>
+                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {fmtPct(r.bowlPct)}
+                      </td>
+                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {fmtPct(r.undefeatedPct)}
+                      </td>
+                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {r.quarterfinalPct != null ? fmtPct(r.quarterfinalPct) : "–"}
+                      </td>
+                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {r.semifinalPct != null ? fmtPct(r.semifinalPct) : "–"}
+                      </td>
+                      <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {r.nattyGamePct != null ? fmtPct(r.nattyGamePct) : "–"}
+                      </td>
+                    </>
+                  )}
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <button className="menu-btn" style={{ padding: "0.15rem 0.4rem" }} onClick={() => setExpanded(isOpen ? null : r.team)}>
                       {isOpen ? "Hide" : "Distribution"}
                     </button>
                   </td>
                 </tr>
-                {isOpen && <DistributionDetail result={r} />}
+                {isOpen && <DistributionDetail result={r} colSpan={colSpan} showMore={showMore} />}
               </Fragment>
             );
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -167,6 +272,7 @@ function HistoryTab({ season }: { season: number }) {
   const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
   const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
   const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
+  const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
   const [loading, setLoading] = useState(true);
   const [teamQuery, setTeamQuery] = useState("");
   const [teamHistory, setTeamHistory] = useState<TeamRunHistoryEntry[] | null>(null);
@@ -183,6 +289,7 @@ function HistoryTab({ season }: { season: number }) {
     if (run) {
       setLoadedRunId(id);
       setLoadedResults(run.results);
+      setLoadedNumTrials(run.num_trials);
     }
   }
 
@@ -217,7 +324,7 @@ function HistoryTab({ season }: { season: number }) {
       {loadedResults && (
         <div style={{ marginBottom: "1.5rem" }}>
           <div className="section-label">Run results</div>
-          <ResultsTable results={loadedResults} />
+          <ResultsTable results={loadedResults} numTrials={loadedNumTrials} />
         </div>
       )}
 
@@ -389,7 +496,7 @@ function MonteCarloResultsSection() {
 
           {results && (
             <div style={{ marginTop: "1rem" }}>
-              <ResultsTable results={results} />
+              <ResultsTable results={results} numTrials={numTrials} />
             </div>
           )}
         </>
@@ -672,8 +779,211 @@ function SrsTab() {
   );
 }
 
+// ---------------------------------------------------------------------
+// Betting tab — same saved-run data as Results, but every % converted to
+// a fair American moneyline via fairMoneylineFromWinPct. The Monte Carlo
+// itself stays percentage-based; this is purely a display conversion.
+// ---------------------------------------------------------------------
+function BettingResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTrials: number }) {
+  const [sortKey, setSortKey] = useState("nattyPct");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showMore, setShowMore] = useState(false);
+
+  const enriched = useMemo(() => {
+    return results.map((r) => ({
+      ...r,
+      bowlPct: winsAtLeastPct(r, numTrials, 6),
+      undefeatedPct: undefeatedPct(r, numTrials),
+    }));
+  }, [results, numTrials]);
+
+  const sorted = useMemo(() => {
+    return [...enriched].sort((a: any, b: any) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [enriched, sortKey, sortDir]);
+
+  function handleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.4rem" }}>
+        <button className="menu-btn" style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem" }} onClick={() => setShowMore((s) => !s)}>
+          {showMore ? "Show fewer stats" : "Show more stats"}
+        </button>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+              <SortHeader
+                label="Make Champ"
+                sortKey="madeConfChampPct"
+                active={sortKey === "madeConfChampPct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Win Champ"
+                sortKey="confTitlePct"
+                active={sortKey === "confTitlePct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Playoff"
+                sortKey="playoffPct"
+                active={sortKey === "playoffPct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader label="Natty" sortKey="nattyPct" active={sortKey === "nattyPct"} dir={sortDir} onClick={handleSort} align="right" />
+              {showMore && (
+                <>
+                  <SortHeader label="Bowl (6+)" sortKey="bowlPct" active={sortKey === "bowlPct"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader
+                    label="Undefeated"
+                    sortKey="undefeatedPct"
+                    active={sortKey === "undefeatedPct"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
+                    label="Quarterfinal"
+                    sortKey="quarterfinalPct"
+                    active={sortKey === "quarterfinalPct"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
+                    label="Semifinal"
+                    sortKey="semifinalPct"
+                    active={sortKey === "semifinalPct"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader label="NCG" sortKey="nattyGamePct" active={sortKey === "nattyGamePct"} dir={sortDir} onClick={handleSort} align="right" />
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.team}>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.madeConfChampPct)}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.confTitlePct)}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.playoffPct)}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.nattyPct)}</td>
+                {showMore && (
+                  <>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.bowlPct)}</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.undefeatedPct)}</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.quarterfinalPct)}</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.semifinalPct)}</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.nattyGamePct)}</td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BettingTab() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
+  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
+  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
+  const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
+  const [loading, setLoading] = useState(true);
+
+  useMemo(() => {
+    setLoading(true);
+    setLoadedRunId(null);
+    setLoadedResults(null);
+    fetchMonteCarloRuns(season)
+      .then((r) => {
+        setRuns(r);
+        if (r.length > 0) void viewRun(r[0].id);
+      })
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season]);
+
+  async function viewRun(id: number) {
+    const run = await fetchMonteCarloRun(id);
+    if (run) {
+      setLoadedRunId(id);
+      setLoadedResults(run.results);
+      setLoadedNumTrials(run.num_trials);
+    }
+  }
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+        Same saved Monte Carlo runs as Results, converted to fair American moneylines
+        (P/(1-P)×-100 for favorites, (1-P)/P×100 for underdogs).
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem" }}>
+        <label>
+          Season{" "}
+          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+        </label>
+      </div>
+
+      {loading ? (
+        <p>Loading saved runs…</p>
+      ) : runs.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
+            {runs.map((r) => (
+              <button
+                key={r.id}
+                className="menu-btn"
+                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
+                onClick={() => viewRun(r.id)}
+              >
+                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
+              </button>
+            ))}
+          </div>
+          {loadedResults && <BettingResultsTable results={loadedResults} numTrials={loadedNumTrials} />}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
-  const [section, setSection] = useState<"results" | "srs">("results");
+  const [section, setSection] = useState<"results" | "betting" | "srs">("results");
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const { medianFcsRating, syntheticRating } = getSubFcsRatingInfo(liveByTeam);
 
@@ -689,12 +999,16 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
         <button className={`mode-btn ${section === "results" ? "mode-btn-active" : ""}`} onClick={() => setSection("results")}>
           Monte Carlo Results
         </button>
+        <button className={`mode-btn ${section === "betting" ? "mode-btn-active" : ""}`} onClick={() => setSection("betting")}>
+          Betting
+        </button>
         <button className={`mode-btn ${section === "srs" ? "mode-btn-active" : ""}`} onClick={() => setSection("srs")}>
           SRS
         </button>
       </div>
 
       {section === "results" && <MonteCarloResultsSection />}
+      {section === "betting" && <BettingTab />}
       {section === "srs" && <SrsTab />}
 
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: "2rem", borderTop: "1px solid var(--hash)", paddingTop: "1rem" }}>

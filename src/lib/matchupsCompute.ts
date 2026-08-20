@@ -1,5 +1,5 @@
 import { TEAMS_BY_NAME } from "../data/teams";
-import { hfaFor, spreadToMoneyline, spreadToWinPct } from "./odds";
+import { HFA, hfaFor, spreadToMoneyline, spreadToWinPct } from "./odds";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
@@ -286,7 +286,19 @@ export function computeWatchSignal(
   return null;
 }
 
-export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>): MatchupComputed {
+// hfaMode "team" (default) uses each home team's own saved HFA value
+// (hfaFor, falling back to the flat HFA constant when a team doesn't have
+// one saved yet) — this is the site's normal behavior, unchanged. "flat"
+// forces every game to use the flat HFA constant regardless of any
+// team-specific value, for A/B-comparing signal quality between the two
+// approaches on live/current games. Only meaningful going forward — the
+// historical 2024/25 admin bet history dataset has no per-team HFA
+// history to recompute against, so this only applies here (live matchups).
+export function computeRow(
+  game: GameWithLines,
+  liveByTeam: Record<string, any>,
+  hfaMode: "team" | "flat" = "team"
+): MatchupComputed {
   const line = pickLine(game.lines);
   const staticAwayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
   const staticHomeTeam = TEAMS_BY_NAME[game.home_team] ?? null;
@@ -301,8 +313,8 @@ export function computeRow(game: GameWithLines, liveByTeam: Record<string, any>)
     ? { ...staticHomeTeam, rating: liveByTeam[game.home_team]?.rating ?? staticHomeTeam.rating }
     : null;
 
-  const projAwaySpread =
-    awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(game.home_team, liveByTeam) : null;
+  const hfa = hfaMode === "flat" ? HFA : hfaFor(game.home_team, liveByTeam);
+  const projAwaySpread = awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfa : null;
 
   const vegasAwaySpread = line?.spread != null ? -line.spread : null;
 

@@ -5,11 +5,18 @@ import { BET_HISTORY } from "../data/betHistory.data";
 import {
   buildMlRowsFromBetHistory,
   buildMlRowsFromLiveRatings,
+  buildMlRowsFromLiveRatingsBillR,
+  BILL_R_DEFAULT_DIVISOR,
   aggregateMlRows,
   aggregateMlRowsFiltered,
+  aggregateMlSplits,
+  aggregateMlSplitsFiltered,
+  filterMlRowsBySpreadSignal,
   mlWinPct,
   type MlGameRow,
   type MlTally,
+  type MlSplitBucket,
+  type SpreadSignal,
 } from "../lib/moneylineBetHistory";
 
 const SEASONS = [2024, 2025, 2026];
@@ -64,11 +71,136 @@ function StakingModeSummary({ tally, mode, compact }: { tally: MlTally; mode: "t
   );
 }
 
+function SplitsTable({ every, filtered, evThreshold }: { every: MlSplitBucket; filtered: MlSplitBucket; evThreshold: number }) {
+  const rows: { key: keyof MlSplitBucket; label: string }[] = [
+    { key: "home", label: "Home" },
+    { key: "away", label: "Away" },
+    { key: "favorite", label: "Favorite" },
+    { key: "underdog", label: "Underdog" },
+  ];
+  return (
+    <div style={{ marginBottom: "1.5rem" }}>
+      <div className="section-label">Home / Away / Favorite / Underdog</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        Favorite/underdog comes from my projected spread (true pick'ems excluded from that split).
+        Combo cuts aren't broken out separately — too small a sample size for now.
+      </p>
+      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}></th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Every Bet</th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                Filtered (EV &gt; {evThreshold.toFixed(1)}%)
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ key, label }) => {
+              const e = every[key];
+              const f = filtered[key];
+              return (
+                <tr key={key}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {e.w}-{e.l} <span style={{ color: "var(--chalk-dim)" }}>({mlWinPct(e).toFixed(1)}%)</span>
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {f.w + f.l > 0 ? (
+                      <>
+                        {f.w}-{f.l} <span style={{ color: "var(--chalk-dim)" }}>({mlWinPct(f).toFixed(1)}%)</span>
+                      </>
+                    ) : (
+                      "–"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const SPREAD_SIGNALS: { key: SpreadSignal; label: string }[] = [
+  { key: "filtered", label: "Filtered Bet" },
+  { key: "wfb", label: "WFB" },
+  { key: "nwfb", label: "NWFB" },
+];
+
+/** Only meaningful for seasons with a BET_HISTORY entry (2024/25 currently) — that's the only place the ATS engine's inputs are stored, so live 2026+ games can't be cross-referenced yet. */
+function AlsoBetSpreadBlock({
+  weekRows,
+  season,
+  stakingMode,
+  hasBetHistoryForSeason,
+}: {
+  weekRows: MlGameRow[];
+  season: number;
+  stakingMode: "toWin1" | "flat1";
+  hasBetHistoryForSeason: boolean;
+}) {
+  const [signal, setSignal] = useState<SpreadSignal>("filtered");
+  const cut = useMemo(() => filterMlRowsBySpreadSignal(weekRows, season, signal), [weekRows, season, signal]);
+  const agg = useMemo(() => aggregateMlRows(cut), [cut]);
+
+  return (
+    <div
+      style={{
+        padding: "1.1rem 1.3rem",
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: 10,
+        marginBottom: "1.5rem",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.8rem",
+          fontWeight: 700,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: "var(--gold)",
+          marginBottom: "0.4rem",
+        }}
+      >
+        Also bet the spread
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        ML record restricted to games where the spread side's own signal also fired that week
+        (same engine as Admin Bet History, default thresholds).
+        {!hasBetHistoryForSeason && (
+          <strong style={{ color: "#a15c00" }}> Not available for {season} yet — no historical spread/prediction data stored for it.</strong>
+        )}
+      </p>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        {SPREAD_SIGNALS.map((s) => (
+          <button key={s.key} className={`mode-btn ${signal === s.key ? "mode-btn-active" : ""}`} onClick={() => setSignal(s.key)}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {cut.length > 0 ? (
+        <StakingModeSummary tally={agg.overall} mode={stakingMode} compact />
+      ) : (
+        <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", margin: 0 }}>No matching games for this cut.</p>
+      )}
+    </div>
+  );
+}
+
 export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(2025);
   const [week, setWeek] = useState<"all" | number>("all");
   const [stakingMode, setStakingMode] = useState<"toWin1" | "flat1">("toWin1");
   const [evThreshold, setEvThreshold] = useState(0);
+  // Bill R Method only applies to live games (no BET_HISTORY entry for the
+  // season) — see buildMlRowsFromLiveRatingsBillR's doc comment for why.
+  const [conversionMethod, setConversionMethod] = useState<"current" | "billR">("current");
+  const [billRDivisor, setBillRDivisor] = useState(BILL_R_DEFAULT_DIVISOR);
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,8 +223,11 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
       const { rows, unmatchedBetHistory } = buildMlRowsFromBetHistory(season, games);
       return { allRows: rows, unmatchedCount: unmatchedBetHistory.length };
     }
+    if (conversionMethod === "billR") {
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, liveByTeam, billRDivisor), unmatchedCount: 0 };
+    }
     return { allRows: buildMlRowsFromLiveRatings(games, liveByTeam), unmatchedCount: 0 };
-  }, [season, games, hasBetHistoryForSeason, liveByTeam]);
+  }, [season, games, hasBetHistoryForSeason, liveByTeam, conversionMethod, billRDivisor]);
 
   const weekRows = useMemo(
     () => (week === "all" ? allRows : allRows.filter((r) => r.game.week === week)),
@@ -110,6 +245,9 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     [weekRows, evThreshold]
   );
   const filteredSeasonAgg = useMemo(() => aggregateMlRowsFiltered(allRows, evThreshold), [allRows, evThreshold]);
+
+  const everySplits = useMemo(() => aggregateMlSplits(weekRows), [weekRows]);
+  const filteredSplits = useMemo(() => aggregateMlSplitsFiltered(weekRows, evThreshold), [weekRows, evThreshold]);
 
   return (
     <div>
@@ -147,6 +285,41 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         <button className={`mode-btn ${stakingMode === "flat1" ? "mode-btn-active" : ""}`} onClick={() => setStakingMode("flat1")}>
           Flat-1
         </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>My win% derivation:</span>
+        <button
+          className={`mode-btn ${conversionMethod === "current" ? "mode-btn-active" : ""}`}
+          onClick={() => setConversionMethod("current")}
+        >
+          Current conversion
+        </button>
+        <button
+          className={`mode-btn ${conversionMethod === "billR" ? "mode-btn-active" : ""}`}
+          onClick={() => setConversionMethod("billR")}
+          disabled={hasBetHistoryForSeason}
+          title={hasBetHistoryForSeason ? "Live games only — no historical rating snapshots to rebuild " + season + " with." : undefined}
+        >
+          Bill R Method
+        </button>
+        {conversionMethod === "billR" && !hasBetHistoryForSeason && (
+          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+            z-score divisor{" "}
+            <input
+              type="number"
+              step="0.5"
+              value={billRDivisor}
+              onChange={(e) => setBillRDivisor(parseFloat(e.target.value) || BILL_R_DEFAULT_DIVISOR)}
+              style={{ width: 60 }}
+            />
+          </label>
+        )}
+        {hasBetHistoryForSeason && (
+          <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>
+            Bill R Method is live-only (2026+) — {season} keeps using the current conversion.
+          </span>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
@@ -290,6 +463,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
               </table>
             </div>
           )}
+
+          <SplitsTable every={everySplits} filtered={filteredSplits} evThreshold={evThreshold} />
+
+          <AlsoBetSpreadBlock weekRows={weekRows} season={season} stakingMode={stakingMode} hasBetHistoryForSeason={hasBetHistoryForSeason} />
 
           <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>

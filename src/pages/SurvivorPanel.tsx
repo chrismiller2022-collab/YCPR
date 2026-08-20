@@ -8,11 +8,25 @@ import {
   gameForTeamInWeek,
   opponentOf,
   teamSpread,
+  teamWinPct,
   cellStatus,
   teamsUsedElsewhere,
   allUsedTeams,
   computeSpreadRanks,
 } from "../lib/survivor";
+import { fairMoneylineFromWinPct } from "../lib/odds";
+
+// Heat-map coloring for the grid — brighter gold = higher win probability
+// (a "safer" week to burn that team), purple = the single best matchup of
+// that week among all eligible cells (rank.weekRank === 1, already
+// computed by computeSpreadRanks). Mirrors the style of the NFL survivor
+// optimal-path graphics Chris referenced.
+function heatBg(winPct: number | null, isOptimal: boolean): string {
+  if (isOptimal) return "rgba(168, 85, 247, 0.45)";
+  if (winPct == null) return "transparent";
+  const t = Math.max(0, Math.min(1, (winPct - 0.5) / 0.45)); // 50% -> 0, 95%+ -> 1
+  return `rgba(230, 185, 60, ${(0.08 + t * 0.5).toFixed(2)})`;
+}
 
 const STORAGE_KEY = "survivor_picks_v1";
 
@@ -33,6 +47,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
   const [hideUsed, setHideUsed] = useState(false);
+  const [view, setView] = useState<"spread" | "moneyline">("spread");
   const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -141,6 +156,18 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
         </div>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
+            className={`mode-btn ${view === "spread" ? "mode-btn-active" : ""}`}
+            onClick={() => setView("spread")}
+          >
+            Spread
+          </button>
+          <button
+            className={`mode-btn ${view === "moneyline" ? "mode-btn-active" : ""}`}
+            onClick={() => setView("moneyline")}
+          >
+            Moneyline
+          </button>
+          <button
             className="menu-btn"
             onClick={() => setHideUsed((v) => !v)}
             style={{ opacity: hideUsed ? 1 : 0.7 }}
@@ -162,6 +189,17 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             ← Admin
           </a>
         </div>
+      </div>
+
+      <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <span
+          style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "rgba(230, 185, 60, 0.55)" }}
+        />
+        Brighter = safer pick (higher win%)
+        <span
+          style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: "rgba(168, 85, 247, 0.45)", marginLeft: "0.5rem" }}
+        />
+        Purple = biggest favorite of that week
       </div>
 
       <div
@@ -304,15 +342,17 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
 
                     const isHome = game.home === team.team;
                     const spread = opp ? teamSpread(team, opp, game) : null;
+                    const winPct = opp ? teamWinPct(team, opp, game) : null;
                     const clickable = status === "open" || status === "selected";
                     const rank = spreadRanks.get(`${team.team}::${week.key}`);
+                    const isOptimal = rank != null && rank.weekRank === 1;
 
                     const bg =
                       status === "selected"
                         ? "var(--gold-dim)"
                         : status === "ineligible" || status === "team-used" || status === "week-locked"
                         ? "rgba(255,255,255,0.03)"
-                        : "transparent";
+                        : heatBg(winPct, isOptimal);
 
                     const tip =
                       status === "ineligible"
@@ -344,10 +384,19 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                           {isHome ? "" : "@"}
                           {opp ? opp.team : "?"}
                         </div>
-                        {spread != null && (
+                        {view === "spread" && spread != null && (
                           <div style={{ fontSize: "0.68rem", opacity: 0.75 }}>
                             {spread > 0 ? "+" : ""}
                             {spread.toFixed(1)}
+                          </div>
+                        )}
+                        {view === "moneyline" && winPct != null && (
+                          <div style={{ fontSize: "0.68rem", opacity: 0.75 }}>
+                            {(() => {
+                              const ml = fairMoneylineFromWinPct(winPct);
+                              if (ml == null) return "–";
+                              return `${ml > 0 ? "+" : ""}${Math.round(ml)}`;
+                            })()}
                           </div>
                         )}
                         {rank && (

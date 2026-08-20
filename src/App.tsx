@@ -13,8 +13,9 @@ import ResumeRatingsPage from "./pages/ResumeRatingsPage";
 import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
 import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
 import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
-import NattyOddsPage from "./pages/NattyOddsPage";
 import PythagWinsPage from "./pages/PythagWinsPage";
+import OtherFuturesPage from "./pages/OtherFuturesPage";
+import SiteFooter from "./components/SiteFooter";
 import ConferenceWinOddsPage from "./pages/ConferenceWinOddsPage";
 import ConferencePreviewPage from "./pages/ConferencePreviewPage";
 import ConferenceOverviewPage from "./pages/ConferenceOverviewPage";
@@ -143,6 +144,7 @@ export default function App() {
             handleHome();
           }}
         />
+        <SiteFooter />
       </div>
     );
   }
@@ -158,6 +160,7 @@ export default function App() {
             handleHome();
           }}
         />
+        <SiteFooter />
       </div>
     );
   }
@@ -270,15 +273,15 @@ export default function App() {
           />
         )}
 
-      {page.type === "sub" &&
-        page.catKey === "futures" &&
-        page.subKey === "natty" && (
-          <NattyOddsPage
-            onNavigateTeam={handleNavigateTeam}
-            onNavigateConference={handleNavigateConference}
-            onHome={handleHome}
-          />
-        )}
+      {page.type === "sub" && page.catKey === "otherfutures" && (
+        <OtherFuturesPage
+          subKey={page.subKey}
+          subLabel={page.subLabel}
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
+      )}
 
       {page.type === "sub" &&
         page.catKey === "futures" &&
@@ -391,6 +394,7 @@ export default function App() {
       {page.type === "sub" &&
         !(page.catKey === "matchups") &&
         !(page.catKey === "wintotals" && page.subKey === "live") &&
+        !(page.catKey === "otherfutures") &&
         !(page.catKey === "resume" && page.subKey === "live") &&
         !(page.catKey === "sos" && page.subKey === "live") &&
         !(page.subKey === "weeklyprogression" &&
@@ -408,7 +412,6 @@ export default function App() {
           page.catKey === "futures" &&
           (page.subKey === "confwinodds" ||
             page.subKey === "confwintotals" ||
-            page.subKey === "natty" ||
             page.subKey === "pythagwins")
         ) &&
         !(page.catKey === "modelresults" && ["all", "2024", "2025", "2026"].includes(page.subKey)) && (
@@ -458,6 +461,8 @@ export default function App() {
       {page.type === "weekreport" && <WeekReportPage onHome={handleHome} />}
 
       {page.type === "cfbsurvivor" && <CfbSurvivorToolPage onHome={handleHome} />}
+
+      <SiteFooter />
     </div>
   );
 }

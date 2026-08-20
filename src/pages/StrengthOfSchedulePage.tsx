@@ -13,6 +13,7 @@ import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/con
 const MODES = [
   { key: "sos", label: "SOS" },
   { key: "hypowins", label: "Hypothetical #12 Team Win Total" },
+  { key: "top7", label: "Top 7" },
 ];
 
 function SosRow({ rank, team, sos, change, onNavigateTeam, onNavigateConference }: any) {
@@ -65,6 +66,32 @@ function HypoWinsRow({ rank, team, hypoWins, gameCount, onNavigateTeam, onNaviga
   );
 }
 
+function Top7Row({ rank, team, top7, gameCount, onNavigateTeam, onNavigateConference }: any) {
+  return (
+    <tr>
+      <td style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>{rank}</td>
+      <td>
+        <button className="team-link" onClick={() => onNavigateTeam(team)}>
+          <TeamLogo team={team} />
+          {team.team}
+        </button>
+        <span className={`div-pill ${team.div === "FBS" ? "div-fbs" : "div-fcs"}`}>{team.div}</span>
+      </td>
+      <td className="conf-cell">
+        <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
+      </td>
+      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
+        {team.rating > 0 ? "+" : ""}
+        {team.rating.toFixed(2)}
+      </td>
+      <td className={`rating-cell ${top7 != null && top7 < 0 ? "rating-good" : "rating-bad"}`}>
+        {top7 != null ? (top7 > 0 ? "+" : "") + top7.toFixed(2) : "–"}
+      </td>
+      <td className="wintotals-record-cell">{gameCount ?? "–"} games</td>
+    </tr>
+  );
+}
+
 function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNavigateConference }: any) {
   return (
     <div style={{ flex: 1, minWidth: 320 }}>
@@ -84,9 +111,14 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
                   <th className="th th-right">SOS</th>
                   <th className="th th-right">Change from Last Week</th>
                 </>
-              ) : (
+              ) : mode === "hypowins" ? (
                 <>
                   <th className="th th-right">Hypothetical Wins</th>
+                  <th className="th th-right">Schedule</th>
+                </>
+              ) : (
+                <>
+                  <th className="th th-right">Top 7 Avg PR</th>
                   <th className="th th-right">Schedule</th>
                 </>
               )}
@@ -104,12 +136,22 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
                 />
-              ) : (
+              ) : mode === "hypowins" ? (
                 <HypoWinsRow
                   key={t.team}
                   rank={t.trueRank}
                   team={t}
                   hypoWins={t.hypoWins}
+                  gameCount={t.gameCount}
+                  onNavigateTeam={onNavigateTeam}
+                  onNavigateConference={onNavigateConference}
+                />
+              ) : (
+                <Top7Row
+                  key={t.team}
+                  rank={t.trueRank}
+                  team={t}
+                  top7={t.top7}
                   gameCount={t.gameCount}
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
@@ -145,7 +187,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
   const [gamesLoading, setGamesLoading] = useState(false);
 
   useEffect(() => {
-    if (mode !== "hypowins" || games.length > 0) return;
+    if ((mode !== "hypowins" && mode !== "top7") || games.length > 0) return;
     setGamesLoading(true);
     fetchGamesWithLines(season)
       .then(setGames)
@@ -186,6 +228,27 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
     return { hypoWins: teamGames.length > 0 ? expWins : null, gameCount: teamGames.length };
   }
 
+  // Top 7 (credit: John Harris, @jhnhrris) — average power rating of a
+  // team's 7 toughest opponents. Ratings are sorted best-to-worst (lower =
+  // better, this site's convention) and the 7 best (toughest) opponents'
+  // ratings are averaged. Teams with fewer than 7 opponents on the
+  // schedule so far just average whatever's available.
+  function computeTop7(team: any): { top7: number | null; gameCount: number } {
+    const teamGames = games.filter((g) => g.home_team === team.team || g.away_team === team.team);
+    const oppRatings: number[] = [];
+    for (const g of teamGames) {
+      const isHome = g.home_team === team.team;
+      const oppName = isHome ? g.away_team : g.home_team;
+      const opp = TEAMS_BY_NAME[oppName];
+      if (!opp) continue;
+      oppRatings.push(ratingFor(oppName, opp.rating));
+    }
+    if (oppRatings.length === 0) return { top7: null, gameCount: 0 };
+    const toughest7 = [...oppRatings].sort((a, b) => a - b).slice(0, 7);
+    const avg = toughest7.reduce((s, r) => s + r, 0) / toughest7.length;
+    return { top7: avg, gameCount: teamGames.length };
+  }
+
   const rankedPool = useMemo(() => {
     const pool = TEAMS.filter((t) => {
       if (forceDivision) return t.div === forceDivision;
@@ -205,14 +268,28 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       return sorted.map((t, i) => ({ ...t, trueRank: i + 1 }));
     }
 
-    const withHypo = pool.map((t) => ({ ...t, ...computeHypoWins(t) }));
-    const sorted = [...withHypo].sort((a, b) => {
-      if (a.hypoWins == null && b.hypoWins == null) return 0;
-      if (a.hypoWins == null) return 1;
-      if (b.hypoWins == null) return -1;
-      return a.hypoWins - b.hypoWins;
+    if (mode === "hypowins") {
+      const withHypo = pool.map((t) => ({ ...t, ...computeHypoWins(t) }));
+      const sorted = [...withHypo].sort((a, b) => {
+        if (a.hypoWins == null && b.hypoWins == null) return 0;
+        if (a.hypoWins == null) return 1;
+        if (b.hypoWins == null) return -1;
+        return a.hypoWins - b.hypoWins;
+      });
+      return sorted.map((t, i) => ({ ...t, trueRank: i + 1 }));
+    }
+
+    // top7 — lower average rating among the 7 toughest opponents = harder
+    // schedule (this site's ratings are lower-is-better), so ascending
+    // sort puts the hardest schedules first, same direction as hypowins.
+    const withTop7 = pool.map((t) => ({ ...t, ...computeTop7(t) }));
+    const sortedTop7 = [...withTop7].sort((a, b) => {
+      if (a.top7 == null && b.top7 == null) return 0;
+      if (a.top7 == null) return 1;
+      if (b.top7 == null) return -1;
+      return a.top7 - b.top7;
     });
-    return sorted.map((t, i) => ({ ...t, trueRank: i + 1 }));
+    return sortedTop7.map((t, i) => ({ ...t, trueRank: i + 1 }));
   }, [division, forceDivision, liveByTeam, mode, games, top12Rating]);
 
   const trueHalf = Math.ceil(rankedPool.length / 2);
@@ -245,10 +322,20 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
         <p className="subtitle team-subtitle">
           {mode === "sos"
             ? "SOS is Strength of Schedule, based on a number of things — including but not limited to average opponent power rating."
-            : `How many games would the #12 power-rated FBS team (currently ${
+            : mode === "hypowins"
+            ? `How many games would the #12 power-rated FBS team (currently ${
                 top12Rating != null ? (top12Rating > 0 ? "+" : "") + top12Rating.toFixed(2) : "–"
-              }) win playing each team's actual schedule?`}
+              }) win playing each team's actual schedule?`
+            : "Average power rating of a team's 7 toughest opponents on the schedule."}
         </p>
+        {mode === "top7" && (
+          <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+            Credit:{" "}
+            <a href="https://x.com/jhnhrris" target="_blank" rel="noreferrer" style={{ color: "var(--gold)" }}>
+              John Harris (@jhnhrris)
+            </a>
+          </p>
+        )}
         {forceDivision === "FCS" ? (
           <p style={{ fontSize: "0.8rem", color: "#666" }}>
             FCS strength-of-schedule data isn't calculated yet — this page is wired up and will
@@ -310,7 +397,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       </div>
 
       <div className="table-wrap" style={{ maxWidth: 1400 }}>
-        {mode === "hypowins" && gamesLoading ? (
+        {(mode === "hypowins" || mode === "top7") && gamesLoading ? (
           <div className="empty">Loading schedules…</div>
         ) : (
           <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
@@ -337,7 +424,9 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
       <div className="footer-note" data-export-exclude="true">
         {mode === "sos"
           ? "SOS is Strength of Schedule, based on a number of things — including but not limited to average opponent power rating."
-          : "This substitutes only the subject team's own rating with the #12 FBS team's current rating — opponents keep their real ratings, home/away, and home-field advantage. Expected wins are a sum of each game's win probability, the same underlying method used for the site's other win-total projections."}
+          : mode === "hypowins"
+          ? "This substitutes only the subject team's own rating with the #12 FBS team's current rating — opponents keep their real ratings, home/away, and home-field advantage. Expected wins are a sum of each game's win probability, the same underlying method used for the site's other win-total projections."
+          : "Top 7 takes every opponent on a team's schedule, sorts them best to worst, and averages the power ratings of the 7 best (toughest) opponents. Credit: John Harris (@jhnhrris)."}
       </div>
     </div>
   );

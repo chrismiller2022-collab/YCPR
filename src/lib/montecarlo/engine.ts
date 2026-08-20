@@ -31,12 +31,42 @@ export interface TeamSimResult {
   confTitlePct: number; // odds to WIN the conference championship
   playoffPct: number;
   avgSeed: number | null;
-  nattyPct: number;
+  // seedPct[s] = % chance of landing seed (s+1), s = 0..11. Only meaningful
+  // for teams with playoffPct > 0; sums to playoffPct across all 12 slots.
+  // Optional because saved runs from before this field existed won't have
+  // it — treat missing as "not available for this saved run."
+  seedPct?: number[];
+  quarterfinalPct?: number; // reached the CFP quarterfinals (bye seeds auto-qualify)
+  semifinalPct?: number; // reached the CFP semifinals
+  nattyGamePct?: number; // played IN the title game (win or lose) — broader than nattyPct
+  nattyPct: number; // WON the title game
 }
 
 export interface SimulationResult {
   teamResults: TeamSimResult[];
   unmatchedTeams: string[];
+}
+
+// ---------------------------------------------------------------------
+// Derived from winDistribution — no new simulation tracking needed, so
+// these work for every already-saved run too, not just ones simulated
+// after this was added. numTrials must be passed in (it's a run-level
+// property, not stored per team).
+// ---------------------------------------------------------------------
+
+/** % of trials with at least `n` regular-season wins (e.g. n=6 for bowl eligibility). */
+export function winsAtLeastPct(result: TeamSimResult, numTrials: number, n: number): number {
+  if (numTrials <= 0) return 0;
+  let count = 0;
+  for (let w = n; w < result.winDistribution.length; w++) count += result.winDistribution[w] ?? 0;
+  return (count / numTrials) * 100;
+}
+
+/** % of trials with zero regular-season losses (won every game on the schedule). */
+export function undefeatedPct(result: TeamSimResult, numTrials: number): number {
+  if (numTrials <= 0) return 0;
+  const count = result.winDistribution[result.totalGames] ?? 0;
+  return (count / numTrials) * 100;
 }
 
 export interface ScheduleRow {
@@ -343,7 +373,18 @@ export function runMonteCarlo(
   const confTitleCount = new Array(n).fill(0);
   const playoffCount = new Array(n).fill(0);
   const seedSum = new Array(n).fill(0);
+  // seedCount[i][s] = number of trials team i landed seed (s+1) — a full
+  // distribution, not just the average, for the "Playoff Seeds" PM market.
+  const seedCount: number[][] = Array.from({ length: n }, () => new Array(12).fill(0));
   const nattyCount = new Array(n).fill(0);
+  // Bracket-round tracking (Quarters/Semis/NCG PM markets) — quarterfinalCount
+  // includes the 4 bye seeds (automatic quarterfinalists) plus the 4 first-
+  // round winners; semifinalCount the 4 quarterfinal winners; ncgCount the 2
+  // semifinal winners (i.e. played FOR the title, win or lose — nattyCount
+  // above is the narrower "won it" count).
+  const quarterfinalCount = new Array(n).fill(0);
+  const semifinalCount = new Array(n).fill(0);
+  const ncgCount = new Array(n).fill(0);
 
   for (let trial = 0; trial < numTrials; trial++) {
     const wins = baseWins.slice();
@@ -429,11 +470,15 @@ export function runMonteCarlo(
     field.forEach((teamIdx, i) => {
       playoffCount[teamIdx]++;
       seedSum[teamIdx] += i + 1;
+      seedCount[teamIdx][i]++;
     });
 
     if (field.length === 12) {
-      const champIdx = simulateBracket(field, fbsTeams, liveByTeam);
-      if (champIdx != null) nattyCount[champIdx]++;
+      const bracket = simulateBracket(field, fbsTeams, liveByTeam);
+      for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
+      for (const idx of bracket.semifinalists) semifinalCount[idx]++;
+      for (const idx of bracket.ncgParticipants) ncgCount[idx]++;
+      if (bracket.champion != null) nattyCount[bracket.champion]++;
     }
   }
 
@@ -454,6 +499,10 @@ export function runMonteCarlo(
       confTitlePct: (confTitleCount[i] / numTrials) * 100,
       playoffPct: (playoffCount[i] / numTrials) * 100,
       avgSeed: playoffCount[i] > 0 ? seedSum[i] / playoffCount[i] : null,
+      seedPct: seedCount[i].map((c) => (c / numTrials) * 100),
+      quarterfinalPct: (quarterfinalCount[i] / numTrials) * 100,
+      semifinalPct: (semifinalCount[i] / numTrials) * 100,
+      nattyGamePct: (ncgCount[i] / numTrials) * 100,
       nattyPct: (nattyCount[i] / numTrials) * 100,
     };
   });
@@ -679,7 +728,14 @@ export function computeSrsStats(rows: ScheduleRow[], liveByTeam: Record<string, 
 // seeds 5-8 hosting 9-12; quarterfinals are neutral-site, each top-4 seed
 // facing the corresponding round-1 winner; semis and championship are
 // also neutral. Uses the same margin-simulation method as everything else.
-function simulateBracket(field: number[], fbsTeams: any[], liveByTeam: Record<string, any>): number | null {
+export interface BracketResult {
+  champion: number | null;
+  quarterfinalists: number[]; // 8: the 4 bye seeds + the 4 first-round winners
+  semifinalists: number[]; // 4: the quarterfinal winners
+  ncgParticipants: number[]; // 2: the semifinal winners (played FOR the title)
+}
+
+function simulateBracket(field: number[], fbsTeams: any[], liveByTeam: Record<string, any>): BracketResult {
   function playGame(aIdx: number, bIdx: number, hostIdx: number | null): number {
     const a = fbsTeams[aIdx];
     const b = fbsTeams[bIdx];
@@ -703,13 +759,20 @@ function simulateBracket(field: number[], fbsTeams: any[], liveByTeam: Record<st
   const r1_6v11 = playGame(s6, s11, s6);
   const r1_7v10 = playGame(s7, s10, s7);
 
+  const quarterfinalists = [s1, s2, s3, s4, r1_8v9, r1_5v12, r1_6v11, r1_7v10];
+
   const qf1 = playGame(s1, r1_8v9, null);
   const qf2 = playGame(s2, r1_5v12, null);
   const qf3 = playGame(s3, r1_6v11, null);
   const qf4 = playGame(s4, r1_7v10, null);
 
+  const semifinalists = [qf1, qf2, qf3, qf4];
+
   const sf1 = playGame(qf1, qf4, null);
   const sf2 = playGame(qf2, qf3, null);
 
-  return playGame(sf1, sf2, null);
+  const ncgParticipants = [sf1, sf2];
+  const champion = playGame(sf1, sf2, null);
+
+  return { champion, quarterfinalists, semifinalists, ncgParticipants };
 }

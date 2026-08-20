@@ -229,6 +229,93 @@ export function aggregateCustom(records: BetHistoryRecord[], params: CustomParam
 }
 
 // ---------------------------------------------------------------------
+// Home / Away / Favorite / Underdog splits — slices the same four bet
+// categories (Every Game / Filtered / WFB / NWFB) by which side of the
+// matchup was picked. Favorite/underdog is read off the Vegas spread's
+// sign (negative = home favored, per this dataset's convention validated
+// in computeCustomGrading above) — a true pick'em (spread === 0) has no
+// favorite, so it's excluded from that split (but still counted in
+// home/away). Intersections (e.g. "home favorite") are deliberately NOT
+// computed — too small a sample to be meaningful yet, per instruction.
+// ---------------------------------------------------------------------
+export interface SplitBucket {
+  home: RecordTally;
+  away: RecordTally;
+  favorite: RecordTally;
+  underdog: RecordTally;
+}
+
+function emptySplitBucket(): SplitBucket {
+  return { home: emptyTally(), away: emptyTally(), favorite: emptyTally(), underdog: emptyTally() };
+}
+
+export interface CategorySplitTally {
+  everyBet: SplitBucket;
+  filteredBet: SplitBucket;
+  weightedFilteredBet: SplitBucket;
+  nwfb: SplitBucket;
+}
+
+function emptyCategorySplitTally(): CategorySplitTally {
+  return {
+    everyBet: emptySplitBucket(),
+    filteredBet: emptySplitBucket(),
+    weightedFilteredBet: emptySplitBucket(),
+    nwfb: emptySplitBucket(),
+  };
+}
+
+export interface SplitAggregate {
+  overall: CategorySplitTally;
+  byWeek: Map<number, CategorySplitTally>;
+}
+
+function addSplitPick(bucket: SplitBucket, r: BetHistoryRecord, pick: CategoryPick) {
+  if (pick.team == null) return;
+  const isHome = pick.team === r.homeTeam;
+  tallyAdd(isHome ? bucket.home : bucket.away, pick.result);
+
+  if (r.spread !== 0) {
+    const favoriteIsHome = r.spread < 0;
+    const pickedFavorite = isHome === favoriteIsHome;
+    tallyAdd(pickedFavorite ? bucket.favorite : bucket.underdog, pick.result);
+  }
+  // spread === 0 (true pick'em): no favorite/underdog to attribute to.
+}
+
+function addCategorySplits(t: CategorySplitTally, r: BetHistoryRecord, picks: ThreeCategoryPicks) {
+  addSplitPick(t.everyBet, r, picks.everyBet);
+  addSplitPick(t.filteredBet, r, picks.filteredBet);
+  addSplitPick(t.weightedFilteredBet, r, picks.weightedFilteredBet);
+  addSplitPick(t.nwfb, r, picks.nwfb);
+}
+
+function aggregateSplits(records: BetHistoryRecord[], picksFn: (r: BetHistoryRecord) => ThreeCategoryPicks): SplitAggregate {
+  const overall = emptyCategorySplitTally();
+  const byWeek = new Map<number, CategorySplitTally>();
+
+  for (const r of records) {
+    const picks = picksFn(r);
+    addCategorySplits(overall, r, picks);
+
+    const wk = byWeek.get(r.week) ?? emptyCategorySplitTally();
+    addCategorySplits(wk, r, picks);
+    byWeek.set(r.week, wk);
+  }
+
+  return { overall, byWeek };
+}
+
+/** Plain History's NWFB bucket is always empty here too — same reason as the main triple tally: no such column in the uploaded CSV. */
+export function computeSplitsPlain(records: BetHistoryRecord[]): SplitAggregate {
+  return aggregateSplits(records, picksFromPlain);
+}
+
+export function computeSplitsCustom(records: BetHistoryRecord[], params: CustomParams): SplitAggregate {
+  return aggregateSplits(records, (r) => picksFromCustom(r, params));
+}
+
+// ---------------------------------------------------------------------
 // Filtering. Conference is looked up LIVE from data/teams.ts (current
 // conference), since this upload doesn't include a historical
 // conference snapshot per record — realignment means this can be

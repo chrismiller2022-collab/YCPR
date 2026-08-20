@@ -28,6 +28,7 @@
 import { hfaFor, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
+import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS, type CustomParams } from "./betHistory";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
 
 export type BetSide = "away" | "home" | null;
@@ -88,9 +89,15 @@ export function computeMlRow(
   game: GameWithLines,
   myAwaySpread: number | null,
   vegasAwayMoneyline: number | null,
-  vegasHomeMoneyline: number | null
+  vegasHomeMoneyline: number | null,
+  // Bill R Method (see buildMlRowsFromLiveRatingsBillR below) doesn't go
+  // through a spread number at all — it derives a win probability directly
+  // from a z-score. When supplied, this wins over myAwaySpread for the
+  // win%/EV/bet-side math; myAwaySpread is still kept around for display
+  // (null under Bill R — there's no spread to show).
+  overrideAwayWinPct?: number | null
 ): MlGameRow {
-  const myAwayWinPct = myAwaySpread != null ? spreadToWinPct(myAwaySpread) : null;
+  const myAwayWinPct = overrideAwayWinPct != null ? overrideAwayWinPct : myAwaySpread != null ? spreadToWinPct(myAwaySpread) : null;
   const myHomeWinPct = myAwayWinPct != null ? 1 - myAwayWinPct : null;
 
   const vegasAwayWinPct = vegasAwayMoneyline != null ? vegasImpliedWinPct(vegasAwayMoneyline) : null;
@@ -220,6 +227,62 @@ export function buildMlRowsFromLiveRatings(games: GameWithLines[], liveByTeam: R
 }
 
 // ---------------------------------------------------------------------
+// Bill R Method — an alternate moneyline derivation, live games only
+// (2026+; the site's own YC/Consensus power rating has no historical
+// per-week snapshot for 2024/25 to rebuild against). Skips the spread
+// number entirely: ratingDiff -> HFA-adjusted margin -> z-score -> normal
+// CDF -> win probability -> fair moneyline.
+//
+// This site's rating convention is inverted from a normal SP+-style
+// rating (lower/more negative = better team here, see LiveWinTotalsPage's
+// "rating < 0 ? good : bad"). So "away team's margin over home, positive
+// = away better" is homeRating - awayRating, not the other way around —
+// otherwise the sign would come out backwards vs. the worked example
+// (Team A at Team B, higher-is-better ratings) the method was specified
+// with.
+// ---------------------------------------------------------------------
+export const BILL_R_DEFAULT_DIVISOR = 17;
+export const BILL_R_HFA = 2.5; // fixed for this method, independent of the site's normal flat/team-specific HFA (2.4 / hfaFor)
+
+// Standard normal CDF (Abramowitz-Stegun approximation).
+function normalCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp((-z * z) / 2);
+  let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  if (z > 0) p = 1 - p;
+  return p;
+}
+
+/** Away team's win probability under Bill R Method, given both teams' site power ratings (lower = better). */
+export function billRAwayWinPct(awayRating: number, homeRating: number, divisor: number = BILL_R_DEFAULT_DIVISOR): number {
+  const margin = homeRating - awayRating - BILL_R_HFA; // positive => away favored, after shaving off the home team's HFA
+  const z = divisor !== 0 ? margin / divisor : 0;
+  return normalCdf(z);
+}
+
+export function buildMlRowsFromLiveRatingsBillR(
+  games: GameWithLines[],
+  liveByTeam: Record<string, any>,
+  divisor: number = BILL_R_DEFAULT_DIVISOR
+): MlGameRow[] {
+  const rows: MlGameRow[] = [];
+  for (const g of games) {
+    const line = pickMoneylineLine(g.lines);
+    if (!line) continue;
+
+    const staticAway = TEAMS_BY_NAME[g.away_team] ?? null;
+    const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
+    const awayRating = liveByTeam[g.away_team]?.rating ?? staticAway?.rating ?? null;
+    const homeRating = liveByTeam[g.home_team]?.rating ?? staticHome?.rating ?? null;
+
+    const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor) : null;
+
+    rows.push(computeMlRow(g, null, line.away_moneyline, line.home_moneyline, awayWinPct));
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
 // Aggregation — unit totals under both staking modes, plus a plain W-L
 // record, overall and by week.
 // ---------------------------------------------------------------------
@@ -267,6 +330,92 @@ export function aggregateMlRows(rows: MlGameRow[]): MlAggregate {
 /** Only counts rows where the bet side's EV exceeds evThreshold (percentage points) — "Filtered Bet," same idea as the spread side's filter threshold. Every Bet (aggregateMlRows) stays threshold-agnostic: bets whichever side is positive at all. */
 export function aggregateMlRowsFiltered(rows: MlGameRow[], evThreshold: number): MlAggregate {
   return aggregateMlRows(rows.filter((r) => r.betEv != null && r.betEv > evThreshold));
+}
+
+// ---------------------------------------------------------------------
+// Home / Away / Favorite / Underdog splits. Favorite/underdog reads off
+// myAwaySpread's sign (negative = away favored, this file's own
+// away-oriented convention, documented on MlGameRow above) — a true
+// pick'em (spread exactly 0) has no favorite, so it's excluded from that
+// split only (still counted in home/away). Combo cuts aren't broken out
+// separately — too small a sample size for now.
+// ---------------------------------------------------------------------
+export interface MlSplitBucket {
+  home: MlTally;
+  away: MlTally;
+  favorite: MlTally;
+  underdog: MlTally;
+}
+
+function emptyMlSplitBucket(): MlSplitBucket {
+  return { home: emptyMlTally(), away: emptyMlTally(), favorite: emptyMlTally(), underdog: emptyMlTally() };
+}
+
+function addSplitRow(bucket: MlSplitBucket, row: MlGameRow) {
+  if (row.betSide == null) return;
+  addToTally(row.betSide === "home" ? bucket.home : bucket.away, row);
+
+  if (row.myAwaySpread != null && row.myAwaySpread !== 0) {
+    const favoriteIsAway = row.myAwaySpread < 0;
+    const pickedAway = row.betSide === "away";
+    addToTally(pickedAway === favoriteIsAway ? bucket.favorite : bucket.underdog, row);
+  }
+}
+
+export function aggregateMlSplits(rows: MlGameRow[]): MlSplitBucket {
+  const bucket = emptyMlSplitBucket();
+  for (const row of rows) addSplitRow(bucket, row);
+  return bucket;
+}
+
+export function aggregateMlSplitsFiltered(rows: MlGameRow[], evThreshold: number): MlSplitBucket {
+  return aggregateMlSplits(rows.filter((r) => r.betEv != null && r.betEv > evThreshold));
+}
+
+// ---------------------------------------------------------------------
+// "Also bet the spread" — restricts the ML rows to games where the SPREAD
+// side's own signal (Filtered / WFB / NWFB, same engine as the Admin Bet
+// History page) also fired that week. Only possible for seasons with a
+// BET_HISTORY entry (2024/2025 currently) — that's the only place the
+// spread/prediction inputs the ATS engine needs are stored; a live 2026+
+// game has no BET_HISTORY match, so it's excluded from this cut rather
+// than silently guessed at.
+// ---------------------------------------------------------------------
+export type SpreadSignal = "filtered" | "wfb" | "nwfb";
+
+function betHistoryKey(season: number, week: number, homeTeam: string, awayTeam: string): string {
+  return `${season}::${week}::${homeTeam}::${awayTeam}`;
+}
+
+/** Which of the three spread signals fired for a BET_HISTORY record, using the same default params as the Admin Bet History page. */
+function spreadSignalsFor(r: BetHistoryRecord, params: CustomParams): Set<SpreadSignal> {
+  const g = computeCustomGrading(r, params);
+  const set = new Set<SpreadSignal>();
+  if (g.filteredBetTeam != null) set.add("filtered");
+  if (g.weightedFilteredBetTeam != null) set.add("wfb");
+  if (g.nwfbTeam != null) set.add("nwfb");
+  return set;
+}
+
+/** Rows for a season with no BET_HISTORY coverage (e.g. 2026+ live games) always come back empty — there's no spread signal to cross-reference against yet. */
+export function filterMlRowsBySpreadSignal(
+  rows: MlGameRow[],
+  season: number,
+  signal: SpreadSignal,
+  params: CustomParams = DEFAULT_CUSTOM_PARAMS
+): MlGameRow[] {
+  const byKey = new Map<string, BetHistoryRecord>();
+  for (const r of BET_HISTORY) {
+    if (r.season !== season) continue;
+    byKey.set(betHistoryKey(r.season, r.week, r.homeTeam, r.awayTeam), r);
+  }
+  if (byKey.size === 0) return [];
+
+  return rows.filter((row) => {
+    const r = byKey.get(betHistoryKey(season, row.game.week, row.game.home_team, row.game.away_team));
+    if (!r) return false;
+    return spreadSignalsFor(r, params).has(signal);
+  });
 }
 
 export { fairMoneylineFromWinPct };

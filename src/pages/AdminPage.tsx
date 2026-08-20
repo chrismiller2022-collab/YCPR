@@ -18,6 +18,7 @@ import SurvivorPoolAdminPanel from "./SurvivorPoolAdminPanel";
 import BetHistoryAdminPanel from "./BetHistoryAdminPanel";
 import MoneylineBetHistoryPanel from "./MoneylineBetHistoryPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
+import PmAdminPanel from "./PmAdminPanel";
 import RatingSystemsPanel from "./RatingSystemsPanel";
 import SosAdminPanel from "./SosAdminPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
@@ -203,6 +204,7 @@ type AdminView =
   | "upload"
   | "survivor"
   | "montecarlo"
+  | "pm"
   | "gametotals"
   | "gameslines"
   | "matchups"
@@ -631,6 +633,11 @@ function AdminDashboard({
           onClick={() => onNavigateView("montecarlo")}
         />
         <MenuTile
+          label="Prediction Markets"
+          description="Kalshi-style Yes/No pricing on Monte Carlo markets, playoff seeds, win totals, and head-to-head win comparisons."
+          onClick={() => onNavigateView("pm")}
+        />
+        <MenuTile
           label="Rating Systems"
           description="Conglomerate FPI/SP+/SRS/Core, your published sheet, and McIllece/Massey into YC + Consensus."
           onClick={() => onNavigateView("ratingsystems")}
@@ -932,6 +939,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
 
       {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
+
+      {view === "pm" && <PmAdminPanel onBack={() => setView("home")} />}
 
       {view === "ratingsystems" && <RatingSystemsPanel onBack={() => setView("home")} />}
       {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
