@@ -1,6 +1,7 @@
 import { supabase } from "../supabaseClient";
 import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor, spreadToMoneyline } from "../odds";
+import { hfaFor, fairMoneylineFromWinPct } from "../odds";
+import { billRAwayWinPct } from "../moneylineBetHistory";
 import type { GameRow, BettingLineRow } from "./gamesLines";
 
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
@@ -27,7 +28,8 @@ export interface EspnMlPickWithGame extends EspnMlPickRow {
   game: GameRow | null;
   lines: BettingLineRow[];
   myProjAwaySpread: number | null;
-  myProjMoneyline: number | null; // away-perspective
+  myProjAwayMoneyline: number | null;
+  myProjHomeMoneyline: number | null;
   vegasAwayMoneyline: number | null;
   vegasHomeMoneyline: number | null;
   vegasTotal: number | null;
@@ -89,14 +91,18 @@ export async function fetchEspnMlPicksForWeek(
     const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
     const myProjAwaySpread =
       g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
-    const myProjMoneyline = myProjAwaySpread != null ? spreadToMoneyline(myProjAwaySpread) : null;
+    // Bill R Method — see espnConfidencePool.ts for the full explanation.
+    const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating) : null;
+    const myProjAwayMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(awayWinPct) : null;
+    const myProjHomeMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(1 - awayWinPct) : null;
 
     return {
       ...p,
       game: g,
       lines: gameLines,
       myProjAwaySpread,
-      myProjMoneyline,
+      myProjAwayMoneyline,
+      myProjHomeMoneyline,
       vegasAwayMoneyline: line?.away_moneyline ?? null,
       vegasHomeMoneyline: line?.home_moneyline ?? null,
       vegasTotal: line?.over_under ?? null,

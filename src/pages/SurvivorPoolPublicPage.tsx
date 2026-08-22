@@ -298,6 +298,19 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
     );
   }
 
+  if (entrant === "loading") {
+    // Unreachable in practice — loadAll() always sets entrant (to the
+    // fetched row or null) before it flips loading to false, and the
+    // `if (loading)` guard above already returns first. This guard exists
+    // only so TypeScript can narrow entrant to SurvivorPoolEntrantPublic
+    // for the rest of the render.
+    return (
+      <div style={{ maxWidth: 600, margin: "4rem auto", padding: "0 1rem", textAlign: "center" }}>
+        <p>Loading…</p>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div style={{ maxWidth: 480, margin: "4rem auto", padding: "0 1rem", textAlign: "center" }}>
