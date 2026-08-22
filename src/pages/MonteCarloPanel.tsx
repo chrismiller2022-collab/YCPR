@@ -25,7 +25,7 @@ import { saveRatingRows } from "../lib/api/ratingSystems";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
-const TRIAL_OPTIONS = [1000, 5000, 10000, 20000, 100000];
+const NUM_TRIALS = 100000;
 
 function fmtPct(v: number) {
   return `${v.toFixed(1)}%`;
@@ -394,7 +394,7 @@ function HistoryTab({ season }: { season: number }) {
 function MonteCarloResultsSection() {
   const [tab, setTab] = useState<"run" | "history">("run");
   const [season, setSeason] = useState(new Date().getFullYear());
-  const [numTrials, setNumTrials] = useState(5000);
+  const numTrials = NUM_TRIALS;
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -482,16 +482,6 @@ function MonteCarloResultsSection() {
             <label>
               Season{" "}
               <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
-            </label>
-            <label>
-              Trials{" "}
-              <select value={numTrials} onChange={(e) => setNumTrials(parseInt(e.target.value, 10))}>
-                {TRIAL_OPTIONS.map((t) => (
-                  <option key={t} value={t}>
-                    {t.toLocaleString()}
-                  </option>
-                ))}
-              </select>
             </label>
             <button onClick={handleRun} disabled={running}>
               {running ? "Running…" : "Run simulation"}

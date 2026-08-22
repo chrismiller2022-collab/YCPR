@@ -1,6 +1,21 @@
 import { TEAMS, TEAMS_BY_NAME } from "../../data/teams";
 import { hfaFor } from "../odds";
 
+// 2026-27 CFP auto-bid conference tiers (NCAA.com). Power 4 champs are
+// guaranteed in; Group of 5 gets one auto bid for its highest-ranked team
+// overall (not necessarily its champion). FBS Independents (Notre Dame,
+// etc.) are deliberately excluded from both - they only ever reach the
+// field via at-large, matching the real rule ("ranks among the top 12").
+const POWER4_CONFS = new Set(["ACC", "Big Ten", "Big 12", "SEC"]);
+const GROUP_OF_5_CONFS = new Set([
+  "American Athletic",
+  "Conference USA",
+  "Mid-American",
+  "Mountain West",
+  "Pac-12",
+  "Sun Belt",
+]);
+
 export interface SimGame {
   week: number;
   home_team: string;
@@ -572,21 +587,32 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
   };
   const byResult = (a: number, b: number) => winPct(b) - winPct(a) || byRating(a, b);
 
-  const sortedChamps = [...champions].sort(byResult);
-  const autoBids = sortedChamps.slice(0, 5);
+  // 2026-27 CFP auto-bid rule (per NCAA.com): only the ACC/Big Ten/Big 12/SEC
+  // champions are guaranteed in as conference champs. The Group of 5 gets a
+  // single auto bid for its single highest-ranked team overall, champion or
+  // not (replaces the old "5 highest-rated conference champs, any league"
+  // 2024-25 rule). Notre Dame has no guaranteed bid - it competes for an
+  // at-large spot like any other unaffiliated team, which is exactly what
+  // "in if it's top-12 overall" amounts to, since it's never part of
+  // confGroups (FBS Independents are excluded there) and so can never be a
+  // conference champion or the Group-of-5 pick.
+  const power4Champs = champions.filter((i) => POWER4_CONFS.has(fbsTeams[i].conf));
+  const group5Teams = fbsTeams.map((_, i) => i).filter((i) => GROUP_OF_5_CONFS.has(fbsTeams[i].conf));
+  const bestGroup5 = group5Teams.length > 0 ? [...group5Teams].sort(byResult)[0] : null;
+
+  const autoBids = bestGroup5 != null ? [...power4Champs, bestGroup5] : [...power4Champs];
   const champSet = new Set(autoBids);
 
   const atLargePool = fbsTeams
     .map((_, i) => i)
     .filter((i) => !champSet.has(i))
     .sort(byResult)
-    .slice(0, 7);
+    .slice(0, Math.max(0, 12 - autoBids.length));
 
-  const byeSeeds = autoBids.slice(0, 4);
-  const fifthChamp = autoBids[4];
-  const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byResult);
-
-  const field = [...byeSeeds, ...seed5to12];
+  // Seeding: the four highest-ranked teams in the 12-team field get the
+  // byes regardless of conference-champion status (also a 2026-27 rule
+  // change - previously byes went to the top 4 conference champs only).
+  const field = [...autoBids, ...atLargePool].sort(byResult);
   field.forEach((teamIdx, i) => {
     playoffCount[teamIdx]++;
     seedSum[teamIdx] += i + 1;
