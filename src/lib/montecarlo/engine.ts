@@ -69,6 +69,13 @@ export interface TeamSimResult {
 export interface SimulationResult {
   teamResults: TeamSimResult[];
   unmatchedTeams: string[];
+  // SRS/VSRS averaged over a 1-in-SRS_SAMPLE_EVERY trial sample, plus a
+  // parallel win%+VSRS ("resume-informed") field/seed tally computed on the
+  // exact same sampled trials as the main win%+rating model, so the two are
+  // directly comparable. Only present from runMonteCarlo/runMonteCarloAsync
+  // (not from runOneMonteCarloTrial callers that skip finalize).
+  resumeComparison?: ResumeComparisonEntry[];
+  resumeComparisonTrials?: number;
 }
 
 // ---------------------------------------------------------------------
@@ -327,6 +334,30 @@ interface RemainingGame {
   awayIdx: number | null;
   isConf: boolean;
   mySpread: number; // 0 if truly no rating on either side (rare fallback)
+  // Kept alongside homeIdx/awayIdx (which are null for untracked/sub-FBS
+  // opponents) so a sampled trial can still build a name-keyed game result
+  // for computeSrsStats, the same way simulateSingleSeason does.
+  homeTeam: string;
+  awayTeam: string;
+}
+
+// Every 10th trial also gets run through computeSrsStats and an alternate
+// (resume-informed) field/seed tally, so SRS/VSRS can be reported as a
+// stable ~10k-trial average instead of one single-realization roll, and the
+// current win%+rating model can be compared against a win%+VSRS model on
+// the exact same trials. Full-cost every trial was benchmarked at roughly
+// tripling total run time for 100k trials; 1-in-10 keeps the extra cost
+// modest while still averaging 10,000 realizations (chosen by Chris).
+const SRS_SAMPLE_EVERY = 10;
+
+export interface ResumeComparisonEntry {
+  team: string;
+  avgSrs: number | null;
+  avgVsrs: number | null;
+  currentPlayoffPct: number;
+  currentAvgSeed: number | null;
+  resumePlayoffPct: number;
+  resumeAvgSeed: number | null;
 }
 
 /**
@@ -341,10 +372,13 @@ interface RemainingGame {
  * - Playoff seeding ranks by that trial's actual win% first, fixed rating
  *   only as a tiebreaker between comparable records - a stand-in for a
  *   committee ranking, not the full resume-rating methodology. Ratings
- *   themselves don't evolve mid-simulation based on simulated results.
+ *   themselves don't evolve mid-simulation based on simulated results. A
+ *   parallel win%+VSRS model is also tracked on a 1-in-10 trial sample
+ *   (resumeComparison on the result) so the two can be compared directly.
  * - Playoff bracket structure (5 auto-bids + 7 at-large, byes to the top
- *   4 conference champions) mirrors the real 12-team CFP format and
- *   reuses this site's existing 12-team bracket shape from BracketPage.tsx.
+ *   4 highest-ranked teams in the field) mirrors the real 12-team CFP
+ *   format (2026-27 auto-bid rules) and reuses this site's existing
+ *   12-team bracket shape from BracketPage.tsx.
  */
 // ---------------------------------------------------------------------
 // Split into create/run-one-trial/finalize so the trial loop can be driven
@@ -359,10 +393,16 @@ interface MonteCarloState {
   n: number;
   remaining: RemainingGame[];
   confGroups: Map<string, number[]>;
+  indexByName: Map<string, number>;
   baseWins: number[];
   baseLosses: number[];
   baseConfWins: number[];
   baseConfLosses: number[];
+  // Already-completed games' actual winner/loser/margin (by team name) —
+  // fixed across every trial, so computed once here instead of every trial.
+  // Feeds the sampled-trial SRS/VSRS pass alongside that trial's simulated
+  // remaining-game results.
+  baseGameResults: { winner: string; loser: string; margin: number }[];
   totalGames: number[];
   unmatchedTeams: Set<string>;
   winDistribution: number[][];
@@ -376,6 +416,16 @@ interface MonteCarloState {
   quarterfinalCount: number[];
   semifinalCount: number[];
   ncgCount: number[];
+  // 1-in-SRS_SAMPLE_EVERY sampling for SRS/VSRS + resume-informed model
+  // comparison — see SRS_SAMPLE_EVERY comment above.
+  trialsRun: number;
+  srsSampleCount: number;
+  srsSum: number[];
+  vsrsSum: number[];
+  cmpCurrentPlayoffCount: number[];
+  cmpCurrentSeedSum: number[];
+  cmpResumePlayoffCount: number[];
+  cmpResumeSeedSum: number[];
 }
 
 function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>): MonteCarloState {
@@ -398,6 +448,7 @@ function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>
 
   const unmatchedTeams = new Set<string>();
   const remaining: RemainingGame[] = [];
+  const baseGameResults: { winner: string; loser: string; margin: number }[] = [];
 
   for (const g of games) {
     const homeIdx = indexByName.get(g.home_team) ?? null;
@@ -426,6 +477,11 @@ function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>
           else baseConfLosses[awayIdx]++;
         }
       }
+      baseGameResults.push({
+        winner: homeWon ? g.home_team : g.away_team,
+        loser: homeWon ? g.away_team : g.home_team,
+        margin: Math.abs(g.home_points - g.away_points),
+      });
       continue;
     }
 
@@ -434,6 +490,8 @@ function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>
       awayIdx,
       isConf,
       mySpread: computeMySpread(g, liveByTeam, syntheticSubFcsRating) ?? 0,
+      homeTeam: g.home_team,
+      awayTeam: g.away_team,
     });
   }
 
@@ -455,10 +513,12 @@ function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>
     n,
     remaining,
     confGroups,
+    indexByName,
     baseWins,
     baseLosses,
     baseConfWins,
     baseConfLosses,
+    baseGameResults,
     totalGames,
     unmatchedTeams,
     winDistribution: Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0)),
@@ -479,6 +539,14 @@ function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>
     quarterfinalCount: new Array(n).fill(0),
     semifinalCount: new Array(n).fill(0),
     ncgCount: new Array(n).fill(0),
+    trialsRun: 0,
+    srsSampleCount: 0,
+    srsSum: new Array(n).fill(0),
+    vsrsSum: new Array(n).fill(0),
+    cmpCurrentPlayoffCount: new Array(n).fill(0),
+    cmpCurrentSeedSum: new Array(n).fill(0),
+    cmpResumePlayoffCount: new Array(n).fill(0),
+    cmpResumeSeedSum: new Array(n).fill(0),
   };
 }
 
@@ -489,10 +557,12 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
     n,
     remaining,
     confGroups,
+    indexByName,
     baseWins,
     baseLosses,
     baseConfWins,
     baseConfLosses,
+    baseGameResults,
     winDistribution,
     confWinDistribution,
     madeConfChampCount,
@@ -504,12 +574,22 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
     quarterfinalCount,
     semifinalCount,
     ncgCount,
+    srsSum,
+    vsrsSum,
+    cmpCurrentPlayoffCount,
+    cmpCurrentSeedSum,
+    cmpResumePlayoffCount,
+    cmpResumeSeedSum,
   } = state;
+
+  state.trialsRun++;
+  const isSampledTrial = state.trialsRun % SRS_SAMPLE_EVERY === 0;
 
   const wins = baseWins.slice();
   const losses = baseLosses.slice();
   const confWins = baseConfWins.slice();
   const confLosses = baseConfLosses.slice();
+  const sampledGameResults: { winner: string; loser: string; margin: number }[] = [];
 
   for (const g of remaining) {
     const finalResult = g.mySpread + drawGameMarginNoise();
@@ -529,6 +609,14 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
         if (awayWins) confWins[g.awayIdx]++;
         else confLosses[g.awayIdx]++;
       }
+    }
+    if (isSampledTrial) {
+      const margin = Math.abs(finalResult);
+      sampledGameResults.push(
+        awayWins
+          ? { winner: g.awayTeam, loser: g.homeTeam, margin }
+          : { winner: g.homeTeam, loser: g.awayTeam, margin }
+      );
     }
   }
 
@@ -619,6 +707,51 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
     seedCount[teamIdx][i]++;
   });
 
+  // Sampled trials only (see SRS_SAMPLE_EVERY): compute this trial's SRS/VSRS
+  // via the exact same computeSrsStats math the SRS tab uses on a single
+  // realization, then tally BOTH the current win%+rating field and an
+  // alternate win%+VSRS ("resume-informed") field on the identical trial —
+  // same random draws either way, so the two counts are directly comparable.
+  if (isSampledTrial) {
+    state.srsSampleCount++;
+    const srsRows = computeSrsStats([...baseGameResults, ...sampledGameResults], liveByTeam);
+    const vsrsByName = new Map<string, number>();
+    for (const row of srsRows) {
+      vsrsByName.set(row.team, row.vsrs);
+      const idx = indexByName.get(row.team);
+      if (idx == null) continue;
+      srsSum[idx] += row.srs;
+      vsrsSum[idx] += row.vsrs;
+    }
+
+    const byResumeResult = (a: number, b: number) => {
+      const wp = winPct(b) - winPct(a);
+      if (wp !== 0) return wp;
+      const va = vsrsByName.get(fbsTeams[a].team) ?? -Infinity;
+      const vb = vsrsByName.get(fbsTeams[b].team) ?? -Infinity;
+      return vb - va; // higher VSRS is better, same convention as SRS/VSRS elsewhere
+    };
+
+    const bestGroup5Resume = group5Teams.length > 0 ? [...group5Teams].sort(byResumeResult)[0] : null;
+    const autoBidsResume = bestGroup5Resume != null ? [...power4Champs, bestGroup5Resume] : [...power4Champs];
+    const champSetResume = new Set(autoBidsResume);
+    const atLargePoolResume = fbsTeams
+      .map((_, i) => i)
+      .filter((i) => !champSetResume.has(i))
+      .sort(byResumeResult)
+      .slice(0, Math.max(0, 12 - autoBidsResume.length));
+    const fieldResume = [...autoBidsResume, ...atLargePoolResume].sort(byResumeResult);
+
+    fieldResume.forEach((teamIdx, i) => {
+      cmpResumePlayoffCount[teamIdx]++;
+      cmpResumeSeedSum[teamIdx] += i + 1;
+    });
+    field.forEach((teamIdx, i) => {
+      cmpCurrentPlayoffCount[teamIdx]++;
+      cmpCurrentSeedSum[teamIdx] += i + 1;
+    });
+  }
+
   if (field.length === 12) {
     const bracket = simulateBracket(field, fbsTeams, liveByTeam);
     for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
@@ -647,6 +780,13 @@ function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): S
     ncgCount,
     nattyCount,
     unmatchedTeams,
+    srsSampleCount,
+    srsSum,
+    vsrsSum,
+    cmpCurrentPlayoffCount,
+    cmpCurrentSeedSum,
+    cmpResumePlayoffCount,
+    cmpResumeSeedSum,
   } = state;
 
   const teamResults: TeamSimResult[] = fbsTeams.map((t, i) => {
@@ -677,7 +817,22 @@ function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): S
     };
   });
 
-  return { teamResults, unmatchedTeams: Array.from(unmatchedTeams) };
+  const resumeComparison: ResumeComparisonEntry[] = fbsTeams.map((t, i) => ({
+    team: t.team,
+    avgSrs: srsSampleCount > 0 ? srsSum[i] / srsSampleCount : null,
+    avgVsrs: srsSampleCount > 0 ? vsrsSum[i] / srsSampleCount : null,
+    currentPlayoffPct: srsSampleCount > 0 ? (cmpCurrentPlayoffCount[i] / srsSampleCount) * 100 : 0,
+    currentAvgSeed: cmpCurrentPlayoffCount[i] > 0 ? cmpCurrentSeedSum[i] / cmpCurrentPlayoffCount[i] : null,
+    resumePlayoffPct: srsSampleCount > 0 ? (cmpResumePlayoffCount[i] / srsSampleCount) * 100 : 0,
+    resumeAvgSeed: cmpResumePlayoffCount[i] > 0 ? cmpResumeSeedSum[i] / cmpResumePlayoffCount[i] : null,
+  }));
+
+  return {
+    teamResults,
+    unmatchedTeams: Array.from(unmatchedTeams),
+    resumeComparison,
+    resumeComparisonTrials: srsSampleCount,
+  };
 }
 
 export function runMonteCarlo(
@@ -761,7 +916,10 @@ export interface SrsTeamRow {
 // drawMarginNoise() uses above.
 const WIN_BONUS_EPS = 1e-10;
 
-export function computeSrsStats(rows: ScheduleRow[], liveByTeam: Record<string, any>): SrsTeamRow[] {
+export function computeSrsStats(
+  rows: Pick<ScheduleRow, "winner" | "loser" | "margin">[],
+  liveByTeam: Record<string, any>
+): SrsTeamRow[] {
   interface GameEntry {
     opponent: string;
     isWin: boolean;

@@ -11,6 +11,7 @@ import {
   type TeamSimResult,
   type ScheduleRow,
   type SrsTeamRow,
+  type ResumeComparisonEntry,
 } from "../lib/montecarlo/engine";
 import {
   fetchSeasonGames,
@@ -391,6 +392,130 @@ function HistoryTab({ season }: { season: number }) {
   );
 }
 
+// ---------------------------------------------------------------------
+// Current model (win% + rating tiebreak) vs. resume-informed model (win% +
+// VSRS tiebreak), computed on the exact same 1-in-10 sampled trials so the
+// two columns are apples-to-apples. SRS/VSRS themselves are also a 10k-
+// trial average now instead of a single realization — see SRS_SAMPLE_EVERY
+// in engine.ts.
+// ---------------------------------------------------------------------
+function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeComparisonEntry[]; sampleTrials: number }) {
+  const [sortKey, setSortKey] = useState<keyof ResumeComparisonEntry>("resumePlayoffPct");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  function handleSort(key: string) {
+    const k = key as keyof ResumeComparisonEntry;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("desc");
+    }
+  }
+
+  const ranked = useMemo(() => {
+    return entries
+      .filter((r) => r.currentPlayoffPct > 0.05 || r.resumePlayoffPct > 0.05)
+      .sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+        return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+      });
+  }, [entries, sortKey, sortDir]);
+
+  if (sampleTrials === 0) return null;
+
+  return (
+    <div style={{ marginTop: "1.5rem" }}>
+      <h4 style={{ marginBottom: "0.3rem" }}>Current model vs. resume-informed model</h4>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+        Every 10th trial ({sampleTrials.toLocaleString()} of them) also ran through the SRS/VSRS methodology and an
+        alternate playoff field/seed using win% + VSRS as the tiebreaker instead of win% + fixed rating — same random
+        draws both ways, so the two columns are directly comparable. SRS/VSRS below are averaged across those same
+        sampled trials.
+      </p>
+      <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+              <SortHeader
+                label="Current CFP%"
+                sortKey="currentPlayoffPct"
+                active={sortKey === "currentPlayoffPct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Current Avg Seed"
+                sortKey="currentAvgSeed"
+                active={sortKey === "currentAvgSeed"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Resume CFP%"
+                sortKey="resumePlayoffPct"
+                active={sortKey === "resumePlayoffPct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Resume Avg Seed"
+                sortKey="resumeAvgSeed"
+                active={sortKey === "resumeAvgSeed"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader label="Avg SRS" sortKey="avgSrs" active={sortKey === "avgSrs"} dir={sortDir} onClick={handleSort} align="right" />
+              <SortHeader label="Avg VSRS" sortKey="avgVsrs" active={sortKey === "avgVsrs"} dir={sortDir} onClick={handleSort} align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.map((r) => {
+              const pctDelta = r.resumePlayoffPct - r.currentPlayoffPct;
+              return (
+                <tr key={r.team}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.currentPlayoffPct)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.currentAvgSeed != null ? r.currentAvgSeed.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.resumePlayoffPct)}{" "}
+                    <span style={{ fontSize: "0.7rem", color: pctDelta > 0.5 ? "#2e8b40" : pctDelta < -0.5 ? "#c0392b" : "var(--chalk-dim)" }}>
+                      ({pctDelta >= 0 ? "+" : ""}
+                      {pctDelta.toFixed(1)})
+                    </span>
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.resumeAvgSeed != null ? r.resumeAvgSeed.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.avgSrs != null ? r.avgSrs.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.avgVsrs != null ? r.avgVsrs.toFixed(1) : "–"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MonteCarloResultsSection() {
   const [tab, setTab] = useState<"run" | "history">("run");
   const [season, setSeason] = useState(new Date().getFullYear());
@@ -399,6 +524,8 @@ function MonteCarloResultsSection() {
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [results, setResults] = useState<TeamSimResult[] | null>(null);
+  const [resumeComparison, setResumeComparison] = useState<ResumeComparisonEntry[] | null>(null);
+  const [resumeComparisonTrials, setResumeComparisonTrials] = useState(0);
   const [unmatched, setUnmatched] = useState<string[]>([]);
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -438,11 +565,12 @@ function MonteCarloResultsSection() {
       // Runs in yielding batches (see runMonteCarloAsync) so the tab stays
       // responsive and this progress bar actually animates instead of the
       // page freezing for however long 100k trials takes.
-      const { teamResults, unmatchedTeams } = await runMonteCarloAsync(games, liveByTeam, numTrials, (completed, total) =>
-        setProgress({ completed, total })
-      );
+      const { teamResults, unmatchedTeams, resumeComparison: cmp, resumeComparisonTrials: cmpTrials } =
+        await runMonteCarloAsync(games, liveByTeam, numTrials, (completed, total) => setProgress({ completed, total }));
       setResults(teamResults);
       setUnmatched(unmatchedTeams);
+      setResumeComparison(cmp ?? null);
+      setResumeComparisonTrials(cmpTrials ?? 0);
     } catch (err: any) {
       setError(err.message ?? "Simulation failed");
     } finally {
@@ -538,6 +666,7 @@ function MonteCarloResultsSection() {
           {results && (
             <div style={{ marginTop: "1rem" }}>
               <ResultsTable results={results} numTrials={numTrials} />
+              {resumeComparison && <ResumeComparisonTable entries={resumeComparison} sampleTrials={resumeComparisonTrials} />}
             </div>
           )}
         </>
