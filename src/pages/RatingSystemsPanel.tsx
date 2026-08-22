@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import { CONFERENCES } from "../data/teams";
 import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "../lib/ratingSystems";
+import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
 import { parseSheetCsv, parseMcilleceCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, type ConglomeratedRow } from "../lib/ratingConglomerate";
@@ -568,9 +569,202 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
 }
 
 // ---------------------------------------------------------------------
+// Power Ratings History — a verification view, not an editor. Lets you
+// confirm the weekly "Save as week" snapshots (SaveAsWeekControl, above)
+// are actually landing correctly: pick a season, pick one of its saved
+// weeks, and see every rating system's value for every team that week,
+// straight from weekly_power_ratings. Starts empty for any season with no
+// saved weeks yet (2026 is the first season this was ever wired up).
+// ---------------------------------------------------------------------
+interface HistoryRow {
+  team: string;
+  conference: string | null;
+  division: string | null;
+  values: Record<string, number>;
+}
+
+function pivotHistoryRows(rows: WeeklyPowerRatingRow[]): { rows: HistoryRow[]; systemKeys: string[] } {
+  const byTeam = new Map<string, HistoryRow>();
+  const systemKeys = new Set<string>();
+  for (const r of rows) {
+    let row = byTeam.get(r.team);
+    if (!row) {
+      row = { team: r.team, conference: r.conference, division: r.division, values: {} };
+      byTeam.set(r.team, row);
+    }
+    row.values[r.system_key] = r.value;
+    systemKeys.add(r.system_key);
+  }
+  // Order columns by the canonical RATING_SYSTEMS registry order (falling
+  // back to alphabetical for any key that isn't in the registry, e.g. an
+  // old/retired system that still has historical rows).
+  const known = RATING_SYSTEMS.map((s) => s.key).filter((k) => systemKeys.has(k));
+  const unknown = Array.from(systemKeys).filter((k) => !RATING_SYSTEMS_BY_KEY[k]).sort();
+  return { rows: Array.from(byTeam.values()), systemKeys: [...known, ...unknown] };
+}
+
+function PowerRatingsHistorySection() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [savedWeeks, setSavedWeeks] = useState<number[]>([]);
+  const [week, setWeek] = useState<number | null>(null);
+  const [raw, setRaw] = useState<WeeklyPowerRatingRow[]>([]);
+  const [loadingWeeks, setLoadingWeeks] = useState(false);
+  const [loadingWeek, setLoadingWeek] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState("team");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  useEffect(() => {
+    setLoadingWeeks(true);
+    setError(null);
+    setWeek(null);
+    setRaw([]);
+    fetchSavedRatingWeeks(season)
+      .then((weeks) => {
+        setSavedWeeks(weeks);
+        if (weeks.length > 0) setWeek(weeks[weeks.length - 1]); // default to the most recent saved week
+      })
+      .catch((err) => setError(err.message ?? "Failed to load saved weeks"))
+      .finally(() => setLoadingWeeks(false));
+  }, [season]);
+
+  useEffect(() => {
+    if (week == null) return;
+    setLoadingWeek(true);
+    setError(null);
+    fetchWeeklyPowerRatings(season, week)
+      .then(setRaw)
+      .catch((err) => setError(err.message ?? "Failed to load week"))
+      .finally(() => setLoadingWeek(false));
+  }, [season, week]);
+
+  const { rows, systemKeys } = useMemo(() => pivotHistoryRows(raw), [raw]);
+
+  function handleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    return [...rows].sort((a: any, b: any) => {
+      const av = sortKey === "team" || sortKey === "conference" ? a[sortKey] : a.values[sortKey];
+      const bv = sortKey === "team" || sortKey === "conference" ? b[sortKey] : b.values[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [rows, sortKey, sortDir]);
+
+  return (
+    <div>
+      <h2 style={{ marginTop: 0 }}>Power Ratings History</h2>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+        Read-only — a way to confirm each week's "Save as week" snapshot actually landed. Pick a
+        season and one of its saved weeks to see every rating system's value for every team that
+        week, straight from what's stored.
+      </p>
+
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
+          Season{" "}
+          <input
+            type="number"
+            value={season}
+            onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)}
+            style={{ width: 90 }}
+          />
+        </label>
+        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
+          Week{" "}
+          <select
+            value={week ?? ""}
+            onChange={(e) => setWeek(e.target.value === "" ? null : parseInt(e.target.value, 10))}
+            disabled={savedWeeks.length === 0}
+          >
+            {savedWeeks.length === 0 && <option value="">No saved weeks</option>}
+            {savedWeeks.map((w) => (
+              <option key={w} value={w}>
+                Week {w}
+              </option>
+            ))}
+          </select>
+        </label>
+        {loadingWeeks && <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Loading weeks…</span>}
+      </div>
+
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
+
+      {!loadingWeeks && savedWeeks.length === 0 && (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+          No saved snapshots for {season} yet — use "Save as week" on the Manage tab once ratings
+          look right for a given week.
+        </p>
+      )}
+
+      {week != null && (
+        <>
+          {loadingWeek ? (
+            <p>Loading…</p>
+          ) : rows.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No rows saved for week {week}.</p>
+          ) : (
+            <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+                <thead>
+                  <tr>
+                    <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+                    <SortHeader
+                      label="Conf"
+                      sortKey="conference"
+                      active={sortKey === "conference"}
+                      dir={sortDir}
+                      onClick={handleSort}
+                    />
+                    {systemKeys.map((key) => (
+                      <SortHeader
+                        key={key}
+                        label={RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
+                        sortKey={key}
+                        active={sortKey === key}
+                        dir={sortDir}
+                        onClick={handleSort}
+                        align="right"
+                      />
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((r) => (
+                    <tr key={r.team}>
+                      <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                      <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
+                      {systemKeys.map((key) => (
+                        <td key={key} style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                          {fmtNum(r.values[key] ?? null)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Top-level panel.
 // ---------------------------------------------------------------------
 export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
+  const [panelTab, setPanelTab] = useState<"manage" | "history">("manage");
   const [pulls, setPulls] = useState<RatingPullRow[]>([]);
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -598,24 +792,39 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
         ‹ Admin
       </button>
 
-      <h2 style={{ marginTop: 0 }}>Rating Systems</h2>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Pull FPI/SP+/SRS/Core/Elo from CFBD, pull the published sheet, and upload McIllece/Massey weekly. YC is a
-        customizable weighted average across every system (including Consensus, itself a simple average of the
-        source systems). Save the current table to a specific week once you're happy with it.
-      </p>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
+        <button className={`mode-btn ${panelTab === "manage" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("manage")}>
+          Manage
+        </button>
+        <button className={`mode-btn ${panelTab === "history" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("history")}>
+          Power Ratings History
+        </button>
+      </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {loading ? (
-        <p>Loading…</p>
+      {panelTab === "history" ? (
+        <PowerRatingsHistorySection />
       ) : (
         <>
-          <SyncControls onDataChanged={loadAll} />
-          <SystemPerformanceSummary season={new Date().getFullYear()} />
-          <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
-          <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
-          <PushYcControl rows={conglomerated} />
-          <ConglomeratedTable rows={conglomerated} />
+          <h2 style={{ marginTop: 0 }}>Rating Systems</h2>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+            Pull FPI/SP+/SRS/Core/Elo from CFBD, pull the published sheet, and upload McIllece/Massey weekly. YC is a
+            customizable weighted average across every system (including Consensus, itself a simple average of the
+            source systems). Save the current table to a specific week once you're happy with it.
+          </p>
+
+          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {loading ? (
+            <p>Loading…</p>
+          ) : (
+            <>
+              <SyncControls onDataChanged={loadAll} />
+              <SystemPerformanceSummary season={new Date().getFullYear()} />
+              <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
+              <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
+              <PushYcControl rows={conglomerated} />
+              <ConglomeratedTable rows={conglomerated} />
+            </>
+          )}
         </>
       )}
     </div>

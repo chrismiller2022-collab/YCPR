@@ -1474,6 +1474,23 @@
           line-height: 1.25;
         }
 
+        /* Opt-out of the page-wide sticky thead above. That rule is meant
+           for tall tables that scroll internally (or take up most of the
+           viewport) so the header stays visible while you scroll through
+           rows. Short summary tables (a handful of rows, no internal
+           scroll) don't benefit from it — instead, once the table scrolls
+           past the sticky offset, its header detaches from the table and
+           pins itself over whatever content is now at that scroll
+           position, which is especially bad when several short tables sit
+           near each other (their sticky headers fight over the same
+           screen position and overlap each other's rows). Add this class
+           to a <table> to keep its thead in normal flow. */
+        .no-sticky-head thead th {
+          position: static;
+          top: auto;
+          z-index: auto;
+        }
+
         .home-table tbody td {
           white-space: nowrap;
         }

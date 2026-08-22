@@ -235,18 +235,33 @@ export function aggregateCustom(records: BetHistoryRecord[], params: CustomParam
 // sign (negative = home favored, per this dataset's convention validated
 // in computeCustomGrading above) — a true pick'em (spread === 0) has no
 // favorite, so it's excluded from that split (but still counted in
-// home/away). Intersections (e.g. "home favorite") are deliberately NOT
-// computed — too small a sample to be meaningful yet, per instruction.
+// home/away). The four intersections (home favorite / home underdog /
+// away favorite / away underdog) ARE also computed, for the same reason
+// and excluded from the same pick'em case — sample size is smaller than
+// the plain splits but the user wants them anyway.
 // ---------------------------------------------------------------------
 export interface SplitBucket {
   home: RecordTally;
   away: RecordTally;
   favorite: RecordTally;
   underdog: RecordTally;
+  homeFavorite: RecordTally;
+  homeUnderdog: RecordTally;
+  awayFavorite: RecordTally;
+  awayUnderdog: RecordTally;
 }
 
 function emptySplitBucket(): SplitBucket {
-  return { home: emptyTally(), away: emptyTally(), favorite: emptyTally(), underdog: emptyTally() };
+  return {
+    home: emptyTally(),
+    away: emptyTally(),
+    favorite: emptyTally(),
+    underdog: emptyTally(),
+    homeFavorite: emptyTally(),
+    homeUnderdog: emptyTally(),
+    awayFavorite: emptyTally(),
+    awayUnderdog: emptyTally(),
+  };
 }
 
 export interface CategorySplitTally {
@@ -279,6 +294,12 @@ function addSplitPick(bucket: SplitBucket, r: BetHistoryRecord, pick: CategoryPi
     const favoriteIsHome = r.spread < 0;
     const pickedFavorite = isHome === favoriteIsHome;
     tallyAdd(pickedFavorite ? bucket.favorite : bucket.underdog, pick.result);
+
+    if (isHome) {
+      tallyAdd(pickedFavorite ? bucket.homeFavorite : bucket.homeUnderdog, pick.result);
+    } else {
+      tallyAdd(pickedFavorite ? bucket.awayFavorite : bucket.awayUnderdog, pick.result);
+    }
   }
   // spread === 0 (true pick'em): no favorite/underdog to attribute to.
 }
@@ -453,6 +474,117 @@ export function breakdownByConference(
 export function breakdownByTeam(records: BetHistoryRecord[], mode: "plain" | "custom", params?: CustomParams): BreakdownTriple {
   const picksFn = mode === "plain" ? picksFromPlain : (r: BetHistoryRecord) => picksFromCustom(r, params!);
   return breakdownGeneric(records, picksFn, (team) => team);
+}
+
+// ---------------------------------------------------------------------
+// Amount-Off Matrix — every game (there's always a pick, everyBetTeam) is
+// a data point with two numbers: the betting line, SIGNED from the picked
+// team's own perspective (positive = picked the underdog/getting points,
+// negative = picked the favorite/giving points — same convention as the
+// favorite/underdog split above, just kept per-game instead of collapsed
+// into one bucket), and how many points off that line the model's own
+// prediction was (a magnitude — perspective-invariant, same absAmountOff
+// computeCustomGrading already produces). Rows bucket by line, columns
+// bucket by a "amount off >= X" threshold, so a cell answers "of the
+// games where the betting line was in this range AND the model disagreed
+// with it by at least this much, how did picking the model's side do."
+// This is a manual threshold-hunting tool, not a graded bet category —
+// unlike Filtered/WFB/NWFB it has no saved default, it's meant to be
+// stared at and used to pick numbers for those by hand.
+// ---------------------------------------------------------------------
+export interface AmountOffPoint {
+  lineSigned: number; // from the picked team's own perspective; positive = underdog, negative = favorite
+  absAmountOff: number;
+  result: BetPick;
+}
+
+export function computeAmountOffPoints(records: BetHistoryRecord[], params: CustomParams): AmountOffPoint[] {
+  return records.map((r) => {
+    const g = computeCustomGrading(r, params);
+    const pickedIsHome = g.everyBetTeam === r.homeTeam;
+    const lineSigned = pickedIsHome ? r.spread : -r.spread;
+    return { lineSigned, absAmountOff: g.absAmountOff, result: g.everyBetResult };
+  });
+}
+
+export interface AmountOffLineBucket {
+  min: number; // inclusive
+  max: number; // exclusive
+}
+
+/**
+ * Row buckets, 1-wide, built from the actual data range so there's no
+ * padding of empty rows at either end. Signed mode spans however far
+ * negative (favorite) and positive (underdog) the data actually goes,
+ * e.g. -14 to +21 wouldn't produce a symmetric -21 to +21 range. Abs mode
+ * folds sign first (Math.abs of each line) so a favorite and an underdog
+ * bet at the same magnitude land in the same row.
+ */
+export function buildLineBuckets(points: AmountOffPoint[], absValues: boolean): AmountOffLineBucket[] {
+  if (points.length === 0) return [];
+  const values = absValues ? points.map((p) => Math.abs(p.lineSigned)) : points.map((p) => p.lineSigned);
+  const lo = Math.floor(Math.min(...values));
+  const hi = Math.ceil(Math.max(...values));
+  const buckets: AmountOffLineBucket[] = [];
+  for (let m = lo; m < hi; m++) buckets.push({ min: m, max: m + 1 });
+  return buckets;
+}
+
+/** Threshold columns, 0.5-wide, from 0 up to the actual max absAmountOff observed (rounded up to the nearest 0.5). */
+export function buildAmountOffThresholds(points: AmountOffPoint[]): number[] {
+  if (points.length === 0) return [];
+  const max = Math.max(...points.map((p) => p.absAmountOff));
+  const roundedMax = Math.ceil(max * 2) / 2;
+  const thresholds: number[] = [];
+  for (let t = 0; t <= roundedMax + 1e-9; t += 0.5) thresholds.push(Math.round(t * 10) / 10);
+  return thresholds;
+}
+
+function lineInBucket(lineSigned: number, bucket: AmountOffLineBucket, absValues: boolean): boolean {
+  const v = absValues ? Math.abs(lineSigned) : lineSigned;
+  return v >= bucket.min && v < bucket.max;
+}
+
+export interface AmountOffMatrix {
+  lineBuckets: AmountOffLineBucket[];
+  thresholds: number[];
+  cells: RecordTally[][]; // cells[rowIndex][colIndex]
+}
+
+export function buildAmountOffMatrix(points: AmountOffPoint[], absValues: boolean): AmountOffMatrix {
+  const lineBuckets = buildLineBuckets(points, absValues);
+  const thresholds = buildAmountOffThresholds(points);
+
+  const cells: RecordTally[][] = lineBuckets.map(() => thresholds.map(() => emptyTally()));
+
+  for (const p of points) {
+    const rowIdx = lineBuckets.findIndex((b) => lineInBucket(p.lineSigned, b, absValues));
+    if (rowIdx === -1) continue;
+    for (let colIdx = 0; colIdx < thresholds.length; colIdx++) {
+      if (p.absAmountOff >= thresholds[colIdx]) {
+        tallyAdd(cells[rowIdx][colIdx], p.result);
+      }
+    }
+  }
+
+  return { lineBuckets, thresholds, cells };
+}
+
+/**
+ * The standalone "custom bucket" row — one ad hoc min/max line range (kept
+ * signed, since that's what makes min=0/max=positive mean "underdog only"
+ * and min=negative/max=0 mean "favorite only", per how this is meant to
+ * be used) plus one amount-off threshold, graded independent of whatever
+ * bucket widths the grid below is currently using.
+ */
+export function tallyAmountOffCustom(points: AmountOffPoint[], min: number, max: number, threshold: number): RecordTally {
+  const t = emptyTally();
+  for (const p of points) {
+    if (p.lineSigned < min || p.lineSigned > max) continue;
+    if (p.absAmountOff < threshold) continue;
+    tallyAdd(t, p.result);
+  }
+  return t;
 }
 
 // ---------------------------------------------------------------------

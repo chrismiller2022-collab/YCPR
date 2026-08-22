@@ -67,7 +67,7 @@ function StatsBlock({ title, overall, byWeek }: { title: string; overall: Record
             Weekly breakdown
           </summary>
           <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginTop: "0.5rem" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+            <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
               <thead>
                 <tr>
                   <th className="th">Week</th>
@@ -97,8 +97,9 @@ function StatsBlock({ title, overall, byWeek }: { title: string; overall: Record
 
 // ---------------------------------------------------------------------
 // Home / Away / Favorite / Underdog splits — Every Game / Filtered / WFB
-// only (this page runs off Plain History, which has no NWFB column).
-// Combo cuts (e.g. home favorite) aren't broken out — too small a sample.
+// only (this page runs off Plain History, which has no NWFB column). A
+// second table breaks out the four combos (home favorite, home underdog,
+// away favorite, away underdog) — smaller samples than the plain splits.
 // ---------------------------------------------------------------------
 function SplitCell({ t }: { t: RecordTally }) {
   return (
@@ -121,10 +122,11 @@ function SplitsSection({ splits }: { splits: CategorySplitTally }) {
       <div className="section-label">Home / Away / Favorite / Underdog</div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
         Same bet categories above, sliced by which side was picked. Favorite/underdog comes from
-        the Vegas closing spread (true pick'ems excluded from that split).
+        the Vegas closing spread (true pick'ems excluded from that split). The second table below
+        breaks out the four combos (home favorite, home underdog, away favorite, away underdog).
       </p>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
           <thead>
             <tr>
               <th className="th">Bet Type</th>
@@ -144,6 +146,34 @@ function SplitsSection({ splits }: { splits: CategorySplitTally }) {
                   <SplitCell t={b.away} />
                   <SplitCell t={b.favorite} />
                   <SplitCell t={b.underdog} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: "0.9rem", overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <th className="th">Bet Type</th>
+              <th className="th th-right">Home Favorite</th>
+              <th className="th th-right">Home Underdog</th>
+              <th className="th th-right">Away Favorite</th>
+              <th className="th th-right">Away Underdog</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SPLIT_ROWS.map(({ key, label }) => {
+              const b: SplitBucket = splits[key];
+              return (
+                <tr key={key}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
+                  <SplitCell t={b.homeFavorite} />
+                  <SplitCell t={b.homeUnderdog} />
+                  <SplitCell t={b.awayFavorite} />
+                  <SplitCell t={b.awayUnderdog} />
                 </tr>
               );
             })}
@@ -309,7 +339,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
     <div style={{ marginBottom: "1.5rem" }}>
       <div className="section-label">ATS Stats</div>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
           <thead>
             <tr>
               <th className="th"></th>

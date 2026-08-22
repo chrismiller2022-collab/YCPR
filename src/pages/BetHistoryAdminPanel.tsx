@@ -12,6 +12,9 @@ import {
   computeErrorStatsFromBetHistory,
   computeSplitsPlain,
   computeSplitsCustom,
+  computeAmountOffPoints,
+  buildAmountOffMatrix,
+  tallyAmountOffCustom,
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
   type BetHistoryFilters,
@@ -19,6 +22,7 @@ import {
   type BreakdownTriple,
   type CategorySplitTally,
   type SplitBucket,
+  type AmountOffPoint,
 } from "../lib/betHistory";
 
 const SEASONS = [2024, 2025, 2026];
@@ -89,7 +93,7 @@ function StatsBlock({
           <details>
             <summary style={{ cursor: "pointer", fontSize: "0.76rem", color: "var(--chalk-dim)" }}>Weekly breakdown</summary>
             <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 6, marginTop: "0.4rem" }}>
-              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem" }}>
+              <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem" }}>
                 <thead>
                   <tr>
                     <th className="th">Week</th>
@@ -157,7 +161,7 @@ function StatsBlock({
             Weekly breakdown
           </summary>
           <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginTop: "0.5rem" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+            <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
               <thead>
                 <tr>
                   <th className="th">Week</th>
@@ -320,7 +324,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
     <div style={{ marginBottom: "1.5rem" }}>
       <div className="section-label">ATS Stats</div>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
           <thead>
             <tr>
               <th className="th"></th>
@@ -441,11 +445,13 @@ function SplitsSection({ splits, hideNwfb }: { splits: CategorySplitTally; hideN
       <div className="section-label">Home / Away / Favorite / Underdog</div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
         Same four bet categories above, sliced by which side was picked. Favorite/underdog comes
-        from the Vegas closing spread (true pick'ems excluded from that split). Combo cuts (e.g.
-        home favorite) aren't broken out separately yet — too small a sample size for now.
+        from the Vegas closing spread (true pick'ems excluded from that split). The second table
+        below breaks out the four combos (home favorite, home underdog, away favorite, away
+        underdog) — smaller samples than the plain splits, so treat with proportionally more
+        caution.
       </p>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
           <thead>
             <tr>
               <th className="th">Bet Type</th>
@@ -471,6 +477,221 @@ function SplitsSection({ splits, hideNwfb }: { splits: CategorySplitTally; hideN
           </tbody>
         </table>
       </div>
+
+      <div style={{ marginTop: "0.9rem", overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table className="no-sticky-head" style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <th className="th">Bet Type</th>
+              <th className="th th-right">Home Favorite</th>
+              <th className="th th-right">Home Underdog</th>
+              <th className="th th-right">Away Favorite</th>
+              <th className="th th-right">Away Underdog</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ key, label }) => {
+              const b: SplitBucket = splits[key];
+              return (
+                <tr key={key}>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
+                  <SplitCell t={b.homeFavorite} />
+                  <SplitCell t={b.homeUnderdog} />
+                  <SplitCell t={b.awayFavorite} />
+                  <SplitCell t={b.awayUnderdog} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Amount-Off Matrix — every game bucketed by betting line (rows, signed
+// from the picked team's own perspective unless "Abs values only" folds
+// it) x "amount off >=" threshold (columns). A manual threshold-hunting
+// tool, not a graded bet category. The custom row above the grid is an
+// independent ad hoc calculator, always signed regardless of the grid's
+// abs toggle — min=0/max=positive isolates underdog bets, min=negative/
+// max=0 isolates favorite bets, purely as a byproduct of the plain range
+// filter (no separate sign-detection logic needed).
+// ---------------------------------------------------------------------
+type MatrixStatMode = "total" | "win" | "loss" | "pct";
+const MATRIX_STAT_TABS: { key: MatrixStatMode; label: string }[] = [
+  { key: "total", label: "Total Games" },
+  { key: "win", label: "Wins" },
+  { key: "loss", label: "Losses" },
+  { key: "pct", label: "Win %" },
+];
+
+function matrixCellText(t: RecordTally, mode: MatrixStatMode): string {
+  if (mode === "total") return t.w + t.l + t.push > 0 ? String(t.w + t.l + t.push) : "–";
+  if (mode === "win") return t.w > 0 ? String(t.w) : "–";
+  if (mode === "loss") return t.l > 0 ? String(t.l) : "–";
+  const decided = t.w + t.l;
+  return decided === 0 ? "–" : `${winPct(t).toFixed(0)}%`;
+}
+
+/** Green above 50%, red below, fading to neutral near 50% — same idea as odds.ts's spreadColor but centered on win% instead of a spread. Cells with fewer than 5 decided games stay neutral (too small a sample to color meaningfully). */
+function matrixCellBg(t: RecordTally, mode: MatrixStatMode): string | undefined {
+  if (mode !== "pct") return undefined;
+  const decided = t.w + t.l;
+  if (decided < 5) return undefined;
+  const pct = winPct(t);
+  const clamp = Math.max(-25, Math.min(25, pct - 50));
+  const favorite = [90, 168, 105];
+  const neutral = [39, 45, 58];
+  const underdog = [196, 92, 82];
+  const k = Math.abs(clamp) / 25;
+  const target = clamp >= 0 ? favorite : underdog;
+  const [r, g, b] = neutral.map((n, i) => Math.round(n + (target[i] - n) * k));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function fmtLineBucketLabel(min: number, max: number): string {
+  return `${min} to ${max}`;
+}
+
+function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
+  const [absValues, setAbsValues] = useState(false);
+  const [statMode, setStatMode] = useState<MatrixStatMode>("pct");
+  const [customMin, setCustomMin] = useState(0);
+  const [customMax, setCustomMax] = useState(10);
+  const [customThreshold, setCustomThreshold] = useState(6);
+
+  const matrix = useMemo(() => buildAmountOffMatrix(points, absValues), [points, absValues]);
+  const customTally = useMemo(
+    () => tallyAmountOffCustom(points, customMin, customMax, customThreshold),
+    [points, customMin, customMax, customThreshold]
+  );
+
+  return (
+    <div style={{ marginBottom: "1.75rem" }}>
+      <div className="section-label">Amount-Off Matrix</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        Every game (there's always a pick), rows = betting line, columns = the model's
+        prediction was at least this many points off that line. "Abs values only" folds
+        favorite/underdog into one 0-and-up axis instead of a signed -N to +N list.
+      </p>
+
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          alignItems: "flex-end",
+          flexWrap: "wrap",
+          marginBottom: "0.75rem",
+          padding: "0.75rem 0.9rem",
+          background: "var(--turf-panel)",
+          border: "1px solid var(--hash)",
+          borderRadius: 8,
+        }}
+      >
+        <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+          Custom min line{" "}
+          <input type="number" step="0.5" value={customMin} onChange={(e) => setCustomMin(parseFloat(e.target.value) || 0)} style={{ width: 70 }} />
+        </label>
+        <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+          Custom max line{" "}
+          <input type="number" step="0.5" value={customMax} onChange={(e) => setCustomMax(parseFloat(e.target.value) || 0)} style={{ width: 70 }} />
+        </label>
+        <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+          Amount off &gt;={" "}
+          <input
+            type="number"
+            step="0.5"
+            value={customThreshold}
+            onChange={(e) => setCustomThreshold(parseFloat(e.target.value) || 0)}
+            style={{ width: 70 }}
+          />
+        </label>
+        <div style={{ display: "flex", gap: "1.25rem", alignItems: "baseline" }}>
+          <div>
+            <div style={{ fontSize: "1.2rem", fontWeight: 800, lineHeight: 1 }}>{fmtRecord(customTally)}</div>
+            <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>Record</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "1.2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(customTally)}</div>
+            <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>Win %</div>
+          </div>
+        </div>
+        <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+          Min 0 / max positive = underdog bets only. Min negative / max 0 = favorite bets only. Not color coded.
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+        {MATRIX_STAT_TABS.map((t) => (
+          <button key={t.key} className={`mode-btn ${statMode === t.key ? "mode-btn-active" : ""}`} onClick={() => setStatMode(t.key)}>
+            {t.label}
+          </button>
+        ))}
+        <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>
+          <input type="checkbox" checked={absValues} onChange={(e) => setAbsValues(e.target.checked)} /> Abs values only
+        </label>
+      </div>
+
+      {matrix.lineBuckets.length === 0 || matrix.thresholds.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No games match those filters.</p>
+      ) : (
+        <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.72rem" }}>
+            <thead>
+              <tr>
+                <th
+                  className="th"
+                  style={{ position: "sticky", left: 0, zIndex: 21, background: "var(--turf)" }}
+                >
+                  Line
+                </th>
+                {matrix.thresholds.map((th) => (
+                  <th key={th} className="th th-right">
+                    &gt;= {th}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.lineBuckets.map((b, rowIdx) => (
+                <tr key={`${b.min}-${b.max}`}>
+                  <td
+                    style={{
+                      padding: "0.25rem 0.5rem",
+                      borderBottom: "1px solid var(--hash)",
+                      position: "sticky",
+                      left: 0,
+                      background: "var(--turf-panel)",
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {fmtLineBucketLabel(b.min, b.max)}
+                  </td>
+                  {matrix.thresholds.map((th, colIdx) => {
+                    const t = matrix.cells[rowIdx][colIdx];
+                    return (
+                      <td
+                        key={th}
+                        style={{
+                          padding: "0.25rem 0.5rem",
+                          borderBottom: "1px solid var(--hash)",
+                          textAlign: "right",
+                          background: matrixCellBg(t, statMode),
+                        }}
+                      >
+                        {matrixCellText(t, statMode)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -601,6 +822,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
   const plainSplits = useMemo(() => computeSplitsPlain(filtered), [filtered]);
   const customSplits = useMemo(() => computeSplitsCustom(filtered, params), [filtered, params]);
+  const amountOffPoints = useMemo(() => computeAmountOffPoints(filtered, params), [filtered, params]);
 
   const plainByConf = useMemo(() => breakdownByConference(filtered, "plain"), [filtered]);
   const plainByTeam = useMemo(() => breakdownByTeam(filtered, "plain"), [filtered]);
@@ -685,6 +907,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           />
           <SplitsSection splits={plainSplits.overall} hideNwfb />
           <ErrorStatsBlock errorStats={errorStats} />
+          <AmountOffMatrixSection points={amountOffPoints} />
           <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
         </>
@@ -813,6 +1036,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
           <SplitsSection splits={customSplits.overall} />
           <ErrorStatsBlock errorStats={errorStats} />
+          <AmountOffMatrixSection points={amountOffPoints} />
           <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} />
         </>
