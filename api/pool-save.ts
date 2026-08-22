@@ -6,6 +6,10 @@ import { createClient } from "@supabase/supabase-js";
 // `pool` field in the request body. This exists purely to stay under
 // Vercel Hobby's 12-serverless-function-per-deployment cap — the actual
 // logic is unchanged from each pool's original endpoint.
+//
+// cbssplash (CBS Splash) was added later as a straight copy of peay's
+// shape/logic, targeting cbs_splash_picks/splash_line instead of
+// peay_picks/peay_line — see the branch below.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
@@ -76,6 +80,32 @@ export default async function handler(req: any, res: any) {
         updated_at: new Date().toISOString(),
       }));
       const { error } = await supabaseAdmin.from("peay_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
+      if (error) throw error;
+      res.status(200).json({ ok: true, saved: cleanRows.length });
+      return;
+    }
+
+    // --- CBS Splash: same shape as Peay, own table/field names ---
+    if (pool === "cbssplash") {
+      if (action !== "saveWeek") {
+        res.status(400).json({ error: `Unknown action for cbssplash: ${action}` });
+        return;
+      }
+      const { season, week, rows } = req.body;
+      if (!season || !week || !Array.isArray(rows)) {
+        res.status(400).json({ error: "Missing season, week, or rows" });
+        return;
+      }
+      const cleanRows = rows.map((r: any) => ({
+        season,
+        week,
+        game_id: r.game_id,
+        splash_line: r.splash_line ?? null,
+        picked_side: r.picked_side ?? null,
+        is_key_pick: !!r.is_key_pick,
+        updated_at: new Date().toISOString(),
+      }));
+      const { error } = await supabaseAdmin.from("cbs_splash_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
       if (error) throw error;
       res.status(200).json({ ok: true, saved: cleanRows.length });
       return;

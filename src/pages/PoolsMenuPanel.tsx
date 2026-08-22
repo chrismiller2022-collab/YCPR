@@ -75,6 +75,11 @@ export default function PoolsMenuPanel({
         />
         <PoolTile label="Peay Pool" description="ATS pool vs a custom line, all FBS vs FBS games." onClick={() => onSelectPool("peay")} />
         <PoolTile
+          label="CBS Splash"
+          description="ATS pool vs a custom line, all FBS vs FBS games."
+          onClick={() => onSelectPool("cbssplash")}
+        />
+        <PoolTile
           label="CFBD Pick'em"
           description="Fill in predicted margins for CFBD's own prediction contest CSV."
           onClick={() => onSelectPool("cfbdpickem")}

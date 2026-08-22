@@ -9,6 +9,7 @@ import TeamTotalsAdminPanel from "./TeamTotalsAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
+import CbsSplashPoolPanel from "./CbsSplashPoolPanel";
 import EspnMoneylinePanel from "./EspnMoneylinePanel";
 import EspnSpreadPanel from "./EspnSpreadPanel";
 import EspnConfidencePanel from "./EspnConfidencePanel";
@@ -211,6 +212,7 @@ type AdminView =
   | "pools"
   | "brit"
   | "peay"
+  | "cbssplash"
   | "espnml"
   | "espnspread"
   | "espnconfidence"
@@ -354,6 +356,7 @@ const CHECKLIST_ITEMS: ChecklistItemDef[] = [
       { key: "pools_espn_confidence", label: "ESPN Confidence" },
       { key: "pools_brit", label: "The Brit" },
       { key: "pools_peay", label: "Peay" },
+      { key: "pools_cbs_splash", label: "CBS Splash" },
       { key: "pools_cfbd", label: "CFBD" },
       { key: "pools_cbs", label: "CBS" },
     ],
@@ -624,7 +627,7 @@ function AdminDashboard({
         />
         <MenuTile
           label="Pools"
-          description="Weekly pools: The Brit, ESPN pools, Peay Pool."
+          description="Weekly pools: The Brit, ESPN pools, Peay Pool, CBS Splash."
           onClick={() => onNavigateView("pools")}
         />
         <MenuTile
@@ -927,6 +930,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       {view === "brit" && <BritPoolPanel onBack={() => setView("pools")} />}
 
       {view === "peay" && <PeayPoolPanel onBack={() => setView("pools")} />}
+      {view === "cbssplash" && <CbsSplashPoolPanel onBack={() => setView("pools")} />}
 
       {view === "espnml" && <EspnMoneylinePanel onBack={() => setView("pools")} />}
 
