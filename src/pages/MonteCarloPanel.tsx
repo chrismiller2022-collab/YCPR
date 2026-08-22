@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import {
-  runMonteCarlo,
+  runMonteCarloAsync,
   simulateSingleSeason,
   computeSrsStats,
   getSubFcsRatingInfo,
@@ -25,7 +25,7 @@ import { saveRatingRows } from "../lib/api/ratingSystems";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
-const TRIAL_OPTIONS = [1000, 5000, 10000, 20000];
+const TRIAL_OPTIONS = [1000, 5000, 10000, 20000, 100000];
 
 function fmtPct(v: number) {
   return `${v.toFixed(1)}%`;
@@ -396,6 +396,8 @@ function MonteCarloResultsSection() {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [numTrials, setNumTrials] = useState(5000);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [results, setResults] = useState<TeamSimResult[] | null>(null);
   const [unmatched, setUnmatched] = useState<string[]>([]);
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
@@ -405,10 +407,22 @@ function MonteCarloResultsSection() {
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
+  // Large trial counts (100k) take tens of seconds even batched — a live
+  // elapsed timer while the progress bar creeps up is what actually
+  // reassures someone the tab isn't just hung.
+  useEffect(() => {
+    if (!running) return;
+    const start = Date.now();
+    setElapsedMs(0);
+    const interval = setInterval(() => setElapsedMs(Date.now() - start), 200);
+    return () => clearInterval(interval);
+  }, [running]);
+
   async function handleRun() {
     setRunning(true);
     setError(null);
     setSaveMsg(null);
+    setProgress(null);
     try {
       const games = await fetchSeasonGames(season);
       if (games.length === 0) {
@@ -421,13 +435,19 @@ function MonteCarloResultsSection() {
       setCurrentWeek(week);
 
       await new Promise((r) => setTimeout(r, 30));
-      const { teamResults, unmatchedTeams } = runMonteCarlo(games, liveByTeam, numTrials);
+      // Runs in yielding batches (see runMonteCarloAsync) so the tab stays
+      // responsive and this progress bar actually animates instead of the
+      // page freezing for however long 100k trials takes.
+      const { teamResults, unmatchedTeams } = await runMonteCarloAsync(games, liveByTeam, numTrials, (completed, total) =>
+        setProgress({ completed, total })
+      );
       setResults(teamResults);
       setUnmatched(unmatchedTeams);
     } catch (err: any) {
       setError(err.message ?? "Simulation failed");
     } finally {
       setRunning(false);
+      setProgress(null);
     }
   }
 
@@ -482,6 +502,36 @@ function MonteCarloResultsSection() {
               </button>
             )}
           </div>
+
+          {running && (
+            <div style={{ marginBottom: "1rem", maxWidth: 420 }}>
+              <div
+                style={{
+                  height: 8,
+                  borderRadius: 4,
+                  background: "var(--turf-panel-2)",
+                  border: "1px solid var(--hash)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: progress ? `${Math.round((progress.completed / progress.total) * 100)}%` : "4%",
+                    background: "var(--gold, #d9a441)",
+                    transition: "width 0.15s linear",
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: "0.3rem" }}>
+                {progress
+                  ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} trials`
+                  : "Loading games…"}
+                {" · "}
+                {(elapsedMs / 1000).toFixed(1)}s elapsed
+              </div>
+            </div>
+          )}
 
           {error && <p style={{ color: "crimson" }}>{error}</p>}
           {saveMsg && <p style={{ color: "green" }}>{saveMsg}</p>}

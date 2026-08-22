@@ -330,11 +330,39 @@ interface RemainingGame {
  *   4 conference champions) mirrors the real 12-team CFP format and
  *   reuses this site's existing 12-team bracket shape from BracketPage.tsx.
  */
-export function runMonteCarlo(
-  games: SimGame[],
-  liveByTeam: Record<string, any>,
-  numTrials: number
-): SimulationResult {
+// ---------------------------------------------------------------------
+// Split into create/run-one-trial/finalize so the trial loop can be driven
+// either all at once (runMonteCarlo, unchanged behavior) or in yielding
+// batches (runMonteCarloAsync, below) without duplicating any simulation
+// logic between the two. Everything in this section is a direct 1:1
+// extraction of what used to be one long function — no behavior change.
+// ---------------------------------------------------------------------
+interface MonteCarloState {
+  liveByTeam: Record<string, any>;
+  fbsTeams: { team: string; conf: string; div: "FBS" | "FCS"; rating: number }[];
+  n: number;
+  remaining: RemainingGame[];
+  confGroups: Map<string, number[]>;
+  baseWins: number[];
+  baseLosses: number[];
+  baseConfWins: number[];
+  baseConfLosses: number[];
+  totalGames: number[];
+  unmatchedTeams: Set<string>;
+  winDistribution: number[][];
+  confWinDistribution: number[][];
+  madeConfChampCount: number[];
+  confTitleCount: number[];
+  playoffCount: number[];
+  seedSum: number[];
+  seedCount: number[][];
+  nattyCount: number[];
+  quarterfinalCount: number[];
+  semifinalCount: number[];
+  ncgCount: number[];
+}
+
+function createMonteCarloState(games: SimGame[], liveByTeam: Record<string, any>): MonteCarloState {
   // Resolved once so every downstream lookup (conference title games,
   // bracket seeding/simulation) uses each team's live weekly rating
   // instead of the frozen preseason snapshot, matching computeMySpread's
@@ -405,122 +433,180 @@ export function runMonteCarlo(
     confGroups.set(t.conf, list);
   });
 
-  const winDistribution: number[][] = Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0));
-  const confWinDistribution: number[][] = Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0));
-  const madeConfChampCount = new Array(n).fill(0);
-  const confTitleCount = new Array(n).fill(0);
-  const playoffCount = new Array(n).fill(0);
-  const seedSum = new Array(n).fill(0);
-  // seedCount[i][s] = number of trials team i landed seed (s+1) — a full
-  // distribution, not just the average, for the "Playoff Seeds" PM market.
-  const seedCount: number[][] = Array.from({ length: n }, () => new Array(12).fill(0));
-  const nattyCount = new Array(n).fill(0);
-  // Bracket-round tracking (Quarters/Semis/NCG PM markets) — quarterfinalCount
-  // includes the 4 bye seeds (automatic quarterfinalists) plus the 4 first-
-  // round winners; semifinalCount the 4 quarterfinal winners; ncgCount the 2
-  // semifinal winners (i.e. played FOR the title, win or lose — nattyCount
-  // above is the narrower "won it" count).
-  const quarterfinalCount = new Array(n).fill(0);
-  const semifinalCount = new Array(n).fill(0);
-  const ncgCount = new Array(n).fill(0);
+  return {
+    liveByTeam,
+    fbsTeams,
+    n,
+    remaining,
+    confGroups,
+    baseWins,
+    baseLosses,
+    baseConfWins,
+    baseConfLosses,
+    totalGames,
+    unmatchedTeams,
+    winDistribution: Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0)),
+    confWinDistribution: Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0)),
+    madeConfChampCount: new Array(n).fill(0),
+    confTitleCount: new Array(n).fill(0),
+    playoffCount: new Array(n).fill(0),
+    seedSum: new Array(n).fill(0),
+    // seedCount[i][s] = number of trials team i landed seed (s+1) — a full
+    // distribution, not just the average, for the "Playoff Seeds" PM market.
+    seedCount: Array.from({ length: n }, () => new Array(12).fill(0)),
+    nattyCount: new Array(n).fill(0),
+    // Bracket-round tracking (Quarters/Semis/NCG PM markets) — quarterfinalCount
+    // includes the 4 bye seeds (automatic quarterfinalists) plus the 4 first-
+    // round winners; semifinalCount the 4 quarterfinal winners; ncgCount the 2
+    // semifinal winners (i.e. played FOR the title, win or lose — nattyCount
+    // above is the narrower "won it" count).
+    quarterfinalCount: new Array(n).fill(0),
+    semifinalCount: new Array(n).fill(0),
+    ncgCount: new Array(n).fill(0),
+  };
+}
 
-  for (let trial = 0; trial < numTrials; trial++) {
-    const wins = baseWins.slice();
-    const losses = baseLosses.slice();
-    const confWins = baseConfWins.slice();
-    const confLosses = baseConfLosses.slice();
+function runOneMonteCarloTrial(state: MonteCarloState): void {
+  const {
+    liveByTeam,
+    fbsTeams,
+    n,
+    remaining,
+    confGroups,
+    baseWins,
+    baseLosses,
+    baseConfWins,
+    baseConfLosses,
+    winDistribution,
+    confWinDistribution,
+    madeConfChampCount,
+    confTitleCount,
+    playoffCount,
+    seedSum,
+    seedCount,
+    nattyCount,
+    quarterfinalCount,
+    semifinalCount,
+    ncgCount,
+  } = state;
 
-    for (const g of remaining) {
-      const finalResult = g.mySpread + drawGameMarginNoise();
-      const awayWins = finalResult < 0;
-      if (g.homeIdx != null) {
-        if (awayWins) losses[g.homeIdx]++;
-        else wins[g.homeIdx]++;
-        if (g.isConf) {
-          if (awayWins) confLosses[g.homeIdx]++;
-          else confWins[g.homeIdx]++;
-        }
-      }
-      if (g.awayIdx != null) {
-        if (awayWins) wins[g.awayIdx]++;
-        else losses[g.awayIdx]++;
-        if (g.isConf) {
-          if (awayWins) confWins[g.awayIdx]++;
-          else confLosses[g.awayIdx]++;
-        }
+  const wins = baseWins.slice();
+  const losses = baseLosses.slice();
+  const confWins = baseConfWins.slice();
+  const confLosses = baseConfLosses.slice();
+
+  for (const g of remaining) {
+    const finalResult = g.mySpread + drawGameMarginNoise();
+    const awayWins = finalResult < 0;
+    if (g.homeIdx != null) {
+      if (awayWins) losses[g.homeIdx]++;
+      else wins[g.homeIdx]++;
+      if (g.isConf) {
+        if (awayWins) confLosses[g.homeIdx]++;
+        else confWins[g.homeIdx]++;
       }
     }
-
-    for (let i = 0; i < n; i++) {
-      const bucket = Math.min(wins[i], MAX_WINS_BUCKET);
-      winDistribution[i][bucket]++;
-      const confBucket = Math.min(confWins[i], MAX_WINS_BUCKET);
-      confWinDistribution[i][confBucket]++;
-    }
-
-    // Conference championship: rank by conf win%, top 2 make the game,
-    // then simulate one more (neutral site) game between them.
-    const champions: number[] = [];
-    for (const [, teamIdxs] of confGroups) {
-      const ranked = teamIdxs
-        .map((i) => {
-          const total = confWins[i] + confLosses[i];
-          return { i, pct: total > 0 ? confWins[i] / total : -1 };
-        })
-        .filter((r) => r.pct >= 0)
-        .sort((a, b) => b.pct - a.pct || Math.random() - 0.5);
-
-      if (ranked.length === 0) continue;
-
-      if (ranked.length === 1) {
-        madeConfChampCount[ranked[0].i]++;
-        confTitleCount[ranked[0].i]++;
-        champions.push(ranked[0].i);
-        continue;
+    if (g.awayIdx != null) {
+      if (awayWins) wins[g.awayIdx]++;
+      else losses[g.awayIdx]++;
+      if (g.isConf) {
+        if (awayWins) confWins[g.awayIdx]++;
+        else confLosses[g.awayIdx]++;
       }
-
-      const a = ranked[0].i;
-      const b = ranked[1].i;
-      madeConfChampCount[a]++;
-      madeConfChampCount[b]++;
-
-      const champGameSpread = fbsTeams[b].rating - fbsTeams[a].rating; // neutral site
-      const champResult = champGameSpread + drawGameMarginNoise();
-      const champ = champResult < 0 ? b : a;
-      confTitleCount[champ]++;
-      champions.push(champ);
-    }
-
-    const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
-    const sortedChamps = [...champions].sort(byRating);
-    const autoBids = sortedChamps.slice(0, 5);
-    const champSet = new Set(autoBids);
-
-    const atLargePool = fbsTeams
-      .map((_, i) => i)
-      .filter((i) => !champSet.has(i))
-      .sort(byRating)
-      .slice(0, 7);
-
-    const byeSeeds = autoBids.slice(0, 4);
-    const fifthChamp = autoBids[4];
-    const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byRating);
-
-    const field = [...byeSeeds, ...seed5to12];
-    field.forEach((teamIdx, i) => {
-      playoffCount[teamIdx]++;
-      seedSum[teamIdx] += i + 1;
-      seedCount[teamIdx][i]++;
-    });
-
-    if (field.length === 12) {
-      const bracket = simulateBracket(field, fbsTeams, liveByTeam);
-      for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
-      for (const idx of bracket.semifinalists) semifinalCount[idx]++;
-      for (const idx of bracket.ncgParticipants) ncgCount[idx]++;
-      if (bracket.champion != null) nattyCount[bracket.champion]++;
     }
   }
+
+  for (let i = 0; i < n; i++) {
+    const bucket = Math.min(wins[i], MAX_WINS_BUCKET);
+    winDistribution[i][bucket]++;
+    const confBucket = Math.min(confWins[i], MAX_WINS_BUCKET);
+    confWinDistribution[i][confBucket]++;
+  }
+
+  // Conference championship: rank by conf win%, top 2 make the game,
+  // then simulate one more (neutral site) game between them.
+  const champions: number[] = [];
+  for (const [, teamIdxs] of confGroups) {
+    const ranked = teamIdxs
+      .map((i) => {
+        const total = confWins[i] + confLosses[i];
+        return { i, pct: total > 0 ? confWins[i] / total : -1 };
+      })
+      .filter((r) => r.pct >= 0)
+      .sort((a, b) => b.pct - a.pct || Math.random() - 0.5);
+
+    if (ranked.length === 0) continue;
+
+    if (ranked.length === 1) {
+      madeConfChampCount[ranked[0].i]++;
+      confTitleCount[ranked[0].i]++;
+      champions.push(ranked[0].i);
+      continue;
+    }
+
+    const a = ranked[0].i;
+    const b = ranked[1].i;
+    madeConfChampCount[a]++;
+    madeConfChampCount[b]++;
+
+    const champGameSpread = fbsTeams[b].rating - fbsTeams[a].rating; // neutral site
+    const champResult = champGameSpread + drawGameMarginNoise();
+    const champ = champResult < 0 ? b : a;
+    confTitleCount[champ]++;
+    champions.push(champ);
+  }
+
+  const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
+  const sortedChamps = [...champions].sort(byRating);
+  const autoBids = sortedChamps.slice(0, 5);
+  const champSet = new Set(autoBids);
+
+  const atLargePool = fbsTeams
+    .map((_, i) => i)
+    .filter((i) => !champSet.has(i))
+    .sort(byRating)
+    .slice(0, 7);
+
+  const byeSeeds = autoBids.slice(0, 4);
+  const fifthChamp = autoBids[4];
+  const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byRating);
+
+  const field = [...byeSeeds, ...seed5to12];
+  field.forEach((teamIdx, i) => {
+    playoffCount[teamIdx]++;
+    seedSum[teamIdx] += i + 1;
+    seedCount[teamIdx][i]++;
+  });
+
+  if (field.length === 12) {
+    const bracket = simulateBracket(field, fbsTeams, liveByTeam);
+    for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
+    for (const idx of bracket.semifinalists) semifinalCount[idx]++;
+    for (const idx of bracket.ncgParticipants) ncgCount[idx]++;
+    if (bracket.champion != null) nattyCount[bracket.champion]++;
+  }
+}
+
+function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): SimulationResult {
+  const {
+    fbsTeams,
+    baseWins,
+    baseConfWins,
+    baseConfLosses,
+    totalGames,
+    winDistribution,
+    confWinDistribution,
+    madeConfChampCount,
+    confTitleCount,
+    playoffCount,
+    seedSum,
+    seedCount,
+    quarterfinalCount,
+    semifinalCount,
+    ncgCount,
+    nattyCount,
+    unmatchedTeams,
+  } = state;
 
   const teamResults: TeamSimResult[] = fbsTeams.map((t, i) => {
     const winsSum = winDistribution[i].reduce((sum, count, wins) => sum + count * wins, 0);
@@ -529,7 +615,7 @@ export function runMonteCarlo(
       team: t.team,
       conf: t.conf,
       currentWins: baseWins[i],
-      currentLosses: baseLosses[i],
+      currentLosses: state.baseLosses[i],
       confCurrentWins: baseConfWins[i],
       confCurrentLosses: baseConfLosses[i],
       totalGames: totalGames[i],
@@ -551,6 +637,43 @@ export function runMonteCarlo(
   });
 
   return { teamResults, unmatchedTeams: Array.from(unmatchedTeams) };
+}
+
+export function runMonteCarlo(
+  games: SimGame[],
+  liveByTeam: Record<string, any>,
+  numTrials: number
+): SimulationResult {
+  const state = createMonteCarloState(games, liveByTeam);
+  for (let trial = 0; trial < numTrials; trial++) runOneMonteCarloTrial(state);
+  return finalizeMonteCarloResults(state, numTrials);
+}
+
+// Same simulation as runMonteCarlo, but run in yielding batches so a large
+// trial count (e.g. 100k) doesn't freeze the browser tab for the entire
+// duration. Between batches, control is handed back to the event loop
+// (setTimeout 0) so the UI can repaint a progress bar and stay responsive
+// to clicks — otherwise a single synchronous 20-30+ second loop reads as a
+// hung page. onProgress is optional and called after every batch with
+// (trialsCompleted, totalTrials).
+const ASYNC_BATCH_SIZE = 2000;
+
+export async function runMonteCarloAsync(
+  games: SimGame[],
+  liveByTeam: Record<string, any>,
+  numTrials: number,
+  onProgress?: (completed: number, total: number) => void
+): Promise<SimulationResult> {
+  const state = createMonteCarloState(games, liveByTeam);
+  let completed = 0;
+  while (completed < numTrials) {
+    const batchSize = Math.min(ASYNC_BATCH_SIZE, numTrials - completed);
+    for (let i = 0; i < batchSize; i++) runOneMonteCarloTrial(state);
+    completed += batchSize;
+    onProgress?.(completed, numTrials);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return finalizeMonteCarloResults(state, numTrials);
 }
 
 // ---------------------------------------------------------------------
