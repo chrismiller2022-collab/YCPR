@@ -326,10 +326,15 @@ function DashboardCard({ label, value }: { label: string; value: string }) {
 // "preseason" strings used elsewhere) and persisted to Supabase so it
 // carries across devices/browsers, not just localStorage on one machine.
 // ---------------------------------------------------------------------
+interface ChecklistSubItemDef {
+  key: string;
+  label: string;
+  url?: string;
+}
 interface ChecklistItemDef {
   key: string;
   label: string;
-  subItems?: { key: string; label: string }[];
+  subItems?: ChecklistSubItemDef[];
 }
 
 const CHECKLIST_ITEMS: ChecklistItemDef[] = [
@@ -359,6 +364,11 @@ const CHECKLIST_ITEMS: ChecklistItemDef[] = [
       { key: "pools_cbs_splash", label: "CBS Splash" },
       { key: "pools_cfbd", label: "CFBD" },
       { key: "pools_cbs", label: "CBS" },
+      {
+        key: "pools_cfb_survivor",
+        label: "CFB Survivor",
+        url: "https://app.splashsports.com/contest/fd3afd3f-9fe8-4d70-a68f-085efb6c99b2/entries/overall",
+      },
     ],
   },
   { key: "pull_games_lines", label: "Pull games and Lines" },
@@ -456,9 +466,25 @@ function WeeklyChecklist({ week }: { week: string | null }) {
                   {item.subItems.map((sub) => (
                     <label key={sub.key} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
                       <input type="checkbox" checked={isChecked(sub.key)} onChange={(e) => toggle(sub.key, e.target.checked)} />
-                      <span style={{ textDecoration: isChecked(sub.key) ? "line-through" : "none", opacity: isChecked(sub.key) ? 0.6 : 1 }}>
-                        {sub.label}
-                      </span>
+                      {sub.url ? (
+                        <a
+                          href={sub.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            textDecoration: isChecked(sub.key) ? "line-through" : "underline",
+                            opacity: isChecked(sub.key) ? 0.6 : 1,
+                            color: "inherit",
+                          }}
+                        >
+                          {sub.label} ↗
+                        </a>
+                      ) : (
+                        <span style={{ textDecoration: isChecked(sub.key) ? "line-through" : "none", opacity: isChecked(sub.key) ? 0.6 : 1 }}>
+                          {sub.label}
+                        </span>
+                      )}
                     </label>
                   ))}
                 </div>

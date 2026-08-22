@@ -17,9 +17,18 @@ export interface TeamSimResult {
   conf: string;
   currentWins: number;
   currentLosses: number;
+  confCurrentWins: number;
+  confCurrentLosses: number;
   totalGames: number;
   meanWins: number;
   winDistribution: number[]; // index = win count (0..15), value = trial count
+  // Same idea as winDistribution but for CONFERENCE wins only (confWins,
+  // already tracked per trial for conf-champ seeding, just never bucketed
+  // into a distribution until now) — for teams not in a conference group
+  // (FBS Independents), every trial lands in bucket 0. Optional for the
+  // same reason seedPct is: saved runs from before this field existed
+  // won't have it.
+  confWinDistribution?: number[];
   // Regular-season win total only — the conference championship game is
   // NOT included here (by design, not oversight). It's tracked separately
   // via madeConfChampPct/confTitlePct below, since it's an extra 13th game
@@ -59,6 +68,14 @@ export function winsAtLeastPct(result: TeamSimResult, numTrials: number, n: numb
   if (numTrials <= 0) return 0;
   let count = 0;
   for (let w = n; w < result.winDistribution.length; w++) count += result.winDistribution[w] ?? 0;
+  return (count / numTrials) * 100;
+}
+
+/** Same as winsAtLeastPct but generic over any bucketed win-count distribution — used for confWinDistribution, which isn't tied to a specific TeamSimResult field. */
+export function distributionAtLeastPct(distribution: number[] | undefined, numTrials: number, n: number): number {
+  if (!distribution || numTrials <= 0) return 0;
+  let count = 0;
+  for (let w = n; w < distribution.length; w++) count += distribution[w] ?? 0;
   return (count / numTrials) * 100;
 }
 
@@ -369,6 +386,7 @@ export function runMonteCarlo(
   });
 
   const winDistribution: number[][] = Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0));
+  const confWinDistribution: number[][] = Array.from({ length: n }, () => new Array(MAX_WINS_BUCKET + 1).fill(0));
   const madeConfChampCount = new Array(n).fill(0);
   const confTitleCount = new Array(n).fill(0);
   const playoffCount = new Array(n).fill(0);
@@ -416,6 +434,8 @@ export function runMonteCarlo(
     for (let i = 0; i < n; i++) {
       const bucket = Math.min(wins[i], MAX_WINS_BUCKET);
       winDistribution[i][bucket]++;
+      const confBucket = Math.min(confWins[i], MAX_WINS_BUCKET);
+      confWinDistribution[i][confBucket]++;
     }
 
     // Conference championship: rank by conf win%, top 2 make the game,
@@ -490,9 +510,12 @@ export function runMonteCarlo(
       conf: t.conf,
       currentWins: baseWins[i],
       currentLosses: baseLosses[i],
+      confCurrentWins: baseConfWins[i],
+      confCurrentLosses: baseConfLosses[i],
       totalGames: totalGames[i],
       meanWins: winsSum / numTrials,
       winDistribution: winDistribution[i],
+      confWinDistribution: confWinDistribution[i],
       ci95Low: ci.low,
       ci95High: ci.high,
       madeConfChampPct: (madeConfChampCount[i] / numTrials) * 100,

@@ -5,10 +5,8 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsSplashPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
 
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
-// FBS-vs-FBS game" pool. No contest URL wired up yet — drop it in POOL_URL
-// below once you have it and the "Open CBS Splash" link will show, same as
-// Peay's.
-const POOL_URL: string | null = null;
+// FBS-vs-FBS game" pool.
+const POOL_URL: string | null = "https://app.splashsports.com/contest/05480bf3-91d8-4e2a-b25d-1502bb7c9061/entries/overall";
 const KEY_PICKS_TARGET = 3;
 
 async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {

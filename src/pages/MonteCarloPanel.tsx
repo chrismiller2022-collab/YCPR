@@ -23,6 +23,7 @@ import {
 } from "../lib/api/monteCarlo";
 import { saveRatingRows } from "../lib/api/ratingSystems";
 import { fairMoneylineFromWinPct } from "../lib/odds";
+import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
 const TRIAL_OPTIONS = [1000, 5000, 10000, 20000];
 
@@ -982,8 +983,235 @@ function BettingTab() {
   );
 }
 
+// ---------------------------------------------------------------------
+// Playoff Seed Odds — one row per team with any playoff chance at all,
+// ranked by CFP% (playoffPct), with a moneyline derived from that same
+// number, and all 12 seedPct columns laid out side by side instead of
+// buried in the Results tab's per-row "Show More" text blob. Picks from
+// the same saved runs as Betting, above — this is a viewer, not something
+// that recomputes anything itself.
+// ---------------------------------------------------------------------
+function seedHeatBg(pct: number): string | undefined {
+  if (pct < 3) return undefined;
+  const alpha = Math.min(0.55, (pct / 30) * 0.55);
+  return `rgba(96, 165, 250, ${alpha.toFixed(2)})`;
+}
+
+function PlayoffSeedOddsTable({ results }: { results: TeamSimResult[] }) {
+  const ranked = results
+    .filter((r) => r.playoffPct > 0.05 && r.seedPct)
+    .sort((a, b) => b.playoffPct - a.playoffPct);
+
+  if (ranked.length === 0) {
+    return <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No team had a playoff chance in this run.</p>;
+  }
+
+  return (
+    <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem" }}>
+        <thead>
+          <tr>
+            <th className="th">Team</th>
+            <th className="th">Conf</th>
+            <th className="th th-right">CFP#</th>
+            <th className="th th-right">CFP%</th>
+            <th className="th th-right">ML</th>
+            {Array.from({ length: 12 }, (_, i) => (
+              <th key={i} className="th th-right">
+                {i + 1}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ranked.map((r, idx) => (
+            <tr key={r.team}>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.team}</td>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.conf}</td>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>#{idx + 1}</td>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(r.playoffPct)}</td>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.playoffPct)}</td>
+              {(r.seedPct ?? []).map((pct, i) => (
+                <td
+                  key={i}
+                  style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right", background: seedHeatBg(pct) }}
+                >
+                  {pct < 0.5 ? "–" : `${Math.round(pct)}%`}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PlayoffSeedOddsTab() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
+  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
+  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useMemo(() => {
+    setLoading(true);
+    setLoadedRunId(null);
+    setLoadedResults(null);
+    fetchMonteCarloRuns(season)
+      .then((r) => {
+        setRuns(r);
+        if (r.length > 0) void viewRun(r[0].id);
+      })
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season]);
+
+  async function viewRun(id: number) {
+    const run = await fetchMonteCarloRun(id);
+    if (run) {
+      setLoadedRunId(id);
+      setLoadedResults(run.results);
+    }
+  }
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+        Every team with a playoff chance in the saved run, ranked by CFP% (playoffPct), with the
+        moneyline that number implies and the full chance of landing each of the 12 seeds.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem" }}>
+        <label>
+          Season{" "}
+          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+        </label>
+      </div>
+
+      {loading ? (
+        <p>Loading saved runs…</p>
+      ) : runs.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
+            {runs.map((r) => (
+              <button
+                key={r.id}
+                className="menu-btn"
+                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
+                onClick={() => viewRun(r.id)}
+              >
+                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
+              </button>
+            ))}
+          </div>
+          {loadedResults && <PlayoffSeedOddsTable results={loadedResults} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Conference Standings Odds — same saved-run picker pattern as the other
+// tabs, plus a conference dropdown built from whichever conferences
+// actually show up in the loaded run's teams. Rendering itself lives in
+// ConferenceStandingsOddsTable, shared with the public Conference Preview
+// pages so both places stay in sync automatically.
+// ---------------------------------------------------------------------
+function ConferenceStandingsTab() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
+  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
+  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
+  const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
+  const [loading, setLoading] = useState(true);
+  const [conference, setConference] = useState<string>("");
+
+  useMemo(() => {
+    setLoading(true);
+    setLoadedRunId(null);
+    setLoadedResults(null);
+    fetchMonteCarloRuns(season)
+      .then((r) => {
+        setRuns(r);
+        if (r.length > 0) void viewRun(r[0].id);
+      })
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season]);
+
+  async function viewRun(id: number) {
+    const run = await fetchMonteCarloRun(id);
+    if (run) {
+      setLoadedRunId(id);
+      setLoadedResults(run.results);
+      setLoadedNumTrials(run.num_trials);
+      const confs = Array.from(new Set(run.results.map((r) => r.conf))).filter((c) => c !== "FBS Independents").sort();
+      setConference((prev) => (prev && confs.includes(prev) ? prev : confs[0] ?? ""));
+    }
+  }
+
+  const conferences = loadedResults
+    ? Array.from(new Set(loadedResults.map((r) => r.conf))).filter((c) => c !== "FBS Independents").sort()
+    : [];
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+        Chance each team in the picked conference finishes with at least N conference wins, from
+        the saved run's full conference-win distribution. Same table shown on that conference's
+        public preview page, always reading the most recently saved run.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <label>
+          Season{" "}
+          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+        </label>
+        {conferences.length > 0 && (
+          <label>
+            Conference{" "}
+            <select value={conference} onChange={(e) => setConference(e.target.value)}>
+              {conferences.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+
+      {loading ? (
+        <p>Loading saved runs…</p>
+      ) : runs.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
+            {runs.map((r) => (
+              <button
+                key={r.id}
+                className="menu-btn"
+                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
+                onClick={() => viewRun(r.id)}
+              >
+                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
+              </button>
+            ))}
+          </div>
+          {loadedResults && conference && (
+            <ConferenceStandingsOddsTable results={loadedResults} numTrials={loadedNumTrials} conference={conference} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
-  const [section, setSection] = useState<"results" | "betting" | "srs">("results");
+  const [section, setSection] = useState<"results" | "betting" | "srs" | "seeds" | "confstandings">("results");
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const { medianFcsRating, syntheticRating } = getSubFcsRatingInfo(liveByTeam);
 
@@ -1005,11 +1233,22 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
         <button className={`mode-btn ${section === "srs" ? "mode-btn-active" : ""}`} onClick={() => setSection("srs")}>
           SRS
         </button>
+        <button className={`mode-btn ${section === "seeds" ? "mode-btn-active" : ""}`} onClick={() => setSection("seeds")}>
+          Playoff Seeds
+        </button>
+        <button
+          className={`mode-btn ${section === "confstandings" ? "mode-btn-active" : ""}`}
+          onClick={() => setSection("confstandings")}
+        >
+          Conference Standings
+        </button>
       </div>
 
       {section === "results" && <MonteCarloResultsSection />}
       {section === "betting" && <BettingTab />}
       {section === "srs" && <SrsTab />}
+      {section === "seeds" && <PlayoffSeedOddsTab />}
+      {section === "confstandings" && <ConferenceStandingsTab />}
 
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: "2rem", borderTop: "1px solid var(--hash)", paddingTop: "1rem" }}>
         Simulates the rest of the season using your projected spread for every remaining

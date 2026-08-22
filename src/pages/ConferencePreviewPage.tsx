@@ -7,6 +7,9 @@ import { fmtNum, fmtOdds, fmtPct } from "../lib/format";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchTeamSos, type TeamSosRow } from "../lib/api/ratingSystems";
+import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
+import type { TeamSimResult } from "../lib/montecarlo/engine";
+import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
 function DiffCell({ value }: any) {
   if (value == null) return <td className="wintotals-total-cell">–</td>;
@@ -76,11 +79,29 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
 
   const season = new Date().getFullYear();
   const [sosByTeam, setSosByTeam] = useState<Record<string, TeamSosRow>>({});
+  const [mcResults, setMcResults] = useState<TeamSimResult[] | null>(null);
+  const [mcNumTrials, setMcNumTrials] = useState(0);
 
   useEffect(() => {
     fetchTeamSos(season)
       .then(setSosByTeam)
       .catch(() => setSosByTeam({}));
+  }, [season]);
+
+  // Always the most recently saved Monte Carlo run for the season — this
+  // table refreshes itself the moment a new run gets saved from Admin,
+  // nothing on this page needs to change to pick it up.
+  useEffect(() => {
+    setMcResults(null);
+    fetchMonteCarloRuns(season)
+      .then((runs) => (runs.length > 0 ? fetchMonteCarloRun(runs[0].id) : null))
+      .then((run) => {
+        if (run) {
+          setMcResults(run.results);
+          setMcNumTrials(run.num_trials);
+        }
+      })
+      .catch(() => setMcResults(null));
   }, [season]);
 
   const rows = useMemo(() => {
@@ -173,6 +194,17 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
           </div>
         )}
       </div>
+
+      {mcResults && (
+        <div className="table-wrap" style={{ marginTop: "1.5rem" }}>
+          <div className="section-label">Monte Carlo Conference Standings Odds</div>
+          <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+            Chance each {conference} team finishes with at least N conference wins, from the most
+            recently saved Monte Carlo run.
+          </p>
+          <ConferenceStandingsOddsTable results={mcResults} numTrials={mcNumTrials} conference={conference} />
+        </div>
+      )}
 
       <div className="footer-note" data-export-exclude="true">
         Conference Odds bar reflects our model's probability to win the
