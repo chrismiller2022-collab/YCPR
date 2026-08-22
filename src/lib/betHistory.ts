@@ -2,6 +2,8 @@ import { type BetHistoryRecord, type BetPick } from "../data/betHistory.data";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { isP4, bucketFor } from "./conferenceBuckets";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
+import { HFA, hfaFor } from "./odds";
+import type { GameWithLines, BettingLineRow } from "./api/gamesLines";
 
 export { isP4, bucketFor };
 
@@ -183,6 +185,105 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
     weightedFilteredBetResult,
     nwfbResult,
   };
+}
+
+// ---------------------------------------------------------------------
+// Live path — for seasons with no BET_HISTORY upload (2026+), builds
+// BetHistoryRecord-shaped rows straight from synced games/lines + live
+// power ratings, so they flow through every aggregation function above
+// completely unchanged. Mirrors moneylineBetHistory.ts's
+// buildMlRowsFromLiveRatings, including the same flat-2.4-vs-team-
+// specific HFA toggle — live games only, since 2024/25 has no per-team
+// HFA history to recompute against.
+//
+// Sign convention gotcha: betHistory.data.ts's spread/prediction are
+// HOME-relation (negative = home favored) — the OPPOSITE of the site's
+// usual away-perspective convention used everywhere else (including
+// moneylineBetHistory.ts and matchupsCompute.ts). So the usual
+// `awayRating - homeRating + hfa` (away-perspective) gets negated before
+// being stored as `prediction` here. The raw `betting_lines.spread`
+// column is already home-relation (peayPool.ts etc. negate IT to get an
+// away-perspective number), so it's used as-is for `spread`.
+//
+// The "precomputed" fields (everyBetTeam, filteredBetTeam, etc.) only
+// matter for Plain History, which has nothing to show for a season with
+// no upload anyway — but they're still filled in via computeCustomGrading
+// (at DEFAULT_CUSTOM_PARAMS) rather than left null/zero, so Plain History
+// shows something sensible instead of a broken-looking blank row if
+// someone switches to that tab for a live season.
+// ---------------------------------------------------------------------
+export type HfaMode = "team" | "flat";
+
+const LIVE_PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
+function pickSpreadLine(lines: BettingLineRow[]): BettingLineRow | null {
+  const withSpread = lines.filter((l) => l.spread != null);
+  if (withSpread.length === 0) return null;
+  for (const p of LIVE_PREFERRED_PROVIDERS) {
+    const match = withSpread.find((l) => l.provider === p);
+    if (match) return match;
+  }
+  return withSpread[0];
+}
+
+export function buildLiveBetHistoryRecords(
+  games: GameWithLines[],
+  liveByTeam: Record<string, any>,
+  hfaMode: HfaMode = "team"
+): BetHistoryRecord[] {
+  const records: BetHistoryRecord[] = [];
+
+  for (const g of games) {
+    if (!g.completed || g.home_points == null || g.away_points == null) continue; // nothing to grade yet
+    const line = pickSpreadLine(g.lines);
+    if (!line || line.spread == null) continue;
+
+    const homeRating = liveByTeam[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
+    const awayRating = liveByTeam[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
+    if (homeRating == null || awayRating == null) continue;
+
+    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, liveByTeam);
+    const awayPerspectivePrediction = awayRating - homeRating + hfa;
+
+    const base: BetHistoryRecord = {
+      season: g.season,
+      week: g.week,
+      homeTeam: g.home_team,
+      awayTeam: g.away_team,
+      homeScore: g.home_points,
+      awayScore: g.away_points,
+      spread: line.spread,
+      prediction: -awayPerspectivePrediction,
+      actualFinalSpread: g.home_points - g.away_points,
+      everyBetTeam: null,
+      amountOff: 0,
+      absAmountOff: 0,
+      filteredBetTeam: null,
+      weightedFilteredBetTeam: null,
+      actualCoverTeam: null,
+      everyBetResult: null,
+      filteredBetResult: null,
+      weightedFilteredBetResult: null,
+      absBettingLine: Math.abs(line.spread),
+      relativeAmountOff: 0,
+    };
+
+    const graded = computeCustomGrading(base, DEFAULT_CUSTOM_PARAMS);
+    records.push({
+      ...base,
+      everyBetTeam: graded.everyBetTeam,
+      amountOff: graded.amountOff,
+      absAmountOff: graded.absAmountOff,
+      filteredBetTeam: graded.filteredBetTeam,
+      weightedFilteredBetTeam: graded.weightedFilteredBetTeam,
+      actualCoverTeam: graded.actualCoverTeam,
+      everyBetResult: graded.everyBetResult,
+      filteredBetResult: graded.filteredBetResult,
+      weightedFilteredBetResult: graded.weightedFilteredBetResult,
+      relativeAmountOff: graded.relativeAmountOff,
+    });
+  }
+
+  return records;
 }
 
 export function aggregateCustom(records: BetHistoryRecord[], params: CustomParams): TripleAggregate {

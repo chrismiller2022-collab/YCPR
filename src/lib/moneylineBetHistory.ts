@@ -25,7 +25,7 @@
 // vig eating both sides at once is the normal case when your number is close
 // to the market's).
 
-import { hfaFor, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
+import { HFA, hfaFor, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
 import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS, type CustomParams } from "./betHistory";
@@ -207,9 +207,19 @@ export function buildMlRowsFromBetHistory(season: number, games: GameWithLines[]
 // ---------------------------------------------------------------------
 // Live path — "my" spread from live power ratings (2026+, or any season
 // with synced games but no BET_HISTORY entries). Same formula as
-// matchupsCompute.ts's computeRow / multiRatingMatchups.ts.
+// matchupsCompute.ts's computeRow / multiRatingMatchups.ts. hfaMode picks
+// between each home team's own saved HFA value (default, "team") and the
+// site's flat 2.4 constant ("flat") — same A/B toggle AdminMatchupsPanel
+// used to have, live-games-only since 2024/25 has no per-team HFA history
+// to recompute against.
 // ---------------------------------------------------------------------
-export function buildMlRowsFromLiveRatings(games: GameWithLines[], liveByTeam: Record<string, any>): MlGameRow[] {
+export type HfaMode = "team" | "flat";
+
+export function buildMlRowsFromLiveRatings(
+  games: GameWithLines[],
+  liveByTeam: Record<string, any>,
+  hfaMode: HfaMode = "team"
+): MlGameRow[] {
   const rows: MlGameRow[] = [];
   for (const g of games) {
     const line = pickMoneylineLine(g.lines);
@@ -219,7 +229,8 @@ export function buildMlRowsFromLiveRatings(games: GameWithLines[], liveByTeam: R
     const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
     const awayRating = liveByTeam[g.away_team]?.rating ?? staticAway?.rating ?? null;
     const homeRating = liveByTeam[g.home_team]?.rating ?? staticHome?.rating ?? null;
-    const myAwaySpread = awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
+    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, liveByTeam);
+    const myAwaySpread = awayRating != null && homeRating != null ? awayRating - homeRating + hfa : null;
 
     rows.push(computeMlRow(g, myAwaySpread, line.away_moneyline, line.home_moneyline));
   }

@@ -201,6 +201,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   // season) — see buildMlRowsFromLiveRatingsBillR's doc comment for why.
   const [conversionMethod, setConversionMethod] = useState<"current" | "billR">("current");
   const [billRDivisor, setBillRDivisor] = useState(BILL_R_DEFAULT_DIVISOR);
+  // Flat HFA (site-wide 2.4 constant) vs each home team's own saved HFA —
+  // only applies to the "Current conversion" live path; Bill R Method uses
+  // its own fixed 2.5 HFA regardless (see buildMlRowsFromLiveRatingsBillR).
+  const [hfaMode, setHfaMode] = useState<"team" | "flat">("team");
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -226,8 +230,8 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     if (conversionMethod === "billR") {
       return { allRows: buildMlRowsFromLiveRatingsBillR(games, liveByTeam, billRDivisor), unmatchedCount: 0 };
     }
-    return { allRows: buildMlRowsFromLiveRatings(games, liveByTeam), unmatchedCount: 0 };
-  }, [season, games, hasBetHistoryForSeason, liveByTeam, conversionMethod, billRDivisor]);
+    return { allRows: buildMlRowsFromLiveRatings(games, liveByTeam, hfaMode), unmatchedCount: 0 };
+  }, [season, games, hasBetHistoryForSeason, liveByTeam, conversionMethod, billRDivisor, hfaMode]);
 
   const weekRows = useMemo(
     () => (week === "all" ? allRows : allRows.filter((r) => r.game.week === week)),
@@ -321,6 +325,16 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
           </span>
         )}
       </div>
+
+      {!hasBetHistoryForSeason && conversionMethod === "current" && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>HFA:</span>
+          <select value={hfaMode} onChange={(e) => setHfaMode(e.target.value as "team" | "flat")}>
+            <option value="team">Team-specific</option>
+            <option value="flat">Flat 2.4</option>
+          </select>
+        </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
         <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Filtered Bet — only bet if EV above:</span>

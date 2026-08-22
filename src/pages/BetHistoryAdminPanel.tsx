@@ -1,7 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { BET_HISTORY } from "../data/betHistory.data";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import {
   aggregatePlain,
   aggregateCustom,
@@ -15,6 +17,7 @@ import {
   computeAmountOffPoints,
   buildAmountOffMatrix,
   tallyAmountOffCustom,
+  buildLiveBetHistoryRecords,
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
   type BetHistoryFilters,
@@ -23,9 +26,16 @@ import {
   type CategorySplitTally,
   type SplitBucket,
   type AmountOffPoint,
+  type HfaMode,
 } from "../lib/betHistory";
 
 const SEASONS = [2024, 2025, 2026];
+
+// Any season in SEASONS with zero BET_HISTORY rows gets its data built
+// live instead, from synced games/lines + live power ratings (see
+// buildLiveBetHistoryRecords in lib/betHistory.ts). Computed once — both
+// SEASONS and BET_HISTORY are static.
+const LIVE_SEASONS = SEASONS.filter((s) => !BET_HISTORY.some((r) => r.season === s));
 
 function fmtRecord(t: RecordTally) {
   return `${t.w}-${t.l}${t.push > 0 ? `-${t.push}` : ""}`;
@@ -783,6 +793,31 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
   const [params, setParams] = useState<CustomParams>({ ...DEFAULT_CUSTOM_PARAMS });
 
+  // Live seasons (2026+, no BET_HISTORY upload) — fetched once on mount
+  // and recomputed into BetHistoryRecord-shaped rows via
+  // buildLiveBetHistoryRecords whenever ratings or the HFA toggle change,
+  // then concatenated with the static upload before any filter is applied.
+  const [hfaMode, setHfaMode] = useState<HfaMode>("team");
+  const [liveGamesBySeason, setLiveGamesBySeason] = useState<Record<number, GameWithLines[]>>({});
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  useEffect(() => {
+    if (LIVE_SEASONS.length === 0) return;
+    Promise.all(LIVE_SEASONS.map((s) => fetchGamesWithLines(s).then((games) => [s, games] as const)))
+      .then((pairs) => setLiveGamesBySeason(Object.fromEntries(pairs)))
+      .catch(() => setLiveGamesBySeason({}));
+  }, []);
+
+  const liveRecords = useMemo(() => {
+    const all: BetHistoryRecord[] = [];
+    for (const s of LIVE_SEASONS) {
+      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], liveByTeam, hfaMode));
+    }
+    return all;
+  }, [liveGamesBySeason, liveByTeam, hfaMode]);
+
+  const allRecords = useMemo(() => [...BET_HISTORY, ...liveRecords], [liveRecords]);
+
   function toggleYear(y: number) {
     setYears((prev) => {
       const next = new Set(prev);
@@ -813,8 +848,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   };
 
   const filtered = useMemo(
-    () => filterRecords(BET_HISTORY, filters),
-    [filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery]
+    () => filterRecords(allRecords, filters),
+    [allRecords, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery]
   );
 
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
@@ -884,6 +919,20 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         allConfs={allConfs}
       />
 
+      {LIVE_SEASONS.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>HFA:</span>
+          <select value={hfaMode} onChange={(e) => setHfaMode(e.target.value as HfaMode)}>
+            <option value="team">Team-specific</option>
+            <option value="flat">Flat 2.4</option>
+          </select>
+          <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>
+            Live seasons only ({LIVE_SEASONS.join(", ")}) — {SEASONS.filter((s) => !LIVE_SEASONS.includes(s)).join("/")} keeps using
+            the uploaded historical prediction, no HFA recompute possible there.
+          </span>
+        </div>
+      )}
+
       {tab === "custom" && (
         <div style={{ marginBottom: "0.75rem", display: "flex", justifyContent: "flex-end" }}>
           <button className="menu-btn" onClick={() => setParams({ ...DEFAULT_CUSTOM_PARAMS })} disabled={isDefault}>
@@ -892,7 +941,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </div>
       )}
 
-      {BET_HISTORY.length === 0 ? (
+      {allRecords.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No bet history data uploaded yet.</p>
       ) : filtered.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No games match those filters.</p>
