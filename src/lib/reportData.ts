@@ -69,6 +69,30 @@ export function winsLossesLeft(division: "FBS" | "FCS"): {
   return { byWinsLeft, byLossesLeft };
 }
 
+/**
+ * Full ranked power ratings list for a division, resolving live ratings
+ * over the static preseason snapshot the same way HomePage.tsx's
+ * resolvedAll does — used for the compact spreadsheet-style Power Ratings
+ * section of the Weekly Report PDF, which shows every team (not just top
+ * 25 gainers/losers).
+ */
+export function powerRatingsList(
+  division: "FBS" | "FCS",
+  liveByTeam: Record<string, any> = {}
+): { rank: number; team: string; conf: string; rating: number }[] {
+  return TEAMS.filter((t) => t.div === division)
+    .map((t) => {
+      const live = liveByTeam[t.team];
+      return {
+        rank: live?.rank ?? t.rank,
+        team: t.team,
+        conf: t.conf,
+        rating: live?.rating ?? t.rating,
+      };
+    })
+    .sort((a, b) => a.rank - b.rank);
+}
+
 export interface ConferencePreviewRowData {
   conference: string;
   rows: {

@@ -6,6 +6,7 @@ import {
   winsLossesLeft,
   allConferencePreviews,
   weekMatchups,
+  powerRatingsList,
 } from "../lib/reportData";
 
 export default function WeekReportPage({ onHome }: any) {
@@ -36,6 +37,7 @@ export default function WeekReportPage({ onHome }: any) {
           winsLossesLeft: winsLossesLeft(division),
           conferencePreviews: allConferencePreviews(division, liveByTeam),
           matchups: weekMatchups(division, week, liveByTeam),
+          powerRatings: powerRatingsList(division, liveByTeam),
           hasWeeklyChangeData,
         });
       } catch (err: any) {
@@ -56,8 +58,9 @@ export default function WeekReportPage({ onHome }: any) {
         <h1 className="title matchup-title">WEEK REPORT (PDF)</h1>
         <p className="subtitle team-subtitle">
           Generates a PDF covering Top 25 gainers/losers for SOS, Resume, and
-          Power Rating, wins/losses left, every conference preview, and that
-          week's matchups — all for one division at a time.
+          Power Rating, wins/losses left, every conference preview, that
+          week's matchups, and the full power ratings list — all for one
+          division at a time.
         </p>
         {!hasWeeklyChangeData && (
           <p style={{ fontSize: "0.8rem", color: "#666" }}>

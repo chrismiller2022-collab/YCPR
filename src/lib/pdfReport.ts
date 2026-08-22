@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { fmtNum, fmtOdds, fmtPct } from "./format";
+import { chunkForCompactGrid, type CompactRatingRow } from "./compactPowerRatings";
 import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
 
 const MARGIN = 40;
@@ -64,6 +65,53 @@ function pageBreakIfNeeded(doc: jsPDF, y: number): number {
   return y;
 }
 
+// Same compact, spreadsheet-style layout as the branded Tweet graphic
+// (CompactPowerRatingsGraphic component / chunkForCompactGrid helper): the
+// full ranked list is chunked into several short columns instead of one
+// long scroll, then "zipped" into a single wide autoTable whose columns
+// repeat a #/Team/Rtg header group once per chunk — that's the only way to
+// get side-by-side tables out of jspdf-autotable without hand-rolling
+// per-cell positioning.
+function compactPowerRatingsTable(doc: jsPDF, title: string, rows: CompactRatingRow[], startY: number): number {
+  doc.setFontSize(11);
+  doc.text(title, MARGIN, startY);
+
+  const columns = chunkForCompactGrid(rows, 34);
+  if (columns.length === 0) {
+    doc.setFontSize(9);
+    doc.text("No teams available.", MARGIN, startY + 16);
+    return startY + 16;
+  }
+
+  const maxRows = Math.max(...columns.map((c) => c.length));
+  const head = [columns.flatMap(() => ["#", "Team", "Rtg"])];
+  const body = Array.from({ length: maxRows }, (_, ri) =>
+    columns.flatMap((col) => {
+      const r = col[ri];
+      if (!r) return ["", "", ""];
+      return [String(r.rank), r.team, (r.rating > 0 ? "+" : "") + r.rating.toFixed(1)];
+    })
+  );
+
+  autoTable(doc, {
+    startY: startY + 8,
+    margin: { left: MARGIN, right: MARGIN },
+    head,
+    body,
+    styles: { fontSize: 7, cellPadding: 2 },
+    headStyles: { fillColor: [31, 32, 65] },
+    theme: "striped",
+    columnStyles: Object.fromEntries(
+      columns.flatMap((_, ci) => [
+        [ci * 3, { cellWidth: 18, halign: "right" as const }],
+        [ci * 3 + 1, { cellWidth: 90 }],
+        [ci * 3 + 2, { cellWidth: 30, halign: "right" as const }],
+      ])
+    ),
+  });
+  return (doc as any).lastAutoTable.finalY;
+}
+
 export interface WeekReportInput {
   division: "FBS" | "FCS";
   week: number;
@@ -73,6 +121,7 @@ export interface WeekReportInput {
   winsLossesLeft: { byWinsLeft: WinsLossesRow[]; byLossesLeft: WinsLossesRow[] };
   conferencePreviews: ConferencePreviewRowData[];
   matchups: MatchupRow[];
+  powerRatings: CompactRatingRow[];
   hasWeeklyChangeData: boolean;
 }
 
@@ -87,6 +136,7 @@ export function buildWeekReportPdf(input: WeekReportInput) {
     winsLossesLeft: wl,
     conferencePreviews,
     matchups,
+    powerRatings,
     hasWeeklyChangeData,
   } = input;
 
@@ -241,6 +291,12 @@ export function buildWeekReportPdf(input: WeekReportInput) {
     });
     y = (doc as any).lastAutoTable.finalY + 24;
   }
+
+  // --- Section 4: Full power ratings, compact spreadsheet layout ---
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.text(`4. Full ${division} Power Ratings`, MARGIN, MARGIN);
+  compactPowerRatingsTable(doc, `${division} — every team, ranked`, powerRatings, MARGIN + 24);
 
   doc.save(`${division.toLowerCase()}-week-${week}-report.pdf`);
 }
