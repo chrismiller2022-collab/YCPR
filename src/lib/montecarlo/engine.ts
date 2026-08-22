@@ -156,6 +156,26 @@ export function drawMarginNoise(): number {
   return Math.max(-MARGIN_CLIP, Math.min(MARGIN_CLIP, raw));
 }
 
+// A game's simulated margin noise as two independent per-side performance
+// draws (home's deviation from its rating today, minus away's) instead of
+// one shared noise term applied to the fixed spread — same idea as the
+// Pugh paper's per-team offensive/defensive randomization, just collapsed
+// onto this engine's single overall rating instead of separate off/def
+// ratings. Ratings themselves stay fixed; only how each side performs
+// relative to its rating, for this one game, is randomized.
+//
+// Keeps the same 15.7 stddev / +-25 clip per side (unchanged, per Chris),
+// but two independent clipped draws combine into up to +-50 of swing
+// instead of being ceilinged at +-25 no matter how lopsided the true
+// rating gap is — that's what was collapsing very large mismatches into a
+// guaranteed win every trial. Also raises the simulated margin's overall
+// variance, since two independent noise sources sum to more spread than
+// one (this is the fix for seed/CFP% probabilities clustering too tightly
+// near 0%/100%).
+export function drawGameMarginNoise(): number {
+  return drawMarginNoise() - drawMarginNoise();
+}
+
 // 95% confidence interval on a win-total distribution — the win count at
 // the 2.5th percentile and at the 97.5th percentile of the trials, read
 // straight off the same bucketed distribution already being tallied per
@@ -263,7 +283,7 @@ export function simulateSingleSeason(games: SimGame[], liveByTeam: Record<string
     }
 
     const mySpread = computeMySpread(g, liveByTeam, syntheticSubFcsRating);
-    const randomValue = drawMarginNoise();
+    const randomValue = drawGameMarginNoise();
     const finalResult = (mySpread ?? 0) + randomValue;
     const winner = finalResult < 0 ? g.away_team : g.home_team;
     const loser = finalResult < 0 ? g.home_team : g.away_team;
@@ -411,7 +431,7 @@ export function runMonteCarlo(
     const confLosses = baseConfLosses.slice();
 
     for (const g of remaining) {
-      const finalResult = g.mySpread + drawMarginNoise();
+      const finalResult = g.mySpread + drawGameMarginNoise();
       const awayWins = finalResult < 0;
       if (g.homeIdx != null) {
         if (awayWins) losses[g.homeIdx]++;
@@ -465,7 +485,7 @@ export function runMonteCarlo(
       madeConfChampCount[b]++;
 
       const champGameSpread = fbsTeams[b].rating - fbsTeams[a].rating; // neutral site
-      const champResult = champGameSpread + drawMarginNoise();
+      const champResult = champGameSpread + drawGameMarginNoise();
       const champ = champResult < 0 ? b : a;
       confTitleCount[champ]++;
       champions.push(champ);
@@ -769,7 +789,7 @@ function simulateBracket(field: number[], fbsTeams: any[], liveByTeam: Record<st
         : hostIdx === bIdx
         ? a.rating - b.rating + hfaFor(b.team, liveByTeam)
         : b.rating - a.rating;
-    const finalResult = spread + drawMarginNoise();
+    const finalResult = spread + drawGameMarginNoise();
     const awayWins = finalResult < 0;
     if (awayIsB) return awayWins ? bIdx : aIdx;
     return awayWins ? aIdx : bIdx;
