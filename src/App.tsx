@@ -1,5 +1,5 @@
 import "./styles/global.css";
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import HomePage from "./pages/HomePage";
 import TeamPage from "./pages/TeamPage";
 import MatchupPage from "./pages/MatchupPage";
@@ -26,7 +26,7 @@ import Playoff24Page from "./pages/Playoff24Page";
 import WeekReportPage from "./pages/WeekReportPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
-import AdminPage from "./pages/AdminPage";
+const AdminPage = lazy(() => import("./pages/AdminPage"));
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
@@ -121,15 +121,17 @@ export default function App() {
   if (page.type === "admin") {
     return (
       <div className="page">
-        <AdminPage
-          onHome={() => {
-            window.location.hash = "";
-            handleHome();
-          }}
-          onGoToRatings={goToLiveRatings}
-          onGoToResume={goToLiveResume}
-          onGoToSOS={goToLiveSOS}
-        />
+        <Suspense fallback={<div className="page-loading">Loading admin…</div>}>
+          <AdminPage
+            onHome={() => {
+              window.location.hash = "";
+              handleHome();
+            }}
+            onGoToRatings={goToLiveRatings}
+            onGoToResume={goToLiveResume}
+            onGoToSOS={goToLiveSOS}
+          />
+        </Suspense>
       </div>
     );
   }
