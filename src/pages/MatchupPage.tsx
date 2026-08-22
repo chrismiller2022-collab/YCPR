@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import TeamPicker from "../components/TeamPicker";
 import { TEAMS } from "../data/teams";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
+import { buildRankMap } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 export default function MatchupPage({ onHome }: any) {
@@ -20,14 +21,25 @@ export default function MatchupPage({ onHome }: any) {
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
+  // National rank is always derived from resolved rating, never trusted
+  // from a stored/pasted "rank" column — that column turned out to be
+  // saved as a flat 1 for every team in every saved week (a spreadsheet/
+  // upload-side bug), which silently broke every page reading live.rank.
+  // Computing it here the same way HomePage/LiveWinTotalsPage do makes it
+  // self-correcting regardless of what's sitting in weekly_team_stats.
+  const nationalRankByTeam = useMemo(
+    () => buildRankMap(TEAMS.map((t) => [t.team, liveByTeam[t.team]?.rating ?? t.rating]), false),
+    [liveByTeam]
+  );
+
   // Resolve both teams' rating/rank to their live weekly value (falling
   // back to the static preseason snapshot) once, here — every calculation
   // and display below reads from these resolved objects.
   const teamA = staticTeamA
-    ? { ...staticTeamA, rating: liveByTeam[staticTeamA.team]?.rating ?? staticTeamA.rating, rank: liveByTeam[staticTeamA.team]?.rank ?? staticTeamA.rank }
+    ? { ...staticTeamA, rating: liveByTeam[staticTeamA.team]?.rating ?? staticTeamA.rating, rank: nationalRankByTeam[staticTeamA.team] }
     : null;
   const teamB = staticTeamB
-    ? { ...staticTeamB, rating: liveByTeam[staticTeamB.team]?.rating ?? staticTeamB.rating, rank: liveByTeam[staticTeamB.team]?.rank ?? staticTeamB.rank }
+    ? { ...staticTeamB, rating: liveByTeam[staticTeamB.team]?.rating ?? staticTeamB.rating, rank: nationalRankByTeam[staticTeamB.team] }
     : null;
   const bothSelected = teamA && teamB;
   const sameTeam = bothSelected && teamA.team === teamB.team;

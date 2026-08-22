@@ -78,6 +78,15 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
     return buildRankMap(pool, false);
   }, [division, liveByTeam]);
 
+  // National rank ("All" division view) is always derived from resolved
+  // rating too, never trusted from a stored/pasted "rank" column — that
+  // column turned out to be saved as a flat 1 for every team in every
+  // saved week, which silently broke this exact rank badge.
+  const nationalRankByTeam = useMemo(
+    () => buildRankMap(TEAMS.map((t) => [t.team, liveByTeam[t.team]?.rating ?? t.rating]), false),
+    [liveByTeam]
+  );
+
   const rows = useMemo(() => {
     let list = TEAMS.filter((t) => {
       if (division !== "All" && t.div !== division) return false;
@@ -92,7 +101,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
       return {
         ...t,
         rating: live?.rating ?? t.rating,
-        rank: divisionRankByTeam ? divisionRankByTeam[t.team] : live?.rank ?? t.rank,
+        rank: divisionRankByTeam ? divisionRankByTeam[t.team] : nationalRankByTeam[t.team],
         winTotal,
         vegasTotal,
         diff: vegasTotal != null ? winTotal - vegasTotal : null,
@@ -114,7 +123,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir, liveByTeam, divisionRankByTeam]);
+  }, [query, division, conference, sortKey, sortDir, liveByTeam, divisionRankByTeam, nationalRankByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {

@@ -1,7 +1,7 @@
 import { TEAMS, conferencesForDivision, type Team } from "../data/teams";
 import { GAMES, gamesForTeam } from "../data/games";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
-import { TEAM_WIN_TOTALS } from "./ranks";
+import { TEAM_WIN_TOTALS, buildRankMap } from "./ranks";
 import { HFA, hfaFor, spreadToWinPct, spreadToMoneyline } from "./odds";
 
 export interface ChangeRow {
@@ -80,17 +80,17 @@ export function powerRatingsList(
   division: "FBS" | "FCS",
   liveByTeam: Record<string, any> = {}
 ): { rank: number; team: string; conf: string; rating: number }[] {
-  return TEAMS.filter((t) => t.div === division)
-    .map((t) => {
-      const live = liveByTeam[t.team];
-      return {
-        rank: live?.rank ?? t.rank,
-        team: t.team,
-        conf: t.conf,
-        rating: live?.rating ?? t.rating,
-      };
-    })
-    .sort((a, b) => a.rank - b.rank);
+  const teams = TEAMS.filter((t) => t.div === division).map((t) => ({
+    team: t.team,
+    conf: t.conf,
+    rating: liveByTeam[t.team]?.rating ?? t.rating,
+  }));
+  // Rank is always derived from resolved rating, never trusted from a
+  // stored/pasted "rank" column — that column is saved as a flat 1 for
+  // every team in every saved week (a spreadsheet/upload-side bug), which
+  // would otherwise make every team in this PDF section show rank 1.
+  const rankByTeam = buildRankMap(teams.map((t) => [t.team, t.rating]), false);
+  return teams.map((t) => ({ ...t, rank: rankByTeam[t.team] })).sort((a, b) => a.rank - b.rank);
 }
 
 export interface ConferencePreviewRowData {

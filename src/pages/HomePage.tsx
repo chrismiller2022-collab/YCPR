@@ -1,11 +1,9 @@
 import { Fragment, useMemo, useRef, useState } from "react";
 import ChangeCell from "../components/ChangeCell";
-import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
 import ConfLink from "../components/ConfLink";
 import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
-import TweetButton from "../components/TweetButton";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { SOS_BY_TEAM } from "../data/sor";
 import { CONFERENCES, TEAMS } from "../data/teams";
@@ -22,7 +20,6 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   const [sortKey, setSortKey] = useState("rank");
   const [sortDir, setSortDir] = useState("asc");
   const exportRef = useRef<HTMLDivElement>(null);
-  const compactRef = useRef<HTMLDivElement>(null);
   const { byTeam: changeByTeam } = useWeeklyChange("rating");
   const { byTeam: liveByTeam, resolvedWeek } = useWeeklyStats("latest");
 
@@ -33,12 +30,11 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   // team's rank number means, and live data (once a week is uploaded)
   // takes over from the static preseason snapshot automatically.
   const resolvedAll = useMemo(() => {
-    return TEAMS.map((t) => {
+    const withRating = TEAMS.map((t) => {
       const live = liveByTeam[t.team];
       return {
         ...t,
         rating: live?.rating ?? t.rating,
-        rank: live?.rank ?? t.rank,
         winTotal: live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
         confWinTotal: live?.conf_proj_wins ?? TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
         sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
@@ -46,6 +42,16 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
         resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
       };
     });
+    // rank is always derived from resolved rating here, never trusted from
+    // a stored/pasted "rank" column — that column turned out to be saved
+    // as a flat 1 for every team in every saved week (confirmed directly
+    // in weekly_team_stats), which silently broke every rank badge on the
+    // site once a week's data was uploaded. Rank is fully determined by
+    // rating anyway (lower rating = better team, same convention as
+    // winTotalRankByTeam/sorRankByTeam below), so there's no reason to
+    // trust a separately-pasted value that can drift or come in wrong.
+    const ratingRankByTeam = buildRankMap(withRating.map((t) => [t.team, t.rating]), false);
+    return withRating.map((t) => ({ ...t, rank: ratingRankByTeam[t.team] }));
   }, [liveByTeam]);
 
   // Rank badges for Win Total / Conf Win Total / SOR, computed from the
@@ -123,19 +129,6 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
     conference === "All";
 
   const weekEyebrow = weekLabel(resolvedWeek);
-
-  // Compact tweet graphic always uses the full, unfiltered roster split by
-  // division (not whatever search/division/conference filter happens to be
-  // active on the visible table) — tweeting is about the whole ranking, and
-  // FBS/FCS naturally end up as differently-sized grids since they carry
-  // different team counts.
-  const compactSections = useMemo(
-    () => [
-      { title: "FBS", rows: resolvedAll.filter((t) => t.div === "FBS") },
-      { title: "FCS", rows: resolvedAll.filter((t) => t.div === "FCS") },
-    ],
-    [resolvedAll]
-  );
 
   return (
     <div ref={exportRef}>
@@ -217,22 +210,10 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
             </option>
           ))}
         </select>
+        {/* No Tweet button here on purpose: this page mixes FBS and FCS
+            together, and the compact tweet graphic needs to be one division
+            at a time. Export PNG (full detailed table) still works. */}
         <ExportPngButton targetRef={exportRef} filename="yc-power-ratings" showTweet={false} />
-        <TweetButton
-          targetRef={compactRef}
-          filename="yc-power-ratings-compact"
-          tweetText={`${weekEyebrow} Power Ratings`}
-        />
-      </div>
-
-      {/* Compact spreadsheet-style graphic used only as the Tweet capture
-          target — rendered off-screen (real layout, not display:none) so
-          html-to-image can rasterize it without ever showing it in the
-          normal page flow. */}
-      <div style={{ position: "fixed", top: 0, left: -99999, pointerEvents: "none" }} aria-hidden="true">
-        <div ref={compactRef}>
-          <CompactPowerRatingsGraphic title={`YC POWER RATINGS — ${weekEyebrow}`} sections={compactSections} />
-        </div>
       </div>
 
       <div className="table-wrap">

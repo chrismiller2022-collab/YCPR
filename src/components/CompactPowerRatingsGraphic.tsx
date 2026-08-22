@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { chunkForCompactGrid, type CompactRatingRow } from "../lib/compactPowerRatings";
+import { TEAM_LOGOS } from "../data/logos";
 
 // Dense, spreadsheet-style power ratings display — the compact alternative
 // to the full sortable table, built specifically to be captured as a PNG
@@ -61,21 +62,31 @@ function CompactSection({ title, rows, targetRowsPerColumn }: { title: string; r
             <thead>
               <tr>
                 <th style={{ ...HEAD_CELL, textAlign: "right" }}>#</th>
-                <th style={{ ...HEAD_CELL, textAlign: "left" }}>Team</th>
+                <th style={{ ...HEAD_CELL, textAlign: "left" }} colSpan={2}>
+                  Team
+                </th>
                 <th style={{ ...HEAD_CELL, textAlign: "right" }}>Rtg</th>
               </tr>
             </thead>
             <tbody>
-              {col.map((r, ri) => (
-                <tr key={r.team} style={{ background: ri % 2 === 1 ? "rgba(255,255,255,0.04)" : "transparent" }}>
-                  <td style={{ ...CELL, color: "rgba(255,255,255,0.6)" }}>{r.rank}</td>
-                  <td style={{ ...CELL, textAlign: "left", color: "#fff", fontWeight: 600 }}>{r.team}</td>
-                  <td style={{ ...CELL, color: ratingColor(r.rating), fontWeight: 700 }}>
-                    {r.rating > 0 ? "+" : ""}
-                    {r.rating.toFixed(1)}
-                  </td>
-                </tr>
-              ))}
+              {col.map((r, ri) => {
+                const logo = TEAM_LOGOS[r.team];
+                return (
+                  <tr key={r.team} style={{ background: ri % 2 === 1 ? "rgba(255,255,255,0.04)" : "transparent" }}>
+                    <td style={{ ...CELL, color: "rgba(255,255,255,0.6)" }}>{r.rank}</td>
+                    <td style={{ ...CELL, textAlign: "left", padding: "2.5px 0 2.5px 8px", width: 16 }}>
+                      {logo && <img src={logo} alt="" width={14} height={14} style={{ display: "block" }} />}
+                    </td>
+                    <td style={{ ...CELL, textAlign: "left", color: "#fff", fontWeight: 600, padding: "2.5px 8px 2.5px 4px" }}>
+                      {r.team}
+                    </td>
+                    <td style={{ ...CELL, color: ratingColor(r.rating), fontWeight: 700 }}>
+                      {r.rating > 0 ? "+" : ""}
+                      {r.rating.toFixed(1)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ))}
