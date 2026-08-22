@@ -323,9 +323,10 @@ interface RemainingGame {
  *   conference win%, one extra game between them, neutral site) - so the
  *   "win conference" team can differ from the regular-season record
  *   leader, same as real life.
- * - Playoff seeding uses each team's current rating as a stand-in for a
- *   committee ranking - ratings don't evolve mid-simulation based on
- *   simulated results.
+ * - Playoff seeding ranks by that trial's actual win% first, fixed rating
+ *   only as a tiebreaker between comparable records - a stand-in for a
+ *   committee ranking, not the full resume-rating methodology. Ratings
+ *   themselves don't evolve mid-simulation based on simulated results.
  * - Playoff bracket structure (5 auto-bids + 7 at-large, byes to the top
  *   4 conference champions) mirrors the real 12-team CFP format and
  *   reuses this site's existing 12-team bracket shape from BracketPage.tsx.
@@ -557,19 +558,33 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
   }
 
   const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
-  const sortedChamps = [...champions].sort(byRating);
+  // Selection/seeding within a trial: that trial's actual regular-season
+  // win% is the primary sort key, so a bad simulated season can cost a
+  // team its bye, its seed, or its spot in the field entirely — rating is
+  // only a tiebreaker between teams with comparable records (mirrors how
+  // a real committee ranks similar resumes by team quality). Previously
+  // this sorted purely by fixed rating, which meant a team's seed only
+  // ever reflected whether it won its conference that trial, never how
+  // many games it actually won or lost.
+  const winPct = (i: number) => {
+    const total = wins[i] + losses[i];
+    return total > 0 ? wins[i] / total : 0;
+  };
+  const byResult = (a: number, b: number) => winPct(b) - winPct(a) || byRating(a, b);
+
+  const sortedChamps = [...champions].sort(byResult);
   const autoBids = sortedChamps.slice(0, 5);
   const champSet = new Set(autoBids);
 
   const atLargePool = fbsTeams
     .map((_, i) => i)
     .filter((i) => !champSet.has(i))
-    .sort(byRating)
+    .sort(byResult)
     .slice(0, 7);
 
   const byeSeeds = autoBids.slice(0, 4);
   const fifthChamp = autoBids[4];
-  const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byRating);
+  const seed5to12 = [...(fifthChamp != null ? [fifthChamp] : []), ...atLargePool].sort(byResult);
 
   const field = [...byeSeeds, ...seed5to12];
   field.forEach((teamIdx, i) => {
