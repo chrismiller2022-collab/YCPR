@@ -552,7 +552,7 @@ function SrsStatsTable({ stats }: { stats: SrsTeamRow[] }) {
           </button>
         ))}
       </div>
-      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
+      <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
           <thead>
             <tr>
@@ -628,6 +628,7 @@ function SrsGamesTable({ rows }: { rows: ScheduleRow[] }) {
         </div>
       )}
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 600, overflowY: "auto" }}>
+        {/* thead th here already has explicit inline position:sticky; unaffected by the table-scroll flip */}
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
           <thead>
             <tr>
@@ -1007,7 +1008,7 @@ function PlayoffSeedOddsTable({ results }: { results: TeamSimResult[] }) {
   }
 
   return (
-    <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
+    <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
       <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.74rem" }}>
         <thead>
           <tr>

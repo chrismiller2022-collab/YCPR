@@ -288,7 +288,7 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
             </select>
           </div>
 
-          <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700, overflowY: "auto" }}>
+          <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700, overflowY: "auto" }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
               <thead>
                 <tr>

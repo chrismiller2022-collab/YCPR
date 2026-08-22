@@ -248,7 +248,7 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
       {groups.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>No data for this breakdown yet.</p>
       ) : (
-        <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: maxHeight ?? undefined }}>
+        <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: maxHeight ?? undefined }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
             <thead>
               <tr>
@@ -647,7 +647,7 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
       {matrix.lineBuckets.length === 0 || matrix.thresholds.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No games match those filters.</p>
       ) : (
-        <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+        <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.72rem" }}>
             <thead>
               <tr>

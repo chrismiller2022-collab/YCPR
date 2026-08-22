@@ -39,6 +39,21 @@ export default function ConferenceStandingsOddsTable({
     return <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No teams found for {conference} in this run.</p>;
   }
 
+  // Runs saved before conference-win tracking was added to the engine won't
+  // have confWinDistribution/confCurrentWins/confCurrentLosses in their
+  // stored JSONB at all, even though TeamSimResult now types them as
+  // present. Detect that case up front and show a clear message instead of
+  // silently rendering "undefined-undefined" and a single empty "0" column.
+  const hasConfData = teams.some((t) => (t.confWinDistribution ?? []).some((c) => c > 0));
+  if (!hasConfData) {
+    return (
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+        This saved run predates conference-win tracking, so {conference} standings odds aren't available for it. Run and save a
+        new Monte Carlo simulation to see this table.
+      </p>
+    );
+  }
+
   // Column count is read straight off the data (the highest conference-win
   // bucket any team in this conference actually has trials in) rather than
   // hardcoded, so it stays correct whichever conference is picked and
@@ -69,7 +84,7 @@ export default function ConferenceStandingsOddsTable({
     .sort((a, b) => b.avgConfWins - a.avgConfWins);
 
   return (
-    <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
+    <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
       <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
         <thead>
           <tr>
@@ -90,7 +105,7 @@ export default function ConferenceStandingsOddsTable({
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>{idx + 1}</td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{team.team}</td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {fmtRec(team.confCurrentWins, team.confCurrentLosses)}
+                {fmtRec(team.confCurrentWins ?? 0, team.confCurrentLosses ?? 0)}
               </td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>
                 {avgConfWins.toFixed(1)}

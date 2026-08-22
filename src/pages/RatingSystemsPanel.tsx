@@ -521,7 +521,7 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
           ))}
         </select>
       </div>
-      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
+      <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
           <thead>
             <tr>
@@ -713,7 +713,7 @@ function PowerRatingsHistorySection() {
           ) : rows.length === 0 ? (
             <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No rows saved for week {week}.</p>
           ) : (
-            <div style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+            <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
                 <thead>
                   <tr>

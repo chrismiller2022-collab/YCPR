@@ -810,7 +810,7 @@ function DataUploadPanel({ onBack, onSaved }: { onBack: () => void; onSaved: () 
             </p>
           )}
           {parsed.rows.length > 0 && (
-            <div style={{ overflowX: "auto", maxHeight: 300, border: "1px solid #ddd" }}>
+            <div className="table-scroll" style={{ overflowX: "auto", maxHeight: 300, border: "1px solid #ddd" }}>
               <table style={{ fontSize: "0.8rem", borderCollapse: "collapse", width: "100%" }}>
                 <thead>
                   <tr>

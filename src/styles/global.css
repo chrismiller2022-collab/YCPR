@@ -1158,7 +1158,9 @@
         }
 
         .table-scroll thead th {
+          position: sticky;
           top: 0;
+          z-index: 20;
         }
 
         .matchups-table {
@@ -1431,6 +1433,20 @@
           font-size: 0.88rem;
         }
 
+        /* Sticky headers are opt-in via .table-scroll (below), not a
+           default for every <thead>. A table only behaves correctly with
+           position:sticky when it's wrapped in a container that actually
+           establishes its own scrollbox AND has a `top` offset relative
+           to THAT container (0, via .table-scroll thead th below) — not
+           the page's fixed topbar offset. Applying sticky (with the
+           topbar's 3.7rem offset) to every table regardless meant any
+           table that wasn't the site's few genuinely-tall, deliberately
+           `.table-scroll`-wrapped ones — a short summary table, or a
+           table inside a shorter-than-its-maxHeight scroll container —
+           rendered its header pinned partway down over its own rows
+           instead of at the top. This came up repeatedly, so the safe
+           default is now static; a table opts into sticky by being
+           wrapped in .table-scroll. */
         thead th {
           text-align: left;
           padding: 0.95rem 0.75rem;
@@ -1439,9 +1455,6 @@
           letter-spacing: 0.1em;
           color: var(--chalk-dim);
           border-bottom: 2px solid var(--hash);
-          position: sticky;
-          top: var(--topbar-h, 3.7rem);
-          z-index: 20;
           background: var(--turf);
           cursor: pointer;
           user-select: none;
