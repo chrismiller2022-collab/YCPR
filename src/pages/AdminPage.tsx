@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
@@ -497,54 +497,6 @@ function WeeklyChecklist({ week }: { week: string | null }) {
   );
 }
 
-function MenuTile({
-  label,
-  description,
-  comingSoon,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  comingSoon?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        textAlign: "left",
-        padding: "1rem 1.1rem",
-        background: "var(--turf-panel)",
-        border: "1px solid var(--hash)",
-        borderRadius: 8,
-        cursor: "pointer",
-        color: "inherit",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.3rem",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontWeight: 700 }}>{label}</span>
-        {comingSoon && (
-          <span
-            style={{
-              fontSize: "0.68rem",
-              padding: "0.15rem 0.5rem",
-              borderRadius: 999,
-              background: "rgba(255,255,255,0.06)",
-              color: "var(--chalk-dim)",
-            }}
-          >
-            Coming soon
-          </span>
-        )}
-      </div>
-      <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>{description}</span>
-    </button>
-  );
-}
-
 interface AdminDashboardProps {
   lastUpload: LastUpload | null;
   currentWeek: string | null;
@@ -552,9 +504,12 @@ interface AdminDashboardProps {
   onGoToRatings?: () => void;
   onGoToResume?: () => void;
   onGoToSOS?: () => void;
-  onNavigateView: (view: AdminView) => void;
 }
 
+// Overview — stat cards, weekly checklist, quick links to public rating
+// pages. The tile grid that used to live below this was cut when the
+// sidebar took over navigation (every tile is now a sidebar item instead);
+// this is what shows when nothing else is selected.
 function AdminDashboard({
   lastUpload,
   currentWeek,
@@ -562,7 +517,6 @@ function AdminDashboard({
   onGoToRatings,
   onGoToResume,
   onGoToSOS,
-  onNavigateView,
 }: AdminDashboardProps) {
   const lastUploadLabel = loadingSummary
     ? "Loading…"
@@ -578,7 +532,7 @@ function AdminDashboard({
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Admin</h2>
+      <h2 style={{ marginTop: 0 }}>Overview</h2>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginBottom: "1.5rem" }}>
         <DashboardCard label="Last upload date" value={lastUploadLabel} />
@@ -587,7 +541,7 @@ function AdminDashboard({
 
       <WeeklyChecklist week={loadingSummary ? null : currentWeek} />
 
-      <div style={{ marginBottom: "1.75rem" }}>
+      <div>
         <div style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
           Quick links
         </div>
@@ -603,96 +557,126 @@ function AdminDashboard({
           </button>
         </div>
       </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: "0.75rem",
-        }}
-      >
-        <MenuTile
-          label="Data Upload"
-          description="Paste this week's power ratings and save them."
-          onClick={() => onNavigateView("upload")}
-        />
-        <MenuTile
-          label="Survivor"
-          description="Manage Survivor Pool picks and scores."
-          onClick={() => onNavigateView("survivor")}
-        />
-        <MenuTile
-          label="Survivor Pool (Public)"
-          description="Conference scope + entrants for a public survivor pool."
-          onClick={() => onNavigateView("survivorpooladmin")}
-        />
-        <MenuTile
-          label="Bet History"
-          description="ATS track record with adjustable HFA mode and filter threshold."
-          onClick={() => onNavigateView("bethistory")}
-        />
-        <MenuTile
-          label="Moneyline Bet History"
-          description="EV both sides of every game's moneyline vs my fair win%, graded in units (bet-to-win-1 or flat-1)."
-          onClick={() => onNavigateView("mlbethistory")}
-        />
-        <MenuTile
-          label="Resume Rating"
-          description="Adjustable-weight conglomerate score from 16 normalized resume metrics."
-          onClick={() => onNavigateView("resumerating")}
-        />
-        <MenuTile
-          label="Games & Lines"
-          description="View and sync CFBD games and betting lines."
-          onClick={() => onNavigateView("gameslines")}
-        />
-        <MenuTile
-          label="Matchups"
-          description="Admin matchups view (template copy of the public page for now)."
-          onClick={() => onNavigateView("matchups")}
-        />
-        <MenuTile
-          label="Pools"
-          description="Weekly pools: The Brit, ESPN pools, Peay Pool, CBS Splash."
-          onClick={() => onNavigateView("pools")}
-        />
-        <MenuTile
-          label="Monte Carlo"
-          description="Run season simulations for win totals, playoff, and title odds."
-          onClick={() => onNavigateView("montecarlo")}
-        />
-        <MenuTile
-          label="Prediction Markets"
-          description="Kalshi-style Yes/No pricing on Monte Carlo markets, playoff seeds, win totals, and head-to-head win comparisons."
-          onClick={() => onNavigateView("pm")}
-        />
-        <MenuTile
-          label="Rating Systems"
-          description="Conglomerate FPI/SP+/SRS/Core, your published sheet, and McIllece/Massey into YC + Consensus."
-          onClick={() => onNavigateView("ratingsystems")}
-        />
-        <MenuTile
-          label="Rating Systems Matchups"
-          description="Per-system projected spreads, cover teams, filtered bets, NWFB, and results."
-          onClick={() => onNavigateView("ratingmatchups")}
-        />
-        <MenuTile
-          label="Game Totals"
-          description="5-system points model, 6 composites, and bet tracking from CFBD stats."
-          onClick={() => onNavigateView("gametotals")}
-        />
-        <MenuTile
-          label="Team Totals"
-          description="Same engine, split into home/away team totals with bet tracking."
-          onClick={() => onNavigateView("teamtotals")}
-        />
-        <MenuTile
-          label="Strength of Schedule"
-          description="Avg Opp PR (YC), SOS from SRS in Monte Carlo, Best/Worst Win/Loss PR — total and in-conference."
-          onClick={() => onNavigateView("sos")}
-        />
-      </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Sidebar — persistent left nav grouped by category, replacing the old
+// flat tile grid. Every AdminView still exists exactly as before (same
+// panels, same onBack wiring); this only changes how you get to them.
+// Pool sub-views (brit/peay/etc.) aren't their own sidebar entries — they
+// render inside the main content area same as always, reached by clicking
+// a tile inside the Pools panel — but they highlight "Pools" as active in
+// the sidebar so it's clear which section you're still in.
+// ---------------------------------------------------------------------
+interface NavItem {
+  key: AdminView;
+  label: string;
+}
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "This week",
+    items: [
+      { key: "upload", label: "Data Upload" },
+      { key: "montecarlo", label: "Monte Carlo" },
+      { key: "gameslines", label: "Games & Lines" },
+      { key: "survivor", label: "Survivor" },
+      { key: "pools", label: "Pools" },
+    ],
+  },
+  {
+    label: "Ratings & models",
+    items: [
+      { key: "ratingsystems", label: "Rating Systems" },
+      { key: "ratingmatchups", label: "Rating Systems Matchups" },
+      { key: "resumerating", label: "Resume Rating" },
+      { key: "sos", label: "Strength of Schedule" },
+      { key: "gametotals", label: "Game Totals" },
+      { key: "teamtotals", label: "Team Totals" },
+    ],
+  },
+  {
+    label: "Betting & tracking",
+    items: [
+      { key: "bethistory", label: "Bet History" },
+      { key: "mlbethistory", label: "Moneyline Bet History" },
+      { key: "pm", label: "Prediction Markets" },
+      { key: "matchups", label: "Matchups" },
+    ],
+  },
+  {
+    label: "Public tools",
+    items: [{ key: "survivorpooladmin", label: "Survivor Pool (Public)" }],
+  },
+];
+
+const POOL_SUBVIEWS: AdminView[] = [
+  "brit",
+  "peay",
+  "cbssplash",
+  "espnml",
+  "espnspread",
+  "espnconfidence",
+  "cfbdpickem",
+  "cbspickem",
+];
+
+function activeNavKey(view: AdminView): AdminView {
+  return POOL_SUBVIEWS.includes(view) ? "pools" : view;
+}
+
+function AdminSidebar({ view, onNavigate }: { view: AdminView; onNavigate: (v: AdminView) => void }) {
+  const active = activeNavKey(view);
+
+  function itemStyle(isActive: boolean): CSSProperties {
+    return {
+      textAlign: "left",
+      padding: "0.4rem 0.6rem",
+      borderRadius: 6,
+      border: "none",
+      cursor: "pointer",
+      fontSize: "0.85rem",
+      background: isActive ? "var(--turf-panel-2)" : "transparent",
+      color: isActive ? "var(--gold, #d9a441)" : "inherit",
+      fontWeight: isActive ? 700 : 400,
+    };
+  }
+
+  return (
+    <nav style={{ width: 190, flexShrink: 0, display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+      <button onClick={() => onNavigate("home")} style={itemStyle(active === "home")}>
+        Overview
+      </button>
+      {NAV_GROUPS.map((group) => (
+        <div key={group.label}>
+          <div
+            style={{
+              fontSize: "0.68rem",
+              color: "var(--chalk-dim)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "0.35rem",
+              padding: "0 0.6rem",
+            }}
+          >
+            {group.label}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
+            {group.items.map((item) => (
+              <button key={item.key} onClick={() => onNavigate(item.key)} style={itemStyle(active === item.key)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
   );
 }
 
@@ -912,73 +896,77 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
         padding: "0 1rem",
       }}
     >
-      {view === "home" && (
-        <p style={{ marginTop: 0 }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
-            ← Back to site
-          </a>
-        </p>
-      )}
+      <p style={{ marginTop: 0 }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
+          ← Back to site
+        </a>
+      </p>
+      <h1 style={{ fontSize: "1.4rem", margin: "0 0 1.25rem" }}>Admin</h1>
 
-      {view === "home" && (
-        <AdminDashboard
-          lastUpload={lastUpload}
-          currentWeek={currentWeek}
-          loadingSummary={loadingSummary}
-          onGoToRatings={onGoToRatings}
-          onGoToResume={onGoToResume}
-          onGoToSOS={onGoToSOS}
-          onNavigateView={setView}
-        />
-      )}
+      <div style={{ display: "flex", gap: "1.75rem", alignItems: "flex-start" }}>
+        <AdminSidebar view={view} onNavigate={setView} />
 
-      {view === "upload" && (
-        <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
-      )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {view === "home" && (
+            <AdminDashboard
+              lastUpload={lastUpload}
+              currentWeek={currentWeek}
+              loadingSummary={loadingSummary}
+              onGoToRatings={onGoToRatings}
+              onGoToResume={onGoToResume}
+              onGoToSOS={onGoToSOS}
+            />
+          )}
 
-      {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
+          {view === "upload" && (
+            <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
+          )}
 
-      {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
+          {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
 
-      {view === "bethistory" && <BetHistoryAdminPanel onBack={() => setView("home")} />}
+          {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
 
-      {view === "mlbethistory" && <MoneylineBetHistoryPanel onBack={() => setView("home")} />}
+          {view === "bethistory" && <BetHistoryAdminPanel onBack={() => setView("home")} />}
 
-      {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
+          {view === "mlbethistory" && <MoneylineBetHistoryPanel onBack={() => setView("home")} />}
 
-      {view === "matchups" && <AdminMatchupsPanel onBack={() => setView("home")} />}
-      {view === "resumerating" && <ResumeRatingAdminPanel onBack={() => setView("home")} />}
+          {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
 
-      {view === "pools" && (
-        <PoolsMenuPanel onBack={() => setView("home")} onSelectPool={(pool) => setView(pool as AdminView)} />
-      )}
+          {view === "matchups" && <AdminMatchupsPanel onBack={() => setView("home")} />}
+          {view === "resumerating" && <ResumeRatingAdminPanel onBack={() => setView("home")} />}
 
-      {view === "brit" && <BritPoolPanel onBack={() => setView("pools")} />}
+          {view === "pools" && (
+            <PoolsMenuPanel onBack={() => setView("home")} onSelectPool={(pool) => setView(pool as AdminView)} />
+          )}
 
-      {view === "peay" && <PeayPoolPanel onBack={() => setView("pools")} />}
-      {view === "cbssplash" && <CbsSplashPoolPanel onBack={() => setView("pools")} />}
+          {view === "brit" && <BritPoolPanel onBack={() => setView("pools")} />}
 
-      {view === "espnml" && <EspnMoneylinePanel onBack={() => setView("pools")} />}
+          {view === "peay" && <PeayPoolPanel onBack={() => setView("pools")} />}
+          {view === "cbssplash" && <CbsSplashPoolPanel onBack={() => setView("pools")} />}
 
-      {view === "espnspread" && <EspnSpreadPanel onBack={() => setView("pools")} />}
+          {view === "espnml" && <EspnMoneylinePanel onBack={() => setView("pools")} />}
 
-      {view === "espnconfidence" && <EspnConfidencePanel onBack={() => setView("pools")} />}
+          {view === "espnspread" && <EspnSpreadPanel onBack={() => setView("pools")} />}
 
-      {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
+          {view === "espnconfidence" && <EspnConfidencePanel onBack={() => setView("pools")} />}
 
-      {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
+          {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
 
-      {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
+          {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
 
-      {view === "pm" && <PmAdminPanel onBack={() => setView("home")} />}
+          {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 
-      {view === "ratingsystems" && <RatingSystemsPanel onBack={() => setView("home")} />}
-      {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
+          {view === "pm" && <PmAdminPanel onBack={() => setView("home")} />}
 
-      {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
+          {view === "ratingsystems" && <RatingSystemsPanel onBack={() => setView("home")} />}
+          {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
 
-      {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
-      {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}
+          {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
+
+          {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
+          {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}
+        </div>
+      </div>
     </div>
   );
 }
