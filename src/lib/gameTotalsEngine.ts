@@ -170,11 +170,22 @@ export function poolStdDevForTotal(rows: EnrichedGameRow[]): number {
   return stdDev(diffs);
 }
 
+// amountOff expressed in standard deviations of the pool's own amount-off
+// distribution — the actual number now, not just the isFiltered boolean
+// (isFiltered is still derived from this the same way, just exposed as a
+// number too since Chris wants "std dev off" on display, not just a
+// checkmark).
+function stdDevOff(amountOff: number | null, poolStd: number): number | null {
+  if (amountOff == null || poolStd === 0) return null;
+  return amountOff / poolStd;
+}
+
 export interface BetRow {
   row: EnrichedGameRow;
   projectedTotal: number | null;
   vegasTotal: number | null;
   amountOff: number | null;
+  stdDevOff: number | null;
   call: "Over" | "Under" | null;
   isFiltered: boolean;
   actualResult: ReturnType<typeof gradeActualTotal>;
@@ -190,7 +201,7 @@ export function buildBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier:
     const isFiltered = isFilteredBet(amountOff, poolStd, filterThresholdMultiplier);
     const actualResult = gradeActualTotal(row.actualTotal, vegasTotal);
     const grade = gradeBetCall(call, actualResult);
-    return { row, projectedTotal: pv, vegasTotal, amountOff, call, isFiltered, actualResult, grade };
+    return { row, projectedTotal: pv, vegasTotal, amountOff, stdDevOff: stdDevOff(amountOff, poolStd), call, isFiltered, actualResult, grade };
   });
 }
 
@@ -198,9 +209,11 @@ export interface TeamSplitBetRow {
   row: EnrichedGameRow;
   team: string;
   isHome: boolean;
+  isFavorite: boolean | null; // by MY spread (myHomeSpread) — null if no rating available for either side
   myTeamTotal: number | null; // my model's game total, split via MY projected spread (myHomeSpread)
   vegasTeamTotal: number | null; // Vegas's game total, split via Vegas's own spread — a DERIVED number, since there's no real market team-total line synced
   amountOff: number | null;
+  stdDevOff: number | null;
   call: "Over" | "Under" | null;
   isFiltered: boolean;
   actualResult: ReturnType<typeof gradeActualTotal>;
@@ -215,13 +228,34 @@ export interface TeamSplitBetRow {
 // configurable spreadSource, since there's exactly one correct spread
 // for each of the two numbers.
 export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number): TeamSplitBetRow[] {
-  const perTeamRows: { row: EnrichedGameRow; team: string; isHome: boolean; myTeamTotal: number | null; vegasTeamTotal: number | null }[] =
-    [];
+  const perTeamRows: {
+    row: EnrichedGameRow;
+    team: string;
+    isHome: boolean;
+    isFavorite: boolean | null;
+    myTeamTotal: number | null;
+    vegasTeamTotal: number | null;
+  }[] = [];
   for (const row of rows) {
     const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
     const vegasSplit = splitTeamTotal(row.odds.vegasTotal, row.game.homeSpread);
-    perTeamRows.push({ row, team: row.game.homeTeam, isHome: true, myTeamTotal: mySplit.home, vegasTeamTotal: vegasSplit.home });
-    perTeamRows.push({ row, team: row.game.awayTeam, isHome: false, myTeamTotal: mySplit.away, vegasTeamTotal: vegasSplit.away });
+    const homeIsFavorite = row.myHomeSpread == null ? null : row.myHomeSpread < 0;
+    perTeamRows.push({
+      row,
+      team: row.game.homeTeam,
+      isHome: true,
+      isFavorite: homeIsFavorite,
+      myTeamTotal: mySplit.home,
+      vegasTeamTotal: vegasSplit.home,
+    });
+    perTeamRows.push({
+      row,
+      team: row.game.awayTeam,
+      isHome: false,
+      isFavorite: homeIsFavorite == null ? null : !homeIsFavorite,
+      myTeamTotal: mySplit.away,
+      vegasTeamTotal: vegasSplit.away,
+    });
   }
 
   const diffs: number[] = [];
@@ -240,13 +274,171 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
       row: r.row,
       team: r.team,
       isHome: r.isHome,
+      isFavorite: r.isFavorite,
       myTeamTotal: r.myTeamTotal,
       vegasTeamTotal: r.vegasTeamTotal,
       amountOff,
+      stdDevOff: stdDevOff(amountOff, poolStd),
       call,
       isFiltered,
       actualResult,
       grade,
     };
   });
+}
+
+// ---------------------------------------------------------------------
+// Performance breakdown — win/loss/push + win% + margin of error (95%
+// normal-approx CI half-width), computed separately for the "every bet"
+// (EB) pool and the "filtered bets" (FB) pool, for a named segment of
+// rows (e.g. "Home", "Favorite Over", "All").
+// ---------------------------------------------------------------------
+export interface PerfStats {
+  wins: number;
+  losses: number;
+  pushes: number;
+  n: number; // wins+losses, excludes pushes — the denominator winPct/moe use
+  winPct: number | null;
+  marginOfError: number | null; // +/- fraction, e.g. 0.08 = +/-8 pts
+}
+
+function computePerfStats(graded: { grade: ReturnType<typeof gradeBetCall> }[]): PerfStats {
+  const wins = graded.filter((g) => g.grade === "win").length;
+  const losses = graded.filter((g) => g.grade === "loss").length;
+  const pushes = graded.filter((g) => g.grade === "push").length;
+  const n = wins + losses;
+  const winPct = n > 0 ? wins / n : null;
+  const marginOfError = n > 0 && winPct != null ? 1.96 * Math.sqrt((winPct * (1 - winPct)) / n) : null;
+  return { wins, losses, pushes, n, winPct, marginOfError };
+}
+
+export interface PerformanceSegment {
+  key: string;
+  label: string;
+  eb: PerfStats; // every bet — every graded row in this segment
+  fb: PerfStats; // filtered bets only — rows where isFiltered is true
+}
+
+function segmentStats(rows: { grade: ReturnType<typeof gradeBetCall>; isFiltered: boolean }[], key: string, label: string): PerformanceSegment {
+  const graded = rows.filter((r) => r.grade != null);
+  return {
+    key,
+    label,
+    eb: computePerfStats(graded),
+    fb: computePerfStats(graded.filter((r) => r.isFiltered)),
+  };
+}
+
+// Game Totals: just Over/Under (a game total isn't home/away or fav/dog
+// specific) + All.
+export function computeGamePerformanceBreakdown(betRows: BetRow[]): PerformanceSegment[] {
+  return [
+    segmentStats(betRows, "all", "All"),
+    segmentStats(
+      betRows.filter((r) => r.call === "Over"),
+      "over",
+      "Over"
+    ),
+    segmentStats(
+      betRows.filter((r) => r.call === "Under"),
+      "under",
+      "Under"
+    ),
+  ];
+}
+
+// Team Totals: 6 marginal segments (Home/Away/Favorite/Underdog/Over/
+// Under) plus every 3-way combination of Home-or-Away x Favorite-or-
+// Underdog x Over-or-Under (8 cells) — "all combinations of those 6" per
+// Chris. Rows missing isFavorite (no rating available) are excluded from
+// every favorite/underdog-related segment but still count in Home/Away/
+// Over/Under/All.
+export function computeTeamPerformanceBreakdown(betRows: TeamSplitBetRow[]): PerformanceSegment[] {
+  const home = betRows.filter((r) => r.isHome);
+  const away = betRows.filter((r) => !r.isHome);
+  const fav = betRows.filter((r) => r.isFavorite === true);
+  const dog = betRows.filter((r) => r.isFavorite === false);
+  const over = betRows.filter((r) => r.call === "Over");
+  const under = betRows.filter((r) => r.call === "Under");
+
+  const segments: PerformanceSegment[] = [
+    segmentStats(betRows, "all", "All"),
+    segmentStats(home, "home", "Home"),
+    segmentStats(away, "away", "Away"),
+    segmentStats(fav, "favorite", "Favorite"),
+    segmentStats(dog, "underdog", "Underdog"),
+    segmentStats(over, "over", "Over"),
+    segmentStats(under, "under", "Under"),
+  ];
+
+  const sidePreds: [(r: TeamSplitBetRow) => boolean, string, string][] = [
+    [(r) => r.isHome, "home", "Home"],
+    [(r) => !r.isHome, "away", "Away"],
+  ];
+  const fdPreds: [(r: TeamSplitBetRow) => boolean, string, string][] = [
+    [(r) => r.isFavorite === true, "fav", "Favorite"],
+    [(r) => r.isFavorite === false, "dog", "Underdog"],
+  ];
+  const ouPreds: [(r: TeamSplitBetRow) => boolean, string, string][] = [
+    [(r) => r.call === "Over", "over", "Over"],
+    [(r) => r.call === "Under", "under", "Under"],
+  ];
+
+  for (const [sidePred, sideKey, sideLabel] of sidePreds) {
+    for (const [fdPred, fdKey, fdLabel] of fdPreds) {
+      for (const [ouPred, ouKey, ouLabel] of ouPreds) {
+        const combo = betRows.filter((r) => sidePred(r) && fdPred(r) && ouPred(r));
+        segments.push(segmentStats(combo, `${sideKey}-${fdKey}-${ouKey}`, `${sideLabel} ${fdLabel} ${ouLabel}`));
+      }
+    }
+  }
+
+  return segments;
+}
+
+// ---------------------------------------------------------------------
+// Amount-off distribution — buckets |amountOff| into 0.5-point bins from
+// 0 up to the largest amount-off actually present in the data, showing
+// win% per bucket. Point of this: does a bigger edge (amount off) really
+// correlate with a better hit rate, and where's the real cutoff?
+// ---------------------------------------------------------------------
+export interface AmountOffBucket {
+  lo: number;
+  hi: number;
+  label: string;
+  wins: number;
+  losses: number;
+  n: number;
+  winPct: number | null;
+}
+
+export function computeAmountOffDistribution(
+  rows: { amountOff: number | null; grade: ReturnType<typeof gradeBetCall> }[],
+  bucketSize = 0.5
+): AmountOffBucket[] {
+  const graded = rows.filter((r) => r.amountOff != null && r.grade != null && r.grade !== "push");
+  if (graded.length === 0) return [];
+  const maxAbs = Math.max(...graded.map((r) => Math.abs(r.amountOff!)));
+  const bucketCount = Math.max(1, Math.ceil(maxAbs / bucketSize));
+  const buckets: AmountOffBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
+    lo: i * bucketSize,
+    hi: (i + 1) * bucketSize,
+    label: `${(i * bucketSize).toFixed(1)}-${((i + 1) * bucketSize).toFixed(1)}`,
+    wins: 0,
+    losses: 0,
+    n: 0,
+    winPct: null,
+  }));
+  for (const r of graded) {
+    const abs = Math.abs(r.amountOff!);
+    const idx = Math.min(bucketCount - 1, Math.floor(abs / bucketSize));
+    const b = buckets[idx];
+    b.n++;
+    if (r.grade === "win") b.wins++;
+    else if (r.grade === "loss") b.losses++;
+  }
+  for (const b of buckets) {
+    b.winPct = b.n > 0 ? b.wins / b.n : null;
+  }
+  return buckets;
 }

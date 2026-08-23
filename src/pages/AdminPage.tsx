@@ -6,6 +6,7 @@ import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
 import GameTotalsAdminPanel from "./GameTotalsAdminPanel";
 import TeamTotalsAdminPanel from "./TeamTotalsAdminPanel";
+import PredictionsAdminPanel from "./PredictionsAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
@@ -224,6 +225,7 @@ type AdminView =
   | "resumerating"
   | "gametotals"
   | "teamtotals"
+  | "predictions"
   | "ratingsystems"
   | "ratingmatchups"
   | "sos";
@@ -597,8 +599,9 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "ratingmatchups", label: "Rating Systems Matchups" },
       { key: "resumerating", label: "Resume Rating" },
       { key: "sos", label: "Strength of Schedule" },
-      { key: "gametotals", label: "Game Totals" },
+      { key: "gametotals", label: "Totals" },
       { key: "teamtotals", label: "Team Totals" },
+      { key: "predictions", label: "Predictions" },
     ],
   },
   {
@@ -965,6 +968,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
           {view === "teamtotals" && <TeamTotalsAdminPanel onBack={() => setView("home")} />}
+          {view === "predictions" && <PredictionsAdminPanel onBack={() => setView("home")} />}
         </div>
       </div>
     </div>

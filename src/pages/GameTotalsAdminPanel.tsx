@@ -1,23 +1,39 @@
-import { useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
-import { useGameTotalsEngine, buildBetRows, type EnrichedGameRow } from "../lib/gameTotalsEngine";
+import SortHeader from "../components/SortHeader";
+import {
+  useGameTotalsEngine,
+  buildBetRows,
+  computeGamePerformanceBreakdown,
+  computeAmountOffDistribution,
+  type EnrichedGameRow,
+  type BetRow,
+} from "../lib/gameTotalsEngine";
 import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
+import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, type ViewMode } from "./PerformanceView";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
-const TABS = ["raw", "inputs", "composites", "bets", "filtered", "performance"] as const;
+const TABS = ["totals", "performance"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABELS: Record<Tab, string> = {
-  raw: "Raw Data",
-  inputs: "Efficiency Inputs",
-  composites: "Composites",
-  bets: "Bets",
-  filtered: "Filtered Bets",
-  performance: "Performance",
-};
+const TAB_LABELS: Record<Tab, string> = { totals: "Totals", performance: "Performance" };
+
+const LEGACY_TABS = ["raw", "inputs", "composites"] as const;
+type LegacyTab = (typeof LEGACY_TABS)[number];
+const LEGACY_TAB_LABELS: Record<LegacyTab, string> = { raw: "Raw Data", inputs: "Efficiency Inputs", composites: "Legacy Composites" };
 
 function fmt(v: number | null | undefined, digits = 2): string {
   return v == null || Number.isNaN(v) ? "–" : v.toFixed(digits);
+}
+
+function dateLabel(iso: string | null): string {
+  if (!iso) return "–";
+  return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+}
+
+function kickoffLabel(iso: string | null): string {
+  if (!iso) return "–";
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 async function saveSettings(season: number, settings: GameTotalsSettings) {
@@ -206,7 +222,7 @@ export function EfficiencyInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
   );
 }
 
-function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
+function LegacyCompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
   return (
     <div className="table-scroll">
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -251,80 +267,152 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
   );
 }
 
-function BetsTab({ rows, settings, filteredOnly }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; filteredOnly: boolean }) {
-  const betRows = buildBetRows(rows, settings.filterThresholdMultiplier);
-  const shown = filteredOnly ? betRows.filter((b) => b.isFiltered) : betRows;
+function ShowMore({ rows }: { rows: EnrichedGameRow[] }) {
+  const [open, setOpen] = useState(false);
+  const [legacyTab, setLegacyTab] = useState<LegacyTab>("raw");
 
   return (
-    <div>
-      <div className="table-scroll">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={CP}>Wk</th>
-              <th style={CP}>Matchup</th>
-              <th style={{ ...CP, textAlign: "right" }}>My Total</th>
-              <th style={{ ...CP, textAlign: "right" }}>Vegas O/U</th>
-              <th style={{ ...CP, textAlign: "right" }}>Amount Off</th>
-              <th style={CP}>Call</th>
-              {filteredOnly && <th style={CP}>Filtered</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((b) => (
-              <tr key={b.row.game.id}>
-                <td style={CP}>{b.row.game.week}</td>
-                <td style={CP}>
-                  {b.row.game.awayTeam} @ {b.row.game.homeTeam}
-                </td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(b.amountOff)}</td>
-                <td style={{ ...CP, color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined, fontWeight: 700 }}>
-                  {b.call ?? "–"}
-                </td>
-                {filteredOnly && <td style={CP}>{b.isFiltered ? "✓" : "–"}</td>}
-              </tr>
+    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)} style={{ marginBottom: "1rem" }}>
+      <summary style={{ cursor: "pointer", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+        Show more (raw data, efficiency inputs, legacy composites)
+      </summary>
+      {open && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+            {LEGACY_TABS.map((t) => (
+              <button key={t} className={`mode-btn ${legacyTab === t ? "mode-btn-active" : ""}`} onClick={() => setLegacyTab(t)}>
+                {LEGACY_TAB_LABELS[t]}
+              </button>
             ))}
-            {shown.length === 0 && (
-              <tr>
-                <td colSpan={filteredOnly ? 7 : 6} className="empty">
-                  No games.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          {legacyTab === "raw" && <RawDataTab rows={rows} />}
+          {legacyTab === "inputs" && <EfficiencyInputsTab rows={rows} />}
+          {legacyTab === "composites" && <LegacyCompositesTab rows={rows} />}
+        </div>
+      )}
+    </details>
+  );
+}
+
+type SortKey = "week" | "date" | "awayTeam" | "homeTeam" | "vegasTotal" | "myTotal" | "amountOff" | "stdDevOff";
+
+function sortValue(b: BetRow, key: SortKey): number | string {
+  switch (key) {
+    case "week":
+      return b.row.game.week;
+    case "date":
+      return b.row.game.startDate ?? "";
+    case "awayTeam":
+      return b.row.game.awayTeam;
+    case "homeTeam":
+      return b.row.game.homeTeam;
+    case "vegasTotal":
+      return b.vegasTotal ?? -Infinity;
+    case "myTotal":
+      return b.projectedTotal ?? -Infinity;
+    case "amountOff":
+      return b.amountOff ?? -Infinity;
+    case "stdDevOff":
+      return b.stdDevOff ?? -Infinity;
+  }
+}
+
+function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+
+  const [sortKey, setSortKey] = useState<SortKey>("week");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function handleSort(key: string) {
+    const k = key as SortKey;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    return [...betRows].sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }, [betRows, sortKey, sortDir]);
+
+  const sh = (label: string, key: SortKey, align?: "right") => (
+    <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
+  );
+
+  return (
+    <div className="table-scroll">
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            {sh("Wk", "week")}
+            {sh("Date", "date")}
+            <th style={CP}>Kickoff</th>
+            {sh("Away", "awayTeam")}
+            {sh("Home", "homeTeam")}
+            {sh("Vegas Total", "vegasTotal", "right")}
+            {sh("My Total", "myTotal", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>EB</th>
+            <th style={{ ...CP, textAlign: "right" }}>FB</th>
+            {sh("Amt Off", "amountOff", "right")}
+            {sh("Std Dev Off", "stdDevOff", "right")}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((b) => (
+            <tr key={b.row.game.id}>
+              <td style={CP}>{b.row.game.week}</td>
+              <td style={CP}>{dateLabel(b.row.game.startDate)}</td>
+              <td style={CP}>{kickoffLabel(b.row.game.startDate)}</td>
+              <td style={CP}>{b.row.game.awayTeam}</td>
+              <td style={CP}>{b.row.game.homeTeam}</td>
+              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
+              <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
+              <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined }}>
+                {b.call ?? "–"}
+              </td>
+              <td
+                style={{
+                  ...CP,
+                  textAlign: "right",
+                  color: b.isFiltered ? (b.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+                  fontWeight: b.isFiltered ? 700 : undefined,
+                }}
+              >
+                {b.isFiltered ? b.call : "–"}
+              </td>
+              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.amountOff)}</td>
+              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.stdDevOff, 2)}</td>
+            </tr>
+          ))}
+          {sorted.length === 0 && (
+            <tr>
+              <td colSpan={11} className="empty">
+                No games.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function PerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const betRows = buildBetRows(rows, settings.filterThresholdMultiplier);
-  const graded = betRows.filter((b) => b.grade != null);
-  const wins = graded.filter((b) => b.grade === "win").length;
-  const losses = graded.filter((b) => b.grade === "loss").length;
-  const pushes = graded.filter((b) => b.grade === "push").length;
-
-  const filteredGraded = betRows.filter((b) => b.isFiltered && b.grade != null);
-  const fWins = filteredGraded.filter((b) => b.grade === "win").length;
-  const fLosses = filteredGraded.filter((b) => b.grade === "loss").length;
+function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+  const segments = useMemo(() => computeGamePerformanceBreakdown(betRows), [betRows]);
+  const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-      <div style={{ padding: "1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}>
-        <div style={{ fontWeight: 700, color: "var(--gold)", marginBottom: "0.5rem" }}>Ridge Model vs Vegas O/U</div>
-        <div style={{ fontSize: "1.3rem", fontWeight: 800 }}>
-          {wins}-{losses}
-          {pushes > 0 ? `-${pushes}` : ""}
-        </div>
-        <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>All graded games</div>
-        <div style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: "0.5rem" }}>
-          {fWins}-{fLosses}
-        </div>
-        <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Filtered only</div>
-      </div>
+    <div>
+      <PerformanceTable segments={segments} />
+      <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>Win% by Amount Off (every bet)</h3>
+      <AmountOffChart buckets={buckets} />
     </div>
   );
 }
@@ -480,14 +568,19 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
   const [division, setDivision] = useState("FBS");
   const { rows: allRows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
   const rows = filterRowsByDivision(allRows, division);
-  const [tab, setTab] = useState<Tab>("composites");
+  const [tab, setTab] = useState<Tab>("totals");
+
+  const [viewMode, setViewMode] = useState<ViewMode>("season");
+  const [viewWeek, setViewWeek] = useState(1);
+  const availableWeeks = useMemo(() => Array.from(new Set(rows.map((r) => r.game.week))).sort((a, b) => a - b), [rows]);
+  const viewRows = useMemo(() => filterByViewMode(rows, viewMode, viewWeek), [rows, viewMode, viewWeek]);
 
   return (
     <div>
       <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         ‹ Admin
       </button>
-      <h2 style={{ marginTop: 0 }}>Game Totals</h2>
+      <h2 style={{ marginTop: 0 }}>Totals</h2>
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <SeasonPicker season={season} setSeason={setSeason} />
@@ -505,6 +598,8 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
       </details>
       <SettingsBar settings={settings} setSettings={setSettings} season={season} />
 
+      <WeekSeasonToggle mode={viewMode} setMode={setViewMode} week={viewWeek} setWeek={setViewWeek} availableWeeks={availableWeeks} />
+
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
         {TABS.map((t) => (
           <button key={t} className={`mode-btn ${tab === t ? "mode-btn-active" : ""}`} onClick={() => setTab(t)}>
@@ -518,12 +613,13 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
         <div className="empty">Loading…</div>
       ) : (
         <>
-          {tab === "raw" && <RawDataTab rows={rows} />}
-          {tab === "inputs" && <EfficiencyInputsTab rows={rows} />}
-          {tab === "composites" && <CompositesTab rows={rows} />}
-          {tab === "bets" && <BetsTab rows={rows} settings={settings} filteredOnly={false} />}
-          {tab === "filtered" && <BetsTab rows={rows} settings={settings} filteredOnly />}
-          {tab === "performance" && <PerformanceTab rows={rows} settings={settings} />}
+          {tab === "totals" && (
+            <>
+              <TotalsTab rows={viewRows} settings={settings} />
+              <ShowMore rows={viewRows} />
+            </>
+          )}
+          {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} />}
         </>
       )}
     </div>
