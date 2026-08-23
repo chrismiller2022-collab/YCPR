@@ -341,18 +341,18 @@ interface RemainingGame {
   awayTeam: string;
 }
 
-// Every 10th trial gets run through computeSrsStats to get that trial's
-// SRS/VSRS, which drives the DEFAULT playoff selection method (win% first,
-// VSRS as tiebreak instead of fixed rating - see buildField/byResumeResult
-// in runOneMonteCarloTrial). This is also why playoff/seed/bracket stats
-// are sampled-trial-only (~10k of 100k trials) rather than every-trial:
-// full-cost SRS/VSRS on every trial was benchmarked at roughly tripling
-// total run time for 100k trials. 1-in-10 keeps that modest while still
-// averaging/tallying across 10,000 realizations (chosen by Chris). The
-// legacy win%+rating method is still computed on the same sampled trials
-// purely as a comparison column (see ResumeComparisonEntry.currentPlayoffPct
-// below) so the switch is auditable, not just asserted.
-const SRS_SAMPLE_EVERY = 10;
+// Every trial gets run through computeSrsStats to get that trial's SRS/VSRS,
+// which drives the DEFAULT playoff selection method (win% first, VSRS as
+// tiebreak instead of fixed rating - see buildField/byResumeResult in
+// runOneMonteCarloTrial). SRS_SAMPLE_EVERY=1 means every trial - full
+// accuracy, no sampling gap between playoff stats and the rest of the run,
+// at real cost (per Chris: "I don't mind how long the sim takes"). Keep this
+// as a knob rather than hardcoding "every trial" inline, in case the
+// tradeoff needs revisiting later. The legacy win%+rating method is still
+// computed on the same trials purely as a comparison column (see
+// ResumeComparisonEntry.currentPlayoffPct below) so the switch stays
+// auditable, not just asserted.
+const SRS_SAMPLE_EVERY = 1;
 
 export interface ResumeComparisonEntry {
   team: string;
