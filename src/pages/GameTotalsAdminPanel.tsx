@@ -506,7 +506,7 @@ export function CsvImportControl({ season }: { season: number }) {
   );
 }
 
-const SEASON_OPTIONS = [2024, 2025, 2026];
+const SEASON_OPTIONS = [2026, 2025, 2024, 2023, 2022, 2021];
 
 export function SeasonPicker({ season, setSeason }: { season: number; setSeason: (s: number) => void }) {
   return (
