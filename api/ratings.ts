@@ -127,11 +127,19 @@ export default async function handler(req: any, res: any) {
           .map((r: any) => ({ team: r.team, conference: r.conference ?? null, value: -r.rating }));
       },
       srs: async (y) => {
-        let data = await cfbdFetch(`/ratings/srs?year=${y}`);
-        // The plain endpoint has, in practice, come back empty in cases where
-        // /ratings/srs/expanded (same schema + a classification field, and
-        // documented to additionally include FCS) has data — fall back to it
-        // before giving up on this year.
+        // The plain /ratings/srs endpoint has, in practice, come back empty
+        // OR thrown outright (404/deprecated) for some years — previously
+        // only the "came back empty" case fell through to
+        // /ratings/srs/expanded (same schema + a classification field,
+        // documented to additionally include FCS); a thrown error skipped
+        // the fallback entirely and just failed the whole pull. Now both
+        // cases fall through the same way.
+        let data: any[] | null = null;
+        try {
+          data = await cfbdFetch(`/ratings/srs?year=${y}`);
+        } catch {
+          data = null;
+        }
         if (!data || data.length === 0) {
           data = await cfbdFetch(`/ratings/srs/expanded?year=${y}`);
         }

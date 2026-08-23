@@ -103,9 +103,15 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     setLog(null);
     try {
       const data = await syncCfbdRatings(year);
-      const parts = Object.entries(data.results).map(
-        ([key, r]: [string, any]) => `${key}: ${r.error ? `error (${r.error})` : `${r.saved}/${r.fetched}`}`
-      );
+      const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
+        if (r.error) return `${key}: error (${r.error})`;
+        // yearUsed differs from the requested year whenever the primary
+        // year came back empty and the server fell back to year-1 (e.g.
+        // this year's ratings aren't published by CFBD yet) — surface that
+        // so a stale/wrong-year pull is obvious instead of silent.
+        const yearNote = r.yearUsed != null && r.yearUsed !== year ? ` [fell back to ${r.yearUsed}]` : ` [${r.yearUsed ?? year}]`;
+        return `${key}: ${r.saved}/${r.fetched}${yearNote}`;
+      });
       setLog(`CFBD sync — ${parts.join(", ")}`);
       onDataChanged();
     } catch (err: any) {

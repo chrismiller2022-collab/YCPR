@@ -24,6 +24,7 @@ import FCSBracketPage from "./pages/FCSBracketPage";
 import FCSRatingsPage from "./pages/FCSRatingsPage";
 import Playoff24Page from "./pages/Playoff24Page";
 import WeekReportPage from "./pages/WeekReportPage";
+import PreseasonWeek1RatingsPage from "./pages/PreseasonWeek1RatingsPage";
 import ComingSoon from "./pages/ComingSoon";
 import TopNav from "./pages/TopNav";
 const AdminPage = lazy(() => import("./pages/AdminPage"));
@@ -234,6 +235,14 @@ export default function App() {
           />
         )}
 
+      {page.type === "sub" && page.catKey === "ratings" && page.subKey === "week1" && (
+        <PreseasonWeek1RatingsPage
+          onNavigateTeam={handleNavigateTeam}
+          onNavigateConference={handleNavigateConference}
+          onHome={handleHome}
+        />
+      )}
+
       {page.type === "sub" &&
         page.catKey === "resume" &&
         page.subKey === "weeklyprogression" && (
@@ -406,6 +415,7 @@ export default function App() {
         !(page.catKey === "sos" && page.subKey === "live") &&
         !(page.subKey === "weeklyprogression" &&
           (page.catKey === "ratings" || page.catKey === "resume" || page.catKey === "sos")) &&
+        !(page.catKey === "ratings" && page.subKey === "week1") &&
         !(page.catKey === "confpreviews") &&
         !(page.catKey === "bracket") &&
         !(page.catKey === "fcsbracket") &&

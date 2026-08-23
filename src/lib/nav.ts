@@ -39,8 +39,12 @@ export const NAV: any[] = [
     key: "ratings",
     label: "Weekly Power Ratings",
     subs: [
-      { key: "preseason", label: "Preseason" },
-      ...WEEKS,
+      // Preseason and Week 1 used to be two separate nav entries (both
+      // just "Coming Soon" placeholders) - merged into one, since Week 1
+      // IS the preseason power rating snapshot (YC, from Admin > Rating
+      // Systems) as of the moment Week 1 kicked off.
+      { key: "week1", label: "Preseason / Week 1" },
+      ...WEEKS.slice(1),
       { key: "live", label: "Live", pageType: "home" },
       { key: "weeklyprogression", label: "Weekly Progression" },
     ],
