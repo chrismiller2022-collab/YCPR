@@ -128,69 +128,34 @@ const VIEWS = [
 type ViewKey = (typeof VIEWS)[number]["key"];
 
 // ---------------------------------------------------------------------
-// Team schedule view — one team's whole season, one row per game, using
-// that team's own side of the same PredRow numbers (opponent, home/away,
-// my spread from that team's perspective, my projected score for both
-// sides). Always full season regardless of the week/season toggle above
-// (the toggle only applies to the Games tab) — a schedule view that only
-// shows one week isn't useful.
+// Team schedule view — one team's whole season, one row per game. Same
+// shape as the Mine/Vegas/Combined tables (reuses PredictionsTable), just
+// a different column set: away/home shown as actual teams (the selected
+// team lands in whichever slot it's in — no separate H/A column needed),
+// scores combined into one "Away-Home" column, spreads and total after.
+// Always full season regardless of the week/season toggle above (the
+// toggle only applies to the Games tab) — a one-week schedule isn't
+// useful.
 // ---------------------------------------------------------------------
-interface TeamScheduleRow {
-  game: EnrichedGameRow;
-  opponent: string;
-  isHome: boolean;
-  mySpread: number | null; // this team's spread, negative = favored
-  myScore: number | null; // this team's projected score (TT)
-  oppScore: number | null; // opponent's projected score (TT)
-  myTotal: number | null; // game total
-}
-
-function buildTeamSchedule(predRows: PredRow[], team: string): TeamScheduleRow[] {
-  const out: TeamScheduleRow[] = [];
-  for (const r of predRows) {
-    const isHome = r.game.game.homeTeam === team;
-    const isAway = r.game.game.awayTeam === team;
-    if (!isHome && !isAway) continue;
-    out.push({
-      game: r.game,
-      opponent: isHome ? r.game.game.awayTeam : r.game.game.homeTeam,
-      isHome,
-      mySpread: isHome ? r.myHomeSpread : r.myAwaySpread,
-      myScore: isHome ? r.myHomeTT : r.myAwayTT,
-      oppScore: isHome ? r.myAwayTT : r.myHomeTT,
-      myTotal: r.myTotal,
-    });
-  }
-  return out;
-}
-
-type TeamScheduleSortKey = "week" | "date" | "opponent" | "homeAway" | "mySpread" | "myScore" | "oppScore" | "myTotal";
-
-function teamScheduleSortValue(r: TeamScheduleRow, key: TeamScheduleSortKey): number | string {
-  switch (key) {
-    case "week":
-      return r.game.game.week;
-    case "date":
-      return r.game.game.startDate ?? "";
-    case "opponent":
-      return r.opponent;
-    case "homeAway":
-      return r.isHome ? "Home" : "Away";
-    case "mySpread":
-      return r.mySpread ?? -Infinity;
-    case "myScore":
-      return r.myScore ?? -Infinity;
-    case "oppScore":
-      return r.oppScore ?? -Infinity;
-    case "myTotal":
-      return r.myTotal ?? -Infinity;
-  }
-}
+const TEAM_COLUMNS: Column[] = [
+  ...baseCols,
+  kickoffCol,
+  awayCol,
+  {
+    key: "score",
+    label: "Score (mine)",
+    align: "right",
+    value: (r) => r.myHomeTT ?? -Infinity,
+    render: (r) => `${fmt(r.myAwayTT)}-${fmt(r.myHomeTT)}`,
+  },
+  homeCol,
+  { key: "myHomeSpread", label: "Home Spread", align: "right", value: (r) => r.myHomeSpread ?? -Infinity, render: (r) => fmtSpread(r.myHomeSpread) },
+  { key: "myAwaySpread", label: "Away Spread", align: "right", value: (r) => r.myAwaySpread ?? -Infinity, render: (r) => fmtSpread(r.myAwaySpread) },
+  { key: "myTotal", label: "Game Total", align: "right", value: (r) => r.myTotal ?? -Infinity, render: (r) => fmt(r.myTotal) },
+];
 
 function TeamScheduleTab({ predRows, teams }: { predRows: PredRow[]; teams: string[] }) {
   const [team, setTeam] = useState<string>("");
-  const [sortKey, setSortKey] = useState<TeamScheduleSortKey>("week");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // teams loads async — default to the first one once the list shows up,
   // but don't stomp on a selection the user already made.
@@ -198,28 +163,9 @@ function TeamScheduleTab({ predRows, teams }: { predRows: PredRow[]; teams: stri
     if (!team && teams.length > 0) setTeam(teams[0]);
   }, [teams, team]);
 
-  const schedule = useMemo(() => (team ? buildTeamSchedule(predRows, team) : []), [predRows, team]);
-
-  function handleSort(key: string) {
-    const k = key as TeamScheduleSortKey;
-    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(k);
-      setSortDir("asc");
-    }
-  }
-
-  const sorted = useMemo(() => {
-    return [...schedule].sort((a, b) => {
-      const av = teamScheduleSortValue(a, sortKey);
-      const bv = teamScheduleSortValue(b, sortKey);
-      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
-      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
-    });
-  }, [schedule, sortKey, sortDir]);
-
-  const sh = (label: string, key: TeamScheduleSortKey, align?: "right") => (
-    <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
+  const schedule = useMemo(
+    () => (team ? predRows.filter((r) => r.game.game.homeTeam === team || r.game.game.awayTeam === team) : []),
+    [predRows, team]
   );
 
   return (
@@ -232,45 +178,7 @@ function TeamScheduleTab({ predRows, teams }: { predRows: PredRow[]; teams: stri
           </option>
         ))}
       </select>
-      <div className="table-scroll">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              {sh("Wk", "week")}
-              {sh("Date", "date")}
-              <th style={CP}>Kickoff</th>
-              {sh("Opponent", "opponent")}
-              {sh("H/A", "homeAway")}
-              {sh("My Spread", "mySpread", "right")}
-              {sh("My Proj Score", "myScore", "right")}
-              {sh("Opp Proj Score", "oppScore", "right")}
-              {sh("My Total", "myTotal", "right")}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r) => (
-              <tr key={r.game.game.id}>
-                <td style={CP}>{r.game.game.week}</td>
-                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{r.opponent}</td>
-                <td style={CP}>{r.isHome ? "Home" : "Away"}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.mySpread)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.myScore)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.oppScore)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.myTotal)}</td>
-              </tr>
-            ))}
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={9} className="empty">
-                  {team ? "No games." : "Pick a team."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <PredictionsTable rows={schedule} columns={TEAM_COLUMNS} />
     </div>
   );
 }
