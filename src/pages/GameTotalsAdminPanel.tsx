@@ -4,19 +4,27 @@ import SortHeader from "../components/SortHeader";
 import {
   useGameTotalsEngine,
   buildBetRows,
+  buildTeamSplitBetRows,
   computeGamePerformanceBreakdown,
+  computeTeamPerformanceBreakdown,
   computeAmountOffDistribution,
   type EnrichedGameRow,
   type BetRow,
+  type TeamSplitBetRow,
 } from "../lib/gameTotalsEngine";
 import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
 import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, type ViewMode } from "./PerformanceView";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
-const TABS = ["totals", "performance"] as const;
+const TABS = ["totals", "teamtotals", "performance", "teamperformance"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABELS: Record<Tab, string> = { totals: "Totals", performance: "Performance" };
+const TAB_LABELS: Record<Tab, string> = {
+  totals: "Totals",
+  teamtotals: "Team Totals",
+  performance: "Performance",
+  teamperformance: "TT Performance",
+};
 
 const LEGACY_TABS = ["raw", "inputs", "composites"] as const;
 type LegacyTab = (typeof LEGACY_TABS)[number];
@@ -417,6 +425,207 @@ function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; setti
   );
 }
 
+// ---------------------------------------------------------------------
+// Team Totals — nested here as a tab per Chris, not a separate admin
+// page. One row per GAME (not per team): pairs up the home/away
+// TeamSplitBetRow entries buildTeamSplitBetRows produces for the same
+// game.
+// ---------------------------------------------------------------------
+interface CombinedTeamRow {
+  game: EnrichedGameRow;
+  away: TeamSplitBetRow;
+  home: TeamSplitBetRow;
+}
+
+function combineByGame(betRows: TeamSplitBetRow[]): CombinedTeamRow[] {
+  const byGame = new Map<string, { away?: TeamSplitBetRow; home?: TeamSplitBetRow; game: EnrichedGameRow }>();
+  for (const b of betRows) {
+    const id = b.row.game.id;
+    const entry = byGame.get(id) ?? { game: b.row };
+    if (b.isHome) entry.home = b;
+    else entry.away = b;
+    byGame.set(id, entry);
+  }
+  const out: CombinedTeamRow[] = [];
+  for (const { game, home, away } of byGame.values()) {
+    if (home && away) out.push({ game, home, away });
+  }
+  return out;
+}
+
+type TeamSortKey =
+  | "week"
+  | "date"
+  | "awayTeam"
+  | "awayVegasTT"
+  | "awayMyTT"
+  | "awayAmountOff"
+  | "awayStdDevOff"
+  | "homeTeam"
+  | "homeVegasTT"
+  | "homeMyTT"
+  | "homeAmountOff"
+  | "homeStdDevOff";
+
+function teamSortValue(r: CombinedTeamRow, key: TeamSortKey): number | string {
+  switch (key) {
+    case "week":
+      return r.game.game.week;
+    case "date":
+      return r.game.game.startDate ?? "";
+    case "awayTeam":
+      return r.game.game.awayTeam;
+    case "awayVegasTT":
+      return r.away.vegasTeamTotal ?? -Infinity;
+    case "awayMyTT":
+      return r.away.myTeamTotal ?? -Infinity;
+    case "awayAmountOff":
+      return r.away.amountOff ?? -Infinity;
+    case "awayStdDevOff":
+      return r.away.stdDevOff ?? -Infinity;
+    case "homeTeam":
+      return r.game.game.homeTeam;
+    case "homeVegasTT":
+      return r.home.vegasTeamTotal ?? -Infinity;
+    case "homeMyTT":
+      return r.home.myTeamTotal ?? -Infinity;
+    case "homeAmountOff":
+      return r.home.amountOff ?? -Infinity;
+    case "homeStdDevOff":
+      return r.home.stdDevOff ?? -Infinity;
+  }
+}
+
+function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+  const combined = useMemo(() => combineByGame(betRows), [betRows]);
+
+  const [sortKey, setSortKey] = useState<TeamSortKey>("week");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function handleSort(key: string) {
+    const k = key as TeamSortKey;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    return [...combined].sort((a, b) => {
+      const av = teamSortValue(a, sortKey);
+      const bv = teamSortValue(b, sortKey);
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }, [combined, sortKey, sortDir]);
+
+  const sh = (label: string, key: TeamSortKey, align?: "right") => (
+    <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
+  );
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        My TT = my total split by my spread. Vegas TT = Vegas's total split by Vegas's spread (derived — no real
+        market team-total line synced). EB = every bet's call. FB = call shown only if it also clears the filter.
+      </p>
+      <div className="table-scroll">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {sh("Wk", "week")}
+              {sh("Date", "date")}
+              <th style={CP}>Kickoff</th>
+              {sh("Away", "awayTeam")}
+              {sh("Away Vegas TT", "awayVegasTT", "right")}
+              {sh("My Away TT", "awayMyTT", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>EB</th>
+              <th style={{ ...CP, textAlign: "right" }}>FB</th>
+              {sh("Amt Off", "awayAmountOff", "right")}
+              {sh("Std Dev Off", "awayStdDevOff", "right")}
+              {sh("Home", "homeTeam")}
+              {sh("Home Vegas TT", "homeVegasTT", "right")}
+              {sh("My Home TT", "homeMyTT", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>EB</th>
+              <th style={{ ...CP, textAlign: "right" }}>FB</th>
+              {sh("Amt Off", "homeAmountOff", "right")}
+              {sh("Std Dev Off", "homeStdDevOff", "right")}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.game.game.id}>
+                <td style={CP}>{r.game.game.week}</td>
+                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
+                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
+                <td style={CP}>{r.game.game.awayTeam}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.vegasTeamTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.away.myTeamTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.away.call === "Over" ? "#8fd39a" : r.away.call === "Under" ? "#e07a7a" : undefined }}>
+                  {r.away.call ?? "–"}
+                </td>
+                <td
+                  style={{
+                    ...CP,
+                    textAlign: "right",
+                    color: r.away.isFiltered ? (r.away.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+                    fontWeight: r.away.isFiltered ? 700 : undefined,
+                  }}
+                >
+                  {r.away.isFiltered ? r.away.call : "–"}
+                </td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.amountOff, 1)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.stdDevOff, 2)}</td>
+                <td style={CP}>{r.game.game.homeTeam}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.vegasTeamTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.home.myTeamTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.home.call === "Over" ? "#8fd39a" : r.home.call === "Under" ? "#e07a7a" : undefined }}>
+                  {r.home.call ?? "–"}
+                </td>
+                <td
+                  style={{
+                    ...CP,
+                    textAlign: "right",
+                    color: r.home.isFiltered ? (r.home.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+                    fontWeight: r.home.isFiltered ? 700 : undefined,
+                  }}
+                >
+                  {r.home.isFiltered ? r.home.call : "–"}
+                </td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.amountOff, 1)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.stdDevOff, 2)}</td>
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={17} className="empty">
+                  No games.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+  const segments = useMemo(() => computeTeamPerformanceBreakdown(betRows), [betRows]);
+  const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
+
+  return (
+    <div>
+      <PerformanceTable segments={segments} />
+      <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>Win% by Amount Off (every bet)</h3>
+      <AmountOffChart buckets={buckets} />
+    </div>
+  );
+}
+
 export function SyncControl({ season }: { season: number }) {
   const [syncing, setSyncing] = useState(false);
   const [includeStats, setIncludeStats] = useState(false);
@@ -619,7 +828,9 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
               <ShowMore rows={viewRows} />
             </>
           )}
+          {tab === "teamtotals" && <TeamTotalsTab rows={viewRows} settings={settings} />}
           {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} />}
+          {tab === "teamperformance" && <TeamPerformanceTab rows={viewRows} settings={settings} />}
         </>
       )}
     </div>

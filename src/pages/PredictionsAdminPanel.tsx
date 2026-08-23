@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import SortHeader from "../components/SortHeader";
 import { splitTeamTotal } from "../lib/gameTotals";
 import { useGameTotalsEngine, type EnrichedGameRow } from "../lib/gameTotalsEngine";
@@ -127,6 +127,160 @@ const VIEWS = [
 ] as const;
 type ViewKey = (typeof VIEWS)[number]["key"];
 
+// ---------------------------------------------------------------------
+// Team schedule view — one team's whole season, one row per game, using
+// that team's own side of the same PredRow numbers (opponent, home/away,
+// my spread from that team's perspective, my projected score for both
+// sides). Always full season regardless of the week/season toggle above
+// (the toggle only applies to the Games tab) — a schedule view that only
+// shows one week isn't useful.
+// ---------------------------------------------------------------------
+interface TeamScheduleRow {
+  game: EnrichedGameRow;
+  opponent: string;
+  isHome: boolean;
+  mySpread: number | null; // this team's spread, negative = favored
+  myScore: number | null; // this team's projected score (TT)
+  oppScore: number | null; // opponent's projected score (TT)
+  myTotal: number | null; // game total
+}
+
+function buildTeamSchedule(predRows: PredRow[], team: string): TeamScheduleRow[] {
+  const out: TeamScheduleRow[] = [];
+  for (const r of predRows) {
+    const isHome = r.game.game.homeTeam === team;
+    const isAway = r.game.game.awayTeam === team;
+    if (!isHome && !isAway) continue;
+    out.push({
+      game: r.game,
+      opponent: isHome ? r.game.game.awayTeam : r.game.game.homeTeam,
+      isHome,
+      mySpread: isHome ? r.myHomeSpread : r.myAwaySpread,
+      myScore: isHome ? r.myHomeTT : r.myAwayTT,
+      oppScore: isHome ? r.myAwayTT : r.myHomeTT,
+      myTotal: r.myTotal,
+    });
+  }
+  return out;
+}
+
+type TeamScheduleSortKey = "week" | "date" | "opponent" | "homeAway" | "mySpread" | "myScore" | "oppScore" | "myTotal";
+
+function teamScheduleSortValue(r: TeamScheduleRow, key: TeamScheduleSortKey): number | string {
+  switch (key) {
+    case "week":
+      return r.game.game.week;
+    case "date":
+      return r.game.game.startDate ?? "";
+    case "opponent":
+      return r.opponent;
+    case "homeAway":
+      return r.isHome ? "Home" : "Away";
+    case "mySpread":
+      return r.mySpread ?? -Infinity;
+    case "myScore":
+      return r.myScore ?? -Infinity;
+    case "oppScore":
+      return r.oppScore ?? -Infinity;
+    case "myTotal":
+      return r.myTotal ?? -Infinity;
+  }
+}
+
+function TeamScheduleTab({ predRows, teams }: { predRows: PredRow[]; teams: string[] }) {
+  const [team, setTeam] = useState<string>("");
+  const [sortKey, setSortKey] = useState<TeamScheduleSortKey>("week");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // teams loads async — default to the first one once the list shows up,
+  // but don't stomp on a selection the user already made.
+  useEffect(() => {
+    if (!team && teams.length > 0) setTeam(teams[0]);
+  }, [teams, team]);
+
+  const schedule = useMemo(() => (team ? buildTeamSchedule(predRows, team) : []), [predRows, team]);
+
+  function handleSort(key: string) {
+    const k = key as TeamScheduleSortKey;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    return [...schedule].sort((a, b) => {
+      const av = teamScheduleSortValue(a, sortKey);
+      const bv = teamScheduleSortValue(b, sortKey);
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }, [schedule, sortKey, sortDir]);
+
+  const sh = (label: string, key: TeamScheduleSortKey, align?: "right") => (
+    <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
+  );
+
+  return (
+    <div>
+      <select className="filter" value={team} onChange={(e) => setTeam(e.target.value)} style={{ marginBottom: "1rem" }}>
+        {teams.length === 0 && <option value="">No teams loaded</option>}
+        {teams.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+      <div className="table-scroll">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {sh("Wk", "week")}
+              {sh("Date", "date")}
+              <th style={CP}>Kickoff</th>
+              {sh("Opponent", "opponent")}
+              {sh("H/A", "homeAway")}
+              {sh("My Spread", "mySpread", "right")}
+              {sh("My Proj Score", "myScore", "right")}
+              {sh("Opp Proj Score", "oppScore", "right")}
+              {sh("My Total", "myTotal", "right")}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.game.game.id}>
+                <td style={CP}>{r.game.game.week}</td>
+                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
+                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
+                <td style={CP}>{r.opponent}</td>
+                <td style={CP}>{r.isHome ? "Home" : "Away"}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.mySpread)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.myScore)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.oppScore)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.myTotal)}</td>
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={9} className="empty">
+                  {team ? "No games." : "Pick a team."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const TOP_TABS = [
+  { key: "games", label: "Games" },
+  { key: "team", label: "Team" },
+] as const;
+type TopTabKey = (typeof TOP_TABS)[number]["key"];
+
 function PredictionsTable({ rows, columns }: { rows: PredRow[]; columns: Column[] }) {
   const [sortKey, setSortKey] = useState(columns[0].key);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -188,6 +342,7 @@ export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }
   const [division, setDivision] = useState("FBS");
   const { rows: allRows, loading, error } = useGameTotalsEngine(season);
   const rows = filterRowsByDivision(allRows, division);
+  const [topTab, setTopTab] = useState<TopTabKey>("games");
   const [view, setView] = useState<ViewKey>("mine");
 
   const [viewMode, setViewMode] = useState<ViewMode>("season");
@@ -197,6 +352,14 @@ export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }
 
   const predRows = useMemo(() => buildPredRows(viewRows), [viewRows]);
   const activeView = VIEWS.find((v) => v.key === view)!;
+
+  // Team tab always works off the full (division-filtered but not
+  // week-filtered) season, since a one-week schedule view isn't useful.
+  const seasonPredRows = useMemo(() => buildPredRows(rows), [rows]);
+  const allTeams = useMemo(
+    () => Array.from(new Set(rows.flatMap((r) => [r.game.homeTeam, r.game.awayTeam]))).sort(),
+    [rows]
+  );
 
   return (
     <div>
@@ -215,18 +378,32 @@ export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }
         <DivisionPicker division={division} setDivision={setDivision} />
       </div>
 
-      <WeekSeasonToggle mode={viewMode} setMode={setViewMode} week={viewWeek} setWeek={setViewWeek} availableWeeks={availableWeeks} />
-
-      <div className="mode-toggle" style={{ marginBottom: "1rem" }}>
-        {VIEWS.map((v) => (
-          <button key={v.key} className={`mode-btn ${view === v.key ? "mode-btn-active" : ""}`} onClick={() => setView(v.key)}>
-            {v.label}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        {TOP_TABS.map((t) => (
+          <button key={t.key} className={`mode-btn ${topTab === t.key ? "mode-btn-active" : ""}`} onClick={() => setTopTab(t.key)}>
+            {t.label}
           </button>
         ))}
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {loading ? <div className="empty">Loading…</div> : <PredictionsTable rows={predRows} columns={activeView.columns} />}
+      {loading ? (
+        <div className="empty">Loading…</div>
+      ) : topTab === "games" ? (
+        <>
+          <WeekSeasonToggle mode={viewMode} setMode={setViewMode} week={viewWeek} setWeek={setViewWeek} availableWeeks={availableWeeks} />
+          <div className="mode-toggle" style={{ marginBottom: "1rem" }}>
+            {VIEWS.map((v) => (
+              <button key={v.key} className={`mode-btn ${view === v.key ? "mode-btn-active" : ""}`} onClick={() => setView(v.key)}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <PredictionsTable rows={predRows} columns={activeView.columns} />
+        </>
+      ) : (
+        <TeamScheduleTab predRows={seasonPredRows} teams={allTeams} />
+      )}
     </div>
   );
 }
