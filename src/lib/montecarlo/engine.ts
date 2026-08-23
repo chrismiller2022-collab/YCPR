@@ -352,6 +352,7 @@ const SRS_SAMPLE_EVERY = 10;
 
 export interface ResumeComparisonEntry {
   team: string;
+  conf: string; // always FBS - resumeComparison only covers fbsTeams (see indexByName in runOneMonteCarloTrial)
   avgSrs: number | null;
   avgVsrs: number | null;
   currentPlayoffPct: number;
@@ -819,6 +820,7 @@ function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): S
 
   const resumeComparison: ResumeComparisonEntry[] = fbsTeams.map((t, i) => ({
     team: t.team,
+    conf: t.conf,
     avgSrs: srsSampleCount > 0 ? srsSum[i] / srsSampleCount : null,
     avgVsrs: srsSampleCount > 0 ? vsrsSum[i] / srsSampleCount : null,
     currentPlayoffPct: srsSampleCount > 0 ? (cmpCurrentPlayoffCount[i] / srsSampleCount) * 100 : 0,

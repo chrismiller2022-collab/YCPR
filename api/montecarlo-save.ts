@@ -18,7 +18,7 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const { password, season, week, numTrials, results, unmatchedTeams } = req.body ?? {};
+  const { password, season, week, numTrials, results, unmatchedTeams, resumeComparison, resumeComparisonTrials } = req.body ?? {};
   if (password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: "Incorrect password" });
     return;
@@ -40,6 +40,8 @@ export default async function handler(req: any, res: any) {
           num_trials: numTrials,
           results,
           unmatched_teams: unmatchedTeams ?? [],
+          resume_comparison: resumeComparison ?? null,
+          resume_comparison_trials: resumeComparisonTrials ?? null,
         },
       ])
       .select("id")

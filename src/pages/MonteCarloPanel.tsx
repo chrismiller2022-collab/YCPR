@@ -17,9 +17,11 @@ import {
   fetchSeasonGames,
   fetchMonteCarloRuns,
   fetchMonteCarloRun,
+  fetchLatestMonteCarloRunPerWeek,
   fetchTeamRunHistory,
   saveMonteCarloRun,
   type MonteCarloRunSummary,
+  type MonteCarloRun,
   type TeamRunHistoryEntry,
 } from "../lib/api/monteCarlo";
 import { saveRatingRows } from "../lib/api/ratingSystems";
@@ -275,15 +277,23 @@ function HistoryTab({ season }: { season: number }) {
   const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
   const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
   const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
+  const [loadedResumeComparison, setLoadedResumeComparison] = useState<ResumeComparisonEntry[] | null>(null);
+  const [loadedResumeComparisonTrials, setLoadedResumeComparisonTrials] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showAllRuns, setShowAllRuns] = useState(false);
   const [teamQuery, setTeamQuery] = useState("");
   const [teamHistory, setTeamHistory] = useState<TeamRunHistoryEntry[] | null>(null);
 
   useMemo(() => {
     setLoading(true);
+    setShowAllRuns(false);
     fetchMonteCarloRuns(season)
-      .then(setRuns)
+      .then((r) => {
+        setRuns(r);
+        if (r.length > 0) void viewRun(r[0].id);
+      })
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season]);
 
   async function viewRun(id: number) {
@@ -292,6 +302,8 @@ function HistoryTab({ season }: { season: number }) {
       setLoadedRunId(id);
       setLoadedResults(run.results);
       setLoadedNumTrials(run.num_trials);
+      setLoadedResumeComparison(run.resume_comparison ?? null);
+      setLoadedResumeComparisonTrials(run.resume_comparison_trials ?? 0);
     }
   }
 
@@ -303,6 +315,12 @@ function HistoryTab({ season }: { season: number }) {
 
   if (loading) return <p>Loading run history…</p>;
 
+  // Only the most recent saved run shows by default — "Show more" reveals
+  // the rest. This is the one place on the site that shows full run
+  // history; Playoff Seeds/Betting/Conference Standings intentionally
+  // don't (they use a week dropdown pointed at each week's latest run).
+  const visibleRuns = showAllRuns ? runs : runs.slice(0, 1);
+
   return (
     <div>
       <div className="section-label">Saved runs — {season}</div>
@@ -310,7 +328,7 @@ function HistoryTab({ season }: { season: number }) {
         <p style={{ color: "var(--chalk-dim)" }}>No runs saved yet for this season.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.5rem" }}>
-          {runs.map((r) => (
+          {visibleRuns.map((r) => (
             <button
               key={r.id}
               className="menu-btn"
@@ -320,6 +338,15 @@ function HistoryTab({ season }: { season: number }) {
               Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
             </button>
           ))}
+          {!showAllRuns && runs.length > 1 && (
+            <button
+              className="menu-btn"
+              style={{ justifyContent: "flex-start", textAlign: "left", opacity: 0.6, fontSize: "0.8rem" }}
+              onClick={() => setShowAllRuns(true)}
+            >
+              Show more ({runs.length - 1} older run{runs.length - 1 === 1 ? "" : "s"})
+            </button>
+          )}
         </div>
       )}
 
@@ -327,6 +354,9 @@ function HistoryTab({ season }: { season: number }) {
         <div style={{ marginBottom: "1.5rem" }}>
           <div className="section-label">Run results</div>
           <ResultsTable results={loadedResults} numTrials={loadedNumTrials} />
+          {loadedResumeComparison && (
+            <ResumeComparisonTable entries={loadedResumeComparison} sampleTrials={loadedResumeComparisonTrials} />
+          )}
         </div>
       )}
 
@@ -584,7 +614,15 @@ function MonteCarloResultsSection() {
     setSaving(true);
     setError(null);
     try {
-      await saveMonteCarloRun({ season, week: currentWeek, numTrials, results, unmatchedTeams: unmatched });
+      await saveMonteCarloRun({
+        season,
+        week: currentWeek,
+        numTrials,
+        results,
+        unmatchedTeams: unmatched,
+        resumeComparison: resumeComparison ?? undefined,
+        resumeComparisonTrials,
+      });
       setSaveMsg("Saved.");
     } catch (err: any) {
       setError(err.message);
@@ -846,8 +884,126 @@ function SrsGamesTable({ rows }: { rows: ScheduleRow[] }) {
 // full season, then feeds the SAME realization into both the SRS stats
 // pipeline and the games/results table below, in two sub-tabs.
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Monte Carlo average SRS/VSRS — sortable, FBS only (resumeComparison
+// never carries FCS teams; see indexByName in engine.ts). Ranks computed
+// client-side since the saved run only stores the raw averages.
+// ---------------------------------------------------------------------
+function McAvgSrsTable({ entries, sampleTrials }: { entries: ResumeComparisonEntry[]; sampleTrials: number }) {
+  const [sortKey, setSortKey] = useState<"team" | "conf" | "avgSrs" | "avgVsrs">("avgVsrs");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  function handleSort(key: string) {
+    const k = key as typeof sortKey;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir("desc");
+    }
+  }
+
+  const ranked = useMemo(() => {
+    const withRanks = entries
+      .filter((e) => e.avgSrs != null)
+      .map((e) => ({ ...e }));
+    const srsRankOf = new Map(
+      [...withRanks].sort((a, b) => (b.avgSrs ?? 0) - (a.avgSrs ?? 0)).map((e, i) => [e.team, i + 1])
+    );
+    const vsrsRankOf = new Map(
+      [...withRanks].sort((a, b) => (b.avgVsrs ?? 0) - (a.avgVsrs ?? 0)).map((e, i) => [e.team, i + 1])
+    );
+    return withRanks
+      .map((e) => ({ ...e, srsRank: srsRankOf.get(e.team)!, vsrsRank: vsrsRankOf.get(e.team)! }))
+      .sort((a: any, b: any) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+        return sortDir === "asc" ? av - bv : bv - av;
+      });
+  }, [entries, sortKey, sortDir]);
+
+  if (sampleTrials === 0) {
+    return <p style={{ color: "var(--chalk-dim)" }}>This saved run predates SRS/VSRS averaging — re-run and save to populate this.</p>;
+  }
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+        SRS/VSRS averaged across {sampleTrials.toLocaleString()} sampled trials from the loaded Monte
+        Carlo run (1 in 10 of the total), instead of a single realization — much more stable.
+      </p>
+      <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+          <thead>
+            <tr>
+              <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+              <SortHeader label="Avg SRS" sortKey="avgSrs" active={sortKey === "avgSrs"} dir={sortDir} onClick={handleSort} align="right" />
+              <th className="th th-right">SRS Rank</th>
+              <SortHeader label="Avg VSRS" sortKey="avgVsrs" active={sortKey === "avgVsrs"} dir={sortDir} onClick={handleSort} align="right" />
+              <th className="th th-right">VSRS Rank</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.map((r) => (
+              <tr key={r.team}>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 600 }}>
+                  {r.avgSrs?.toFixed(1)}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{r.srsRank}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 600 }}>
+                  {r.avgVsrs?.toFixed(1)}
+                </td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{r.vsrsRank}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function SrsTab() {
+  const [mode, setMode] = useState<"montecarlo" | "single">("montecarlo");
   const [season, setSeason] = useState(new Date().getFullYear());
+
+  // Monte Carlo average mode - reads the same saved-run/week-picker pattern
+  // as Betting/Playoff Seeds/Conference Standings.
+  const { weekOptions, selectedWeek, setSelectedWeek, loadedRun, loading: mcLoading } = useLatestRunByWeek(season);
+  const [mcSending, setMcSending] = useState(false);
+  const [mcSendMsg, setMcSendMsg] = useState<string | null>(null);
+
+  async function sendMcToRatingSystems() {
+    if (!loadedRun?.resume_comparison) return;
+    setMcSending(true);
+    setMcSendMsg(null);
+    try {
+      // Same sign-flip and destination as the single-sim path below - this
+      // is just a more stable (10k-trial-averaged) source for the same
+      // "YC SRS" rating_pulls snapshot.
+      const rows = loadedRun.resume_comparison
+        .filter((r) => r.avgSrs != null && r.avgVsrs != null)
+        .map((r) => ({
+          team: r.team,
+          conference: r.conf,
+          division: "FBS",
+          values: { yc_srs: -(r.avgSrs as number), yc_vsrs: -(r.avgVsrs as number) },
+        }));
+      const result = await saveRatingRows(rows);
+      setMcSendMsg(`Sent ${rows.length} teams to Rating Systems as "YC SRS" (SRS + VSRS, saved ${result.saved}).`);
+    } catch (err: any) {
+      setMcSendMsg(err.message ?? "Failed to send to Rating Systems");
+    } finally {
+      setMcSending(false);
+    }
+  }
+
+  // Single-realization mode - unchanged from before, kept around because it
+  // covers FCS too (the Monte Carlo average only ever covers FBS) and
+  // doesn't require a saved run to exist yet.
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [srsStats, setSrsStats] = useState<SrsTeamRow[]>([]);
   const [subTab, setSubTab] = useState<"stats" | "games">("stats");
@@ -906,45 +1062,82 @@ function SrsTab() {
 
   return (
     <div>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        One simulated realization of the full season — every remaining game gets a single
-        fresh random draw (Normal, mean 0, stddev 15.7, clipped ±25) added to your projected
-        spread. Already-completed games show the actual result. Power Ratings & SRS Stats and
-        Games & Results below reflect this exact same realization — hit Re-roll to draw a new one.
-      </p>
-
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
-        <label>
-          Season{" "}
-          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
-        </label>
-        <button onClick={generate} disabled={loading}>
-          {loading ? "Simulating…" : rows.length > 0 ? "Re-roll" : "Run sim"}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+        <button className={`mode-btn ${mode === "montecarlo" ? "mode-btn-active" : ""}`} onClick={() => setMode("montecarlo")}>
+          Monte Carlo Average
+        </button>
+        <button className={`mode-btn ${mode === "single" ? "mode-btn-active" : ""}`} onClick={() => setMode("single")}>
+          Single Sim (incl. FCS)
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-
-      {rows.length > 0 && (
-        <>
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-            <button className={`mode-btn ${subTab === "stats" ? "mode-btn-active" : ""}`} onClick={() => setSubTab("stats")}>
-              Power Ratings &amp; SRS Stats
-            </button>
-            <button className={`mode-btn ${subTab === "games" ? "mode-btn-active" : ""}`} onClick={() => setSubTab("games")}>
-              Games &amp; Results
-            </button>
-            {subTab === "stats" && (
-              <button onClick={sendToRatingSystems} disabled={sending} style={{ marginLeft: "auto" }}>
-                {sending ? "Sending…" : "Send to Rating Systems (YC SRS)"}
+      {mode === "montecarlo" ? (
+        <div>
+          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <label>
+              Season{" "}
+              <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+            </label>
+            {weekOptions.length > 0 && <WeekPicker weekOptions={weekOptions} selectedWeek={selectedWeek} onChange={setSelectedWeek} />}
+            {loadedRun?.resume_comparison && (
+              <button onClick={sendMcToRatingSystems} disabled={mcSending} style={{ marginLeft: "auto" }}>
+                {mcSending ? "Sending…" : "Send to Rating Systems (YC SRS)"}
               </button>
             )}
           </div>
-          {sendMsg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "-0.5rem" }}>{sendMsg}</p>}
+          {mcSendMsg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>{mcSendMsg}</p>}
 
-          {subTab === "stats" && <SrsStatsTable stats={srsStats} />}
-          {subTab === "games" && <SrsGamesTable rows={rows} />}
-        </>
+          {mcLoading ? (
+            <p>Loading saved runs…</p>
+          ) : weekOptions.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
+          ) : (
+            loadedRun && <McAvgSrsTable entries={loadedRun.resume_comparison ?? []} sampleTrials={loadedRun.resume_comparison_trials ?? 0} />
+          )}
+        </div>
+      ) : (
+        <div>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+            One simulated realization of the full season — every remaining game gets a single
+            fresh random draw (Normal, mean 0, stddev 15.7, clipped ±25) added to your projected
+            spread. Already-completed games show the actual result. Power Ratings & SRS Stats and
+            Games & Results below reflect this exact same realization — hit Re-roll to draw a new one.
+          </p>
+
+          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <label>
+              Season{" "}
+              <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+            </label>
+            <button onClick={generate} disabled={loading}>
+              {loading ? "Simulating…" : rows.length > 0 ? "Re-roll" : "Run sim"}
+            </button>
+          </div>
+
+          {error && <p style={{ color: "crimson" }}>{error}</p>}
+
+          {rows.length > 0 && (
+            <>
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+                <button className={`mode-btn ${subTab === "stats" ? "mode-btn-active" : ""}`} onClick={() => setSubTab("stats")}>
+                  Power Ratings &amp; SRS Stats
+                </button>
+                <button className={`mode-btn ${subTab === "games" ? "mode-btn-active" : ""}`} onClick={() => setSubTab("games")}>
+                  Games &amp; Results
+                </button>
+                {subTab === "stats" && (
+                  <button onClick={sendToRatingSystems} disabled={sending} style={{ marginLeft: "auto" }}>
+                    {sending ? "Sending…" : "Send to Rating Systems (YC SRS)"}
+                  </button>
+                )}
+              </div>
+              {sendMsg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "-0.5rem" }}>{sendMsg}</p>}
+
+              {subTab === "stats" && <SrsStatsTable stats={srsStats} />}
+              {subTab === "games" && <SrsGamesTable rows={rows} />}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1085,35 +1278,75 @@ function BettingResultsTable({ results, numTrials }: { results: TeamSimResult[];
   );
 }
 
-function BettingTab() {
-  const [season, setSeason] = useState(new Date().getFullYear());
-  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
-  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
-  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
-  const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
+// ---------------------------------------------------------------------
+// Shared "pick a week, see that week's latest saved run" pattern used by
+// Betting, Playoff Seeds, and Conference Standings — these three
+// deliberately do NOT show full run-by-run history (that's what Results &
+// History is for). Defaults to the most recent week with a saved run.
+// ---------------------------------------------------------------------
+function useLatestRunByWeek(season: number) {
+  const [weekOptions, setWeekOptions] = useState<MonteCarloRunSummary[]>([]);
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const [loadedRun, setLoadedRun] = useState<MonteCarloRun | null>(null);
   const [loading, setLoading] = useState(true);
 
   useMemo(() => {
     setLoading(true);
-    setLoadedRunId(null);
-    setLoadedResults(null);
-    fetchMonteCarloRuns(season)
-      .then((r) => {
-        setRuns(r);
-        if (r.length > 0) void viewRun(r[0].id);
+    setLoadedRun(null);
+    fetchLatestMonteCarloRunPerWeek(season)
+      .then((weeks) => {
+        setWeekOptions(weeks);
+        setSelectedWeek(weeks.length > 0 ? weeks[0].week : null);
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season]);
 
-  async function viewRun(id: number) {
-    const run = await fetchMonteCarloRun(id);
-    if (run) {
-      setLoadedRunId(id);
-      setLoadedResults(run.results);
-      setLoadedNumTrials(run.num_trials);
+  useEffect(() => {
+    if (selectedWeek == null) {
+      setLoadedRun(null);
+      return;
     }
-  }
+    const match = weekOptions.find((w) => w.week === selectedWeek);
+    if (!match) return;
+    let cancelled = false;
+    fetchMonteCarloRun(match.id).then((run) => {
+      if (!cancelled) setLoadedRun(run);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWeek, weekOptions]);
+
+  return { weekOptions, selectedWeek, setSelectedWeek, loadedRun, loading };
+}
+
+function WeekPicker({
+  weekOptions,
+  selectedWeek,
+  onChange,
+}: {
+  weekOptions: MonteCarloRunSummary[];
+  selectedWeek: number | null;
+  onChange: (week: number) => void;
+}) {
+  return (
+    <label>
+      Week{" "}
+      <select value={selectedWeek ?? ""} onChange={(e) => onChange(parseInt(e.target.value, 10))}>
+        {weekOptions.map((w) => (
+          <option key={w.week} value={w.week}>
+            Week {w.week} · {w.num_trials.toLocaleString()} trials · {new Date(w.run_at).toLocaleDateString()}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function BettingTab() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const { weekOptions, selectedWeek, setSelectedWeek, loadedRun, loading } = useLatestRunByWeek(season);
 
   return (
     <div>
@@ -1126,28 +1359,15 @@ function BettingTab() {
           Season{" "}
           <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
         </label>
+        {weekOptions.length > 0 && <WeekPicker weekOptions={weekOptions} selectedWeek={selectedWeek} onChange={setSelectedWeek} />}
       </div>
 
       {loading ? (
         <p>Loading saved runs…</p>
-      ) : runs.length === 0 ? (
+      ) : weekOptions.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
       ) : (
-        <>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                className="menu-btn"
-                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
-                onClick={() => viewRun(r.id)}
-              >
-                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
-              </button>
-            ))}
-          </div>
-          {loadedResults && <BettingResultsTable results={loadedResults} numTrials={loadedNumTrials} />}
-        </>
+        loadedRun && <BettingResultsTable results={loadedRun.results} numTrials={loadedRun.num_trials} />
       )}
     </div>
   );
@@ -1219,31 +1439,7 @@ function PlayoffSeedOddsTable({ results }: { results: TeamSimResult[] }) {
 
 function PlayoffSeedOddsTab() {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
-  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
-  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useMemo(() => {
-    setLoading(true);
-    setLoadedRunId(null);
-    setLoadedResults(null);
-    fetchMonteCarloRuns(season)
-      .then((r) => {
-        setRuns(r);
-        if (r.length > 0) void viewRun(r[0].id);
-      })
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season]);
-
-  async function viewRun(id: number) {
-    const run = await fetchMonteCarloRun(id);
-    if (run) {
-      setLoadedRunId(id);
-      setLoadedResults(run.results);
-    }
-  }
+  const { weekOptions, selectedWeek, setSelectedWeek, loadedRun, loading } = useLatestRunByWeek(season);
 
   return (
     <div>
@@ -1256,28 +1452,15 @@ function PlayoffSeedOddsTab() {
           Season{" "}
           <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
         </label>
+        {weekOptions.length > 0 && <WeekPicker weekOptions={weekOptions} selectedWeek={selectedWeek} onChange={setSelectedWeek} />}
       </div>
 
       {loading ? (
         <p>Loading saved runs…</p>
-      ) : runs.length === 0 ? (
+      ) : weekOptions.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
       ) : (
-        <>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                className="menu-btn"
-                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
-                onClick={() => viewRun(r.id)}
-              >
-                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
-              </button>
-            ))}
-          </div>
-          {loadedResults && <PlayoffSeedOddsTable results={loadedResults} />}
-        </>
+        loadedRun && <PlayoffSeedOddsTable results={loadedRun.results} />
       )}
     </div>
   );
@@ -1292,40 +1475,18 @@ function PlayoffSeedOddsTab() {
 // ---------------------------------------------------------------------
 function ConferenceStandingsTab() {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const [runs, setRuns] = useState<MonteCarloRunSummary[]>([]);
-  const [loadedRunId, setLoadedRunId] = useState<number | null>(null);
-  const [loadedResults, setLoadedResults] = useState<TeamSimResult[] | null>(null);
-  const [loadedNumTrials, setLoadedNumTrials] = useState<number>(5000);
-  const [loading, setLoading] = useState(true);
+  const { weekOptions, selectedWeek, setSelectedWeek, loadedRun, loading } = useLatestRunByWeek(season);
   const [conference, setConference] = useState<string>("");
 
-  useMemo(() => {
-    setLoading(true);
-    setLoadedRunId(null);
-    setLoadedResults(null);
-    fetchMonteCarloRuns(season)
-      .then((r) => {
-        setRuns(r);
-        if (r.length > 0) void viewRun(r[0].id);
-      })
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season]);
-
-  async function viewRun(id: number) {
-    const run = await fetchMonteCarloRun(id);
-    if (run) {
-      setLoadedRunId(id);
-      setLoadedResults(run.results);
-      setLoadedNumTrials(run.num_trials);
-      const confs = Array.from(new Set(run.results.map((r) => r.conf))).filter((c) => c !== "FBS Independents").sort();
-      setConference((prev) => (prev && confs.includes(prev) ? prev : confs[0] ?? ""));
-    }
-  }
-
-  const conferences = loadedResults
-    ? Array.from(new Set(loadedResults.map((r) => r.conf))).filter((c) => c !== "FBS Independents").sort()
+  const conferences = loadedRun
+    ? Array.from(new Set(loadedRun.results.map((r) => r.conf))).filter((c) => c !== "FBS Independents").sort()
     : [];
+
+  useEffect(() => {
+    if (conferences.length === 0) return;
+    setConference((prev) => (prev && conferences.includes(prev) ? prev : conferences[0]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedRun]);
 
   return (
     <div>
@@ -1339,6 +1500,7 @@ function ConferenceStandingsTab() {
           Season{" "}
           <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
         </label>
+        {weekOptions.length > 0 && <WeekPicker weekOptions={weekOptions} selectedWeek={selectedWeek} onChange={setSelectedWeek} />}
         {conferences.length > 0 && (
           <label>
             Conference{" "}
@@ -1355,26 +1517,13 @@ function ConferenceStandingsTab() {
 
       {loading ? (
         <p>Loading saved runs…</p>
-      ) : runs.length === 0 ? (
+      ) : weekOptions.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No saved runs for this season yet — save a run from Monte Carlo Results first.</p>
       ) : (
-        <>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "1.25rem" }}>
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                className="menu-btn"
-                style={{ justifyContent: "flex-start", textAlign: "left", opacity: loadedRunId === r.id ? 1 : 0.7 }}
-                onClick={() => viewRun(r.id)}
-              >
-                Week {r.week} · {r.num_trials.toLocaleString()} trials · {new Date(r.run_at).toLocaleString()}
-              </button>
-            ))}
-          </div>
-          {loadedResults && conference && (
-            <ConferenceStandingsOddsTable results={loadedResults} numTrials={loadedNumTrials} conference={conference} />
-          )}
-        </>
+        loadedRun &&
+        conference && (
+          <ConferenceStandingsOddsTable results={loadedRun.results} numTrials={loadedRun.num_trials} conference={conference} />
+        )
       )}
     </div>
   );

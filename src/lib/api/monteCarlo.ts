@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
-import type { SimGame, TeamSimResult } from "../montecarlo/engine";
+import type { SimGame, TeamSimResult, ResumeComparisonEntry } from "../montecarlo/engine";
 
 export interface SeasonGame extends SimGame {
   week: number;
@@ -38,12 +38,29 @@ export async function fetchMonteCarloRuns(season: number): Promise<MonteCarloRun
 export interface MonteCarloRun extends MonteCarloRunSummary {
   results: TeamSimResult[];
   unmatched_teams: string[] | null;
+  resume_comparison: ResumeComparisonEntry[] | null;
+  resume_comparison_trials: number | null;
 }
 
 export async function fetchMonteCarloRun(runId: number): Promise<MonteCarloRun | null> {
   const { data, error } = await supabase.from("monte_carlo_runs").select("*").eq("id", runId).maybeSingle();
   if (error) throw error;
   return data ?? null;
+}
+
+/**
+ * One entry per week that has at least one saved run this season, pointing
+ * at that week's MOST RECENT run only — the "select week" dropdown pattern
+ * used by Playoff Seeds / Betting / Conference Standings, which deliberately
+ * don't want the full run-by-run history the Results & History tab shows.
+ */
+export async function fetchLatestMonteCarloRunPerWeek(season: number): Promise<MonteCarloRunSummary[]> {
+  const runs = await fetchMonteCarloRuns(season); // already ordered run_at desc
+  const latestByWeek = new Map<number, MonteCarloRunSummary>();
+  for (const r of runs) {
+    if (!latestByWeek.has(r.week)) latestByWeek.set(r.week, r); // first hit per week = most recent, since runs is desc
+  }
+  return Array.from(latestByWeek.values()).sort((a, b) => b.week - a.week);
 }
 
 export interface TeamRunHistoryEntry {
@@ -79,6 +96,8 @@ export async function saveMonteCarloRun(body: {
   numTrials: number;
   results: TeamSimResult[];
   unmatchedTeams: string[];
+  resumeComparison?: ResumeComparisonEntry[];
+  resumeComparisonTrials?: number;
 }) {
   const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/montecarlo-save", {
