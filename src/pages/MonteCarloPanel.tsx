@@ -460,12 +460,13 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
 
   return (
     <div style={{ marginTop: "1.5rem" }}>
-      <h4 style={{ marginBottom: "0.3rem" }}>Current model vs. resume-informed model</h4>
+      <h4 style={{ marginBottom: "0.3rem" }}>Default (resume-informed) vs. legacy (rating-based) model</h4>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
-        Every 10th trial ({sampleTrials.toLocaleString()} of them) also ran through the SRS/VSRS methodology and an
-        alternate playoff field/seed using win% + VSRS as the tiebreaker instead of win% + fixed rating — same random
-        draws both ways, so the two columns are directly comparable. SRS/VSRS below are averaged across those same
-        sampled trials.
+        The playoff field/seed everywhere else on this site now uses win% + VSRS as the tiebreaker
+        (resume quality — who you beat/lost to — instead of a static preseason rating), computed on
+        every {sampleTrials > 0 ? `10th` : ""} sampled trial ({sampleTrials.toLocaleString()} of them). The "Legacy" columns show
+        what the old win% + fixed-rating method would have produced on those same trials, kept here
+        purely so the switch is auditable. SRS/VSRS are averaged across the same sampled trials.
       </p>
       <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
@@ -473,23 +474,7 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
             <tr>
               <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
               <SortHeader
-                label="Current CFP%"
-                sortKey="currentPlayoffPct"
-                active={sortKey === "currentPlayoffPct"}
-                dir={sortDir}
-                onClick={handleSort}
-                align="right"
-              />
-              <SortHeader
-                label="Current Avg Seed"
-                sortKey="currentAvgSeed"
-                active={sortKey === "currentAvgSeed"}
-                dir={sortDir}
-                onClick={handleSort}
-                align="right"
-              />
-              <SortHeader
-                label="Resume CFP%"
+                label="Default CFP%"
                 sortKey="resumePlayoffPct"
                 active={sortKey === "resumePlayoffPct"}
                 dir={sortDir}
@@ -497,9 +482,25 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
                 align="right"
               />
               <SortHeader
-                label="Resume Avg Seed"
+                label="Default Avg Seed"
                 sortKey="resumeAvgSeed"
                 active={sortKey === "resumeAvgSeed"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Legacy CFP%"
+                sortKey="currentPlayoffPct"
+                active={sortKey === "currentPlayoffPct"}
+                dir={sortDir}
+                onClick={handleSort}
+                align="right"
+              />
+              <SortHeader
+                label="Legacy Avg Seed"
+                sortKey="currentAvgSeed"
+                active={sortKey === "currentAvgSeed"}
                 dir={sortDir}
                 onClick={handleSort}
                 align="right"
@@ -515,20 +516,20 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
                 <tr key={r.team}>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.team}</td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmtPct(r.currentPlayoffPct)}
-                  </td>
-                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {r.currentAvgSeed != null ? r.currentAvgSeed.toFixed(1) : "–"}
-                  </td>
-                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmtPct(r.resumePlayoffPct)}{" "}
-                    <span style={{ fontSize: "0.7rem", color: pctDelta > 0.5 ? "#2e8b40" : pctDelta < -0.5 ? "#c0392b" : "var(--chalk-dim)" }}>
-                      ({pctDelta >= 0 ? "+" : ""}
-                      {pctDelta.toFixed(1)})
-                    </span>
+                    {fmtPct(r.resumePlayoffPct)}
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {r.resumeAvgSeed != null ? r.resumeAvgSeed.toFixed(1) : "–"}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.currentPlayoffPct)}{" "}
+                    <span style={{ fontSize: "0.7rem", color: pctDelta > 0.5 ? "#2e8b40" : pctDelta < -0.5 ? "#c0392b" : "var(--chalk-dim)" }}>
+                      ({-pctDelta >= 0 ? "+" : ""}
+                      {(-pctDelta).toFixed(1)})
+                    </span>
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.currentAvgSeed != null ? r.currentAvgSeed.toFixed(1) : "–"}
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {r.avgSrs != null ? r.avgSrs.toFixed(1) : "–"}
