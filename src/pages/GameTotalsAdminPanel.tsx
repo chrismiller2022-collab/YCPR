@@ -1,13 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
-import {
-  useGameTotalsEngine,
-  buildBetRows,
-  COMPOSITE_KEYS,
-  COMPOSITE_LABELS,
-  type CompositeKey,
-  type EnrichedGameRow,
-} from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows, type EnrichedGameRow } from "../lib/gameTotalsEngine";
 import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
 
@@ -71,18 +64,8 @@ function SettingsBar({ settings, setSettings, season }: any) {
       }}
     >
       <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-        Model: Ridge regression (trained on 2021-2025 CFBD data) — composite1/2 are the raw model total.
+        Model: Ridge regression, trained on 2021-2025 CFBD data — one projected total per game.
       </span>
-      <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-        Composite 3 regression %{" "}
-        <input
-          type="number"
-          step="5"
-          value={Math.round(settings.regressPct * 100)}
-          onChange={(e) => setSettings({ ...settings, regressPct: (parseFloat(e.target.value) || 0) / 100 })}
-          style={{ width: 60 }}
-        />
-      </label>
       <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
         Filter threshold (x std dev){" "}
         <input
@@ -236,12 +219,7 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
                 {SYSTEM_LABELS[k]}
               </th>
             ))}
-            <th style={{ ...CP, textAlign: "right" }}>Comp 1</th>
-            <th style={{ ...CP, textAlign: "right" }}>Comp 2</th>
-            <th style={{ ...CP, textAlign: "right" }}>Comp 3</th>
-            <th style={{ ...CP, textAlign: "right" }}>Comp 4</th>
-            <th style={{ ...CP, textAlign: "right" }}>Comp 5</th>
-            <th style={{ ...CP, textAlign: "right" }}>Comp 6</th>
+            <th style={{ ...CP, textAlign: "right" }}>My Total</th>
             <th style={{ ...CP, textAlign: "right" }}>Open</th>
             <th style={{ ...CP, textAlign: "right" }}>Close</th>
           </tr>
@@ -250,7 +228,6 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
           {rows.map((r) => {
             const h = r.projection?.homeResults;
             const a = r.projection?.awayResults;
-            const c = r.projection?.composites;
             return (
               <tr key={r.game.id}>
                 <td style={CP}>{r.game.week}</td>
@@ -262,12 +239,7 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
                     {h && a ? fmt(h[k] + a[k]) : "–"}
                   </td>
                 ))}
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite1)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite2)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(c?.composite3)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(c?.composite4)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(c?.composite5)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(c?.composite6)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.projection?.projectedTotal)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.openingTotal, 1)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.closingTotal, 1)}</td>
               </tr>
@@ -279,33 +251,19 @@ function CompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
   );
 }
 
-function CompositePicker({ value, onChange }: { value: CompositeKey; onChange: (k: CompositeKey) => void }) {
-  return (
-    <select className="filter" value={value} onChange={(e) => onChange(e.target.value as CompositeKey)} style={{ marginBottom: "0.75rem" }}>
-      {COMPOSITE_KEYS.map((k) => (
-        <option key={k} value={k}>
-          {COMPOSITE_LABELS[k]}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function BetsTab({ rows, settings, filteredOnly }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; filteredOnly: boolean }) {
-  const [composite, setComposite] = useState<CompositeKey>("composite1");
-  const betRows = buildBetRows(rows, composite, settings.filterThresholdMultiplier);
+  const betRows = buildBetRows(rows, settings.filterThresholdMultiplier);
   const shown = filteredOnly ? betRows.filter((b) => b.isFiltered) : betRows;
 
   return (
     <div>
-      <CompositePicker value={composite} onChange={setComposite} />
       <div className="table-scroll">
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
               <th style={CP}>Wk</th>
               <th style={CP}>Matchup</th>
-              <th style={{ ...CP, textAlign: "right" }}>{COMPOSITE_LABELS[composite]}</th>
+              <th style={{ ...CP, textAlign: "right" }}>My Total</th>
               <th style={{ ...CP, textAlign: "right" }}>Vegas O/U</th>
               <th style={{ ...CP, textAlign: "right" }}>Amount Off</th>
               <th style={CP}>Call</th>
@@ -319,7 +277,7 @@ function BetsTab({ rows, settings, filteredOnly }: { rows: EnrichedGameRow[]; se
                 <td style={CP}>
                   {b.row.game.awayTeam} @ {b.row.game.homeTeam}
                 </td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.compositeValue)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.amountOff)}</td>
                 <td style={{ ...CP, color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined, fontWeight: 700 }}>
@@ -343,34 +301,30 @@ function BetsTab({ rows, settings, filteredOnly }: { rows: EnrichedGameRow[]; se
 }
 
 function PerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const betRows = buildBetRows(rows, settings.filterThresholdMultiplier);
+  const graded = betRows.filter((b) => b.grade != null);
+  const wins = graded.filter((b) => b.grade === "win").length;
+  const losses = graded.filter((b) => b.grade === "loss").length;
+  const pushes = graded.filter((b) => b.grade === "push").length;
+
+  const filteredGraded = betRows.filter((b) => b.isFiltered && b.grade != null);
+  const fWins = filteredGraded.filter((b) => b.grade === "win").length;
+  const fLosses = filteredGraded.filter((b) => b.grade === "loss").length;
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-      {COMPOSITE_KEYS.map((key) => {
-        const betRows = buildBetRows(rows, key, settings.filterThresholdMultiplier);
-        const graded = betRows.filter((b) => b.grade != null);
-        const wins = graded.filter((b) => b.grade === "win").length;
-        const losses = graded.filter((b) => b.grade === "loss").length;
-        const pushes = graded.filter((b) => b.grade === "push").length;
-
-        const filteredGraded = betRows.filter((b) => b.isFiltered && b.grade != null);
-        const fWins = filteredGraded.filter((b) => b.grade === "win").length;
-        const fLosses = filteredGraded.filter((b) => b.grade === "loss").length;
-
-        return (
-          <div key={key} style={{ padding: "1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}>
-            <div style={{ fontWeight: 700, color: "var(--gold)", marginBottom: "0.5rem" }}>{COMPOSITE_LABELS[key]}</div>
-            <div style={{ fontSize: "1.3rem", fontWeight: 800 }}>
-              {wins}-{losses}
-              {pushes > 0 ? `-${pushes}` : ""}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>All graded games</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: "0.5rem" }}>
-              {fWins}-{fLosses}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Filtered only</div>
-          </div>
-        );
-      })}
+      <div style={{ padding: "1rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div style={{ fontWeight: 700, color: "var(--gold)", marginBottom: "0.5rem" }}>Ridge Model vs Vegas O/U</div>
+        <div style={{ fontSize: "1.3rem", fontWeight: 800 }}>
+          {wins}-{losses}
+          {pushes > 0 ? `-${pushes}` : ""}
+        </div>
+        <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>All graded games</div>
+        <div style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: "0.5rem" }}>
+          {fWins}-{fLosses}
+        </div>
+        <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>Filtered only</div>
+      </div>
     </div>
   );
 }

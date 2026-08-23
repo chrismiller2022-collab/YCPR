@@ -19,7 +19,6 @@ import {
   isFilteredBet,
   gradeActualTotal,
   gradeBetCall,
-  resolveSplitSpread,
   splitTeamTotal,
   DEFAULT_SYSTEM_WEIGHTS,
   type TeamSeasonInputs,
@@ -134,7 +133,7 @@ export function useGameTotalsEngine(season: number) {
         homeRestDays: restDaysByGame.get(`${game.homeTeam}|${game.id}`) ?? 7,
         awayRestDays: restDaysByGame.get(`${game.awayTeam}|${game.id}`) ?? 7,
       };
-      const projection = computeGameProjection(home, away, league, odds, context, { regressPct: settings.regressPct });
+      const projection = computeGameProjection(home, away, league, odds, context);
 
       return {
         game,
@@ -153,34 +152,27 @@ export function useGameTotalsEngine(season: number) {
   return { rows, settings, setSettings: setSettingsState, loading, error };
 }
 
-export const COMPOSITE_KEYS = ["composite1", "composite2", "composite3", "composite4", "composite5", "composite6"] as const;
-export type CompositeKey = (typeof COMPOSITE_KEYS)[number];
-export const COMPOSITE_LABELS: Record<CompositeKey, string> = {
-  composite1: "Composite 1 (Unweighted)",
-  composite2: "Composite 2 (Weighted)",
-  composite3: "Composite 3 (Regressed to Vegas)",
-  composite4: "Composite 4 (Avg w/ Open+Close)",
-  composite5: "Composite 5 (Avg w/ Open+Close)",
-  composite6: "Composite 6 (Avg w/ Open+Close)",
-};
-
-function compositeValue(row: EnrichedGameRow, key: CompositeKey): number | null {
-  return row.projection?.composites[key] ?? null;
+// projectedTotal() used to take a CompositeKey and pick from 6 stored
+// variants (unweighted/weighted 6-system averages, regressed-toward-
+// market, open/close blends). Retired per Chris — one Ridge model, one
+// number, nothing to pick between.
+function projectedTotal(row: EnrichedGameRow): number | null {
+  return row.projection?.projectedTotal ?? null;
 }
 
-export function poolStdDevForComposite(rows: EnrichedGameRow[], key: CompositeKey): number {
+export function poolStdDevForTotal(rows: EnrichedGameRow[]): number {
   const diffs: number[] = [];
   for (const r of rows) {
-    const cv = compositeValue(r, key);
+    const pv = projectedTotal(r);
     const vegas = r.odds.vegasTotal;
-    if (cv != null && vegas != null) diffs.push(cv - vegas);
+    if (pv != null && vegas != null) diffs.push(pv - vegas);
   }
   return stdDev(diffs);
 }
 
 export interface BetRow {
   row: EnrichedGameRow;
-  compositeValue: number | null;
+  projectedTotal: number | null;
   vegasTotal: number | null;
   amountOff: number | null;
   call: "Over" | "Under" | null;
@@ -189,63 +181,67 @@ export interface BetRow {
   grade: ReturnType<typeof gradeBetCall>;
 }
 
-export function buildBetRows(rows: EnrichedGameRow[], key: CompositeKey, filterThresholdMultiplier: number): BetRow[] {
-  const poolStd = poolStdDevForComposite(rows, key);
+export function buildBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number): BetRow[] {
+  const poolStd = poolStdDevForTotal(rows);
   return rows.map((row) => {
-    const cv = compositeValue(row, key);
+    const pv = projectedTotal(row);
     const vegasTotal = row.odds.vegasTotal;
-    const { amountOff, call } = determineBetCall(cv, vegasTotal);
+    const { amountOff, call } = determineBetCall(pv, vegasTotal);
     const isFiltered = isFilteredBet(amountOff, poolStd, filterThresholdMultiplier);
     const actualResult = gradeActualTotal(row.actualTotal, vegasTotal);
     const grade = gradeBetCall(call, actualResult);
-    return { row, compositeValue: cv, vegasTotal, amountOff, call, isFiltered, actualResult, grade };
+    return { row, projectedTotal: pv, vegasTotal, amountOff, call, isFiltered, actualResult, grade };
   });
 }
 
-export interface TeamSplitBetRow extends BetRow {
+export interface TeamSplitBetRow {
+  row: EnrichedGameRow;
   team: string;
   isHome: boolean;
-  splitValue: number | null;
+  myTeamTotal: number | null; // my model's game total, split via MY projected spread (myHomeSpread)
+  vegasTeamTotal: number | null; // Vegas's game total, split via Vegas's own spread — a DERIVED number, since there's no real market team-total line synced
+  amountOff: number | null;
+  call: "Over" | "Under" | null;
+  isFiltered: boolean;
+  actualResult: ReturnType<typeof gradeActualTotal>;
+  grade: ReturnType<typeof gradeBetCall>;
 }
 
-export function buildTeamSplitBetRows(
-  rows: EnrichedGameRow[],
-  key: CompositeKey,
-  filterThresholdMultiplier: number,
-  spreadSource: "vegas" | "mine" | "vegas-fill-mine"
-): TeamSplitBetRow[] {
-  const perTeamRows: { row: EnrichedGameRow; team: string; isHome: boolean; splitValue: number | null }[] = [];
+// Per Chris's spec: my team total = my game total split by MY spread
+// (myHomeSpread); "Vegas" team total = Vegas's game total split by
+// Vegas's own spread (a derived proxy — Vegas doesn't publish real
+// per-team totals on this site, so this is what we compare my number
+// against). Both spreads are fixed to their own source now — no more
+// configurable spreadSource, since there's exactly one correct spread
+// for each of the two numbers.
+export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number): TeamSplitBetRow[] {
+  const perTeamRows: { row: EnrichedGameRow; team: string; isHome: boolean; myTeamTotal: number | null; vegasTeamTotal: number | null }[] =
+    [];
   for (const row of rows) {
-    const cv = compositeValue(row, key);
-    const spread = resolveSplitSpread(spreadSource, row.game.homeSpread, row.myHomeSpread ?? 0);
-    const split = splitTeamTotal(cv, spread);
-    perTeamRows.push({ row, team: row.game.homeTeam, isHome: true, splitValue: split.home });
-    perTeamRows.push({ row, team: row.game.awayTeam, isHome: false, splitValue: split.away });
+    const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
+    const vegasSplit = splitTeamTotal(row.odds.vegasTotal, row.game.homeSpread);
+    perTeamRows.push({ row, team: row.game.homeTeam, isHome: true, myTeamTotal: mySplit.home, vegasTeamTotal: vegasSplit.home });
+    perTeamRows.push({ row, team: row.game.awayTeam, isHome: false, myTeamTotal: mySplit.away, vegasTeamTotal: vegasSplit.away });
   }
 
   const diffs: number[] = [];
   for (const r of perTeamRows) {
-    const vegasSplit = splitTeamTotal(r.row.odds.vegasTotal, r.row.game.homeSpread);
-    const vegasTeamTotal = r.isHome ? vegasSplit.home : vegasSplit.away;
-    if (r.splitValue != null && vegasTeamTotal != null) diffs.push(r.splitValue - vegasTeamTotal);
+    if (r.myTeamTotal != null && r.vegasTeamTotal != null) diffs.push(r.myTeamTotal - r.vegasTeamTotal);
   }
   const poolStd = stdDev(diffs);
 
   return perTeamRows.map((r) => {
-    const vegasSplit = splitTeamTotal(r.row.odds.vegasTotal, r.row.game.homeSpread);
-    const vegasTeamTotal = r.isHome ? vegasSplit.home : vegasSplit.away;
-    const { amountOff, call } = determineBetCall(r.splitValue, vegasTeamTotal);
+    const { amountOff, call } = determineBetCall(r.myTeamTotal, r.vegasTeamTotal);
     const isFiltered = isFilteredBet(amountOff, poolStd, filterThresholdMultiplier);
     const actualTeamPoints = r.isHome ? r.row.game.homePoints : r.row.game.awayPoints;
-    const actualResult = gradeActualTotal(actualTeamPoints, vegasTeamTotal);
+    const actualResult = gradeActualTotal(actualTeamPoints, r.vegasTeamTotal);
     const grade = gradeBetCall(call, actualResult);
     return {
       row: r.row,
       team: r.team,
       isHome: r.isHome,
-      splitValue: r.splitValue,
-      compositeValue: r.splitValue,
-      vegasTotal: vegasTeamTotal,
+      myTeamTotal: r.myTeamTotal,
+      vegasTeamTotal: r.vegasTeamTotal,
       amountOff,
       call,
       isFiltered,

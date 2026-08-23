@@ -322,26 +322,13 @@ export function computeSystemResults(offense: TeamSeasonInputs, defense: TeamSea
   };
 }
 
+// Kept only because saved GameTotalsSettings rows still have a `weights`
+// field (backward compat, see normalizeWeights in gameTotalsEngine.ts) —
+// teamTotal/teamTotalWeighted, the functions this was originally for,
+// were removed since nothing calls them anymore (composites don't derive
+// from the 6-system breakdown now, see computeGameProjection).
 export type SystemWeights = Record<SystemKey, number>;
 export const DEFAULT_SYSTEM_WEIGHTS: SystemWeights = Object.fromEntries(SYSTEM_KEYS.map((k) => [k, 1])) as SystemWeights;
-
-/** Team total: plain average across all 6 systems. */
-export function teamTotal(r: SystemResults): number {
-  const vals = SYSTEM_KEYS.map((k) => r[k]);
-  return vals.reduce((s, v) => s + v, 0) / vals.length;
-}
-
-/** Team total, weighted average across all 6 systems. */
-export function teamTotalWeighted(r: SystemResults, weights: SystemWeights = DEFAULT_SYSTEM_WEIGHTS): number {
-  let weightedSum = 0;
-  let weightTotal = 0;
-  for (const k of SYSTEM_KEYS) {
-    const w = weights[k] ?? 0;
-    weightedSum += r[k] * w;
-    weightTotal += w;
-  }
-  return weightTotal > 0 ? weightedSum / weightTotal : 0;
-}
 
 // ---------------------------------------------------------------------
 // Efficiency Inputs — the matchup factors + blended pace terms feeding
@@ -427,39 +414,6 @@ export function resolveGameOdds(currentOverUnder: number | null, openingOverUnde
   };
 }
 
-export interface CompositeResults {
-  composite1: number; // raw Ridge model total
-  composite2: number; // same as composite1 — kept as a separate slot for backward compat with saved runs/UI, but there's only one model now, not a weighted-vs-unweighted pair
-  composite3: number | null; // composite1 regressed toward Vegas total — null if no Vegas total synced
-  composite4: number | null; // avg[opening, closing, composite1]
-  composite5: number | null; // avg[opening, closing, composite2]
-  composite6: number | null; // avg[opening, closing, composite3]
-}
-
-// modelTotal comes from the Ridge model (predictGameTotalRidge) now,
-// not from the retired 6-system formula engine — see totalModelRidge.ts.
-export function computeComposites(modelTotal: number, odds: GameOdds, options: { regressPct?: number } = {}): CompositeResults {
-  const regressPct = options.regressPct ?? 0.3;
-
-  const composite1 = modelTotal;
-  const composite2 = modelTotal;
-
-  const regressTarget = odds.closingTotal ?? odds.openingTotal ?? null;
-  const composite3 = regressTarget != null ? composite1 * (1 - regressPct) + regressTarget * regressPct : null;
-
-  const avgOf = (a: number | null, b: number | null, c: number): number | null => {
-    const vals = [a, b, c].filter((v): v is number => v != null);
-    if (vals.length === 0) return null;
-    return vals.reduce((s, v) => s + v, 0) / vals.length;
-  };
-
-  const composite4 = avgOf(odds.openingTotal, odds.closingTotal, composite1);
-  const composite5 = avgOf(odds.openingTotal, odds.closingTotal, composite2);
-  const composite6 = composite3 != null ? avgOf(odds.openingTotal, odds.closingTotal, composite3) : null;
-
-  return { composite1, composite2, composite3, composite4, composite5, composite6 };
-}
-
 export interface TeamSplit {
   home: number | null;
   away: number | null;
@@ -471,14 +425,6 @@ export function splitTeamTotal(total: number | null, homeSpread: number | null):
   const favoriteHalf = half + Math.abs(homeSpread);
   const homeIsFavorite = homeSpread < 0;
   return homeIsFavorite ? { home: favoriteHalf, away: half } : { home: half, away: favoriteHalf };
-}
-
-export type SpreadSource = "vegas" | "mine" | "vegas-fill-mine";
-
-export function resolveSplitSpread(mode: SpreadSource, vegasSpread: number | null, myProjSpread: number): number | null {
-  if (mode === "vegas") return vegasSpread;
-  if (mode === "mine") return myProjSpread;
-  return vegasSpread ?? myProjSpread;
 }
 
 export function stdDev(values: number[]): number {
@@ -525,7 +471,15 @@ export function gradeBetCall(call: "Over" | "Under" | null, actualResult: OverUn
 export interface GameProjection {
   homeResults: SystemResults;
   awayResults: SystemResults;
-  composites: CompositeResults;
+  // The one number: raw Ridge model output, nothing blended toward market.
+  // Used to be 6 "composite" variants (unweighted/weighted 6-system
+  // averages, regressed-toward-market, open/close blends) — retired all
+  // of that per Chris: "I don't really need them if there's only one
+  // projection... I really only need the one." If a market-blended
+  // number is wanted again later, derive it at the call site from
+  // projectedTotal + odds rather than reintroducing multiple stored
+  // variants.
+  projectedTotal: number;
 }
 
 export function computeGameProjection(
@@ -533,8 +487,7 @@ export function computeGameProjection(
   away: TeamSeasonInputs,
   league: LeagueAverages,
   odds: GameOdds,
-  context: { homeFlag: number; homeRestDays: number; awayRestDays: number },
-  options: { regressPct?: number } = {}
+  context: { homeFlag: number; homeRestDays: number; awayRestDays: number }
 ): GameProjection {
   // homeResults/awayResults are the old 6-system formula breakdown — kept
   // around ONLY so the Raw Data / Efficiency Inputs admin tabs still have
@@ -544,7 +497,7 @@ export function computeGameProjection(
   const homeResults = computeSystemResults(home, away, league);
   const awayResults = computeSystemResults(away, home, league);
 
-  const modelTotal = predictGameTotalRidge({
+  const projectedTotal = predictGameTotalRidge({
     homeOffPpa: home.offPpa,
     homeDefPpa: home.defPpa,
     homeOffExplosiveness: home.offExplosiveness,
@@ -559,6 +512,5 @@ export function computeGameProjection(
     marketTotal: odds.vegasTotal,
   });
 
-  const composites = computeComposites(modelTotal, odds, options);
-  return { homeResults, awayResults, composites };
+  return { homeResults, awayResults, projectedTotal };
 }
