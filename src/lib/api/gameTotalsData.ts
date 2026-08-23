@@ -182,7 +182,8 @@ export interface GameForTotals {
   awayPoints: number | null;
   overUnder: number | null;
   openingOverUnder: number | null;
-  homeSpread: number | null; // negative = home favored, CFBD's own raw convention
+  homeSpread: number | null; // negative = home favored, CFBD's own raw convention (this is the closing/latest-synced line)
+  openingSpread: number | null; // same convention as homeSpread, at open — used for line-movement tracking
   neutralSite: boolean; // feeds the Ridge total model's home_flag (1.0 true home, 0.5 neutral)
   startDate: string | null; // feeds rest-days-before-this-game for the Ridge total model
 }
@@ -228,6 +229,7 @@ export async function fetchGamesForTotals(season: number): Promise<GameForTotals
       overUnder: line?.over_under ?? null,
       openingOverUnder: line?.opening_over_under ?? null,
       homeSpread: line?.spread ?? null,
+      openingSpread: line?.opening_spread ?? null,
       neutralSite: !!g.neutral_site,
       startDate: g.start_date ?? null,
     };
