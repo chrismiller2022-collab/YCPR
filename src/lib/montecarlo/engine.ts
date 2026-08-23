@@ -341,13 +341,17 @@ interface RemainingGame {
   awayTeam: string;
 }
 
-// Every 10th trial also gets run through computeSrsStats and an alternate
-// (resume-informed) field/seed tally, so SRS/VSRS can be reported as a
-// stable ~10k-trial average instead of one single-realization roll, and the
-// current win%+rating model can be compared against a win%+VSRS model on
-// the exact same trials. Full-cost every trial was benchmarked at roughly
-// tripling total run time for 100k trials; 1-in-10 keeps the extra cost
-// modest while still averaging 10,000 realizations (chosen by Chris).
+// Every 10th trial gets run through computeSrsStats to get that trial's
+// SRS/VSRS, which drives the DEFAULT playoff selection method (win% first,
+// VSRS as tiebreak instead of fixed rating - see buildField/byResumeResult
+// in runOneMonteCarloTrial). This is also why playoff/seed/bracket stats
+// are sampled-trial-only (~10k of 100k trials) rather than every-trial:
+// full-cost SRS/VSRS on every trial was benchmarked at roughly tripling
+// total run time for 100k trials. 1-in-10 keeps that modest while still
+// averaging/tallying across 10,000 realizations (chosen by Chris). The
+// legacy win%+rating method is still computed on the same sampled trials
+// purely as a comparison column (see ResumeComparisonEntry.currentPlayoffPct
+// below) so the switch is auditable, not just asserted.
 const SRS_SAMPLE_EVERY = 10;
 
 export interface ResumeComparisonEntry {
@@ -355,9 +359,9 @@ export interface ResumeComparisonEntry {
   conf: string; // always FBS - resumeComparison only covers fbsTeams (see indexByName in runOneMonteCarloTrial)
   avgSrs: number | null;
   avgVsrs: number | null;
-  currentPlayoffPct: number;
+  currentPlayoffPct: number; // legacy win%+rating method - comparison only, no longer the default
   currentAvgSeed: number | null;
-  resumePlayoffPct: number;
+  resumePlayoffPct: number; // default win%+VSRS method - identical to the main TeamSimResult.playoffPct
   resumeAvgSeed: number | null;
 }
 
@@ -370,12 +374,17 @@ export interface ResumeComparisonEntry {
  *   conference win%, one extra game between them, neutral site) - so the
  *   "win conference" team can differ from the regular-season record
  *   leader, same as real life.
- * - Playoff seeding ranks by that trial's actual win% first, fixed rating
- *   only as a tiebreaker between comparable records - a stand-in for a
- *   committee ranking, not the full resume-rating methodology. Ratings
- *   themselves don't evolve mid-simulation based on simulated results. A
- *   parallel win%+VSRS model is also tracked on a 1-in-10 trial sample
- *   (resumeComparison on the result) so the two can be compared directly.
+ * - Playoff seeding ranks by that trial's actual win% first, that trial's
+ *   VSRS (resume quality - who you beat/lost to, not just raw scoreboard
+ *   margin) as a tiebreaker between comparable records - a stand-in for a
+ *   committee ranking, not the full resume-rating methodology. This is the
+ *   DEFAULT method (as of Chris's request to default to it) and is why
+ *   playoff/seed/bracket stats only run on a 1-in-10 trial sample (needs
+ *   that trial's SRS/VSRS, the expensive part) instead of every trial.
+ *   Ratings themselves don't evolve mid-simulation based on simulated
+ *   results. The legacy win%+rating method is still tracked on the same
+ *   sampled trials purely as a comparison column (resumeComparison on the
+ *   result), not used for the main stats anymore.
  * - Playoff bracket structure (5 auto-bids + 7 at-large, byes to the top
  *   4 highest-ranked teams in the field) mirrors the real 12-team CFP
  *   format (2026-27 auto-bid rules) and reuses this site's existing
@@ -661,60 +670,26 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
     champions.push(champ);
   }
 
-  const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
-  // Selection/seeding within a trial: that trial's actual regular-season
-  // win% is the primary sort key, so a bad simulated season can cost a
-  // team its bye, its seed, or its spot in the field entirely — rating is
-  // only a tiebreaker between teams with comparable records (mirrors how
-  // a real committee ranks similar resumes by team quality). Previously
-  // this sorted purely by fixed rating, which meant a team's seed only
-  // ever reflected whether it won its conference that trial, never how
-  // many games it actually won or lost.
-  const winPct = (i: number) => {
-    const total = wins[i] + losses[i];
-    return total > 0 ? wins[i] / total : 0;
-  };
-  const byResult = (a: number, b: number) => winPct(b) - winPct(a) || byRating(a, b);
-
-  // 2026-27 CFP auto-bid rule (per NCAA.com): only the ACC/Big Ten/Big 12/SEC
-  // champions are guaranteed in as conference champs. The Group of 5 gets a
-  // single auto bid for its single highest-ranked team overall, champion or
-  // not (replaces the old "5 highest-rated conference champs, any league"
-  // 2024-25 rule). Notre Dame has no guaranteed bid - it competes for an
-  // at-large spot like any other unaffiliated team, which is exactly what
-  // "in if it's top-12 overall" amounts to, since it's never part of
-  // confGroups (FBS Independents are excluded there) and so can never be a
-  // conference champion or the Group-of-5 pick.
-  const power4Champs = champions.filter((i) => POWER4_CONFS.has(fbsTeams[i].conf));
-  const group5Teams = fbsTeams.map((_, i) => i).filter((i) => GROUP_OF_5_CONFS.has(fbsTeams[i].conf));
-  const bestGroup5 = group5Teams.length > 0 ? [...group5Teams].sort(byResult)[0] : null;
-
-  const autoBids = bestGroup5 != null ? [...power4Champs, bestGroup5] : [...power4Champs];
-  const champSet = new Set(autoBids);
-
-  const atLargePool = fbsTeams
-    .map((_, i) => i)
-    .filter((i) => !champSet.has(i))
-    .sort(byResult)
-    .slice(0, Math.max(0, 12 - autoBids.length));
-
-  // Seeding: the four highest-ranked teams in the 12-team field get the
-  // byes regardless of conference-champion status (also a 2026-27 rule
-  // change - previously byes went to the top 4 conference champs only).
-  const field = [...autoBids, ...atLargePool].sort(byResult);
-  field.forEach((teamIdx, i) => {
-    playoffCount[teamIdx]++;
-    seedSum[teamIdx] += i + 1;
-    seedCount[teamIdx][i]++;
-  });
-
-  // Sampled trials only (see SRS_SAMPLE_EVERY): compute this trial's SRS/VSRS
-  // via the exact same computeSrsStats math the SRS tab uses on a single
-  // realization, then tally BOTH the current win%+rating field and an
-  // alternate win%+VSRS ("resume-informed") field on the identical trial —
-  // same random draws either way, so the two counts are directly comparable.
+  // Playoff selection/seeding now runs ONLY on sampled trials (see
+  // SRS_SAMPLE_EVERY) because the default method needs that trial's
+  // SRS/VSRS, which is the expensive part. This trades total playoff-stat
+  // sample size (10k instead of 100k trials) for a resume-informed default
+  // — still a large, statistically solid sample. Regular-season win totals
+  // and conference-championship stats are untouched: those still run every
+  // trial since they don't depend on which selection method is in play.
   if (isSampledTrial) {
     state.srsSampleCount++;
+
+    const byRating = (a: number, b: number) => fbsTeams[a].rating - fbsTeams[b].rating;
+    const winPct = (i: number) => {
+      const total = wins[i] + losses[i];
+      return total > 0 ? wins[i] / total : 0;
+    };
+    // Legacy method (win% first, fixed rating as tiebreak) - no longer the
+    // default, kept only as the comparison column so the switch to
+    // resume-informed selection is visible/auditable, not just assumed.
+    const byResult = (a: number, b: number) => winPct(b) - winPct(a) || byRating(a, b);
+
     const srsRows = computeSrsStats([...baseGameResults, ...sampledGameResults], liveByTeam);
     const vsrsByName = new Map<string, number>();
     for (const row of srsRows) {
@@ -724,7 +699,10 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
       srsSum[idx] += row.srs;
       vsrsSum[idx] += row.vsrs;
     }
-
+    // Default method (win% first, VSRS as tiebreak instead of fixed
+    // rating) - VSRS already reflects that trial's actual results (who
+    // beat whom, by how much), so ties between similar records get broken
+    // by resume quality instead of a static preseason number.
     const byResumeResult = (a: number, b: number) => {
       const wp = winPct(b) - winPct(a);
       if (wp !== 0) return wp;
@@ -733,32 +711,58 @@ function runOneMonteCarloTrial(state: MonteCarloState): void {
       return vb - va; // higher VSRS is better, same convention as SRS/VSRS elsewhere
     };
 
-    const bestGroup5Resume = group5Teams.length > 0 ? [...group5Teams].sort(byResumeResult)[0] : null;
-    const autoBidsResume = bestGroup5Resume != null ? [...power4Champs, bestGroup5Resume] : [...power4Champs];
-    const champSetResume = new Set(autoBidsResume);
-    const atLargePoolResume = fbsTeams
-      .map((_, i) => i)
-      .filter((i) => !champSetResume.has(i))
-      .sort(byResumeResult)
-      .slice(0, Math.max(0, 12 - autoBidsResume.length));
-    const fieldResume = [...autoBidsResume, ...atLargePoolResume].sort(byResumeResult);
+    // 2026-27 CFP auto-bid rule (per NCAA.com): only the ACC/Big Ten/Big
+    // 12/SEC champions are guaranteed in as conference champs. The Group
+    // of 5 gets a single auto bid for its single highest-ranked team
+    // overall, champion or not. Notre Dame has no guaranteed bid - it
+    // competes for an at-large spot like any other unaffiliated team,
+    // which is exactly what "in if it's top-12 overall" amounts to, since
+    // it's never part of confGroups (FBS Independents are excluded there)
+    // and so can never be a conference champion or the Group-of-5 pick.
+    // Which specific team wins the Group-of-5 auto bid can differ between
+    // the two methods (byResult vs byResumeResult); which teams won each
+    // power conference cannot, since that's decided by the simulated
+    // conference title game above, not by either ranking method.
+    const power4Champs = champions.filter((i) => POWER4_CONFS.has(fbsTeams[i].conf));
+    const group5Teams = fbsTeams.map((_, i) => i).filter((i) => GROUP_OF_5_CONFS.has(fbsTeams[i].conf));
+
+    function buildField(byFn: (a: number, b: number) => number): number[] {
+      const bestGroup5 = group5Teams.length > 0 ? [...group5Teams].sort(byFn)[0] : null;
+      const autoBids = bestGroup5 != null ? [...power4Champs, bestGroup5] : [...power4Champs];
+      const champSet = new Set(autoBids);
+      const atLargePool = fbsTeams
+        .map((_, i) => i)
+        .filter((i) => !champSet.has(i))
+        .sort(byFn)
+        .slice(0, Math.max(0, 12 - autoBids.length));
+      // Seeding: the four highest-ranked teams in the 12-team field get the
+      // byes regardless of conference-champion status (2026-27 rule change
+      // - previously byes went to the top 4 conference champs only).
+      return [...autoBids, ...atLargePool].sort(byFn);
+    }
+
+    const fieldResume = buildField(byResumeResult); // DEFAULT - drives the main playoff/seed/bracket stats below
+    const fieldLegacy = buildField(byResult); // comparison only
 
     fieldResume.forEach((teamIdx, i) => {
+      playoffCount[teamIdx]++;
+      seedSum[teamIdx] += i + 1;
+      seedCount[teamIdx][i]++;
       cmpResumePlayoffCount[teamIdx]++;
       cmpResumeSeedSum[teamIdx] += i + 1;
     });
-    field.forEach((teamIdx, i) => {
+    fieldLegacy.forEach((teamIdx, i) => {
       cmpCurrentPlayoffCount[teamIdx]++;
       cmpCurrentSeedSum[teamIdx] += i + 1;
     });
-  }
 
-  if (field.length === 12) {
-    const bracket = simulateBracket(field, fbsTeams, liveByTeam);
-    for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
-    for (const idx of bracket.semifinalists) semifinalCount[idx]++;
-    for (const idx of bracket.ncgParticipants) ncgCount[idx]++;
-    if (bracket.champion != null) nattyCount[bracket.champion]++;
+    if (fieldResume.length === 12) {
+      const bracket = simulateBracket(fieldResume, fbsTeams, liveByTeam);
+      for (const idx of bracket.quarterfinalists) quarterfinalCount[idx]++;
+      for (const idx of bracket.semifinalists) semifinalCount[idx]++;
+      for (const idx of bracket.ncgParticipants) ncgCount[idx]++;
+      if (bracket.champion != null) nattyCount[bracket.champion]++;
+    }
   }
 }
 
@@ -790,6 +794,12 @@ function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): S
     cmpResumeSeedSum,
   } = state;
 
+  // Playoff/seed/bracket stats below are sampled-trial-only now (default
+  // selection method needs SRS/VSRS - see runOneMonteCarloTrial), so their
+  // percentages divide by srsSampleCount (~numTrials/SRS_SAMPLE_EVERY), not
+  // numTrials. Win totals and conference-championship stats are unaffected
+  // - those still run every trial, so they keep dividing by numTrials.
+  const playoffTrials = srsSampleCount;
   const teamResults: TeamSimResult[] = fbsTeams.map((t, i) => {
     const winsSum = winDistribution[i].reduce((sum, count, wins) => sum + count * wins, 0);
     const ci = winTotalCI(winDistribution[i], numTrials);
@@ -808,13 +818,13 @@ function finalizeMonteCarloResults(state: MonteCarloState, numTrials: number): S
       ci95High: ci.high,
       madeConfChampPct: (madeConfChampCount[i] / numTrials) * 100,
       confTitlePct: (confTitleCount[i] / numTrials) * 100,
-      playoffPct: (playoffCount[i] / numTrials) * 100,
+      playoffPct: playoffTrials > 0 ? (playoffCount[i] / playoffTrials) * 100 : 0,
       avgSeed: playoffCount[i] > 0 ? seedSum[i] / playoffCount[i] : null,
-      seedPct: seedCount[i].map((c) => (c / numTrials) * 100),
-      quarterfinalPct: (quarterfinalCount[i] / numTrials) * 100,
-      semifinalPct: (semifinalCount[i] / numTrials) * 100,
-      nattyGamePct: (ncgCount[i] / numTrials) * 100,
-      nattyPct: (nattyCount[i] / numTrials) * 100,
+      seedPct: playoffTrials > 0 ? seedCount[i].map((c) => (c / playoffTrials) * 100) : seedCount[i].map(() => 0),
+      quarterfinalPct: playoffTrials > 0 ? (quarterfinalCount[i] / playoffTrials) * 100 : 0,
+      semifinalPct: playoffTrials > 0 ? (semifinalCount[i] / playoffTrials) * 100 : 0,
+      nattyGamePct: playoffTrials > 0 ? (ncgCount[i] / playoffTrials) * 100 : 0,
+      nattyPct: playoffTrials > 0 ? (nattyCount[i] / playoffTrials) * 100 : 0,
     };
   });
 
