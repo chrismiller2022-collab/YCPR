@@ -553,13 +553,14 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
         <SeasonPicker season={season} setSeason={setSeason} />
         <DivisionPicker division={division} setDivision={setDivision} />
       </div>
-      <CsvImportControl season={season} />
+      <SyncControl season={season} />
       <details style={{ marginBottom: "1rem" }}>
         <summary style={{ cursor: "pointer", fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-          Or sync games/lines live from CFBD (needed either way — CSV import only covers team stats)
+          Or import team stats from CSV instead (no API calls, no timeout risk — games/lines above are
+          always pulled live from CFBD either way)
         </summary>
         <div style={{ marginTop: "0.5rem" }}>
-          <SyncControl season={season} />
+          <CsvImportControl season={season} />
         </div>
       </details>
       <SettingsBar settings={settings} setSettings={setSettings} season={season} />
