@@ -1,13 +1,17 @@
-// Game Totals engine — REWRITTEN from scratch (the old 5-system
-// yards/plays/drives engine is gone entirely, per instruction). This
-// version follows an "efficiency > volume, relative/opponent-adjusted,
-// pace-explicit, split by pass/rush" framework built on CFBD's advanced
-// stats (PPA, success rate, explosiveness, points per opportunity),
-// rather than raw yardage. Still a hand-built formula, not a trained
-// model — this app has no Python/ML runtime, and a formula is what was
-// asked for ("a formula so to speak").
+// Game Totals engine.
 //
-// Shape of the model, end to end:
+// UPDATE: the actual game-total PREDICTION now comes from a trained
+// Ridge regression model (see totalModelRidge.ts) — the hand-built
+// 6-system formula below (PPA/success rate/explosiveness/points-per-
+// opportunity/rush/pass) is kept only to feed the legacy "Raw Data" /
+// "Efficiency Inputs" admin diagnostic tabs, and no longer drives
+// composite1-6 or anything used for betting/grading. Worth deleting
+// those diagnostic tabs in a fast-follow rather than leaving decorative
+// numbers on display. See computeGameProjection below for exactly where
+// the handoff happens.
+//
+// Original shape of the RETIRED 6-system formula engine, for context on
+// what the Raw Data/Efficiency Inputs tabs are still showing:
 //   1. League averages are computed once per season from every loaded
 //      team (computeLeagueAverages) — the normalization baseline every
 //      relative ratio below is measured against.
@@ -29,6 +33,8 @@
 //   5. Systems combine into composites exactly like before: unweighted
 //      average, admin-weighted average, and versions regressed toward /
 //      averaged with the market's total.
+
+import { predictGameTotalRidge } from "./totalModelRidge";
 
 export interface TeamSeasonInputs {
   team: string;
@@ -422,30 +428,21 @@ export function resolveGameOdds(currentOverUnder: number | null, openingOverUnde
 }
 
 export interface CompositeResults {
-  composite1: number; // team1 + team2, unweighted
-  composite2: number; // team1 + team2, weighted
+  composite1: number; // raw Ridge model total
+  composite2: number; // same as composite1 — kept as a separate slot for backward compat with saved runs/UI, but there's only one model now, not a weighted-vs-unweighted pair
   composite3: number | null; // composite1 regressed toward Vegas total — null if no Vegas total synced
   composite4: number | null; // avg[opening, closing, composite1]
   composite5: number | null; // avg[opening, closing, composite2]
   composite6: number | null; // avg[opening, closing, composite3]
 }
 
-export function computeComposites(
-  team1Results: SystemResults,
-  team2Results: SystemResults,
-  odds: GameOdds,
-  options: { weights?: SystemWeights; regressPct?: number } = {}
-): CompositeResults {
-  const weights = options.weights ?? DEFAULT_SYSTEM_WEIGHTS;
+// modelTotal comes from the Ridge model (predictGameTotalRidge) now,
+// not from the retired 6-system formula engine — see totalModelRidge.ts.
+export function computeComposites(modelTotal: number, odds: GameOdds, options: { regressPct?: number } = {}): CompositeResults {
   const regressPct = options.regressPct ?? 0.3;
 
-  const t1Total = teamTotal(team1Results);
-  const t2Total = teamTotal(team2Results);
-  const composite1 = t1Total + t2Total;
-
-  const t1TotalW = teamTotalWeighted(team1Results, weights);
-  const t2TotalW = teamTotalWeighted(team2Results, weights);
-  const composite2 = t1TotalW + t2TotalW;
+  const composite1 = modelTotal;
+  const composite2 = modelTotal;
 
   const regressTarget = odds.closingTotal ?? odds.openingTotal ?? null;
   const composite3 = regressTarget != null ? composite1 * (1 - regressPct) + regressTarget * regressPct : null;
@@ -536,10 +533,32 @@ export function computeGameProjection(
   away: TeamSeasonInputs,
   league: LeagueAverages,
   odds: GameOdds,
-  options: { weights?: SystemWeights; regressPct?: number } = {}
+  context: { homeFlag: number; homeRestDays: number; awayRestDays: number },
+  options: { regressPct?: number } = {}
 ): GameProjection {
+  // homeResults/awayResults are the old 6-system formula breakdown — kept
+  // around ONLY so the Raw Data / Efficiency Inputs admin tabs still have
+  // something to show. They no longer feed the actual prediction; that's
+  // now the Ridge model below. Worth removing those tabs in a fast-follow
+  // rather than leaving legacy numbers on display indefinitely.
   const homeResults = computeSystemResults(home, away, league);
   const awayResults = computeSystemResults(away, home, league);
-  const composites = computeComposites(homeResults, awayResults, odds, options);
+
+  const modelTotal = predictGameTotalRidge({
+    homeOffPpa: home.offPpa,
+    homeDefPpa: home.defPpa,
+    homeOffExplosiveness: home.offExplosiveness,
+    homeDefExplosiveness: home.defExplosiveness,
+    awayOffPpa: away.offPpa,
+    awayDefPpa: away.defPpa,
+    awayOffExplosiveness: away.offExplosiveness,
+    awayDefExplosiveness: away.defExplosiveness,
+    homeFlag: context.homeFlag,
+    homeRestDays: context.homeRestDays,
+    awayRestDays: context.awayRestDays,
+    marketTotal: odds.vegasTotal,
+  });
+
+  const composites = computeComposites(modelTotal, odds, options);
   return { homeResults, awayResults, composites };
 }

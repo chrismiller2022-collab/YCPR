@@ -44,10 +44,43 @@ export interface EnrichedGameRow {
 // A saved settings row from before the ground-up rewrite would have
 // weights as a [n,n,n,n] tuple (the old 4-system shape) instead of the
 // new Record<SystemKey, number> — guard against that so a stale save
-// doesn't silently zero out every new system's weight.
+// doesn't silently zero out every new system's weight. Weights are no
+// longer read by computeGameProjection (single Ridge model now, nothing
+// to weight) but the field is kept in saved settings rows for backward
+// compatibility rather than migrating every existing row.
 function normalizeWeights(weights: unknown): typeof DEFAULT_SYSTEM_WEIGHTS {
   if (!weights || Array.isArray(weights) || typeof weights !== "object") return { ...DEFAULT_SYSTEM_WEIGHTS };
   return { ...DEFAULT_SYSTEM_WEIGHTS, ...(weights as object) };
+}
+
+// Rest days before each team's game in this game list — mirrors the
+// training pipeline's SQL (LAG(start_date) per team/season), imputing 7
+// for a team's first tracked game of the season (no prior game to diff
+// against). Keyed by "<team>|<gameId>" since a team's rest before Game A
+// isn't the same number as its rest before Game B.
+function computeRestDaysByGame(games: GameForTotals[]): Map<string, number> {
+  const byTeam = new Map<string, GameForTotals[]>();
+  for (const g of games) {
+    if (!g.startDate) continue;
+    for (const team of [g.homeTeam, g.awayTeam]) {
+      if (!byTeam.has(team)) byTeam.set(team, []);
+      byTeam.get(team)!.push(g);
+    }
+  }
+  const result = new Map<string, number>();
+  for (const [team, teamGames] of byTeam) {
+    const sorted = [...teamGames].sort((a, b) => (a.startDate! < b.startDate! ? -1 : a.startDate! > b.startDate! ? 1 : 0));
+    for (let i = 0; i < sorted.length; i++) {
+      const g = sorted[i];
+      if (i === 0) {
+        result.set(`${team}|${g.id}`, 7);
+        continue;
+      }
+      const days = Math.round((new Date(g.startDate!).getTime() - new Date(sorted[i - 1].startDate!).getTime()) / 86400000);
+      result.set(`${team}|${g.id}`, days > 0 ? days : 7);
+    }
+  }
+  return result;
 }
 
 export function useGameTotalsEngine(season: number) {
@@ -76,6 +109,8 @@ export function useGameTotalsEngine(season: number) {
     return computeLeagueAverages(Object.values(rawRows.teamInputs));
   }, [rawRows]);
 
+  const restDaysByGame = useMemo(() => (rawRows ? computeRestDaysByGame(rawRows.games) : new Map<string, number>()), [rawRows]);
+
   const rows: EnrichedGameRow[] = useMemo(() => {
     if (!rawRows || !league) return [];
     return rawRows.games.map((game) => {
@@ -94,7 +129,12 @@ export function useGameTotalsEngine(season: number) {
         return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
       }
 
-      const projection = computeGameProjection(home, away, league, odds, { weights: settings.weights, regressPct: settings.regressPct });
+      const context = {
+        homeFlag: game.neutralSite ? 0.5 : 1.0,
+        homeRestDays: restDaysByGame.get(`${game.homeTeam}|${game.id}`) ?? 7,
+        awayRestDays: restDaysByGame.get(`${game.awayTeam}|${game.id}`) ?? 7,
+      };
+      const projection = computeGameProjection(home, away, league, odds, context, { regressPct: settings.regressPct });
 
       return {
         game,
@@ -108,7 +148,7 @@ export function useGameTotalsEngine(season: number) {
         myHomeSpread,
       };
     });
-  }, [rawRows, league, liveByTeam, settings]);
+  }, [rawRows, league, liveByTeam, settings, restDaysByGame]);
 
   return { rows, settings, setSettings: setSettingsState, loading, error };
 }

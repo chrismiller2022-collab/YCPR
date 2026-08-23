@@ -120,13 +120,17 @@ export interface GameForTotals {
   overUnder: number | null;
   openingOverUnder: number | null;
   homeSpread: number | null; // negative = home favored, CFBD's own raw convention
+  neutralSite: boolean; // feeds the Ridge total model's home_flag (1.0 true home, 0.5 neutral)
+  startDate: string | null; // feeds rest-days-before-this-game for the Ridge total model
 }
 
 export async function fetchGamesForTotals(season: number): Promise<GameForTotals[]> {
   const games = await fetchAllRows<any>((from, to) =>
     supabase
       .from("games")
-      .select("id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points")
+      .select(
+        "id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points, neutral_site, start_date"
+      )
       .eq("season", season)
       .range(from, to)
   );
@@ -161,6 +165,8 @@ export async function fetchGamesForTotals(season: number): Promise<GameForTotals
       overUnder: line?.over_under ?? null,
       openingOverUnder: line?.opening_over_under ?? null,
       homeSpread: line?.spread ?? null,
+      neutralSite: !!g.neutral_site,
+      startDate: g.start_date ?? null,
     };
   });
 }

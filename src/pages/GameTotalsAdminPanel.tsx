@@ -70,23 +70,9 @@ function SettingsBar({ settings, setSettings, season }: any) {
         marginBottom: "1rem",
       }}
     >
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", alignItems: "center" }}>
-        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Composite 2 weights:</span>
-        {SYSTEM_KEYS.map((k) => (
-          <label key={k} style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
-            {SYSTEM_LABELS[k]}{" "}
-            <input
-              type="number"
-              step="0.5"
-              value={settings.weights[k] ?? 0}
-              onChange={(e) => {
-                setSettings({ ...settings, weights: { ...settings.weights, [k]: parseFloat(e.target.value) || 0 } });
-              }}
-              style={{ width: 50 }}
-            />
-          </label>
-        ))}
-      </div>
+      <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+        Model: Ridge regression (trained on 2021-2025 CFBD data) — composite1/2 are the raw model total.
+      </span>
       <label style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
         Composite 3 regression %{" "}
         <input
