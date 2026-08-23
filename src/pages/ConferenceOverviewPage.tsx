@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import ConfLink from "../components/ConfLink";
 import { conferencesForDivision, teamsForConference } from "../data/teams";
 import { SOS_BY_TEAM } from "../data/sor";
 import { RESUME_BY_TEAM } from "../data/resume";
@@ -87,7 +88,13 @@ function fmtPct(v: number | null) {
   return `${v.toFixed(1)}%`;
 }
 
-export default function ConferenceOverviewPage({ onHome }: { onHome: () => void }) {
+export default function ConferenceOverviewPage({
+  onNavigateConference,
+  onHome,
+}: {
+  onNavigateConference?: (conf: string) => void;
+  onHome: () => void;
+}) {
   const [div, setDiv] = useState<"FBS" | "FCS">("FBS");
   const [sortKey, setSortKey] = useState<keyof ConfRow>("avgRating");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -167,7 +174,9 @@ export default function ConferenceOverviewPage({ onHome }: { onHome: () => void 
               <tbody>
                 {sorted.map((r) => (
                   <tr key={r.conf}>
-                    <td className="matchup-team-cell">{r.conf}</td>
+                    <td className="matchup-team-cell">
+                      <ConfLink conf={r.conf} onNavigateConference={onNavigateConference} />
+                    </td>
                     <td style={{ textAlign: "right" }}>{r.teamCount}</td>
                     <td style={{ textAlign: "right" }}>{fmt(r.avgRating)}</td>
                     <td style={{ textAlign: "right" }}>{fmt(r.avgSos)}</td>

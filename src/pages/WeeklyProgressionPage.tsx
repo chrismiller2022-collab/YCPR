@@ -75,7 +75,7 @@ function useAllWeeksData() {
   return { weeks, byWeek, loading, error };
 }
 
-function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateConference }: any) {
+function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateTeam, onNavigateConference }: any) {
   const preseason = team.preseason;
 
   // "Change from Preseason" compares against the team's own most recent
@@ -95,7 +95,13 @@ function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateConferen
   return (
     <tr>
       <td>
-        <span className="team-name">{team.team}</span>
+        {onNavigateTeam ? (
+          <button className="team-link" onClick={() => onNavigateTeam(team)}>
+            {team.team}
+          </button>
+        ) : (
+          <span className="team-name">{team.team}</span>
+        )}
         <span className={`div-pill ${team.div === "FBS" ? "div-fbs" : "div-fcs"}`}>
           {team.div}
         </span>

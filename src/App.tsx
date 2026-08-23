@@ -228,6 +228,7 @@ export default function App() {
           <WeeklyProgressionPage
             metric="power"
             subLabel={page.subLabel}
+            onNavigateTeam={handleNavigateTeam}
             onNavigateConference={handleNavigateConference}
             onHome={handleHome}
           />
@@ -239,6 +240,7 @@ export default function App() {
           <WeeklyProgressionPage
             metric="resume"
             subLabel={page.subLabel}
+            onNavigateTeam={handleNavigateTeam}
             onNavigateConference={handleNavigateConference}
             onHome={handleHome}
           />
@@ -250,6 +252,7 @@ export default function App() {
           <WeeklyProgressionPage
             metric="sor"
             subLabel={page.subLabel}
+            onNavigateTeam={handleNavigateTeam}
             onNavigateConference={handleNavigateConference}
             onHome={handleHome}
           />
@@ -336,6 +339,7 @@ export default function App() {
             metric="power"
             defaultDivision="FCS"
             subLabel={page.subLabel}
+            onNavigateTeam={handleNavigateTeam}
             onNavigateConference={handleNavigateConference}
             onHome={handleHome}
           />
@@ -378,6 +382,7 @@ export default function App() {
             metric="sor"
             defaultDivision="FCS"
             subLabel={page.subLabel}
+            onNavigateTeam={handleNavigateTeam}
             onNavigateConference={handleNavigateConference}
             onHome={handleHome}
           />
@@ -442,7 +447,9 @@ export default function App() {
         <ConferenceComparisonPage onNavigateTeam={handleNavigateTeam} onHome={handleHome} />
       )}
 
-      {page.type === "confoverview" && <ConferenceOverviewPage onHome={handleHome} />}
+      {page.type === "confoverview" && (
+        <ConferenceOverviewPage onNavigateConference={handleNavigateConference} onHome={handleHome} />
+      )}
 
       {page.type === "tougheststretch" && (
         <ToughestStretchPage
