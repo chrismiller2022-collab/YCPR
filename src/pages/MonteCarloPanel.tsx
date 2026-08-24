@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import ExportPngButton from "../components/ExportPngButton";
+import { winTotalBuckets } from "../lib/montecarlo/distribution";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import {
   runMonteCarloAsync,
@@ -54,11 +55,7 @@ function fmtML(pct: number | null | undefined) {
 // Distribution breakdown — shown when a team row is expanded.
 // ---------------------------------------------------------------------
 function DistributionDetail({ result, colSpan, showMore }: { result: TeamSimResult; colSpan: number; showMore: boolean }) {
-  const total = result.winDistribution.reduce((s, c) => s + c, 0);
-  const buckets = result.winDistribution
-    .map((count, wins) => ({ wins, losses: result.totalGames - wins, pct: (count / total) * 100 }))
-    .filter((b) => b.pct > 0.05)
-    .sort((a, b) => b.pct - a.pct);
+  const buckets = winTotalBuckets(result);
 
   const seedBuckets = (result.seedPct ?? [])
     .map((pct, i) => ({ seed: i + 1, pct }))

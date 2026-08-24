@@ -16,6 +16,8 @@ import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import { splitTeamTotal } from "../lib/gameTotals";
 import ExportPngButton from "../components/ExportPngButton";
+import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
+import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -336,6 +338,56 @@ function SplitCard({ label, r }: { label: string; r: SplitRecord }) {
   );
 }
 
+function WinDistributionBlock({ team, season }: { team: any; season: number }) {
+  const [buckets, setBuckets] = useState<WinTotalBucket[]>([]);
+  const [numTrials, setNumTrials] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [meanWins, setMeanWins] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchMonteCarloRuns(season).then(async (list) => {
+      if (cancelled) return;
+      const latest = list[0];
+      if (!latest) {
+        setLoading(false);
+        return;
+      }
+      const run = await fetchMonteCarloRun(latest.id);
+      if (cancelled || !run) {
+        setLoading(false);
+        return;
+      }
+      const result = run.results.find((r) => r.team === team.team);
+      setBuckets(result ? winTotalBuckets(result) : []);
+      setMeanWins(result ? result.meanWins : null);
+      setNumTrials(run.num_trials);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [season, team.team]);
+
+  if (loading) return null;
+  if (buckets.length === 0) return null;
+
+  return (
+    <div className="table-wrap">
+      <div className="section-label">{team.team} win-total distribution</div>
+      <p style={{ fontSize: "0.85rem", margin: "0 0 0.5rem" }}>
+        {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
+      </p>
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: 0 }}>
+        {meanWins != null && <>Mean projected record: {meanWins.toFixed(1)} wins. </>}
+        Based on {numTrials > 0 ? numTrials.toLocaleString() : "100,000"} simulations using our power
+        ratings.
+      </p>
+    </div>
+  );
+}
+
 function HomeRoadSplitsBlock({ team }: { team: any }) {
   const season = new Date().getFullYear();
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -473,6 +525,8 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           </div>
         )}
       </div>
+
+      <WinDistributionBlock team={team} season={season} />
 
       <HomeRoadSplitsBlock team={team} />
 
