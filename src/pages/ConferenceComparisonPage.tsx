@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import ExportPngButton from "../components/ExportPngButton";
 import { conferencesForDivision, teamsForConference } from "../data/teams";
 import { SOS_BY_TEAM } from "../data/sor";
 import { RESUME_BY_TEAM } from "../data/resume";
@@ -133,6 +134,7 @@ function LineupRow({ seed, left, right, onNavigateTeam }: any) {
 }
 
 export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const [divA, setDivA] = useState("FBS");
   const [confA, setConfA] = useState("");
   const [divB, setDivB] = useState("FBS");
@@ -204,9 +206,9 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
   });
 
   return (
-    <div className="matchup-page">
+    <div className="matchup-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Tools</div>
@@ -217,10 +219,19 @@ export default function ConferenceComparisonPage({ onNavigateTeam, onHome }: any
           matched up in rank order, #1 vs #1 through the bottom of the
           roster, on a neutral field.
         </p>
+        {bothSelected && !sameConf && (
+          <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+            <ExportPngButton
+              targetRef={exportRef}
+              filename={() => `conf-comparison-${confA}-vs-${confB}`.toLowerCase().replace(/\s+/g, "-")}
+              showTweet={false}
+            />
+          </div>
+        )}
       </div>
 
       <div className="matchup-body compare-body">
-        <div className="picker-grid">
+        <div className="picker-grid" data-export-exclude="true">
           <ConferencePicker
             label="Conference A"
             division={divA}

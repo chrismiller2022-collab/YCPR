@@ -1,7 +1,14 @@
 import { useState, type RefObject } from "react";
 import { Download } from "lucide-react";
-import { exportNodeAsPng } from "../lib/exportPng";
+import { exportNodeAsPng, getMaxTableBodyRowCount } from "../lib/exportPng";
 import TweetButton from "./TweetButton";
+
+// Full-list team/tool pages can run past a hundred rows, which makes for
+// an unwieldy PNG when someone just wants a quick share — but a 16-team
+// conference table or a single week's slate of games shouldn't ever
+// nag about it. 25 draws the line at "long enough that Top 25 is a
+// meaningfully different, more shareable export," not just "has rows."
+const TOP_N_PROMPT_THRESHOLD = 25;
 
 // Renders Export PNG next to a Tweet button everywhere this component is
 // already used, site-wide — a single change here instead of touching
@@ -21,19 +28,54 @@ export default function ExportPngButton({
   tweetText?: string | (() => string);
 }) {
   const [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(false);
 
-  const handleClick = async () => {
+  const runExport = async (topN?: number) => {
     if (!targetRef.current || busy) return;
+    setChoosing(false);
     setBusy(true);
     try {
       const name = typeof filename === "function" ? filename() : filename;
-      await exportNodeAsPng(targetRef.current, name);
+      await exportNodeAsPng(targetRef.current, name, topN);
     } catch (err) {
       console.error("PNG export failed", err);
     } finally {
       setBusy(false);
     }
   };
+
+  const handleClick = () => {
+    if (!targetRef.current || busy) return;
+    const rowCount = getMaxTableBodyRowCount(targetRef.current);
+    if (rowCount > TOP_N_PROMPT_THRESHOLD) {
+      setChoosing(true);
+      return;
+    }
+    void runExport();
+  };
+
+  if (choosing) {
+    return (
+      <span style={{ display: "inline-flex", gap: "0.4rem", alignItems: "center" }} data-export-exclude="true">
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Export:</span>
+        <button type="button" className="export-png-btn" onClick={() => void runExport()} disabled={busy}>
+          Full List
+        </button>
+        <button type="button" className="export-png-btn" onClick={() => void runExport(25)} disabled={busy}>
+          Top 25
+        </button>
+        <button
+          type="button"
+          className="export-png-btn"
+          onClick={() => setChoosing(false)}
+          disabled={busy}
+          title="Cancel"
+        >
+          ✕
+        </button>
+      </span>
+    );
+  }
 
   return (
     <span style={{ display: "inline-flex", gap: "0.5rem" }} data-export-exclude="true">

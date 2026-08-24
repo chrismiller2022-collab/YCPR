@@ -28,7 +28,7 @@ export default function WeekReportPage({ onHome }: any) {
     (async () => {
       try {
         const { buildWeekReportPdf } = await import("../lib/pdfReport");
-        buildWeekReportPdf({
+        await buildWeekReportPdf({
           division,
           week,
           sos: topGainersAndLosers(division, sosChange),

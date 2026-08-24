@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
+import ExportPngButton from "../components/ExportPngButton";
 import { BracketGame } from "./BracketPage";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { RESUME_BY_TEAM } from "../data/resume";
@@ -9,6 +10,7 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fmtOdds } from "../lib/format";
 
 export default function Playoff24Page({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const staticField = useMemo(() => buildPlayoff24Field(), []);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
@@ -27,7 +29,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
     return (
       <div className="matchups-page">
         <div className="team-hero">
-          <button className="back-link" onClick={onHome}>
+          <button className="back-link" data-export-exclude="true" onClick={onHome}>
             ‹ All rankings
           </button>
           <div className="eyebrow">Tools</div>
@@ -60,9 +62,9 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
   const champion = playGame(champPair.host, champPair.away, true, liveByTeam);
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Tools</div>
@@ -74,6 +76,9 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
           championship. Projected champion:{" "}
           <strong style={{ color: "var(--gold)" }}>{champion.team.team}</strong>.
         </p>
+        <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+          <ExportPngButton targetRef={exportRef} filename="24-team-playoff" showTweet={false} />
+        </div>
       </div>
 
       <div className="bracket-body">

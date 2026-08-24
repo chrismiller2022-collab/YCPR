@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
@@ -15,6 +15,7 @@ import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import { splitTeamTotal } from "../lib/gameTotals";
+import ExportPngButton from "../components/ExportPngButton";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -373,6 +374,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const radarMetrics = computeRadarMetrics(team, liveByTeam);
   const season = new Date().getFullYear();
   const { rows: totalsRows } = useGameTotalsEngine(season);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   // Game/Team Totals engine keys games by CFBD id (different id space
   // than the static schedule bundle's own ids), so match on week + both
@@ -392,9 +394,9 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   }, 0);
 
   return (
-    <div className="team-page">
+    <div className="team-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">
@@ -404,6 +406,10 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           <TeamLogo team={team} size="3.2rem" />
           <h1 className="title team-title">{team.team}</h1>
         </div>
+      </div>
+
+      <div className="export-toolbar" data-export-exclude="true">
+        <ExportPngButton targetRef={exportRef} filename={() => `${team.team.toLowerCase().replace(/\s+/g, "-")}-team-page`} showTweet={false} />
       </div>
 
       <div className="table-wrap">

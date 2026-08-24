@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import RadarChart from "../components/RadarChart";
 import TeamLogo from "../components/TeamLogo";
 import TeamPicker from "../components/TeamPicker";
+import ExportPngButton from "../components/ExportPngButton";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { spreadColor } from "../lib/odds";
 import { computeRadarMetrics } from "../lib/percentiles";
@@ -39,6 +40,7 @@ function ComparisonCell({ stat }: any) {
 
 
 export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const [slots, setSlots] = useState(() =>
     Array.from({ length: 6 }, () => ({ div: "All", conf: "All", team: "" }))
   );
@@ -63,9 +65,9 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
   });
 
   return (
-    <div className="matchup-page">
+    <div className="matchup-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Tools</div>
@@ -74,10 +76,15 @@ export default function ResumeComparisonPage({ onNavigateTeam, onHome }: any) {
           Pick up to 6 teams to compare every stat from their team page's
           graphic card, side by side.
         </p>
+        {selectedTeams.length > 0 && (
+          <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+            <ExportPngButton targetRef={exportRef} filename="resume-comparison" showTweet={false} />
+          </div>
+        )}
       </div>
 
       <div className="matchup-body compare-body">
-        <div className="compare-picker-grid">
+        <div className="compare-picker-grid" data-export-exclude="true">
           {slots.map((s, i) => (
             <TeamPicker
               key={i}

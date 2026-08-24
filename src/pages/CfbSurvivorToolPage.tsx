@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import ExportPngButton from "../components/ExportPngButton";
 import { availableConferences, DEFAULT_CONFERENCES } from "../lib/survivor";
 import {
   fetchPoolSeasonGames,
@@ -27,6 +28,7 @@ interface GridCell {
 }
 
 export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void }) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const allConfs = useMemo(() => availableConferences(), []);
   const [season, setSeason] = useState(new Date().getFullYear());
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
@@ -179,10 +181,10 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
   }
 
   return (
-    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: "none", margin: "0 auto" }}>
+    <div style={{ padding: "1.5rem 1.25rem 3rem", maxWidth: "none", margin: "0 auto" }} ref={exportRef}>
       <div className="team-hero">
         {onHome && (
-          <button className="back-link" onClick={onHome}>
+          <button className="back-link" data-export-exclude="true" onClick={onHome}>
             ‹ All rankings
           </button>
         )}
@@ -192,9 +194,13 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
           Browse and plan out survivor picks across the whole season — pick any team in any
           week to try out a strategy. Nothing here is saved; it's purely a planning tool.
         </p>
+        <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+          <ExportPngButton targetRef={exportRef} filename="cfb-survivor-plan" showTweet={false} />
+        </div>
       </div>
 
       <div
+        data-export-exclude="true"
         style={{
           marginBottom: "1.25rem",
           padding: "1rem 1.1rem",

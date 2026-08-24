@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
+import ExportPngButton from "../components/ExportPngButton";
 import { gamesForTeam } from "../data/games";
 import { CONFERENCES, TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
@@ -160,6 +161,7 @@ function StretchCard({ rank, data, gameCount, onNavigateTeam, onNavigateConferen
 }
 
 export default function ToughestStretchPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const [gameCount, setGameCount] = useState(4);
   const [division, setDivision] = useState("FBS");
   const [conference, setConference] = useState("All");
@@ -192,9 +194,9 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
   }, [gameCount, division, conference, liveByTeam, top25AvgByDiv]);
 
   return (
-    <div className="matchups-page">
+    <div className="matchups-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Tools · Strength of Schedule</div>
@@ -209,7 +211,7 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
         </p>
       </div>
 
-      <div className="mode-toggle">
+      <div className="mode-toggle" data-export-exclude="true">
         {GAME_COUNTS.map((n) => (
           <button
             key={n}
@@ -221,7 +223,7 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
         ))}
       </div>
 
-      <div className="controls matchups-controls">
+      <div className="controls matchups-controls" data-export-exclude="true">
         <select
           className="filter"
           value={division}
@@ -250,6 +252,7 @@ export default function ToughestStretchPage({ onNavigateTeam, onNavigateConferen
             </option>
           ))}
         </select>
+        <ExportPngButton targetRef={exportRef} filename={`toughest-stretch-${gameCount}-game`} />
       </div>
 
       <div className="stretch-list">

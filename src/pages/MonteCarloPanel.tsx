@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import ExportPngButton from "../components/ExportPngButton";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import {
   runMonteCarloAsync,
@@ -1534,16 +1535,17 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
   const [section, setSection] = useState<"results" | "betting" | "srs" | "seeds" | "confstandings">("results");
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const { medianFcsRating, syntheticRating } = getSubFcsRatingInfo(liveByTeam);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+      <button className="menu-btn" data-export-exclude="true" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         ‹ Admin
       </button>
 
       <h2 style={{ marginTop: 0 }}>Monte Carlo</h2>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", alignItems: "center", flexWrap: "wrap" }} data-export-exclude="true">
         <button className={`mode-btn ${section === "results" ? "mode-btn-active" : ""}`} onClick={() => setSection("results")}>
           Monte Carlo Results
         </button>
@@ -1562,15 +1564,20 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
         >
           Conference Standings
         </button>
+        <span style={{ marginLeft: "auto" }}>
+          <ExportPngButton targetRef={exportRef} filename={() => `monte-carlo-${section}`} showTweet={false} />
+        </span>
       </div>
 
-      {section === "results" && <MonteCarloResultsSection />}
-      {section === "betting" && <BettingTab />}
-      {section === "srs" && <SrsTab />}
-      {section === "seeds" && <PlayoffSeedOddsTab />}
-      {section === "confstandings" && <ConferenceStandingsTab />}
+      <div ref={exportRef}>
+        {section === "results" && <MonteCarloResultsSection />}
+        {section === "betting" && <BettingTab />}
+        {section === "srs" && <SrsTab />}
+        {section === "seeds" && <PlayoffSeedOddsTab />}
+        {section === "confstandings" && <ConferenceStandingsTab />}
+      </div>
 
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: "2rem", borderTop: "1px solid var(--hash)", paddingTop: "1rem" }}>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: "2rem", borderTop: "1px solid var(--hash)", paddingTop: "1rem" }} data-export-exclude="true">
         Simulates the rest of the season using your projected spread for every remaining
         game plus a random margin drawn from a Normal distribution (mean 0, stddev 15.7,
         clipped ±25) — your same spreadsheet method. Reg. Season Record / 95% CI cover only

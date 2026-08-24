@@ -1,5 +1,46 @@
 import { toPng, toBlob } from "html-to-image";
 
+// Row-count helper shared by ExportPngButton (to decide whether to show
+// the Full List/Top 25 prompt at all) and limitToTopN below (to actually
+// truncate for capture). "Row count" = the biggest single <tbody>'s
+// direct <tr> count — biggest, not total, so a page with several small
+// tables (e.g. Hardest/Easiest side-by-side SOS columns) doesn't
+// accidentally sum past the threshold and trigger a prompt that wouldn't
+// make sense there.
+export function getMaxTableBodyRowCount(root: HTMLElement): number {
+  const bodies = Array.from(root.querySelectorAll<HTMLTableSectionElement>("table tbody"));
+  let max = 0;
+  for (const tbody of bodies) {
+    const count = tbody.querySelectorAll(":scope > tr").length;
+    if (count > max) max = count;
+  }
+  return max;
+}
+
+// For "Top 25" exports — hides every body row past the Nth in each table
+// inside the target, so the exported PNG only shows the first N. Every
+// team-list page on the site already renders rows in ranked order, so
+// "first N rendered rows" is exactly "Top N" with no per-page wiring
+// needed here. Restored right after capture, same pattern as
+// expandScrollAreas below.
+function limitToTopN(root: HTMLElement, n: number): () => void {
+  const bodies = Array.from(root.querySelectorAll<HTMLTableSectionElement>("table tbody"));
+  const restores: (() => void)[] = [];
+  for (const tbody of bodies) {
+    const rows = Array.from(tbody.querySelectorAll<HTMLTableRowElement>(":scope > tr"));
+    rows.forEach((row, i) => {
+      if (i >= n) {
+        const prevDisplay = row.style.display;
+        row.style.display = "none";
+        restores.push(() => {
+          row.style.display = prevDisplay;
+        });
+      }
+    });
+  }
+  return () => restores.forEach((restore) => restore());
+}
+
 // Wrapper containers use `.table-scroll` (max-height + overflow: auto) so
 // long tables scroll on-page instead of stretching the layout. html-to-image
 // only captures what's actually rendered, so a scrolled container would
@@ -67,7 +108,8 @@ function appendBrandingFooter(root: HTMLElement): () => void {
   return () => bar.remove();
 }
 
-async function withCapturePrep<T>(node: HTMLElement, capture: () => Promise<T>): Promise<T> {
+async function withCapturePrep<T>(node: HTMLElement, capture: () => Promise<T>, topN?: number): Promise<T> {
+  const restoreTopN = topN != null ? limitToTopN(node, topN) : () => {};
   const restoreScroll = expandScrollAreas(node);
   const removeBranding = appendBrandingFooter(node);
   try {
@@ -75,13 +117,19 @@ async function withCapturePrep<T>(node: HTMLElement, capture: () => Promise<T>):
   } finally {
     removeBranding();
     restoreScroll();
+    restoreTopN();
   }
 }
 
 const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: shouldInclude };
 
-export async function exportNodeAsPng(node: HTMLElement, filename: string) {
-  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS));
+/**
+ * @param topN - When set (e.g. from the Top 25 choice), body rows past
+ * the Nth in every table are hidden for capture only, then restored.
+ * Omit for the Full List export.
+ */
+export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?: number) {
+  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
@@ -90,9 +138,9 @@ export async function exportNodeAsPng(node: HTMLElement, filename: string) {
   link.remove();
 }
 
-/** Same rasterization (branding + scroll-area expansion included) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
-export async function exportNodeAsPngBlob(node: HTMLElement): Promise<Blob> {
-  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS));
+/** Same rasterization (branding + scroll-area expansion + optional Top N truncation) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
+export async function exportNodeAsPngBlob(node: HTMLElement, topN?: number): Promise<Blob> {
+  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }

@@ -3,13 +3,37 @@ import autoTable from "jspdf-autotable";
 import { fmtNum, fmtOdds, fmtPct } from "./format";
 import { chunkForCompactGrid, type CompactRatingRow } from "./compactPowerRatings";
 import type { ChangeRow, WinsLossesRow, ConferencePreviewRowData, MatchupRow } from "./reportData";
+import { loadTeamLogos } from "./pdfLogos";
 
 const MARGIN = 40;
 // Landscape letter is 792pt wide x 612pt tall - much shorter than portrait,
 // so the "do we need a new page" threshold has to be lower.
 const MAX_Y = 540;
 
-function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: number) {
+// Draws a team's logo (if we have one) left-aligned and vertically
+// centered inside a table cell, for use in autoTable's didDrawCell hook.
+// Wrapped in try/catch since a malformed data URL shouldn't take down
+// the rest of the report.
+function drawLogoInCell(doc: jsPDF, cell: { x: number; y: number; height: number }, dataUrl: string | undefined) {
+  if (!dataUrl) return;
+  const size = 10;
+  const x = cell.x + 2;
+  const y = cell.y + (cell.height - size) / 2;
+  try {
+    doc.addImage(dataUrl, "PNG", x, y, size, size);
+  } catch {
+    // logo just doesn't render for this row; the team name text is
+    // unaffected since it's drawn independently by autoTable.
+  }
+}
+
+function changeTable(
+  doc: jsPDF,
+  title: string,
+  rows: ChangeRow[],
+  startY: number,
+  logosByTeam?: Map<string, string>
+) {
   doc.setFontSize(11);
   doc.text(title, MARGIN, startY);
   autoTable(doc, {
@@ -24,6 +48,13 @@ function changeTable(doc: jsPDF, title: string, rows: ChangeRow[], startY: numbe
     styles: { fontSize: 8, cellPadding: 3 },
     headStyles: { fillColor: [31, 32, 65] },
     theme: "striped",
+    columnStyles: logosByTeam ? { 0: { cellPadding: { top: 3, right: 3, bottom: 3, left: 15 } } } : undefined,
+    didDrawCell: logosByTeam
+      ? (data) => {
+          if (data.section !== "body" || data.column.index !== 0) return;
+          drawLogoInCell(doc, data.cell, logosByTeam.get(rows[data.row.index]?.team.team));
+        }
+      : undefined,
   });
   return (doc as any).lastAutoTable.finalY;
 }
@@ -33,7 +64,8 @@ function winsLossesTable(
   title: string,
   rows: WinsLossesRow[],
   valueKey: "winsLeft" | "lossesLeft",
-  startY: number
+  startY: number,
+  logosByTeam?: Map<string, string>
 ) {
   doc.setFontSize(11);
   doc.text(title, MARGIN, startY);
@@ -51,6 +83,13 @@ function winsLossesTable(
     styles: { fontSize: 8, cellPadding: 3 },
     headStyles: { fillColor: [31, 32, 65] },
     theme: "striped",
+    columnStyles: logosByTeam ? { 0: { cellPadding: { top: 3, right: 3, bottom: 3, left: 15 } } } : undefined,
+    didDrawCell: logosByTeam
+      ? (data) => {
+          if (data.section !== "body" || data.column.index !== 0) return;
+          drawLogoInCell(doc, data.cell, logosByTeam.get(rows[data.row.index]?.team.team));
+        }
+      : undefined,
   });
   return (doc as any).lastAutoTable.finalY;
 }
@@ -125,7 +164,7 @@ export interface WeekReportInput {
   hasWeeklyChangeData: boolean;
 }
 
-export function buildWeekReportPdf(input: WeekReportInput) {
+export async function buildWeekReportPdf(input: WeekReportInput) {
   const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
   const {
     division,
@@ -158,6 +197,20 @@ export function buildWeekReportPdf(input: WeekReportInput) {
 
   let y = 100;
 
+  // Logos for every team appearing in the row-based Top 25 / Wins-Left
+  // sections below (the compact spreadsheet-style Full Power Ratings grid
+  // in Section 4 stays text-only — at ~7pt font in a 34-row column, a
+  // squeezed-in logo icon would be illegible rather than useful).
+  const logoTeams = [
+    ...sos.gainers,
+    ...sos.losers,
+    ...resume.gainers,
+    ...resume.losers,
+    ...rating.gainers,
+    ...rating.losers,
+  ].map((r) => r.team.team).concat(wl.byWinsLeft.map((r) => r.team.team), wl.byLossesLeft.map((r) => r.team.team));
+  const logosByTeam = await loadTeamLogos(logoTeams);
+
   if (!hasWeeklyChangeData) {
     doc.setFontSize(10);
     doc.setTextColor(150, 90, 0);
@@ -180,26 +233,26 @@ export function buildWeekReportPdf(input: WeekReportInput) {
   doc.text("1. Top 25 Gainers & Losers (Change From Last Week)", MARGIN, y);
   y += 20;
 
-  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Gainers", sos.gainers, y) + 26;
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Gainers", sos.gainers, y, logosByTeam) + 26;
   y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Losers", sos.losers, y) + 26;
+  y = changeTable(doc, "1a. Strength of Schedule (SOS) - Top 25 Losers", sos.losers, y, logosByTeam) + 26;
 
   y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1b. Resume Rating - Top 25 Gainers", resume.gainers, y) + 26;
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Gainers", resume.gainers, y, logosByTeam) + 26;
   y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1b. Resume Rating - Top 25 Losers", resume.losers, y) + 26;
+  y = changeTable(doc, "1b. Resume Rating - Top 25 Losers", resume.losers, y, logosByTeam) + 26;
 
   y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1c. Power Rating - Top 25 Gainers", rating.gainers, y) + 26;
+  y = changeTable(doc, "1c. Power Rating - Top 25 Gainers", rating.gainers, y, logosByTeam) + 26;
   y = pageBreakIfNeeded(doc, y);
-  y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y) + 26;
+  y = changeTable(doc, "1c. Power Rating - Top 25 Losers", rating.losers, y, logosByTeam) + 26;
 
   y = pageBreakIfNeeded(doc, y);
   y =
-    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y) + 26;
+    winsLossesTable(doc, "1d. Wins Left - Top 25", wl.byWinsLeft, "winsLeft", y, logosByTeam) + 26;
   y = pageBreakIfNeeded(doc, y);
   y =
-    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y) + 26;
+    winsLossesTable(doc, "1e. Losses Left - Top 25", wl.byLossesLeft, "lossesLeft", y, logosByTeam) + 26;
 
   // --- Section 2: Week matchups ---
   doc.addPage();

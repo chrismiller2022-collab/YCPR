@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import TeamPicker from "../components/TeamPicker";
+import ExportPngButton from "../components/ExportPngButton";
 import { TEAMS } from "../data/teams";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { buildRankMap } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 export default function MatchupPage({ onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const [divA, setDivA] = useState("All");
   const [confA, setConfA] = useState("All");
   const [teamAName, setTeamAName] = useState("");
@@ -64,9 +66,9 @@ export default function MatchupPage({ onHome }: any) {
       : "neutral site";
 
   return (
-    <div className="matchup-page">
+    <div className="matchup-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Simulator</div>
@@ -75,10 +77,19 @@ export default function MatchupPage({ onHome }: any) {
           Pick any two teams to calculate a projected spread from their power
           ratings.
         </p>
+        {bothSelected && !sameTeam && (
+          <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+            <ExportPngButton
+              targetRef={exportRef}
+              filename={() => `matchup-${teamA.team}-vs-${teamB.team}`.toLowerCase().replace(/\s+/g, "-")}
+              showTweet={false}
+            />
+          </div>
+        )}
       </div>
 
       <div className="matchup-body">
-        <div className="picker-grid">
+        <div className="picker-grid" data-export-exclude="true">
           <TeamPicker
             label="Team A"
             division={divA}
@@ -116,7 +127,7 @@ export default function MatchupPage({ onHome }: any) {
           />
         </div>
 
-        <div className="home-select">
+        <div className="home-select" data-export-exclude="true">
           <div className="section-label home-select-label">Field</div>
           <div className="home-toggle">
             <button

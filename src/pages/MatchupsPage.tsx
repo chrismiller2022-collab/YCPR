@@ -5,6 +5,7 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
 function dateLabel(g: GameWithLines) {
   return g.start_date
@@ -99,9 +100,19 @@ function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed;
   );
 }
 
-function TotalsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
+function TotalsRow({ computed, projTotalByGame, onNavigateTeam }: { computed: MatchupComputed; projTotalByGame: Map<string, number>; onNavigateTeam: any }) {
   const { game, awayTeam, homeTeam, line, totalResult } = computed;
   if (!awayTeam || !homeTeam) return null;
+
+  const projTotal = projTotalByGame.get(`${game.week}|${game.home_team}|${game.away_team}`) ?? null;
+  const projResult =
+    projTotal != null && line?.over_under != null
+      ? projTotal > line.over_under
+        ? "Over"
+        : projTotal < line.over_under
+        ? "Under"
+        : "Push"
+      : null;
 
   return (
     <tr>
@@ -109,10 +120,10 @@ function TotalsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; on
       <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
       <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
       <td className="matchups-projected-cell">{line?.over_under != null ? line.over_under : "–"}</td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-projected-cell">{projTotal != null ? projTotal.toFixed(1) : "–"}</td>
       <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
       <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
-      <td className="matchups-empty-cell">–</td>
+      <td className="matchups-winner-cell">{projResult ?? "–"}</td>
       <td className="matchups-winner-cell">{totalResult ?? "–"}</td>
     </tr>
   );
@@ -124,7 +135,7 @@ const MATCHUPS_MODES = [
   { key: "totals", label: "Totals" },
 ];
 
-function MatchupsTable({ rows, onNavigateTeam, mode }: { rows: MatchupComputed[]; onNavigateTeam: any; mode: string }) {
+function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: MatchupComputed[]; onNavigateTeam: any; mode: string; projTotalByGame: Map<string, number> }) {
   return (
     <div className="table-scroll">
       <table className="matchups-table" style={{ width: "100%" }}>
@@ -177,7 +188,7 @@ function MatchupsTable({ rows, onNavigateTeam, mode }: { rows: MatchupComputed[]
         <tbody>
           {mode === "spreads" && rows.map((c) => <SpreadsRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
           {mode === "moneyline" && rows.map((c) => <MoneylineRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
-          {mode === "totals" && rows.map((c) => <TotalsRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
+          {mode === "totals" && rows.map((c) => <TotalsRow key={c.game.id} computed={c} projTotalByGame={projTotalByGame} onNavigateTeam={onNavigateTeam} />)}
         </tbody>
       </table>
     </div>
@@ -371,6 +382,20 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { rows: totalsEngineRows } = useGameTotalsEngine(season);
+
+  // Same week+teams keying as the team page's Proj. Score column — the
+  // Game/Team Totals engine's own game ids are CFBD ids, a different
+  // space than this page's Vegas-lines game ids.
+  const projTotalByGame = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsEngineRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsEngineRows]);
 
   useEffect(() => {
     setLoading(true);
@@ -468,7 +493,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
           {!loading && !isAll && visibleRows.length > 0 && (
             <>
-              <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} />
+              <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
               <BettingStatsBlock rows={visibleRows} title={`${subLabel} Betting Stats`} />
             </>
           )}
@@ -483,7 +508,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
             groupedByWeek.map(({ week, rows }) => (
               <div key={week} className="week-group">
                 <div className="section-label week-group-label">Week {week}</div>
-                <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} />
+                <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
               </div>
             ))}
 

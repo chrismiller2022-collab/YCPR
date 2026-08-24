@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import TeamPicker from "../components/TeamPicker";
+import ExportPngButton from "../components/ExportPngButton";
 import { TEAMS } from "../data/teams";
 import { spreadColor } from "../lib/odds";
 import { computeSwapSchedule } from "../lib/schedule";
@@ -99,6 +100,7 @@ function SwapScheduleTable({ title, ratingTeam, opponentLabel, data, onNavigateT
 
 
 export default function ScheduleSwapPage({ onNavigateTeam, onHome }: any) {
+  const exportRef = useRef<HTMLDivElement>(null);
   const [divA, setDivA] = useState("All");
   const [confA, setConfA] = useState("All");
   const [teamAName, setTeamAName] = useState("");
@@ -120,9 +122,9 @@ export default function ScheduleSwapPage({ onNavigateTeam, onHome }: any) {
   const teamBOnA = bothSelected ? computeSwapSchedule(teamA.team, teamB, liveByTeam) : null;
 
   return (
-    <div className="matchup-page schedule-swap-page">
+    <div className="matchup-page schedule-swap-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Simulator</div>
@@ -131,10 +133,19 @@ export default function ScheduleSwapPage({ onNavigateTeam, onHome }: any) {
           Compare two teams' projected records on their own schedule, then see
           how those records would change if they swapped schedules entirely.
         </p>
+        {bothSelected && !sameTeam && (
+          <div style={{ marginTop: "0.75rem" }} data-export-exclude="true">
+            <ExportPngButton
+              targetRef={exportRef}
+              filename={() => `schedule-swap-${teamA.team}-vs-${teamB.team}`.toLowerCase().replace(/\s+/g, "-")}
+              showTweet={false}
+            />
+          </div>
+        )}
       </div>
 
       <div className="matchup-body">
-        <div className="picker-grid">
+        <div className="picker-grid" data-export-exclude="true">
           <TeamPicker
             label="Team A"
             division={divA}
