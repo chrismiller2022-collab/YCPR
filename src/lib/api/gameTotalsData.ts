@@ -1,5 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
+import { cachedFetch } from "./cache";
 import { type TeamSeasonInputs, type SystemWeights, DEFAULT_SYSTEM_WEIGHTS } from "../gameTotals";
 
 // Every off_*/def_* advanced-stat column in team_season_stats — these are
@@ -23,6 +24,31 @@ const ADVANCED_STAT_COLUMNS = [
   "def_passing_plays_explosiveness", "def_field_position_avg_start", "def_field_position_avg_predicted_points",
   "def_havoc_total", "def_havoc_front_seven", "def_havoc_db",
 ] as const;
+
+// Basic box-score / usage columns actually read below, alongside the
+// advanced-stat columns above — together these replace select("*"),
+// which was pulling every column team_season_stats has (including ones
+// nothing here ever reads) on every single fetch.
+const TEAM_SEASON_STATS_BASE_COLUMNS = [
+  "team",
+  "games",
+  "offense_plays",
+  "defense_plays",
+  "offense_drives",
+  "defense_drives",
+  "total_yards",
+  "total_yards_opponent",
+  "pass_attempts",
+  "net_passing_yards",
+  "pass_attempts_opponent",
+  "net_passing_yards_opponent",
+  "rushing_attempts",
+  "rushing_yards",
+  "rushing_attempts_opponent",
+  "rushing_yards_opponent",
+] as const;
+
+const TEAM_SEASON_STATS_COLUMNS = [...TEAM_SEASON_STATS_BASE_COLUMNS, ...ADVANCED_STAT_COLUMNS].join(", ");
 
 // Weeks 1-3ish of a new season have thin-to-nonexistent CURRENT-season
 // advanced stats (CFBD's /stats/season/advanced has nothing to compute
@@ -49,12 +75,16 @@ function blendedValue(curr: number | null | undefined, prev: number | null | und
 }
 
 export async function fetchTeamSeasonInputs(season: number): Promise<Record<string, TeamSeasonInputs>> {
+  return cachedFetch(`team-season-inputs:${season}`, () => fetchTeamSeasonInputsUncached(season));
+}
+
+async function fetchTeamSeasonInputsUncached(season: number): Promise<Record<string, TeamSeasonInputs>> {
   const [statsRows, prevStatsRows, gameRows] = await Promise.all([
     fetchAllRows<any>((from, to) =>
-      supabase.from("team_season_stats").select("*").eq("season", season).range(from, to)
+      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season).range(from, to)
     ),
     fetchAllRows<any>((from, to) =>
-      supabase.from("team_season_stats").select("*").eq("season", season - 1).range(from, to)
+      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season - 1).range(from, to)
     ),
     fetchAllRows<any>((from, to) =>
       supabase
@@ -189,6 +219,10 @@ export interface GameForTotals {
 }
 
 export async function fetchGamesForTotals(season: number): Promise<GameForTotals[]> {
+  return cachedFetch(`games-for-totals:${season}`, () => fetchGamesForTotalsUncached(season));
+}
+
+async function fetchGamesForTotalsUncached(season: number): Promise<GameForTotals[]> {
   const games = await fetchAllRows<any>((from, to) =>
     supabase
       .from("games")

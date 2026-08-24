@@ -14,6 +14,7 @@ import {
 } from "../lib/gameTotalsEngine";
 import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
+import { invalidateCache } from "../lib/api/cache";
 import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, type ViewMode } from "./PerformanceView";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
@@ -644,6 +645,7 @@ export function SyncControl({ season }: { season: number }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Sync failed");
+      invalidateCache(); // otherwise the cached fetchers keep serving pre-sync data for up to the TTL window
       setMsg(
         `Synced: ${data.gamesUpserted} games, ${data.linesUpserted} lines` +
           (includeStats ? `, ${data.statsTeamsUpserted} teams' stats.` : ".")
@@ -706,6 +708,7 @@ export function CsvImportControl({ season }: { season: number }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
+      invalidateCache();
       setMsg(`Imported ${data.imported} teams' stats from CSV. Games/lines still need syncing separately — this only covers team_season_stats.`);
     } catch (err: any) {
       setMsg(`Error: ${err.message}`);

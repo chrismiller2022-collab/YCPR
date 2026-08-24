@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
+import { invalidateCache } from "../lib/api/cache";
 
 function dateLabel(iso: string | null) {
   if (!iso) return "–";
@@ -101,6 +102,7 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
             data.week === "all" ? " (whole season)" : ` week ${data.week}`
           }.${skippedNote}`
         );
+        invalidateCache(); // otherwise the cached fetchers keep serving pre-sync data for up to the TTL window
         loadView();
       }
     } catch (err: any) {

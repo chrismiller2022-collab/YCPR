@@ -1,5 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
+import { cachedFetch } from "./cache";
 
 export interface GameRow {
   id: string;
@@ -39,35 +40,50 @@ export interface GameWithLines extends GameRow {
   lines: BettingLineRow[];
 }
 
+// Explicit column lists instead of select("*") — this is by far the
+// most widely-called fetcher on the site (14 callers across public
+// pages and admin panels), so a wide unfiltered select here gets
+// multiplied by every one of those. Matches GameRow/BettingLineRow above
+// exactly, field for field.
+const GAME_COLUMNS =
+  "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, away_team, away_classification, away_conference, away_points, away_postgame_win_probability";
+const LINE_COLUMNS = "id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at";
+
 /**
  * Games for a given season, each with its betting lines attached. Pass a
  * week to filter to just that week, or omit it to pull the whole season.
+ * Cached for 5 minutes per (season, week) — 14 different pages/panels
+ * call this independently, often for the same season within one browsing
+ * session, so without a cache every navigation re-pulled the full
+ * dataset from Supabase.
  */
 export async function fetchGamesWithLines(season: number, week?: number): Promise<GameWithLines[]> {
-  const [games, lines] = await Promise.all([
-    fetchAllRows<GameRow>((from, to) => {
-      let q = supabase.from("games").select("*").eq("season", season);
-      if (week != null) q = q.eq("week", week);
-      return q.order("start_date", { ascending: true }).range(from, to);
-    }),
-    fetchAllRows<BettingLineRow>((from, to) => {
-      let q = supabase.from("betting_lines").select("*").eq("season", season);
-      if (week != null) q = q.eq("week", week);
-      return q.range(from, to);
-    }),
-  ]);
+  return cachedFetch(`games-with-lines:${season}:${week ?? "all"}`, async () => {
+    const [games, lines] = await Promise.all([
+      fetchAllRows<GameRow>((from, to) => {
+        let q = supabase.from("games").select(GAME_COLUMNS).eq("season", season);
+        if (week != null) q = q.eq("week", week);
+        return q.order("start_date", { ascending: true }).range(from, to);
+      }),
+      fetchAllRows<BettingLineRow>((from, to) => {
+        let q = supabase.from("betting_lines").select(LINE_COLUMNS).eq("season", season);
+        if (week != null) q = q.eq("week", week);
+        return q.range(from, to);
+      }),
+    ]);
 
-  const linesByGame = new Map<string, BettingLineRow[]>();
-  for (const line of lines) {
-    const list = linesByGame.get(line.game_id) ?? [];
-    list.push(line);
-    linesByGame.set(line.game_id, list);
-  }
+    const linesByGame = new Map<string, BettingLineRow[]>();
+    for (const line of lines) {
+      const list = linesByGame.get(line.game_id) ?? [];
+      list.push(line);
+      linesByGame.set(line.game_id, list);
+    }
 
-  return games.map((g) => ({
-    ...g,
-    lines: linesByGame.get(g.id) ?? [],
-  }));
+    return games.map((g) => ({
+      ...g,
+      lines: linesByGame.get(g.id) ?? [],
+    }));
+  });
 }
 
 /** Distinct (season, week) pairs currently in the games table, most recent first. */
