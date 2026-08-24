@@ -58,12 +58,15 @@ export function computeRadarMetrics(team: any, liveByTeam: Record<string, any> =
     (t) => liveByTeam[t.team]?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? null,
     true
   );
-  // SOS/SOR: lower (more negative) = tougher schedule = better, same
-  // convention as power rating.
+  // SOS/SOR: higher (more positive) value = tougher schedule, matching the
+  // live SOS page's own convention (Hardest column = highest sos value,
+  // rank 1). This was previously ranked with the opposite direction, which
+  // put a team with a genuinely brutal schedule near the 0th percentile
+  // here instead of the 100th.
   const sosRank = rankWithinDivision(
     divisionTeams,
     (t) => liveByTeam[t.team]?.sor ?? SOS_BY_TEAM[t.team] ?? null,
-    false
+    true
   );
   const confOddsRank = rankWithinDivision(
     divisionTeams,

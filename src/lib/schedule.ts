@@ -187,10 +187,15 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
 
   // Rank of our own SOR among every team with a live value, falling back to
   // the static snapshot's rank map if no live SOR data has been saved yet.
+  // higherIsBetter=true: a higher (more positive) sor value means a
+  // tougher schedule, matching the live SOS page's own Hardest-column
+  // convention (rank 1 = highest value = hardest) — this was previously
+  // ranked ascending, the opposite direction, which put teams with a
+  // genuinely brutal schedule near the bottom of the rank instead of top.
   const liveSorEntries = TEAMS.filter((t) => liveByTeam[t.team]?.sor != null).map(
     (t) => [t.team, liveByTeam[t.team].sor]
   );
-  const sorRankMap = liveSorEntries.length > 0 ? buildRankMap(liveSorEntries, false) : SOR_RANK_BY_TEAM;
+  const sorRankMap = liveSorEntries.length > 0 ? buildRankMap(liveSorEntries, true) : SOR_RANK_BY_TEAM;
   const sorValue = live?.sor ?? SOS_BY_TEAM[team.team] ?? null;
   const sorRank = sorRankMap[team.team];
 

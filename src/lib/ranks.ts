@@ -34,10 +34,14 @@ export function buildRankMap(entries, higherIsBetter) {
   return map;
 }
 
-// Power Rating rank reuses each team's existing global rank (lower rating = better).
+// SOS/SOR rank: higher (more positive) value = tougher schedule, matching
+// the live SOS page's own convention (Hardest column = highest sos value,
+// rank 1). Was previously ranked ascending here — the opposite direction —
+// which meant a team with a genuinely brutal schedule (a high positive
+// value) landed near the BOTTOM of this rank instead of the top.
 export const SOR_RANK_BY_TEAM = buildRankMap(
   Object.entries(SOS_BY_TEAM),
-  false
+  true
 );
 export const WIN_TOTAL_RANK_BY_TEAM = buildRankMap(
   TEAMS.map((t) => [t.team, TEAM_WIN_TOTALS[t.team].total]),

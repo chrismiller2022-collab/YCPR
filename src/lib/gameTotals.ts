@@ -424,7 +424,16 @@ export function splitTeamTotal(total: number | null, homeSpread: number | null):
   const half = (total - Math.abs(homeSpread)) / 2;
   const favoriteHalf = half + Math.abs(homeSpread);
   const homeIsFavorite = homeSpread < 0;
-  return homeIsFavorite ? { home: favoriteHalf, away: half } : { home: half, away: favoriteHalf };
+  // The Total model (Ridge regression on box-score inputs) and the spread
+  // (power-rating differential) are computed independently, so nothing
+  // stops the spread from exceeding the total — a 50-point favorite in a
+  // 49-point game, for instance. Left unclamped, the underdog's half goes
+  // negative (e.g. -0.4), which isn't a real football score. Floor each
+  // side at 0 rather than trying to reconcile the two models against each
+  // other.
+  const favoriteScore = Math.max(0, favoriteHalf);
+  const underdogScore = Math.max(0, half);
+  return homeIsFavorite ? { home: favoriteScore, away: underdogScore } : { home: underdogScore, away: favoriteScore };
 }
 
 export function stdDev(values: number[]): number {
