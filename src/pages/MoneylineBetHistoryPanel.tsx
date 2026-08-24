@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import TeamLogo from "../components/TeamLogo";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { BET_HISTORY } from "../data/betHistory.data";
@@ -508,8 +509,12 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" }}>
                         {fmtDateTime(r.game.start_date)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{r.game.away_team}</td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{r.game.home_team}</td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                      </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
                         {fmtSpread(r.myAwaySpread)}
                       </td>
@@ -543,6 +548,9 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         {fmtEv(r.evHome)}
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", fontWeight: 700 }}>
+                        {r.betSide != null && (
+                          <TeamLogo team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />
+                        )}{" "}
                         {r.betSide === "away" ? r.game.away_team : r.betSide === "home" ? r.game.home_team : "–"}
                         {r.betEv != null && r.betEv > evThreshold && (
                           <span

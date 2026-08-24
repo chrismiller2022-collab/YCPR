@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -230,6 +231,7 @@ function TeamNameCell({ team, name }: { team: any | null; name: string }) {
   }
   return (
     <td className="matchup-team-cell">
+      <TeamLogo team={team} />{" "}
       <span className="team-link matchup-team-btn" style={{ cursor: "default" }}>
         {team.team}
       </span>

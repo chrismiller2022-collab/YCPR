@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
@@ -281,8 +282,8 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
                     <tr key={r.game_id} style={{ background: r.is_key_pick ? "var(--gold-dim)" : undefined }}>
-                      <td style={cellStyle}>{r.game.away_team}</td>
-                      <td style={cellStyle}>{r.game.home_team}</td>
+                      <td style={cellStyle}><TeamLogo team={r.game.away_team} /> {r.game.away_team}</td>
+                      <td style={cellStyle}><TeamLogo team={r.game.home_team} /> {r.game.home_team}</td>
                       <td
                         style={{
                           ...cellStyle,

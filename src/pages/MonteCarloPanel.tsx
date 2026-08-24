@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import ExportPngButton from "../components/ExportPngButton";
 import { winTotalBuckets } from "../lib/montecarlo/distribution";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -210,7 +211,9 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
             return (
               <Fragment key={r.team}>
                 <tr>
-                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                    <TeamLogo team={r.team} /> {r.team}
+                  </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {projWins}-{projLosses}{" "}
@@ -512,7 +515,9 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
               const pctDelta = r.resumePlayoffPct - r.currentPlayoffPct;
               return (
                 <tr key={r.team}>
-                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>
+                    <TeamLogo team={r.team} /> {r.team}
+                  </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmtPct(r.resumePlayoffPct)}
                   </td>
@@ -783,7 +788,9 @@ function SrsStatsTable({ stats }: { stats: SrsTeamRow[] }) {
           <tbody>
             {sorted.map((r) => (
               <tr key={r.team}>
-                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  <TeamLogo team={r.team} /> {r.team}
+                </td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{num(r.rating)}</td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
@@ -946,7 +953,9 @@ function McAvgSrsTable({ entries, sampleTrials }: { entries: ResumeComparisonEnt
           <tbody>
             {ranked.map((r) => (
               <tr key={r.team}>
-                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  <TeamLogo team={r.team} /> {r.team}
+                </td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 600 }}>
                   {r.avgSrs?.toFixed(1)}
@@ -1253,7 +1262,9 @@ function BettingResultsTable({ results, numTrials }: { results: TeamSimResult[];
           <tbody>
             {sorted.map((r) => (
               <tr key={r.team}>
-                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  <TeamLogo team={r.team} /> {r.team}
+                </td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.madeConfChampPct)}</td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.confTitlePct)}</td>
@@ -1415,7 +1426,9 @@ function PlayoffSeedOddsTable({ results }: { results: TeamSimResult[] }) {
         <tbody>
           {ranked.map((r, idx) => (
             <tr key={r.team}>
-              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.team}</td>
+              <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>
+                <TeamLogo team={r.team} /> {r.team}
+              </td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.conf}</td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>#{idx + 1}</td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(r.playoffPct)}</td>

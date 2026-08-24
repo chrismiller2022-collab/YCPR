@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import {
@@ -148,7 +149,7 @@ function GameSelectionStep({
               >
                 <input type="checkbox" checked={selected.has(g.id)} disabled={atCap} onChange={() => toggle(g.id)} />
                 <span style={{ flex: 1 }}>
-                  {g.away_team} @ {g.home_team}
+                  <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
                 </span>
                 {selected.has(g.id) && (
                   <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
@@ -346,7 +347,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               return (
                 <tr key={p.id} style={{ background: p.is_key_game ? "var(--gold-dim)" : undefined }}>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    {g.away_team}
+                    <TeamLogo team={g.away_team} /> {g.away_team}
                     {p.is_key_game && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Key game{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
@@ -366,7 +367,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                   >
                     {fmtMl(p.myProjAwayMoneyline)}
                   </td>
-                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.home_team}</td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}><TeamLogo team={g.home_team} /> {g.home_team}</td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmtMl(p.vegasHomeMoneyline)}
                   </td>
@@ -387,14 +388,14 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                         style={{ opacity: d.picked_side === "away" ? 1 : 0.5 }}
                         onClick={() => updateDraft(p.id, { picked_side: "away" })}
                       >
-                        {g.away_team}
+                        <TeamLogo team={g.away_team} /> {g.away_team}
                       </button>
                       <button
                         className="menu-btn"
                         style={{ opacity: d.picked_side === "home" ? 1 : 0.5 }}
                         onClick={() => updateDraft(p.id, { picked_side: "home" })}
                       >
-                        {g.home_team}
+                        <TeamLogo team={g.home_team} /> {g.home_team}
                       </button>
                     </div>
                   </td>

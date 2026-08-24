@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import TeamLogo from "../components/TeamLogo";
 import { supabase } from "../lib/supabaseClient";
 import { availableConferences } from "../lib/survivor";
 import {
@@ -421,7 +422,9 @@ function FpiRatingsTab({ season }: { season: number }) {
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.team}>
-                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.team}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                    <TeamLogo team={r.team} /> {r.team}
+                  </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {r.fpi != null ? r.fpi.toFixed(1) : "–"}
@@ -514,7 +517,9 @@ function PicksTab({ season }: { season: number }) {
                       {entrantNameById.get(p.entrant_id) ?? `#${p.entrant_id}`}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{p.week}</td>
-                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{p.team}</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                      <TeamLogo team={p.team} /> {p.team}
+                    </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                       {new Date(p.submitted_at).toLocaleString()}
                     </td>
@@ -670,7 +675,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
                                 return (
                                   <div key={i} style={{ marginBottom: "0.1rem" }}>
                                     <span style={{ color: result === "loss" ? "#c45c52" : result === "win" ? "#8fd39a" : undefined }}>
-                                      {p.team}
+                                      <TeamLogo team={p.team} /> {p.team}
                                     </span>
                                     {result !== "pending" && <span style={{ fontSize: "0.65rem" }}>{result === "win" ? " ✅" : " ❌"}</span>}
                                     <div style={{ fontSize: "0.62rem", color: "var(--chalk-dim)" }}>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { fetchGamesForTotals, type GameForTotals } from "../lib/api/gameTotalsData";
 import { buildTeamMovementRows, computeTeamMovementSummaries, type TeamMovementSummary } from "../lib/lineMovement";
 import { SeasonPicker, DivisionPicker } from "./GameTotalsAdminPanel";
@@ -104,6 +105,7 @@ function TeamListView({ summaries, onSelectTeam }: { summaries: TeamMovementSumm
           {sorted.map((s) => (
             <tr key={s.team}>
               <td style={CP}>
+                <TeamLogo team={s.team} />{" "}
                 <button
                   className="team-link"
                   style={{ background: "none", border: "none", cursor: "pointer", padding: 0, font: "inherit", color: "inherit", textDecoration: "underline" }}

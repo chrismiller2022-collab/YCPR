@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
 
@@ -225,12 +226,12 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{dateLabel(g.start_date)}</td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.week}</td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                  {g.away_team}
+                  <TeamLogo team={g.away_team} /> {g.away_team}
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> ({g.away_classification ?? "?"})</span>
                 </td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                   {g.neutral_site ? "* " : ""}
-                  {g.home_team}
+                  <TeamLogo team={g.home_team} /> {g.home_team}
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> ({g.home_classification ?? "?"})</span>
                 </td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>

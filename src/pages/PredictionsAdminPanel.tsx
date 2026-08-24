@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { splitTeamTotal } from "../lib/gameTotals";
 import { useGameTotalsEngine, type EnrichedGameRow } from "../lib/gameTotalsEngine";
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
@@ -76,8 +77,26 @@ const baseCols: Column[] = [
   { key: "date", label: "Date", value: (r) => r.game.game.startDate ?? "", render: (r) => dateLabel(r.game.game.startDate) },
 ];
 const kickoffCol: Column = { key: "kickoff", label: "Kickoff", value: (r) => r.game.game.startDate ?? "", render: (r) => kickoffLabel(r.game.game.startDate) };
-const awayCol: Column = { key: "away", label: "Away", value: (r) => r.game.game.awayTeam, render: (r) => r.game.game.awayTeam };
-const homeCol: Column = { key: "home", label: "Home", value: (r) => r.game.game.homeTeam, render: (r) => r.game.game.homeTeam };
+const awayCol: Column = {
+  key: "away",
+  label: "Away",
+  value: (r) => r.game.game.awayTeam,
+  render: (r) => (
+    <>
+      <TeamLogo team={r.game.game.awayTeam} /> {r.game.game.awayTeam}
+    </>
+  ),
+};
+const homeCol: Column = {
+  key: "home",
+  label: "Home",
+  value: (r) => r.game.game.homeTeam,
+  render: (r) => (
+    <>
+      <TeamLogo team={r.game.game.homeTeam} /> {r.game.game.homeTeam}
+    </>
+  ),
+};
 
 const MINE_COLUMNS: Column[] = [
   ...baseCols,

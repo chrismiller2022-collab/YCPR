@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import { undefeatedPct, type TeamSimResult } from "../lib/montecarlo/engine";
@@ -208,7 +209,9 @@ function MarketsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mode:
               <tbody>
                 {rows.map(({ r, val }) => (
                   <tr key={r.team}>
-                    <td style={tdBase}>{r.team}</td>
+                    <td style={tdBase}>
+                      <TeamLogo team={r.team} /> {r.team}
+                    </td>
                     <td style={tdBase}>{r.conf}</td>
                     <td style={tdRight}>{val != null ? `${val.toFixed(1)}%` : "–"}</td>
                     <YesNoCells pct={val} mode={mode} />
@@ -274,7 +277,9 @@ function SeedsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mode: P
                 <tbody>
                   {rows.map(({ r, val }) => (
                     <tr key={r.team}>
-                      <td style={tdBase}>{r.team}</td>
+                      <td style={tdBase}>
+                        <TeamLogo team={r.team} /> {r.team}
+                      </td>
                       <td style={tdBase}>{r.conf}</td>
                       <td style={tdRight}>{val!.toFixed(1)}%</td>
                       <YesNoCells pct={val} mode={mode} />
@@ -431,7 +436,9 @@ function WinTotalsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mod
                     <tbody>
                       {vegasRows.map(({ r, line, over }) => (
                         <tr key={r.team}>
-                          <td style={tdBase}>{r.team}</td>
+                          <td style={tdBase}>
+                            <TeamLogo team={r.team} /> {r.team}
+                          </td>
                           <td style={tdRight}>{line!.toFixed(1)}</td>
                           <td style={tdRight}>{over!.toFixed(1)}%</td>
                           <YesNoCells pct={over} mode={mode} />
@@ -592,7 +599,9 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                 </thead>
                 <tbody>
                   <tr>
-                    <td style={tdBase}>{resultA.team}</td>
+                    <td style={tdBase}>
+                      <TeamLogo team={resultA.team} /> {resultA.team}
+                    </td>
                     <td style={tdRight}>{resultA.meanWins.toFixed(1)}</td>
                     <td style={tdRight}>
                       {resultA.ci95Low}–{resultA.ci95High}
@@ -619,7 +628,9 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                     </td>
                   </tr>
                   <tr>
-                    <td style={tdBase}>{resultB.team}</td>
+                    <td style={tdBase}>
+                      <TeamLogo team={resultB.team} /> {resultB.team}
+                    </td>
                     <td style={tdRight}>{resultB.meanWins.toFixed(1)}</td>
                     <td style={tdRight}>
                       {resultB.ci95Low}–{resultB.ci95High}
