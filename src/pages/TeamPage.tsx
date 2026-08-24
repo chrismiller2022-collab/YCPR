@@ -18,6 +18,7 @@ import { splitTeamTotal } from "../lib/gameTotals";
 import ExportPngButton from "../components/ExportPngButton";
 import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
+import WinDistributionBarChart from "../components/WinDistributionBarChart";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -378,7 +379,8 @@ function WinDistributionBlock({ team, season }: { team: any; season: number }) {
   return (
     <div className="table-wrap">
       <div className="section-label">{team.team} win-total distribution</div>
-      <div className="table-scroll">
+      <WinDistributionBarChart buckets={byWins} />
+      <div className="table-scroll" style={{ marginTop: "1rem" }}>
         <table>
           <thead>
             <tr>
