@@ -26,6 +26,9 @@ import SosAdminPanel from "./SosAdminPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
+import { CHECKLIST_ITEMS } from "../lib/checklistItems";
+import ChecklistItemsBlock from "../components/ChecklistItemsBlock";
+import AdminChecklistPage from "./AdminChecklistPage";
 import { WEEK_OPTIONS } from "../lib/weekOptions";
 
 // Maps flexible/human column headers (however you happen to label them when
@@ -228,7 +231,8 @@ type AdminView =
   | "linemovement"
   | "ratingsystems"
   | "ratingmatchups"
-  | "sos";
+  | "sos"
+  | "checklist";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-auth on the server before
@@ -327,59 +331,12 @@ function DashboardCard({ label, value }: { label: string; value: string }) {
 // checked. State is keyed by the current week label (same "week1"/
 // "preseason" strings used elsewhere) and persisted to Supabase so it
 // carries across devices/browsers, not just localStorage on one machine.
+// Item definitions live in lib/checklistItems.ts, shared with the full
+// Weekly Checklist page (every week at once) reached via the sidebar.
 // ---------------------------------------------------------------------
-interface ChecklistSubItemDef {
-  key: string;
-  label: string;
-  url?: string;
-}
-interface ChecklistItemDef {
-  key: string;
-  label: string;
-  subItems?: ChecklistSubItemDef[];
-}
-
-const CHECKLIST_ITEMS: ChecklistItemDef[] = [
-  {
-    key: "update_ratings",
-    label: "Update Ratings",
-    subItems: [
-      { key: "update_ratings_cfbd", label: "CFBD" },
-      { key: "update_ratings_sheet", label: "Sheet" },
-      { key: "update_ratings_mcillece", label: "McIllece" },
-      { key: "update_ratings_massey", label: "Massey" },
-      { key: "update_ratings_srs", label: "Run SRS" },
-    ],
-  },
-  { key: "monte_carlo", label: "Run Monte Carlo" },
-  { key: "data_upload", label: "Data Upload" },
-  { key: "survivor_picks", label: "Survivor picks" },
-  {
-    key: "pools",
-    label: "Pools",
-    subItems: [
-      { key: "pools_espn_ml", label: "ESPN Moneyline" },
-      { key: "pools_espn_spread", label: "ESPN Spread" },
-      { key: "pools_espn_confidence", label: "ESPN Confidence" },
-      { key: "pools_brit", label: "The Brit" },
-      { key: "pools_peay", label: "Peay" },
-      { key: "pools_cbs_splash", label: "CBS Splash" },
-      { key: "pools_cfbd", label: "CFBD" },
-      { key: "pools_cbs", label: "CBS" },
-      {
-        key: "pools_cfb_survivor",
-        label: "CFB Survivor",
-        url: "https://app.splashsports.com/contest/fd3afd3f-9fe8-4d70-a68f-085efb6c99b2/entries/overall",
-      },
-    ],
-  },
-  { key: "pull_games_lines", label: "Pull games and Lines" },
-  { key: "odds_board", label: "Check Odds Board and make bets" },
-];
 
 function WeeklyChecklist({ week }: { week: string | null }) {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -402,14 +359,6 @@ function WeeklyChecklist({ week }: { week: string | null }) {
       // Revert locally if the save failed — keeps the UI honest about what's actually persisted.
       setChecked((c) => ({ ...c, [key]: !next }));
     });
-  }
-
-  function toggleGroup(item: ChecklistItemDef, next: boolean) {
-    if (!item.subItems) {
-      toggle(item.key, next);
-      return;
-    }
-    for (const sub of item.subItems) toggle(sub.key, next);
   }
 
   if (!week) return null;
@@ -436,65 +385,7 @@ function WeeklyChecklist({ week }: { week: string | null }) {
         <span>Weekly checklist — {week}</span>
         {loading && <span>Loading…</span>}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-        {CHECKLIST_ITEMS.map((item) => {
-          const allSubChecked = item.subItems ? item.subItems.every((s) => isChecked(s.key)) : isChecked(item.key);
-          const isExpanded = expanded[item.key] ?? false;
-          return (
-            <div key={item.key}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <input type="checkbox" checked={allSubChecked} onChange={(e) => toggleGroup(item, e.target.checked)} />
-                <span style={{ textDecoration: allSubChecked ? "line-through" : "none", opacity: allSubChecked ? 0.6 : 1 }}>
-                  {item.label}
-                </span>
-                {item.subItems && (
-                  <button
-                    onClick={() => setExpanded((ex) => ({ ...ex, [item.key]: !isExpanded }))}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--chalk-dim)",
-                      cursor: "pointer",
-                      fontSize: "0.75rem",
-                      padding: 0,
-                    }}
-                  >
-                    {isExpanded ? "▲ hide" : "▼ show"}
-                  </button>
-                )}
-              </div>
-              {item.subItems && isExpanded && (
-                <div style={{ marginLeft: "1.7rem", marginTop: "0.35rem", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-                  {item.subItems.map((sub) => (
-                    <label key={sub.key} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
-                      <input type="checkbox" checked={isChecked(sub.key)} onChange={(e) => toggle(sub.key, e.target.checked)} />
-                      {sub.url ? (
-                        <a
-                          href={sub.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            textDecoration: isChecked(sub.key) ? "line-through" : "underline",
-                            opacity: isChecked(sub.key) ? 0.6 : 1,
-                            color: "inherit",
-                          }}
-                        >
-                          {sub.label} ↗
-                        </a>
-                      ) : (
-                        <span style={{ textDecoration: isChecked(sub.key) ? "line-through" : "none", opacity: isChecked(sub.key) ? 0.6 : 1 }}>
-                          {sub.label}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <ChecklistItemsBlock items={CHECKLIST_ITEMS} isChecked={isChecked} onToggle={toggle} />
     </div>
   );
 }
@@ -585,6 +476,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "This week",
     items: [
+      { key: "checklist", label: "Weekly Checklist" },
       { key: "upload", label: "Data Upload" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
@@ -965,6 +857,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
 
           {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
+          {view === "checklist" && <AdminChecklistPage onBack={() => setView("home")} />}
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
           {view === "predictions" && <PredictionsAdminPanel onBack={() => setView("home")} />}

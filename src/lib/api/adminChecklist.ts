@@ -24,6 +24,24 @@ export async function fetchChecklistState(week: string): Promise<Record<string, 
   return out;
 }
 
+// Batched version for the full Weekly Checklist page — one query for
+// every week's state instead of 16 separate round trips.
+export async function fetchChecklistStateForWeeks(weeks: string[]): Promise<Record<string, Record<string, boolean>>> {
+  if (weeks.length === 0) return {};
+  const { data, error } = await supabase
+    .from("admin_weekly_checklist")
+    .select("week, item_key, checked")
+    .in("week", weeks);
+  if (error) throw error;
+  const out: Record<string, Record<string, boolean>> = {};
+  for (const w of weeks) out[w] = {};
+  for (const row of (data ?? []) as { week: string; item_key: string; checked: boolean }[]) {
+    if (!out[row.week]) out[row.week] = {};
+    out[row.week][row.item_key] = row.checked;
+  }
+  return out;
+}
+
 export function toggleChecklistItem(week: string, itemKey: string, checked: boolean) {
   const password = sessionStorage.getItem("admin_password") ?? "";
   return fetch("/api/ratings", {
