@@ -14,7 +14,10 @@ import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsT
 function DiffCell({ value }: any) {
   if (value == null) return <td className="wintotals-total-cell">–</td>;
   return (
-    <td className="wintotals-total-cell">
+    <td
+      className="wintotals-total-cell"
+      style={{ color: value > 0 ? "var(--pos-green)" : value < 0 ? "var(--neg-red)" : undefined }}
+    >
       {value > 0 ? "+" : ""}
       {value.toFixed(2)}
     </td>
@@ -199,8 +202,8 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
         <div className="table-wrap" style={{ marginTop: "1.5rem" }}>
           <div className="section-label">Monte Carlo Conference Standings Odds</div>
           <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
-            Chance each {conference} team finishes with at least N conference wins, from the most
-            recently saved Monte Carlo run.
+            Chance each {conference} team finishes with at least N conference wins, based on{" "}
+            {mcNumTrials > 0 ? mcNumTrials.toLocaleString() : "100,000"} simulations using our power ratings.
           </p>
           <ConferenceStandingsOddsTable results={mcResults} numTrials={mcNumTrials} conference={conference} />
         </div>

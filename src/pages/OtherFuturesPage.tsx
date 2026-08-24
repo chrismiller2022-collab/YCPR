@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import ExportPngButton from "../components/ExportPngButton";
+import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { TEAMS } from "../data/teams";
 import { fetchMonteCarloRuns, fetchMonteCarloRun, type MonteCarloRunSummary } from "../lib/api/monteCarlo";
@@ -13,6 +14,20 @@ function fmtPct(v: number | null | undefined) {
 
 function teamInfo(name: string) {
   return TEAMS.find((t) => t.team === name);
+}
+
+// Higher probability = better outcome for every column on this page (bowl,
+// playoff, and each bracket round), so cells shade from the site's neutral
+// chalk-dim toward green as the percentage climbs toward 100 — no red end,
+// since a low % here just means "less likely," not "bad."
+function pctColor(v: number | null | undefined): string | undefined {
+  if (v == null) return undefined;
+  const clamp = Math.max(0, Math.min(100, v));
+  const k = clamp / 100;
+  const neutral = [139, 171, 228];
+  const green = [63, 185, 80];
+  const rgb = neutral.map((n, i) => Math.round(n + (green[i] - n) * k));
+  return `rgb(${rgb.join(", ")})`;
 }
 
 // ---------------------------------------------------------------------
@@ -29,6 +44,18 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
   const [results, setResults] = useState<TeamSimResult[] | null>(null);
   const [numTrials, setNumTrials] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [sortKey, setSortKey] = useState<"team" | "conf" | "bowl" | "playoff" | "qf" | "sf" | "ncg" | "winncg">("winncg");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  function handleSort(key: string) {
+    const k = key as typeof sortKey;
+    if (sortKey === k) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      setSortDir(k === "team" || k === "conf" ? "asc" : "desc");
+    }
+  }
 
   const isLive = subKey === "live";
   const weekNum = isLive ? null : parseInt(String(subKey).replace("week", ""), 10);
@@ -57,14 +84,46 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
 
   const rows = useMemo(() => {
     if (!results) return [];
-    return [...results]
-      .map((r) => ({
-        r,
-        bowlPct: winsAtLeastPct(r, numTrials, 6),
-        undefeatedPct: undefeatedPct(r, numTrials),
-      }))
-      .sort((a, b) => b.r.nattyPct - a.r.nattyPct || b.r.playoffPct - a.r.playoffPct || b.bowlPct - a.bowlPct);
-  }, [results, numTrials]);
+    const withPct = results.map((r) => ({
+      r,
+      bowlPct: winsAtLeastPct(r, numTrials, 6),
+      undefeatedPct: undefeatedPct(r, numTrials),
+    }));
+
+    const valueFor = (row: (typeof withPct)[number]) => {
+      switch (sortKey) {
+        case "team":
+          return row.r.team;
+        case "conf":
+          return row.r.conf ?? "";
+        case "bowl":
+          return row.bowlPct;
+        case "playoff":
+          return row.r.playoffPct;
+        case "qf":
+          return row.r.quarterfinalPct;
+        case "sf":
+          return row.r.semifinalPct;
+        case "ncg":
+          return row.r.nattyGamePct;
+        case "winncg":
+        default:
+          return row.r.nattyPct;
+      }
+    };
+
+    return [...withPct].sort((a, b) => {
+      const av = valueFor(a);
+      const bv = valueFor(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") {
+        return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      }
+      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }, [results, numTrials, sortKey, sortDir]);
 
   return (
     <div className="matchups-page" ref={exportRef}>
@@ -97,14 +156,14 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
             <table>
               <thead>
                 <tr>
-                  <th className="th">Team</th>
-                  <th className="th">Conference</th>
-                  <th className="th th-right">Bowl (6+ wins)</th>
-                  <th className="th th-right">Make Playoff</th>
-                  <th className="th th-right">Make Quarterfinals</th>
-                  <th className="th th-right">Make Semifinals</th>
-                  <th className="th th-right">Make NCG</th>
-                  <th className="th th-right">Win NCG</th>
+                  <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+                  <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+                  <SortHeader label="Bowl (6+ wins)" sortKey="bowl" active={sortKey === "bowl"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader label="Make Playoff" sortKey="playoff" active={sortKey === "playoff"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader label="Make Quarterfinals" sortKey="qf" active={sortKey === "qf"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader label="Make Semifinals" sortKey="sf" active={sortKey === "sf"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader label="Make NCG" sortKey="ncg" active={sortKey === "ncg"} dir={sortDir} onClick={handleSort} align="right" />
+                  <SortHeader label="Win NCG" sortKey="winncg" active={sortKey === "winncg"} dir={sortDir} onClick={handleSort} align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -121,12 +180,12 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
                       <td className="conf-cell">
                         <ConfLink conf={r.conf} onNavigateConference={onNavigateConference} />
                       </td>
-                      <td className="wintotals-total-cell">{fmtPct(bowlPct)}</td>
-                      <td className="wintotals-total-cell">{fmtPct(r.playoffPct)}</td>
-                      <td className="wintotals-total-cell">{fmtPct(r.quarterfinalPct)}</td>
-                      <td className="wintotals-total-cell">{fmtPct(r.semifinalPct)}</td>
-                      <td className="wintotals-total-cell">{fmtPct(r.nattyGamePct)}</td>
-                      <td className="wintotals-total-cell">{fmtPct(r.nattyPct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(bowlPct) }}>{fmtPct(bowlPct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(r.playoffPct) }}>{fmtPct(r.playoffPct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(r.quarterfinalPct) }}>{fmtPct(r.quarterfinalPct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(r.semifinalPct) }}>{fmtPct(r.semifinalPct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(r.nattyGamePct) }}>{fmtPct(r.nattyGamePct)}</td>
+                      <td className="wintotals-total-cell" style={{ color: pctColor(r.nattyPct) }}>{fmtPct(r.nattyPct)}</td>
                     </tr>
                   );
                 })}
@@ -138,8 +197,8 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
 
       <div className="footer-note" data-export-exclude="true">
         Make Quarterfinals / Semifinals / NCG require a Monte Carlo run saved after bracket-round
-        tracking was added — older saved weeks may show "–" for those columns. Live shows the
-        most recently saved run.
+        tracking was added — older saved weeks may show "–" for those columns. Based on{" "}
+        {numTrials > 0 ? numTrials.toLocaleString() : "100,000"} simulations using our power ratings.
       </div>
     </div>
   );

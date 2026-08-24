@@ -69,7 +69,7 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
   }, [rows, division, sortKey, sortDir, rankByTeam]);
 
   return (
-    <div className="page">
+    <div className="page preseason-ratings-page">
       <div className="team-hero">
         <button className="back-link" onClick={onHome}>
           ‹ All rankings
@@ -101,6 +101,7 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
           &gt; Rating Systems &gt; Save As Week to populate this page.
         </p>
       ) : (
+        <div className="table-wrap">
         <div className="table-scroll">
           <table>
             <thead>
@@ -137,6 +138,7 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
               })}
             </tbody>
           </table>
+        </div>
         </div>
       )}
     </div>

@@ -61,7 +61,7 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
 }
 
 function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
-  const { game, awayTeam, homeTeam, projAwaySpread, vegasMoneyline, projMoneyline, projWinPct } = computed;
+  const { game, awayTeam, homeTeam, projAwaySpread, vegasMoneyline, projMoneyline, vegasWinPct, projWinPct } = computed;
   if (!awayTeam || !homeTeam || projAwaySpread == null) return null;
 
   const projWinner = projAwaySpread < 0 ? game.away_team : projAwaySpread > 0 ? game.home_team : "Pick'em";
@@ -84,6 +84,9 @@ function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed;
       </td>
       <td className="matchups-projected-cell" style={{ color: spreadColor(projAwaySpread) }}>
         {projMoneyline != null ? `${projMoneyline > 0 ? "+" : ""}${Math.round(projMoneyline)}` : "–"}
+      </td>
+      <td className="matchups-winpct-cell">
+        {vegasWinPct != null ? `${(vegasWinPct * 100).toFixed(1)}%` : "–"}
       </td>
       <td className="matchups-winpct-cell" style={{ color: spreadColor(projAwaySpread) }}>
         {projWinPct != null ? `${(projWinPct * 100).toFixed(1)}%` : "–"}

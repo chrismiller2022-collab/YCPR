@@ -16,7 +16,7 @@ const MODES = [
   { key: "top7", label: "Top 7" },
 ];
 
-function SosRow({ rank, team, sos, change, onNavigateTeam, onNavigateConference }: any) {
+function SosRow({ rank, team, sos, change, showChange, onNavigateTeam, onNavigateConference }: any) {
   return (
     <tr>
       <td style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>{rank}</td>
@@ -37,12 +37,12 @@ function SosRow({ rank, team, sos, change, onNavigateTeam, onNavigateConference 
       <td className="wintotals-total-cell" style={sos != null ? { color: spreadColor(-sos) } : undefined}>
         {sos != null ? (sos > 0 ? "+" : "") + sos.toFixed(2) : "–"}
       </td>
-      <ChangeCell change={change} />
+      {showChange && <ChangeCell change={change} />}
     </tr>
   );
 }
 
-function HypoWinsRow({ rank, team, hypoWins, gameCount, onNavigateTeam, onNavigateConference }: any) {
+function HypoWinsRow({ rank, team, hypoWins, onNavigateTeam, onNavigateConference }: any) {
   return (
     <tr>
       <td style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>{rank}</td>
@@ -61,12 +61,11 @@ function HypoWinsRow({ rank, team, hypoWins, gameCount, onNavigateTeam, onNaviga
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{hypoWins != null ? hypoWins.toFixed(2) : "–"}</td>
-      <td className="wintotals-record-cell">{gameCount ?? "–"} games</td>
     </tr>
   );
 }
 
-function Top7Row({ rank, team, top7, gameCount, onNavigateTeam, onNavigateConference }: any) {
+function Top7Row({ rank, team, top7, onNavigateTeam, onNavigateConference }: any) {
   return (
     <tr>
       <td style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>{rank}</td>
@@ -87,12 +86,11 @@ function Top7Row({ rank, team, top7, gameCount, onNavigateTeam, onNavigateConfer
       <td className={`rating-cell ${top7 != null && top7 < 0 ? "rating-good" : "rating-bad"}`}>
         {top7 != null ? (top7 > 0 ? "+" : "") + top7.toFixed(2) : "–"}
       </td>
-      <td className="wintotals-record-cell">{gameCount ?? "–"} games</td>
     </tr>
   );
 }
 
-function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNavigateConference }: any) {
+function RankedTable({ title, rows, mode, changeByTeam, showChange, onNavigateTeam, onNavigateConference }: any) {
   return (
     <div style={{ flex: 1, minWidth: 320 }}>
       <div className="section-label" style={{ textAlign: "center" }}>
@@ -109,18 +107,12 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
               {mode === "sos" ? (
                 <>
                   <th className="th th-right">SOS</th>
-                  <th className="th th-right">Change from Last Week</th>
+                  {showChange && <th className="th th-right">Change from Last Week</th>}
                 </>
               ) : mode === "hypowins" ? (
-                <>
-                  <th className="th th-right">Hypothetical Wins</th>
-                  <th className="th th-right">Schedule</th>
-                </>
+                <th className="th th-right">Hypothetical Wins</th>
               ) : (
-                <>
-                  <th className="th th-right">Top 7 Avg PR</th>
-                  <th className="th th-right">Schedule</th>
-                </>
+                <th className="th th-right">Top 7 Avg PR</th>
               )}
             </tr>
           </thead>
@@ -133,6 +125,7 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
                   team={t}
                   sos={t.sos}
                   change={changeByTeam[t.team]?.change ?? null}
+                  showChange={showChange}
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
                 />
@@ -142,7 +135,6 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
                   rank={t.trueRank}
                   team={t}
                   hypoWins={t.hypoWins}
-                  gameCount={t.gameCount}
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
                 />
@@ -152,7 +144,6 @@ function RankedTable({ title, rows, mode, changeByTeam, onNavigateTeam, onNaviga
                   rank={t.trueRank}
                   team={t}
                   top7={t.top7}
-                  gameCount={t.gameCount}
                   onNavigateTeam={onNavigateTeam}
                   onNavigateConference={onNavigateConference}
                 />
@@ -180,7 +171,14 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
   const exportRef = useRef<HTMLDivElement>(null);
 
   const { byTeam: liveByTeam, loading: liveLoading, error: liveError } = useWeeklyStats("latest");
-  const { byTeam: changeByTeam } = useWeeklyChange("sor");
+  const { byTeam: changeByTeam, currentWeek } = useWeeklyChange("sor");
+
+  // "Change from Last Week" is only meaningful once there's a real prior
+  // week to compare against — at Preseason/Week 1 it would just be
+  // comparing to the preseason snapshot, which reads as noise rather than
+  // an actual week-over-week move. Hide the column until Week 2+.
+  const currentWeekNum = currentWeek ? /^week(\d+)$/.exec(currentWeek)?.[1] : null;
+  const showChange = currentWeekNum != null && Number(currentWeekNum) >= 2;
 
   const season = new Date().getFullYear();
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -406,6 +404,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
               rows={leftRows}
               mode={mode}
               changeByTeam={changeByTeam}
+              showChange={showChange}
               onNavigateTeam={onNavigateTeam}
               onNavigateConference={onNavigateConference}
             />
@@ -414,6 +413,7 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
               rows={rightRows}
               mode={mode}
               changeByTeam={changeByTeam}
+              showChange={showChange}
               onNavigateTeam={onNavigateTeam}
               onNavigateConference={onNavigateConference}
             />

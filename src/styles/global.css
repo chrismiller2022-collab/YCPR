@@ -36,6 +36,8 @@
           --good: #ffc857;
           --bad: #19647e;
           --danger: #4b3f72;
+          --pos-green: #3fb950;
+          --neg-red: #f85149;
           font-family: 'Inter', sans-serif;
           background: var(--turf);
           color: var(--chalk);
@@ -1148,6 +1150,22 @@
         
         .matchups-page .table-wrap {
           max-width: 1100px;
+        }
+
+        /* Weekly Power Ratings (Preseason/Week 1, Live) only has 4
+           columns, so the default `table { width: 100% }` stretched to
+           the .table-wrap cap and left huge gaps between columns.
+           Letting the table size to its own content and centering it
+           inside the wrap looks intentional without hardcoding a fixed
+           pixel width that would break if columns are ever added. */
+        .preseason-ratings-page .table-scroll table {
+          width: auto;
+          margin: 0 auto;
+        }
+
+        .preseason-ratings-page .table-scroll {
+          display: flex;
+          justify-content: center;
         }
 
         /* Conference preview has more columns (up to 12, including the

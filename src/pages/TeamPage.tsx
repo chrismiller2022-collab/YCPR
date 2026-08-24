@@ -13,8 +13,10 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { splitTeamTotal } from "../lib/gameTotals";
 
-function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
+function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
   const oppName = isHome ? game.away : game.home;
   const opp = TEAMS_BY_NAME[oppName];
@@ -32,6 +34,16 @@ function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
     : teamRating - oppRating + hfaFor(oppName, liveByTeam);
   const winPct = spreadToWinPct(spread);
   const result = spread < 0 ? "Win" : spread > 0 ? "Loss" : "Even";
+
+  // Individual-team score projection — sourced from the same Game/Team
+  // Totals engine the admin panel uses (Ridge total model + our power-
+  // rating spread split into a home/away score), not recomputed here.
+  const split =
+    projRow?.projection?.projectedTotal != null
+      ? splitTeamTotal(projRow.projection.projectedTotal, projRow.myHomeSpread)
+      : null;
+  const teamProjScore = split ? (isHome ? split.home : split.away) : null;
+  const oppProjScore = split ? (isHome ? split.away : split.home) : null;
 
   const dateObj = new Date(game.date);
   const dateLabel = dateObj.toLocaleDateString(undefined, {
@@ -77,6 +89,11 @@ function ScheduleRow({ game, team, liveByTeam, onNavigateTeam }: any) {
       </td>
       <td className="schedule-result-cell" style={{ color: spreadColor(spread) }}>
         {result}
+      </td>
+      <td className="wintotals-total-cell">
+        {teamProjScore != null && oppProjScore != null
+          ? `${teamProjScore.toFixed(1)}-${oppProjScore.toFixed(1)}`
+          : "–"}
       </td>
     </tr>
   );
@@ -354,6 +371,20 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const schedule = gamesForTeam(team.team);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const radarMetrics = computeRadarMetrics(team, liveByTeam);
+  const season = new Date().getFullYear();
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+
+  // Game/Team Totals engine keys games by CFBD id (different id space
+  // than the static schedule bundle's own ids), so match on week + both
+  // team names instead — reliable since both sources describe the same
+  // real-world schedule.
+  const totalsRowByGame = useMemo(() => {
+    const map = new Map<string, (typeof totalsRows)[number]>();
+    for (const row of totalsRows) {
+      map.set(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`, row);
+    }
+    return map;
+  }, [totalsRows]);
 
   const maxConfPct = peers.reduce((max, p) => {
     const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
@@ -417,6 +448,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                   <th className="th th-right">Projected</th>
                   <th className="th th-right">Win %</th>
                   <th className="th">Proj. Result</th>
+                  <th className="th th-right">Proj. Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -426,6 +458,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                     game={g}
                     team={team}
                     liveByTeam={liveByTeam}
+                    projRow={totalsRowByGame.get(`${g.week}|${g.home}|${g.away}`) ?? null}
                     onNavigateTeam={onNavigateTeam}
                   />
                 ))}
