@@ -376,40 +376,42 @@ function WinDistributionBlock({ team, season }: { team: any; season: number }) {
 
   const byWins = [...buckets].sort((a, b) => a.wins - b.wins);
 
+  const ROW_HEIGHT = 30;
+
   return (
     <div className="table-wrap">
       <div className="section-label">{team.team} win-total distribution</div>
       <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "flex-start" }}>
-        <table style={{ flex: "0 0 auto", width: "auto", fontSize: "0.78rem" }}>
+        <table className="win-dist-table" style={{ flex: "0 0 auto", width: "auto", fontSize: "0.78rem" }}>
           <thead>
-            <tr>
-              <th className="th th-right" style={{ padding: "0.3rem 0.6rem" }}>
+            <tr style={{ height: ROW_HEIGHT }}>
+              <th className="th th-right" style={{ padding: "0 0.6rem" }}>
                 Wins
               </th>
-              <th className="th" style={{ padding: "0.3rem 0.6rem" }}>
+              <th className="th" style={{ padding: "0 0.6rem" }}>
                 Record
               </th>
-              <th className="th th-right" style={{ padding: "0.3rem 0.6rem" }}>
+              <th className="th th-right" style={{ padding: "0 0.6rem" }}>
                 Probability
               </th>
             </tr>
           </thead>
           <tbody>
             {byWins.map((b) => (
-              <tr key={b.wins}>
-                <td className="wintotals-total-cell" style={{ padding: "0.3rem 0.6rem" }}>
+              <tr key={b.wins} style={{ height: ROW_HEIGHT }}>
+                <td className="wintotals-total-cell" style={{ padding: "0 0.6rem" }}>
                   {b.wins}
                 </td>
-                <td style={{ padding: "0.3rem 0.6rem" }}>{`${b.wins}-${b.losses}`}</td>
-                <td className="wintotals-total-cell" style={{ padding: "0.3rem 0.6rem" }}>
+                <td style={{ padding: "0 0.6rem" }}>{`${b.wins}-${b.losses}`}</td>
+                <td className="wintotals-total-cell" style={{ padding: "0 0.6rem" }}>
                   {b.pct.toFixed(1)}%
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div style={{ flex: "1 1 280px", minWidth: 240, paddingTop: "0.3rem" }}>
-          <WinDistributionBarChart buckets={byWins} />
+        <div style={{ flex: "1 1 280px", minWidth: 240 }}>
+          <WinDistributionBarChart buckets={byWins} rowHeight={ROW_HEIGHT} headerHeight={ROW_HEIGHT} />
         </div>
       </div>
       <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.75rem 0 0" }}>

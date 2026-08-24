@@ -1569,6 +1569,15 @@
           transition: background 0.15s;
         }
 
+        /* Every row here is a fixed height (set inline, matching the
+           adjacent bar-chart component row-for-row) specifically so the
+           two line up — the 1px row border that's fine everywhere else
+           would add ~1px of drift per row here, growing to a visible
+           offset by the last row. */
+        .win-dist-table tbody tr {
+          border-bottom: none;
+        }
+
         tbody tr:hover {
           background: var(--turf-panel);
         }

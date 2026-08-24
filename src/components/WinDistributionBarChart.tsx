@@ -2,7 +2,15 @@ import type { WinTotalBucket } from "../lib/montecarlo/distribution";
 
 const BOWL_ELIGIBLE_WINS = 6;
 
-export default function WinDistributionBarChart({ buckets }: { buckets: WinTotalBucket[] }) {
+export default function WinDistributionBarChart({
+  buckets,
+  rowHeight = 30,
+  headerHeight = 0,
+}: {
+  buckets: WinTotalBucket[];
+  rowHeight?: number;
+  headerHeight?: number;
+}) {
   if (buckets.length === 0) return null;
 
   const maxPct = Math.max(...buckets.map((b) => b.pct));
@@ -11,13 +19,16 @@ export default function WinDistributionBarChart({ buckets }: { buckets: WinTotal
     <div
       role="img"
       aria-label="Win total distribution, horizontal bars for each win count, six or more wins highlighted as bowl eligible"
-      style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}
     >
+      {headerHeight > 0 && <div style={{ height: headerHeight }} />}
       {buckets.map((b) => {
         const widthPct = maxPct > 0 ? (b.pct / maxPct) * 100 : 0;
         const isBowlEligible = b.wins >= BOWL_ELIGIBLE_WINS;
         return (
-          <div key={b.wins} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <div
+            key={b.wins}
+            style={{ height: rowHeight, display: "flex", alignItems: "center", gap: "0.5rem" }}
+          >
             <div style={{ width: 44, flexShrink: 0, textAlign: "right", fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
               {b.wins}-{b.losses}
             </div>
