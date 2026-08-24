@@ -16,17 +16,26 @@ function teamInfo(name: string) {
   return TEAMS.find((t) => t.team === name);
 }
 
-// Higher probability = better outcome for every column on this page (bowl,
-// playoff, and each bracket round), so cells shade from the site's neutral
-// chalk-dim toward green as the percentage climbs toward 100 — no red end,
-// since a low % here just means "less likely," not "bad."
-function pctColor(v: number | null | undefined): string | undefined {
+// Column-relative, red -> yellow -> green. Each column (Bowl, Playoff, QF,
+// SF, NCG, Win NCG) gets its own min/max scale rather than sharing one
+// absolute 0-100 range — Win NCG tops out in the single digits even for
+// the best team, so on an absolute scale it never read as "green" the way
+// Bowl Eligible (which routinely hits 90%+) did. min = red, max = green,
+// midpoint = yellow, everything else interpolated between the nearest pair.
+function pctColorInColumn(v: number | null | undefined, columnValues: (number | null | undefined)[]): string | undefined {
   if (v == null) return undefined;
-  const clamp = Math.max(0, Math.min(100, v));
-  const k = clamp / 100;
-  const neutral = [139, 171, 228];
+  const valid = columnValues.filter((x): x is number => x != null);
+  if (valid.length === 0) return undefined;
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  if (max === min) return "rgb(255, 214, 92)"; // every team tied — flat yellow, not misleadingly red or green
+  const k = (v - min) / (max - min); // 0 = worst in this column, 1 = best
+
+  const red = [196, 92, 82];
+  const yellow = [255, 214, 92];
   const green = [63, 185, 80];
-  const rgb = neutral.map((n, i) => Math.round(n + (green[i] - n) * k));
+  const [from, to, localK] = k <= 0.5 ? [red, yellow, k / 0.5] : [yellow, green, (k - 0.5) / 0.5];
+  const rgb = from.map((c, i) => Math.round(c + (to[i] - c) * localK));
   return `rgb(${rgb.join(", ")})`;
 }
 
@@ -153,44 +162,58 @@ export default function OtherFuturesPage({ subKey, subLabel, onNavigateTeam, onN
           </div>
         ) : (
           <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
-                  <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-                  <SortHeader label="Bowl (6+ wins)" sortKey="bowl" active={sortKey === "bowl"} dir={sortDir} onClick={handleSort} align="right" />
-                  <SortHeader label="Make Playoff" sortKey="playoff" active={sortKey === "playoff"} dir={sortDir} onClick={handleSort} align="right" />
-                  <SortHeader label="Make Quarterfinals" sortKey="qf" active={sortKey === "qf"} dir={sortDir} onClick={handleSort} align="right" />
-                  <SortHeader label="Make Semifinals" sortKey="sf" active={sortKey === "sf"} dir={sortDir} onClick={handleSort} align="right" />
-                  <SortHeader label="Make NCG" sortKey="ncg" active={sortKey === "ncg"} dir={sortDir} onClick={handleSort} align="right" />
-                  <SortHeader label="Win NCG" sortKey="winncg" active={sortKey === "winncg"} dir={sortDir} onClick={handleSort} align="right" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ r, bowlPct }) => {
-                  const t = teamInfo(r.team);
-                  return (
-                    <tr key={r.team}>
-                      <td>
-                        <button className="team-link" onClick={() => t && onNavigateTeam(t)}>
-                          {t && <TeamLogo team={t} />}
-                          {r.team}
-                        </button>
-                      </td>
-                      <td className="conf-cell">
-                        <ConfLink conf={r.conf} onNavigateConference={onNavigateConference} />
-                      </td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(bowlPct) }}>{fmtPct(bowlPct)}</td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(r.playoffPct) }}>{fmtPct(r.playoffPct)}</td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(r.quarterfinalPct) }}>{fmtPct(r.quarterfinalPct)}</td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(r.semifinalPct) }}>{fmtPct(r.semifinalPct)}</td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(r.nattyGamePct) }}>{fmtPct(r.nattyGamePct)}</td>
-                      <td className="wintotals-total-cell" style={{ color: pctColor(r.nattyPct) }}>{fmtPct(r.nattyPct)}</td>
+            {(() => {
+              // Column-relative min/max computed across every row currently
+              // in the table (i.e. the full, unsorted-order set — sorting
+              // only reorders rows, it shouldn't shrink the color scale).
+              const bowlValues = rows.map((row) => row.bowlPct);
+              const playoffValues = rows.map((row) => row.r.playoffPct);
+              const qfValues = rows.map((row) => row.r.quarterfinalPct);
+              const sfValues = rows.map((row) => row.r.semifinalPct);
+              const ncgValues = rows.map((row) => row.r.nattyGamePct);
+              const winNcgValues = rows.map((row) => row.r.nattyPct);
+
+              return (
+                <table>
+                  <thead>
+                    <tr>
+                      <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Bowl (6+ wins)" sortKey="bowl" active={sortKey === "bowl"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Make Playoff" sortKey="playoff" active={sortKey === "playoff"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Make Quarterfinals" sortKey="qf" active={sortKey === "qf"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Make Semifinals" sortKey="sf" active={sortKey === "sf"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Make NCG" sortKey="ncg" active={sortKey === "ncg"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Win NCG" sortKey="winncg" active={sortKey === "winncg"} dir={sortDir} onClick={handleSort} align="right" />
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {rows.map(({ r, bowlPct }) => {
+                      const t = teamInfo(r.team);
+                      return (
+                        <tr key={r.team}>
+                          <td>
+                            <button className="team-link" onClick={() => t && onNavigateTeam(t)}>
+                              {t && <TeamLogo team={t} />}
+                              {r.team}
+                            </button>
+                          </td>
+                          <td className="conf-cell">
+                            <ConfLink conf={r.conf} onNavigateConference={onNavigateConference} />
+                          </td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(bowlPct, bowlValues) }}>{fmtPct(bowlPct)}</td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(r.playoffPct, playoffValues) }}>{fmtPct(r.playoffPct)}</td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(r.quarterfinalPct, qfValues) }}>{fmtPct(r.quarterfinalPct)}</td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(r.semifinalPct, sfValues) }}>{fmtPct(r.semifinalPct)}</td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(r.nattyGamePct, ncgValues) }}>{fmtPct(r.nattyGamePct)}</td>
+                          <td className="wintotals-total-cell" style={{ color: pctColorInColumn(r.nattyPct, winNcgValues) }}>{fmtPct(r.nattyPct)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
         )}
       </div>
