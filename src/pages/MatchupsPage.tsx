@@ -40,7 +40,7 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
       <td className="game-date-cell">{dateLabel(game)}</td>
       <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
       <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
-      <td className="matchups-empty-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
+      <td className="matchups-vegas-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
         {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
       </td>
       <td className="matchups-projected-cell" style={{ color: spreadColor(projAwaySpread) }}>
@@ -164,6 +164,7 @@ function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: 
               <th className="th">Home (PR)</th>
               <th className="th th-right">Vegas Moneyline</th>
               <th className="th th-right">Projected Moneyline</th>
+              <th className="th th-right">Implied Vegas Win %</th>
               <th className="th th-right">Projected Win %</th>
               <th className="th th-right">Away Score</th>
               <th className="th th-right">Home Score</th>

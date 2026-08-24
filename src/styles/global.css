@@ -1225,6 +1225,17 @@
           opacity: 0.5;
         }
 
+        /* Vegas Line (Spreads tab) has real, meaningful data — it was
+           reusing .matchups-empty-cell purely for the width/alignment
+           layout, which meant it also inherited that class's 0.5 opacity
+           (meant for genuinely blank placeholder cells like an unplayed
+           game's score). The inline spreadColor() text color was applying
+           correctly underneath; the washed-out look was the opacity. */
+        .matchups-vegas-cell {
+          width: 1%;
+          text-align: right;
+        }
+
         .matchups-projected-cell {
           width: 1%;
           text-align: right;
