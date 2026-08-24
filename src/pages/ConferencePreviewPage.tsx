@@ -131,7 +131,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
   const showVegasWinLines = rows[0]?.div !== "FCS";
 
   return (
-    <div className="matchups-page" ref={exportRef}>
+    <div className="matchups-page conference-preview-page" ref={exportRef}>
       <div className="team-hero">
         <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
