@@ -373,13 +373,32 @@ function WinDistributionBlock({ team, season }: { team: any; season: number }) {
   if (loading) return null;
   if (buckets.length === 0) return null;
 
+  const byWins = [...buckets].sort((a, b) => a.wins - b.wins);
+
   return (
     <div className="table-wrap">
       <div className="section-label">{team.team} win-total distribution</div>
-      <p style={{ fontSize: "0.85rem", margin: "0 0 0.5rem" }}>
-        {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
-      </p>
-      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: 0 }}>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th className="th th-right">Wins</th>
+              <th className="th">Record</th>
+              <th className="th th-right">Probability</th>
+            </tr>
+          </thead>
+          <tbody>
+            {byWins.map((b) => (
+              <tr key={b.wins}>
+                <td className="wintotals-total-cell">{b.wins}</td>
+                <td>{`${b.wins}-${b.losses}`}</td>
+                <td className="wintotals-total-cell">{b.pct.toFixed(1)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0" }}>
         {meanWins != null && <>Mean projected record: {meanWins.toFixed(1)} wins. </>}
         Based on {numTrials > 0 ? numTrials.toLocaleString() : "100,000"} simulations using our power
         ratings.
