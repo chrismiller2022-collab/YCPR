@@ -1,75 +1,44 @@
 import type { WinTotalBucket } from "../lib/montecarlo/distribution";
 
 const BOWL_ELIGIBLE_WINS = 6;
-const CHART_HEIGHT = 150;
-const BAR_GAP = 6;
 
 export default function WinDistributionBarChart({ buckets }: { buckets: WinTotalBucket[] }) {
   if (buckets.length === 0) return null;
 
   const maxPct = Math.max(...buckets.map((b) => b.pct));
-  const barWidth = 34;
-  const width = buckets.length * (barWidth + BAR_GAP) + BAR_GAP;
-  const labelSpace = 34;
-  const svgHeight = CHART_HEIGHT + labelSpace;
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${svgHeight}`}
-      width="100%"
-      style={{ maxWidth: width, display: "block", margin: "0 auto" }}
+    <div
       role="img"
-      aria-label="Win total distribution bar chart, bars for six or more wins highlighted as bowl eligible"
+      aria-label="Win total distribution, horizontal bars for each win count, six or more wins highlighted as bowl eligible"
+      style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}
     >
-      {buckets.map((b, i) => {
-        const barHeight = maxPct > 0 ? (b.pct / maxPct) * CHART_HEIGHT : 0;
-        const x = BAR_GAP + i * (barWidth + BAR_GAP);
-        const y = CHART_HEIGHT - barHeight;
+      {buckets.map((b) => {
+        const widthPct = maxPct > 0 ? (b.pct / maxPct) * 100 : 0;
         const isBowlEligible = b.wins >= BOWL_ELIGIBLE_WINS;
         return (
-          <g key={b.wins}>
-            <text
-              x={x + barWidth / 2}
-              y={y - 6}
-              textAnchor="middle"
-              fontSize="10"
-              fill="var(--chalk-dim)"
-            >
-              {b.pct.toFixed(1)}%
-            </text>
-            <rect
-              x={x}
-              y={y}
-              width={barWidth}
-              height={barHeight}
-              rx={3}
-              fill={isBowlEligible ? "var(--gold)" : "var(--chalk-dim)"}
-              opacity={isBowlEligible ? 1 : 0.55}
-            >
-              <title>{`${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`}</title>
-            </rect>
-            <text
-              x={x + barWidth / 2}
-              y={CHART_HEIGHT + 16}
-              textAnchor="middle"
-              fontSize="11"
-              fontWeight={700}
-              fill="var(--chalk)"
-            >
-              {b.wins}
-            </text>
-            <text
-              x={x + barWidth / 2}
-              y={CHART_HEIGHT + 29}
-              textAnchor="middle"
-              fontSize="9"
-              fill="var(--chalk-dim)"
-            >
+          <div key={b.wins} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <div style={{ width: 44, flexShrink: 0, textAlign: "right", fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
               {b.wins}-{b.losses}
-            </text>
-          </g>
+            </div>
+            <div style={{ flex: 1, height: 14, borderRadius: 3, background: "rgba(255,255,255,0.06)", position: "relative" }}>
+              <div
+                title={`${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`}
+                style={{
+                  width: `${widthPct}%`,
+                  height: "100%",
+                  borderRadius: 3,
+                  background: isBowlEligible ? "var(--gold)" : "var(--chalk-dim)",
+                  opacity: isBowlEligible ? 1 : 0.55,
+                }}
+              />
+            </div>
+            <div style={{ width: 40, flexShrink: 0, fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+              {b.pct.toFixed(1)}%
+            </div>
+          </div>
         );
       })}
-    </svg>
+    </div>
   );
 }

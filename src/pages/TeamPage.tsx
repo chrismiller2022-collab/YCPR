@@ -379,28 +379,40 @@ function WinDistributionBlock({ team, season }: { team: any; season: number }) {
   return (
     <div className="table-wrap">
       <div className="section-label">{team.team} win-total distribution</div>
-      <WinDistributionBarChart buckets={byWins} />
-      <div className="table-scroll" style={{ marginTop: "1rem" }}>
-        <table>
+      <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+        <table style={{ flex: "0 0 auto", width: "auto", fontSize: "0.78rem" }}>
           <thead>
             <tr>
-              <th className="th th-right">Wins</th>
-              <th className="th">Record</th>
-              <th className="th th-right">Probability</th>
+              <th className="th th-right" style={{ padding: "0.3rem 0.6rem" }}>
+                Wins
+              </th>
+              <th className="th" style={{ padding: "0.3rem 0.6rem" }}>
+                Record
+              </th>
+              <th className="th th-right" style={{ padding: "0.3rem 0.6rem" }}>
+                Probability
+              </th>
             </tr>
           </thead>
           <tbody>
             {byWins.map((b) => (
               <tr key={b.wins}>
-                <td className="wintotals-total-cell">{b.wins}</td>
-                <td>{`${b.wins}-${b.losses}`}</td>
-                <td className="wintotals-total-cell">{b.pct.toFixed(1)}%</td>
+                <td className="wintotals-total-cell" style={{ padding: "0.3rem 0.6rem" }}>
+                  {b.wins}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem" }}>{`${b.wins}-${b.losses}`}</td>
+                <td className="wintotals-total-cell" style={{ padding: "0.3rem 0.6rem" }}>
+                  {b.pct.toFixed(1)}%
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        <div style={{ flex: "1 1 280px", minWidth: 240, paddingTop: "0.3rem" }}>
+          <WinDistributionBarChart buckets={byWins} />
+        </div>
       </div>
-      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0" }}>
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.75rem 0 0" }}>
         {meanWins != null && <>Mean projected record: {meanWins.toFixed(1)} wins. </>}
         Based on {numTrials > 0 ? numTrials.toLocaleString() : "100,000"} simulations using our power
         ratings.
