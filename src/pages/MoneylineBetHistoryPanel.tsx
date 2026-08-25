@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+import { classOf } from "../lib/matchupsCompute";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { BET_HISTORY } from "../data/betHistory.data";
 import {
@@ -37,7 +38,11 @@ function fmtOdds(v: number | null) {
   if (v == null) return "–";
   return v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`;
 }
-function fmtUnits(v: number) {
+function fmtUnits(v: number, currency: "units" | "dollars" = "units", dollarsPerUnit = 100) {
+  if (currency === "dollars") {
+    const dollars = v * dollarsPerUnit;
+    return `${dollars < 0 ? "-" : "+"}$${Math.abs(dollars).toFixed(2)}`;
+  }
   return `${v > 0 ? "+" : ""}${v.toFixed(2)}u`;
 }
 function fmtDateTime(iso: string | null) {
@@ -45,7 +50,19 @@ function fmtDateTime(iso: string | null) {
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function StakingModeSummary({ tally, mode, compact }: { tally: MlTally; mode: "toWin1" | "flat1"; compact?: boolean }) {
+function StakingModeSummary({
+  tally,
+  mode,
+  compact,
+  currency = "units",
+  dollarsPerUnit = 100,
+}: {
+  tally: MlTally;
+  mode: "toWin1" | "flat1";
+  compact?: boolean;
+  currency?: "units" | "dollars";
+  dollarsPerUnit?: number;
+}) {
   const units = mode === "toWin1" ? tally.toWin1Units : tally.flat1Units;
   const size = compact ? "1.4rem" : "2rem";
   return (
@@ -62,10 +79,10 @@ function StakingModeSummary({ tally, mode, compact }: { tally: MlTally; mode: "t
       </div>
       <div>
         <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1, color: units >= 0 ? "var(--gold)" : "#e05a5a" }}>
-          {fmtUnits(units)}
+          {fmtUnits(units, currency, dollarsPerUnit)}
         </div>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>
-          Units ({mode === "toWin1" ? "bet-to-win-1" : "flat-1"})
+          {currency === "dollars" ? "$" : "Units"} ({mode === "toWin1" ? "bet-to-win-1" : "flat-1"})
         </div>
       </div>
     </div>
@@ -210,6 +227,65 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Division matchup filter — multi-selectable (any combination of the
+  // 3, including all 3 = unfiltered). Games with an unknown/untracked
+  // classification on either side don't match any of the 3 buckets and
+  // are always shown, so they're never silently hidden by narrowing this
+  // filter down.
+  const DIV_BUCKETS = ["fbsvfbs", "fcsvfcs", "cross"] as const;
+  type DivBucket = (typeof DIV_BUCKETS)[number];
+  const [divFilters, setDivFilters] = useState<Set<DivBucket>>(new Set(DIV_BUCKETS));
+  function toggleDivFilter(b: DivBucket) {
+    setDivFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(b)) next.delete(b);
+      else next.add(b);
+      return next;
+    });
+  }
+  function divBucketOf(g: GameWithLines): DivBucket | "other" {
+    const h = classOf(g, "home");
+    const a = classOf(g, "away");
+    if (h === "fbs" && a === "fbs") return "fbsvfbs";
+    if (h === "fcs" && a === "fcs") return "fcsvfcs";
+    if ((h === "fbs" && a === "fcs") || (h === "fcs" && a === "fbs")) return "cross";
+    return "other";
+  }
+
+  // Conference filter — multi-selectable, matches if EITHER team belongs
+  // to a selected conference. Empty selection = no filter (show every
+  // conference), rather than forcing the user to select all of them.
+  const [confFilters, setConfFilters] = useState<Set<string>>(new Set());
+  function toggleConfFilter(c: string) {
+    setConfFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+  }
+  const availableConferences = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of games) {
+      if (g.home_conference) set.add(g.home_conference);
+      if (g.away_conference) set.add(g.away_conference);
+    }
+    return Array.from(set).sort();
+  }, [games]);
+
+  // Units -> dollars view. $ per unit is just a multiplier applied at
+  // display time — none of the underlying win/loss math changes.
+  const [displayCurrency, setDisplayCurrency] = useState<"units" | "dollars">("units");
+  const [dollarsPerUnit, setDollarsPerUnit] = useState(100);
+  function fmtStakeValue(units: number | null | undefined): string {
+    if (units == null) return "–";
+    if (displayCurrency === "dollars") {
+      const dollars = units * dollarsPerUnit;
+      return `${dollars < 0 ? "-" : ""}$${Math.abs(dollars).toFixed(2)}`;
+    }
+    return `${units > 0 ? "+" : ""}${units.toFixed(2)}u`;
+  }
+
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
@@ -253,10 +329,19 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode), unmatchedCount: 0 };
   }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode]);
 
-  const weekRows = useMemo(
-    () => (week === "all" ? allRows : allRows.filter((r) => r.game.week === week)),
-    [allRows, week]
-  );
+  const weekRows = useMemo(() => {
+    const base = week === "all" ? allRows : allRows.filter((r) => r.game.week === week);
+    return base.filter((r) => {
+      const bucket = divBucketOf(r.game);
+      if (bucket !== "other" && !divFilters.has(bucket)) return false;
+      if (confFilters.size > 0) {
+        const homeMatch = r.game.home_conference != null && confFilters.has(r.game.home_conference);
+        const awayMatch = r.game.away_conference != null && confFilters.has(r.game.away_conference);
+        if (!homeMatch && !awayMatch) return false;
+      }
+      return true;
+    });
+  }, [allRows, week, divFilters, confFilters]);
 
   const weeks = useMemo(() => Array.from(new Set(allRows.map((r) => r.game.week))).sort((a, b) => a - b), [allRows]);
 
@@ -311,7 +396,77 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         <button className={`mode-btn ${stakingMode === "flat1" ? "mode-btn-active" : ""}`} onClick={() => setStakingMode("flat1")}>
           Flat-1
         </button>
+        <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Show:</span>
+        <button
+          className={`mode-btn ${displayCurrency === "units" ? "mode-btn-active" : ""}`}
+          onClick={() => setDisplayCurrency("units")}
+        >
+          Units
+        </button>
+        <button
+          className={`mode-btn ${displayCurrency === "dollars" ? "mode-btn-active" : ""}`}
+          onClick={() => setDisplayCurrency("dollars")}
+        >
+          $
+        </button>
+        {displayCurrency === "dollars" && (
+          <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+            $ per unit{" "}
+            <input
+              type="number"
+              step="10"
+              value={dollarsPerUnit}
+              onChange={(e) => setDollarsPerUnit(parseFloat(e.target.value) || 0)}
+              style={{ width: 70 }}
+            />
+          </label>
+        )}
       </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Division:</span>
+        <button
+          className={`mode-btn ${divFilters.has("fbsvfbs") ? "mode-btn-active" : ""}`}
+          onClick={() => toggleDivFilter("fbsvfbs")}
+        >
+          FBS v FBS
+        </button>
+        <button
+          className={`mode-btn ${divFilters.has("fcsvfcs") ? "mode-btn-active" : ""}`}
+          onClick={() => toggleDivFilter("fcsvfcs")}
+        >
+          FCS v FCS
+        </button>
+        <button
+          className={`mode-btn ${divFilters.has("cross") ? "mode-btn-active" : ""}`}
+          onClick={() => toggleDivFilter("cross")}
+        >
+          Cross-Div
+        </button>
+      </div>
+
+      {availableConferences.length > 0 && (
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: "0.35rem" }}>Conference:</span>
+          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", flex: 1 }}>
+            {availableConferences.map((c) => (
+              <button
+                key={c}
+                className={`mode-btn ${confFilters.has(c) ? "mode-btn-active" : ""}`}
+                style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }}
+                onClick={() => toggleConfFilter(c)}
+              >
+                {c}
+              </button>
+            ))}
+            {confFilters.size > 0 && (
+              <button className="mode-btn" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }} onClick={() => setConfFilters(new Set())}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
         <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>My win% derivation:</span>
@@ -419,13 +574,13 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
             >
               {week === "all" ? `${season} — Every Bet` : `${season} Week ${week} — Every Bet`}
             </div>
-            <StakingModeSummary tally={overall} mode={stakingMode} />
+            <StakingModeSummary tally={overall} mode={stakingMode} currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
 
             <div style={{ marginTop: "0.9rem", paddingTop: "0.9rem", borderTop: "1px solid var(--hash)" }}>
               <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
                 Filtered Bet — EV &gt; {evThreshold.toFixed(1)}%
               </div>
-              <StakingModeSummary tally={filteredOverall} mode={stakingMode} compact />
+              <StakingModeSummary tally={filteredOverall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
             </div>
 
             {week !== "all" && (
@@ -433,11 +588,11 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                 <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
                   Full {season} season — Every Bet
                 </div>
-                <StakingModeSummary tally={seasonAgg.overall} mode={stakingMode} compact />
+                <StakingModeSummary tally={seasonAgg.overall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
                 <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.6rem 0 0.4rem" }}>
                   Full {season} season — Filtered Bet (EV &gt; {evThreshold.toFixed(1)}%)
                 </div>
-                <StakingModeSummary tally={filteredSeasonAgg.overall} mode={stakingMode} compact />
+                <StakingModeSummary tally={filteredSeasonAgg.overall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
               </div>
             )}
           </div>
@@ -511,14 +666,23 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                   <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Date</th>
                   <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Away</th>
                   <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Home</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Spread</th>
+                  <th
+                    style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}
+                    title={conversionMethod === "billR" ? "Bill R Method skips the spread entirely — it goes straight from ratings to win%." : undefined}
+                  >
+                    My Spread
+                  </th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Away Win%</th>
+                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Away ML</th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Vegas Away ML</th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Away EV</th>
+                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Home Win%</th>
+                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Home ML</th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Vegas Home ML</th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Home EV</th>
                   <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Bet</th>
                   <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Result</th>
+                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Stake</th>
                   <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Units</th>
                 </tr>
               </thead>
@@ -543,6 +707,9 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         {fmtPct(r.myAwayWinPct)}
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        {fmtOdds(r.myAwayMoneyline)}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
                         {fmtOdds(r.vegasAwayMoneyline)}
                       </td>
                       <td
@@ -554,6 +721,12 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         }}
                       >
                         {fmtEv(r.evAway)}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        {fmtPct(r.myHomeWinPct)}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        {fmtOdds(r.myHomeMoneyline)}
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
                         {fmtOdds(r.vegasHomeMoneyline)}
@@ -597,11 +770,21 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                           padding: "0.3rem 0.5rem",
                           borderBottom: "1px solid rgba(255,255,255,0.05)",
                           textAlign: "right",
+                          color: "var(--chalk-dim)",
+                        }}
+                      >
+                        {stake == null ? "–" : fmtStakeValue(stake.stake)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.3rem 0.5rem",
+                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          textAlign: "right",
                           fontWeight: 700,
                           color: stake == null ? "inherit" : stake.profit >= 0 ? "var(--gold)" : "#e05a5a",
                         }}
                       >
-                        {stake == null ? "–" : fmtUnits(stake.profit)}
+                        {stake == null ? "–" : fmtStakeValue(stake.profit)}
                       </td>
                     </tr>
                   );

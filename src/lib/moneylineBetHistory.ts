@@ -69,6 +69,8 @@ export interface MlGameRow {
   myAwaySpread: number | null; // away-oriented, negative = away favored (site convention)
   myAwayWinPct: number | null;
   myHomeWinPct: number | null;
+  myAwayMoneyline: number | null; // fair moneyline implied by myAwayWinPct
+  myHomeMoneyline: number | null;
   vegasAwayMoneyline: number | null;
   vegasHomeMoneyline: number | null;
   vegasAwayWinPct: number | null;
@@ -99,6 +101,8 @@ export function computeMlRow(
 ): MlGameRow {
   const myAwayWinPct = overrideAwayWinPct != null ? overrideAwayWinPct : myAwaySpread != null ? spreadToWinPct(myAwaySpread) : null;
   const myHomeWinPct = myAwayWinPct != null ? 1 - myAwayWinPct : null;
+  const myAwayMoneyline = myAwayWinPct != null ? fairMoneylineFromWinPct(myAwayWinPct) : null;
+  const myHomeMoneyline = myHomeWinPct != null ? fairMoneylineFromWinPct(myHomeWinPct) : null;
 
   const vegasAwayWinPct = vegasAwayMoneyline != null ? vegasImpliedWinPct(vegasAwayMoneyline) : null;
   const vegasHomeWinPct = vegasHomeMoneyline != null ? vegasImpliedWinPct(vegasHomeMoneyline) : null;
@@ -146,6 +150,8 @@ export function computeMlRow(
     myAwaySpread,
     myAwayWinPct,
     myHomeWinPct,
+    myAwayMoneyline,
+    myHomeMoneyline,
     vegasAwayMoneyline,
     vegasHomeMoneyline,
     vegasAwayWinPct,
