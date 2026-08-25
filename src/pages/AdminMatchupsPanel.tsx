@@ -29,6 +29,35 @@ function pseudoSpreadColor(winPct: number | null): string | undefined {
   return spreadColor((0.5 - winPct) * 30);
 }
 
+// Home-side values aren't stored on MatchupComputed (only the away side
+// is — projMoneyline/projWinPct/vegasWinPct/ev), so both the row
+// renderer and sortValue() need to derive them the same way. Centralized
+// here so the two can't quietly drift apart.
+function homeSideValues(c: MatchupComputed) {
+  const homeWinPct = c.projWinPct != null ? 1 - c.projWinPct : null;
+  const homeMoneyline = homeWinPct != null ? fairMoneylineFromWinPct(homeWinPct) : null;
+  const vegasHomeMoneyline = c.line?.home_moneyline ?? null;
+  const vegasHomeWinPct =
+    vegasHomeMoneyline != null
+      ? vegasHomeMoneyline > 0
+        ? 100 / (vegasHomeMoneyline + 100)
+        : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
+      : null;
+  const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+  return { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome };
+}
+
+// Whichever side is positive EV (mirrors the Every-Bet rule) — both
+// sortValue() and the row renderer need this same pick.
+function mlBetSideFor(c: MatchupComputed): "away" | "home" | null {
+  const { evHome } = homeSideValues(c);
+  if (c.ev != null && evHome != null) {
+    if (c.ev > 0 && !(evHome > 0)) return "away";
+    if (evHome > 0 && !(c.ev > 0)) return "home";
+  }
+  return null;
+}
+
 function pctLabel(w: number, l: number) {
   const decided = w + l;
   return decided === 0 ? "–" : `${((w / decided) * 100).toFixed(1)}%`;
@@ -425,27 +454,12 @@ function MatchupsRow({
     // computes — "my" win% sums to exactly 1 (one spread-derived number),
     // but Vegas's two win%s are each computed independently from their
     // own moneyline (so they sum to slightly more than 1, the vig) —
-    // same convention as the Moneyline Bet History engine.
-    const vegasHomeMoneyline = line?.home_moneyline ?? null;
-    const homeWinPct = projWinPct != null ? 1 - projWinPct : null;
-    const homeMoneyline = homeWinPct != null ? fairMoneylineFromWinPct(homeWinPct) : null;
-    const vegasHomeWinPct =
-      vegasHomeMoneyline != null
-        ? vegasHomeMoneyline > 0
-          ? 100 / (vegasHomeMoneyline + 100)
-          : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
-        : null;
-    const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+    // same convention as the Moneyline Bet History engine. Shared with
+    // sortValue() via homeSideValues()/mlBetSideFor() so the two can't
+    // quietly drift apart.
+    const { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome } = homeSideValues(computed);
     const evAway = ev;
-
-    // Bet: whichever side is positive EV (both-positive is mathematically
-    // impossible given the vig; both-negative — the vig eating both — is
-    // the normal case and means no bet).
-    let mlBetSide: "away" | "home" | null = null;
-    if (evAway != null && evHome != null) {
-      if (evAway > 0 && !(evHome > 0)) mlBetSide = "away";
-      else if (evHome > 0 && !(evAway > 0)) mlBetSide = "home";
-    }
+    const mlBetSide = mlBetSideFor(computed);
     const mlBetEv = mlBetSide === "away" ? evAway : mlBetSide === "home" ? evHome : null;
     const clearsFilter = mlBetEv != null && mlBetEv > mlEvThreshold;
 
@@ -578,20 +592,27 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
         return c.vegasWinPct;
       case "ev":
         return c.ev;
+      case "vegasHomeML":
+        return c.line?.home_moneyline ?? null;
+      case "projHomeML":
+        return homeSideValues(c).homeMoneyline;
+      case "homeWinPct":
+        return homeSideValues(c).homeWinPct;
+      case "vegasHomeWinPct":
+        return homeSideValues(c).vegasHomeWinPct;
+      case "evHome":
+        return homeSideValues(c).evHome;
+      case "betSide": {
+        const side = mlBetSideFor(c);
+        return side ? (side === "away" ? c.game.away_team : c.game.home_team) : null;
+      }
+      case "filteredBetSide": {
+        const side = mlBetSideFor(c);
+        const ev = side === "away" ? c.ev : side === "home" ? homeSideValues(c).evHome : null;
+        return side && ev != null && ev > 0 ? (side === "away" ? c.game.away_team : c.game.home_team) : null;
+      }
       case "bestEv": {
-        // Same home-side derivation as the row renderer (there's no
-        // stored home EV on MatchupComputed — only the away side is,
-        // as `ev`). Recomputed here so the standalone "Sort by Best EV"
-        // button can rank by whichever side has the stronger edge.
-        const homeWinPct = c.projWinPct != null ? 1 - c.projWinPct : null;
-        const vegasHomeMoneyline = c.line?.home_moneyline ?? null;
-        const vegasHomeWinPct =
-          vegasHomeMoneyline != null
-            ? vegasHomeMoneyline > 0
-              ? 100 / (vegasHomeMoneyline + 100)
-              : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
-            : null;
-        const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+        const { evHome } = homeSideValues(c);
         const vals = [c.ev, evHome].filter((v): v is number => v != null);
         return vals.length > 0 ? Math.max(...vals) : null;
       }
@@ -910,13 +931,13 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="My Away Win %" sortKey="projWinPct" active={sortKey === "projWinPct"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Vegas Away Win %" sortKey="vegasWinPct" active={sortKey === "vegasWinPct"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away EV" sortKey="ev" active={sortKey === "ev"} dir={sortDir} onClick={handleSort} align="right" />
-                      <th className="th th-right">Vegas Home ML</th>
-                      <th className="th th-right">My Home ML</th>
-                      <th className="th th-right">My Home Win %</th>
-                      <th className="th th-right">Vegas Home Win %</th>
-                      <th className="th th-right">Home EV</th>
-                      <th className="th">Bet</th>
-                      <th className="th">Filtered Bet</th>
+                      <SortHeader label="Vegas Home ML" sortKey="vegasHomeML" active={sortKey === "vegasHomeML"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="My Home ML" sortKey="projHomeML" active={sortKey === "projHomeML"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="My Home Win %" sortKey="homeWinPct" active={sortKey === "homeWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Vegas Home Win %" sortKey="vegasHomeWinPct" active={sortKey === "vegasHomeWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Home EV" sortKey="evHome" active={sortKey === "evHome"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Bet" sortKey="betSide" active={sortKey === "betSide"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Filtered Bet" sortKey="filteredBetSide" active={sortKey === "filteredBetSide"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Act. Winner" sortKey="actWinner" active={sortKey === "actWinner"} dir={sortDir} onClick={handleSort} />
