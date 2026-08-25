@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import SortHeader from "../components/SortHeader";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { classOf } from "../lib/matchupsCompute";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -391,6 +392,84 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
 
   const weeks = useMemo(() => Array.from(new Set(allRows.map((r) => r.game.week))).sort((a, b) => a - b), [allRows]);
 
+  // Per-game table sort. "bestEv" is a special combined sort (not a real
+  // column) — max(evAway, evHome) descending, so whichever side has the
+  // stronger edge surfaces first regardless of which side it's on.
+  type TableSortKey =
+    | "date" | "away" | "home" | "mySpread" | "awayWinPct" | "awayMl" | "vegasAwayMl" | "evAway"
+    | "homeWinPct" | "homeMl" | "vegasHomeMl" | "evHome" | "bet" | "filteredBet" | "result" | "stake" | "units" | "bestEv";
+  const [tableSortKey, setTableSortKey] = useState<TableSortKey>("date");
+  const [tableSortDir, setTableSortDir] = useState<"asc" | "desc">("asc");
+
+  function handleTableSort(key: string) {
+    const k = key as TableSortKey;
+    if (tableSortKey === k) {
+      setTableSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setTableSortKey(k);
+      setTableSortDir(k === "bestEv" ? "desc" : "asc");
+    }
+  }
+
+  function tableSortValue(r: MlGameRow, key: TableSortKey): number | string | null {
+    const stake = stakingMode === "toWin1" ? r.toWin1 : r.flat1;
+    switch (key) {
+      case "date":
+        return r.game.start_date ?? "";
+      case "away":
+        return r.game.away_team;
+      case "home":
+        return r.game.home_team;
+      case "mySpread":
+        return r.myAwaySpread;
+      case "awayWinPct":
+        return r.myAwayWinPct;
+      case "awayMl":
+        return r.myAwayMoneyline;
+      case "vegasAwayMl":
+        return r.vegasAwayMoneyline;
+      case "evAway":
+        return r.evAway;
+      case "homeWinPct":
+        return r.myHomeWinPct;
+      case "homeMl":
+        return r.myHomeMoneyline;
+      case "vegasHomeMl":
+        return r.vegasHomeMoneyline;
+      case "evHome":
+        return r.evHome;
+      case "bet":
+        return r.betSide ?? "";
+      case "filteredBet":
+        return r.betEv != null && r.betEv > evThreshold ? r.betSide ?? "" : "";
+      case "result":
+        return r.result ?? "";
+      case "stake":
+        return stake?.stake ?? null;
+      case "units":
+        return stake?.profit ?? null;
+      case "bestEv": {
+        const vals = [r.evAway, r.evHome].filter((v): v is number => v != null);
+        return vals.length > 0 ? Math.max(...vals) : null;
+      }
+    }
+  }
+
+  const sortedTableRows = useMemo(() => {
+    return [...weekRows].sort((a, b) => {
+      const av = tableSortValue(a, tableSortKey);
+      const bv = tableSortValue(b, tableSortKey);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") {
+        return tableSortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      }
+      return tableSortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekRows, tableSortKey, tableSortDir, stakingMode, evThreshold]);
+
   const { overall, byWeek } = useMemo(() => aggregateMlRows(weekRows), [weekRows]);
   const seasonAgg = useMemo(() => aggregateMlRows(allRows), [allRows]);
   const weeksSorted = Array.from(byWeek.keys()).sort((a, b) => a - b);
@@ -571,6 +650,13 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
           style={{ width: 220 }}
         />
         <span style={{ fontSize: "0.85rem", fontWeight: 700, minWidth: 42 }}>{evThreshold.toFixed(1)}%</span>
+        <button
+          className="mode-btn"
+          onClick={() => handleTableSort("bestEv")}
+          title="Sorts the per-game table below by whichever side (home or away) has the stronger EV, highest to lowest"
+        >
+          Sort by Best EV
+        </button>
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -716,31 +802,34 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Date</th>
-                  <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Away</th>
-                  <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Home</th>
-                  <th
-                    style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}
-                    title={conversionMethod === "billR" ? "Bill R Method skips the spread entirely — it goes straight from ratings to win%." : undefined}
-                  >
-                    My Spread
-                  </th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Away Win%</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Away ML</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Vegas Away ML</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Away EV</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Home Win%</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>My Home ML</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Vegas Home ML</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Home EV</th>
-                  <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Bet</th>
-                  <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Result</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Stake</th>
-                  <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>Units</th>
+                  <SortHeader label="Date" sortKey="date" active={tableSortKey === "date"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader label="Away" sortKey="away" active={tableSortKey === "away"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader label="Home" sortKey="home" active={tableSortKey === "home"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader
+                    label="My Spread"
+                    sortKey="mySpread"
+                    active={tableSortKey === "mySpread"}
+                    dir={tableSortDir}
+                    onClick={handleTableSort}
+                    align="right"
+                  />
+                  <SortHeader label="My Away Win%" sortKey="awayWinPct" active={tableSortKey === "awayWinPct"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="My Away ML" sortKey="awayMl" active={tableSortKey === "awayMl"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Vegas Away ML" sortKey="vegasAwayMl" active={tableSortKey === "vegasAwayMl"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Away EV" sortKey="evAway" active={tableSortKey === "evAway"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="My Home Win%" sortKey="homeWinPct" active={tableSortKey === "homeWinPct"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="My Home ML" sortKey="homeMl" active={tableSortKey === "homeMl"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Vegas Home ML" sortKey="vegasHomeMl" active={tableSortKey === "vegasHomeMl"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Home EV" sortKey="evHome" active={tableSortKey === "evHome"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Bet" sortKey="bet" active={tableSortKey === "bet"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader label="Filtered Bet" sortKey="filteredBet" active={tableSortKey === "filteredBet"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader label="Result" sortKey="result" active={tableSortKey === "result"} dir={tableSortDir} onClick={handleTableSort} />
+                  <SortHeader label="Stake" sortKey="stake" active={tableSortKey === "stake"} dir={tableSortDir} onClick={handleTableSort} align="right" />
+                  <SortHeader label="Units" sortKey="units" active={tableSortKey === "units"} dir={tableSortDir} onClick={handleTableSort} align="right" />
                 </tr>
               </thead>
               <tbody>
-                {weekRows.map((r: MlGameRow) => {
+                {sortedTableRows.map((r: MlGameRow) => {
                   const stake = stakingMode === "toWin1" ? r.toWin1 : r.flat1;
                   return (
                     <tr key={r.game.id}>
@@ -807,6 +896,16 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                           >
                             ✓
                           </span>
+                        )}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", color: "var(--gold)" }}>
+                        {r.betEv != null && r.betEv > evThreshold && r.betSide != null ? (
+                          <>
+                            <TeamLogo team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />{" "}
+                            {r.betSide === "away" ? r.game.away_team : r.game.home_team}
+                          </>
+                        ) : (
+                          "–"
                         )}
                       </td>
                       <td
