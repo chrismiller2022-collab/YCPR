@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ExportPngButton from "../components/ExportPngButton";
 import TeamCell from "../components/TeamCell";
 import { spreadColor } from "../lib/odds";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
@@ -382,7 +382,9 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const currentSeason = new Date().getFullYear();
+  const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
   const { rows: totalsEngineRows } = useGameTotalsEngine(season);
 
   // Same week+teams keying as the team page's Proj. Score column — the
@@ -423,7 +425,10 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
   const filteredGames = useMemo(() => games.filter(matchesFilters), [games, matchupType, query]);
 
-  const computedRows = useMemo(() => filteredGames.map((g) => computeRow(g, liveByTeam)), [filteredGames, liveByTeam]);
+  const computedRows = useMemo(
+    () => filteredGames.map((g) => computeRow(g, ratingsByWeek[g.week] ?? {})),
+    [filteredGames, ratingsByWeek]
+  );
 
   const visibleRows = useMemo(
     () => (hideNoLine ? computedRows.filter((c) => c.vegasAwaySpread != null) : computedRows),

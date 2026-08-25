@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, type MatchupComputed } from "../lib/matchupsCompute";
 import SortHeader from "../components/SortHeader";
@@ -577,7 +577,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const currentSeason = new Date().getFullYear();
+  const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
 
   useEffect(() => {
     setLoading(true);
@@ -609,7 +611,10 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     });
   }, [games, matchupType, query]);
 
-  const computedRows = useMemo(() => filteredGames.map((g) => computeRow(g, liveByTeam)), [filteredGames, liveByTeam]);
+  const computedRows = useMemo(
+    () => filteredGames.map((g) => computeRow(g, ratingsByWeek[g.week] ?? {})),
+    [filteredGames, ratingsByWeek]
+  );
 
   const visibleRows = useMemo(() => {
     if (!hideNoLine) return computedRows;
