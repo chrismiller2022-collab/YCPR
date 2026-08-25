@@ -431,6 +431,35 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Mirror this week into the season archive (season_weekly_ratings) —
+    // weekly_team_stats has no season column and upserts on (team, week)
+    // alone, so the moment next season reuses these same week labels
+    // (e.g. next year's "week1" upload), this season's data would
+    // otherwise be silently overwritten with no record left. Archiving on
+    // every push means it's already saved from the moment each week goes
+    // live, not something that has to be remembered at season's end.
+    // Best-effort: a failure here doesn't fail the actual ratings push.
+    const currentSeason = new Date().getFullYear();
+    const archiveRows = allRows
+      .filter((r) => r.rating != null)
+      .map((r) => ({
+        season: currentSeason,
+        week,
+        week_number: weekNumber,
+        team: r.team,
+        rating: r.rating,
+        resume_rating: r.resume_rating ?? null,
+        sor: r.sor ?? null,
+        rank: r.rank ?? null,
+      }));
+    if (archiveRows.length > 0) {
+      await supabaseAdmin
+        .from("season_weekly_ratings")
+        .upsert(archiveRows, { onConflict: "season,week,team" });
+      // Errors here are intentionally swallowed — archiving is a
+      // best-effort mirror, not the primary write this action promises.
+    }
+
     res.status(200).json({ ok: true, matched, saved: count ?? allRows.length, week });
     return;
   }
