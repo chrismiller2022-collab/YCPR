@@ -10,6 +10,7 @@ import { computeRadarMetrics } from "../lib/percentiles";
 import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
@@ -463,6 +464,15 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const { rows: totalsRows } = useGameTotalsEngine(season);
   const exportRef = useRef<HTMLDivElement>(null);
 
+  // Schedule table only: each game gets its OWN week's ratings snapshot
+  // (not "latest") so a played/projected Week 3 game doesn't silently
+  // reflect Week 8's ratings once Week 8 is uploaded. The graphic card,
+  // radar profile, and conference standings above intentionally keep
+  // using "latest" — those represent the team's current standing right
+  // now, not a specific game's own-week projection.
+  const scheduleWeekNumbers = useMemo(() => schedule.map((g) => g.week), [schedule]);
+  const { byWeek: scheduleRatingsByWeek } = useWeekAccurateRatings(season, scheduleWeekNumbers, season);
+
   // Game/Team Totals engine keys games by CFBD id (different id space
   // than the static schedule bundle's own ids), so match on week + both
   // team names instead — reliable since both sources describe the same
@@ -550,7 +560,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                     key={g.id}
                     game={g}
                     team={team}
-                    liveByTeam={liveByTeam}
+                    liveByTeam={scheduleRatingsByWeek[g.week] ?? {}}
                     projRow={totalsRowByGame.get(`${g.week}|${g.home}|${g.away}`) ?? null}
                     onNavigateTeam={onNavigateTeam}
                   />

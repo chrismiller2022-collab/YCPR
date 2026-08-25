@@ -215,9 +215,14 @@ export function buildMlRowsFromBetHistory(season: number, games: GameWithLines[]
 // ---------------------------------------------------------------------
 export type HfaMode = "team" | "flat";
 
+// ratingsByWeek: one ratings-by-team map PER GAME WEEK (from
+// useWeekAccurateRatings), not one shared "latest" map for every game —
+// so a Week 3 game always uses Week 3's own snapshot regardless of what's
+// been uploaded since, whether that's the live current season or an
+// archived past one (e.g. 2025's season_weekly_ratings backfill).
 export function buildMlRowsFromLiveRatings(
   games: GameWithLines[],
-  liveByTeam: Record<string, any>,
+  ratingsByWeek: Record<number, Record<string, any>>,
   hfaMode: HfaMode = "team"
 ): MlGameRow[] {
   const rows: MlGameRow[] = [];
@@ -225,11 +230,12 @@ export function buildMlRowsFromLiveRatings(
     const line = pickMoneylineLine(g.lines);
     if (!line) continue;
 
+    const weekRatings = ratingsByWeek[g.week] ?? {};
     const staticAway = TEAMS_BY_NAME[g.away_team] ?? null;
     const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
-    const awayRating = liveByTeam[g.away_team]?.rating ?? staticAway?.rating ?? null;
-    const homeRating = liveByTeam[g.home_team]?.rating ?? staticHome?.rating ?? null;
-    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, liveByTeam);
+    const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
+    const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
+    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
     const myAwaySpread = awayRating != null && homeRating != null ? awayRating - homeRating + hfa : null;
 
     rows.push(computeMlRow(g, myAwaySpread, line.away_moneyline, line.home_moneyline));
@@ -238,11 +244,14 @@ export function buildMlRowsFromLiveRatings(
 }
 
 // ---------------------------------------------------------------------
-// Bill R Method — an alternate moneyline derivation, live games only
-// (2026+; the site's own YC/Consensus power rating has no historical
-// per-week snapshot for 2024/25 to rebuild against). Skips the spread
-// number entirely: ratingDiff -> HFA-adjusted margin -> z-score -> normal
-// CDF -> win probability -> fair moneyline.
+// Bill R Method — an alternate moneyline derivation. Originally live-only
+// (2026+), since it needs each team's actual per-week power rating
+// rather than a single graded spread number, and no historical per-week
+// snapshot existed for past seasons. Now also works for any season with
+// an entry in season_weekly_ratings (2025's CSV backfill, and any future
+// past-season archive). Skips the spread number entirely: ratingDiff ->
+// HFA-adjusted margin -> z-score -> normal CDF -> win probability ->
+// fair moneyline.
 //
 // This site's rating convention is inverted from a normal SP+-style
 // rating (lower/more negative = better team here, see LiveWinTotalsPage's
@@ -273,7 +282,7 @@ export function billRAwayWinPct(awayRating: number, homeRating: number, divisor:
 
 export function buildMlRowsFromLiveRatingsBillR(
   games: GameWithLines[],
-  liveByTeam: Record<string, any>,
+  ratingsByWeek: Record<number, Record<string, any>>,
   divisor: number = BILL_R_DEFAULT_DIVISOR
 ): MlGameRow[] {
   const rows: MlGameRow[] = [];
@@ -281,10 +290,11 @@ export function buildMlRowsFromLiveRatingsBillR(
     const line = pickMoneylineLine(g.lines);
     if (!line) continue;
 
+    const weekRatings = ratingsByWeek[g.week] ?? {};
     const staticAway = TEAMS_BY_NAME[g.away_team] ?? null;
     const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
-    const awayRating = liveByTeam[g.away_team]?.rating ?? staticAway?.rating ?? null;
-    const homeRating = liveByTeam[g.home_team]?.rating ?? staticHome?.rating ?? null;
+    const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
+    const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
 
     const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor) : null;
 

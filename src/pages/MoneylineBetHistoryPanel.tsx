@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { BET_HISTORY } from "../data/betHistory.data";
 import {
@@ -210,7 +210,19 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const currentSeason = new Date().getFullYear();
+  const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+
+  // Whether there's any actual per-team rating source for this season at
+  // all — the live current season (weekly_team_stats) or an archived past
+  // one (season_weekly_ratings, e.g. 2025's CSV backfill). A season with
+  // neither (e.g. 2024) can't support Bill R or the from-ratings "current
+  // conversion" path, only the pre-graded BET_HISTORY predictions.
+  const hasRatingsForSeason = useMemo(
+    () => Object.values(ratingsByWeek).some((m) => Object.keys(m).length > 0),
+    [ratingsByWeek]
+  );
 
   useEffect(() => {
     setLoading(true);
@@ -224,15 +236,22 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const hasBetHistoryForSeason = useMemo(() => BET_HISTORY.some((r) => r.season === season), [season]);
 
   const { allRows, unmatchedCount } = useMemo(() => {
+    // Bill R explicitly selected and we actually have real per-team
+    // ratings for this season — use it even for a season that also has
+    // BET_HISTORY rows (2025), since Bill R needs the real ratings, not
+    // the pre-graded spread-only predictions.
+    if (conversionMethod === "billR" && hasRatingsForSeason) {
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
+    }
     if (hasBetHistoryForSeason) {
       const { rows, unmatchedBetHistory } = buildMlRowsFromBetHistory(season, games);
       return { allRows: rows, unmatchedCount: unmatchedBetHistory.length };
     }
     if (conversionMethod === "billR") {
-      return { allRows: buildMlRowsFromLiveRatingsBillR(games, liveByTeam, billRDivisor), unmatchedCount: 0 };
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
     }
-    return { allRows: buildMlRowsFromLiveRatings(games, liveByTeam, hfaMode), unmatchedCount: 0 };
-  }, [season, games, hasBetHistoryForSeason, liveByTeam, conversionMethod, billRDivisor, hfaMode]);
+    return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode), unmatchedCount: 0 };
+  }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode]);
 
   const weekRows = useMemo(
     () => (week === "all" ? allRows : allRows.filter((r) => r.game.week === week)),
@@ -265,8 +284,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         Every game, both sides' moneyline converted to Vegas's implied win% (vig included, same convention as the
         Matchups pages' EV column), compared against my own fair win% from that game's projected spread. Whichever
         side is positive EV is the bet — if neither side is positive (the vig eating both, which is the normal case),
-        no bet. 2024/2025 use the historical prediction actually made at the time (from Bet History); 2026 onward uses
-        live power ratings as each week is synced.
+        no bet. Current conversion: 2024/2025 use the historical prediction actually made at the time (from Bet
+        History); 2026 onward uses live power ratings as each week is synced. Bill R Method: available for any
+        season with real per-team-per-week ratings on file — 2025 (archived) and 2026 (live) — since it derives a
+        win probability directly from each team's own rating rather than a single graded spread number.
       </p>
 
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -303,12 +324,12 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         <button
           className={`mode-btn ${conversionMethod === "billR" ? "mode-btn-active" : ""}`}
           onClick={() => setConversionMethod("billR")}
-          disabled={hasBetHistoryForSeason}
-          title={hasBetHistoryForSeason ? "Live games only — no historical rating snapshots to rebuild " + season + " with." : undefined}
+          disabled={!hasRatingsForSeason}
+          title={!hasRatingsForSeason ? "No per-team rating snapshots to rebuild " + season + " with." : undefined}
         >
           Bill R Method
         </button>
-        {conversionMethod === "billR" && !hasBetHistoryForSeason && (
+        {conversionMethod === "billR" && hasRatingsForSeason && (
           <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
             z-score divisor{" "}
             <input
@@ -320,9 +341,9 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
             />
           </label>
         )}
-        {hasBetHistoryForSeason && (
+        {!hasRatingsForSeason && (
           <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>
-            Bill R Method is live-only (2026+) — {season} keeps using the current conversion.
+            No rating snapshots for {season} — Bill R needs a live season or an archived one (season_weekly_ratings).
           </span>
         )}
       </div>
