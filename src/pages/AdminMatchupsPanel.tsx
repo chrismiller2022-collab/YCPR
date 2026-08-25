@@ -17,6 +17,18 @@ const CP: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+// Vegas ML cells have no literal "spread" to color by (unlike the My ML
+// cells, which reuse the real projAwaySpread/-projAwaySpread), so they
+// were left with .matchups-projected-cell's flat gold default while My
+// ML sat right next to them properly color-coded — jarring and harder
+// to read at a glance. This derives a spread-equivalent from the win%
+// itself (0.5 -> 0, scaled at the same rough sensitivity spreadColor
+// expects) purely for consistent coloring, not used for any math.
+function pseudoSpreadColor(winPct: number | null): string | undefined {
+  if (winPct == null) return undefined;
+  return spreadColor((0.5 - winPct) * 30);
+}
+
 function pctLabel(w: number, l: number) {
   const decided = w + l;
   return decided === 0 ? "–" : `${((w / decided) * 100).toFixed(1)}%`;
@@ -442,7 +454,7 @@ function MatchupsRow({
         <td className="game-date-cell">{dateLabel}</td>
         <TeamNameCell team={awayTeam} name={game.away_team} />
         <TeamNameCell team={homeTeam} name={game.home_team} />
-        <td className="matchups-projected-cell">
+        <td className="matchups-projected-cell" style={{ color: pseudoSpreadColor(vegasWinPct) }}>
           {vegasMoneyline != null ? `${vegasMoneyline > 0 ? "+" : ""}${Math.round(vegasMoneyline)}` : "–"}
         </td>
         <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(projAwaySpread) } : undefined}>
@@ -455,7 +467,7 @@ function MatchupsRow({
         <td className="matchups-winpct-cell" style={evAway != null ? { color: evAway > 0 ? "#8fd39a" : evAway < 0 ? "#c45c52" : undefined } : undefined}>
           {evAway != null ? `${evAway > 0 ? "+" : ""}${evAway.toFixed(1)}%` : "–"}
         </td>
-        <td className="matchups-projected-cell">
+        <td className="matchups-projected-cell" style={{ color: pseudoSpreadColor(vegasHomeWinPct) }}>
           {vegasHomeMoneyline != null ? `${vegasHomeMoneyline > 0 ? "+" : ""}${Math.round(vegasHomeMoneyline)}` : "–"}
         </td>
         <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(-projAwaySpread) } : undefined}>
@@ -566,6 +578,23 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
         return c.vegasWinPct;
       case "ev":
         return c.ev;
+      case "bestEv": {
+        // Same home-side derivation as the row renderer (there's no
+        // stored home EV on MatchupComputed — only the away side is,
+        // as `ev`). Recomputed here so the standalone "Sort by Best EV"
+        // button can rank by whichever side has the stronger edge.
+        const homeWinPct = c.projWinPct != null ? 1 - c.projWinPct : null;
+        const vegasHomeMoneyline = c.line?.home_moneyline ?? null;
+        const vegasHomeWinPct =
+          vegasHomeMoneyline != null
+            ? vegasHomeMoneyline > 0
+              ? 100 / (vegasHomeMoneyline + 100)
+              : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
+            : null;
+        const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+        const vals = [c.ev, evHome].filter((v): v is number => v != null);
+        return vals.length > 0 ? Math.max(...vals) : null;
+      }
       case "projWinner":
         return c.projAwaySpread != null
           ? c.projAwaySpread < 0
@@ -808,6 +837,18 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             />
             <span style={{ fontWeight: 700, minWidth: 40 }}>{mlEvThreshold.toFixed(1)}%</span>
           </label>
+        )}
+        {mode === "moneyline" && (
+          <button
+            className="mode-btn"
+            onClick={() => {
+              setSortKey("bestEv");
+              setSortDir("desc");
+            }}
+            title="Sorts by whichever side (home or away) has the stronger EV, highest to lowest"
+          >
+            Sort by Best EV
+          </button>
         )}
       </div>
 
