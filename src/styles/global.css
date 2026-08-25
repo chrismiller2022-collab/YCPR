@@ -1155,17 +1155,13 @@
         /* Weekly Power Ratings (Preseason/Week 1, Live) only has 4
            columns, so the default `table { width: 100% }` stretched to
            the .table-wrap cap and left huge gaps between columns.
-           Letting the table size to its own content and centering it
-           inside the wrap looks intentional without hardcoding a fixed
-           pixel width that would break if columns are ever added. */
+           Centering via margin:auto on the table itself (not flex on the
+           scroll container — that broke .table-scroll's own max-height/
+           overflow clipping, producing an oversized unclipped table with
+           a page-level scrollbar instead of a contained scroll box). */
         .preseason-ratings-page .table-scroll table {
           width: auto;
           margin: 0 auto;
-        }
-
-        .preseason-ratings-page .table-scroll {
-          display: flex;
-          justify-content: center;
         }
 
         /* Conference preview has more columns (up to 12, including the

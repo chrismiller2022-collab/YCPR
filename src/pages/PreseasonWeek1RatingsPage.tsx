@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
+import ExportPngButton from "../components/ExportPngButton";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { fetchWeeklyPowerRatings } from "../lib/api/ratingSystems";
 import { buildRankMap } from "../lib/ranks";
@@ -23,6 +24,7 @@ interface Row {
 
 export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const season = new Date().getFullYear();
+  const exportRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,9 +71,9 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
   }, [rows, division, sortKey, sortDir, rankByTeam]);
 
   return (
-    <div className="page preseason-ratings-page">
+    <div className="page preseason-ratings-page" ref={exportRef}>
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">Weekly Power Ratings</div>
@@ -83,12 +85,15 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", alignItems: "center" }} data-export-exclude="true">
         {(["FBS", "FCS", "All"] as const).map((d) => (
           <button key={d} className={`mode-btn ${division === d ? "mode-btn-active" : ""}`} onClick={() => setDivision(d)}>
             {d}
           </button>
         ))}
+        <span style={{ marginLeft: "auto" }}>
+          <ExportPngButton targetRef={exportRef} filename={() => `power-ratings-week1-${division.toLowerCase()}`} />
+        </span>
       </div>
 
       {loading ? (
