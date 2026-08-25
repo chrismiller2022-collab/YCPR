@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import TeamLogo from "../components/TeamLogo";
-import { spreadColor } from "../lib/odds";
+import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, type MatchupComputed } from "../lib/matchupsCompute";
@@ -268,11 +268,13 @@ function MatchupsRow({
   mode,
   selected,
   onToggleSelect,
+  mlEvThreshold = 0,
 }: {
   computed: MatchupComputed;
   mode: string;
   selected?: boolean;
   onToggleSelect?: (computed: MatchupComputed) => void;
+  mlEvThreshold?: number;
 }) {
   const {
     game,
@@ -398,8 +400,6 @@ function MatchupsRow({
   }
 
   if (mode === "moneyline") {
-
-    const winner = projAwaySpread != null ? (projAwaySpread < 0 ? game.away_team : projAwaySpread > 0 ? game.home_team : "Pick'em") : "–";
     const actualWinner =
       game.away_points != null && game.home_points != null
         ? game.away_points > game.home_points
@@ -408,6 +408,35 @@ function MatchupsRow({
           ? game.home_team
           : "Tie"
         : "–";
+
+    // Home-side mirror of the away-side fields matchupsCompute.ts already
+    // computes — "my" win% sums to exactly 1 (one spread-derived number),
+    // but Vegas's two win%s are each computed independently from their
+    // own moneyline (so they sum to slightly more than 1, the vig) —
+    // same convention as the Moneyline Bet History engine.
+    const vegasHomeMoneyline = line?.home_moneyline ?? null;
+    const homeWinPct = projWinPct != null ? 1 - projWinPct : null;
+    const homeMoneyline = homeWinPct != null ? fairMoneylineFromWinPct(homeWinPct) : null;
+    const vegasHomeWinPct =
+      vegasHomeMoneyline != null
+        ? vegasHomeMoneyline > 0
+          ? 100 / (vegasHomeMoneyline + 100)
+          : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
+        : null;
+    const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+    const evAway = ev;
+
+    // Bet: whichever side is positive EV (both-positive is mathematically
+    // impossible given the vig; both-negative — the vig eating both — is
+    // the normal case and means no bet).
+    let mlBetSide: "away" | "home" | null = null;
+    if (evAway != null && evHome != null) {
+      if (evAway > 0 && !(evHome > 0)) mlBetSide = "away";
+      else if (evHome > 0 && !(evAway > 0)) mlBetSide = "home";
+    }
+    const mlBetEv = mlBetSide === "away" ? evAway : mlBetSide === "home" ? evHome : null;
+    const clearsFilter = mlBetEv != null && mlBetEv > mlEvThreshold;
+
     return (
       <tr>
         <td className="game-date-cell">{dateLabel}</td>
@@ -423,12 +452,30 @@ function MatchupsRow({
           {projWinPct != null ? `${(projWinPct * 100).toFixed(1)}%` : "–"}
         </td>
         <td className="matchups-winpct-cell">{vegasWinPct != null ? `${(vegasWinPct * 100).toFixed(1)}%` : "–"}</td>
-        <td className="matchups-winpct-cell" style={ev != null ? { color: ev > 0 ? "#8fd39a" : ev < 0 ? "#c45c52" : undefined } : undefined}>
-          {ev != null ? `${ev > 0 ? "+" : ""}${ev.toFixed(1)}%` : "–"}
+        <td className="matchups-winpct-cell" style={evAway != null ? { color: evAway > 0 ? "#8fd39a" : evAway < 0 ? "#c45c52" : undefined } : undefined}>
+          {evAway != null ? `${evAway > 0 ? "+" : ""}${evAway.toFixed(1)}%` : "–"}
+        </td>
+        <td className="matchups-projected-cell">
+          {vegasHomeMoneyline != null ? `${vegasHomeMoneyline > 0 ? "+" : ""}${Math.round(vegasHomeMoneyline)}` : "–"}
+        </td>
+        <td className="matchups-projected-cell" style={projAwaySpread != null ? { color: spreadColor(-projAwaySpread) } : undefined}>
+          {homeMoneyline != null ? `${homeMoneyline > 0 ? "+" : ""}${Math.round(homeMoneyline)}` : "–"}
+        </td>
+        <td className="matchups-winpct-cell" style={projAwaySpread != null ? { color: spreadColor(-projAwaySpread) } : undefined}>
+          {homeWinPct != null ? `${(homeWinPct * 100).toFixed(1)}%` : "–"}
+        </td>
+        <td className="matchups-winpct-cell">{vegasHomeWinPct != null ? `${(vegasHomeWinPct * 100).toFixed(1)}%` : "–"}</td>
+        <td className="matchups-winpct-cell" style={evHome != null ? { color: evHome > 0 ? "#8fd39a" : evHome < 0 ? "#c45c52" : undefined } : undefined}>
+          {evHome != null ? `${evHome > 0 ? "+" : ""}${evHome.toFixed(1)}%` : "–"}
+        </td>
+        <td style={{ ...CP, fontWeight: 700 }}>
+          {mlBetSide != null ? (mlBetSide === "away" ? game.away_team : game.home_team) : "–"}
+        </td>
+        <td style={{ ...CP, fontWeight: 700, color: clearsFilter ? "var(--gold)" : undefined }}>
+          {clearsFilter ? (mlBetSide === "away" ? game.away_team : game.home_team) : "–"}
         </td>
         <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
         <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
-        <td className="matchups-winner-cell">{winner}</td>
         <td className="matchups-winner-cell">{actualWinner}</td>
       </tr>
     );
@@ -565,6 +612,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [query, setQuery] = useState("");
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
+  const [mlEvThreshold, setMlEvThreshold] = useState(0);
   const [hideNoLine, setHideNoLine] = useState(true);
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -746,6 +794,21 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
           Hide games with no Vegas {mode === "spreads" ? "line" : mode === "moneyline" ? "moneyline" : "total"}
         </label>
+        {mode === "moneyline" && (
+          <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            Filtered Bet EV threshold:
+            <input
+              type="range"
+              min={0}
+              max={30}
+              step={0.5}
+              value={mlEvThreshold}
+              onChange={(e) => setMlEvThreshold(parseFloat(e.target.value))}
+              style={{ width: 160 }}
+            />
+            <span style={{ fontWeight: 700, minWidth: 40 }}>{mlEvThreshold.toFixed(1)}%</span>
+          </label>
+        )}
       </div>
 
       <div className="mode-toggle">
@@ -801,14 +864,20 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Vegas Moneyline" sortKey="vegasML" active={sortKey === "vegasML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Projected Moneyline" sortKey="projML" active={sortKey === "projML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Projected Win %" sortKey="projWinPct" active={sortKey === "projWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Vegas Win %" sortKey="vegasWinPct" active={sortKey === "vegasWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="EV" sortKey="ev" active={sortKey === "ev"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Vegas Away ML" sortKey="vegasML" active={sortKey === "vegasML"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="My Away ML" sortKey="projML" active={sortKey === "projML"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="My Away Win %" sortKey="projWinPct" active={sortKey === "projWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Vegas Away Win %" sortKey="vegasWinPct" active={sortKey === "vegasWinPct"} dir={sortDir} onClick={handleSort} align="right" />
+                      <SortHeader label="Away EV" sortKey="ev" active={sortKey === "ev"} dir={sortDir} onClick={handleSort} align="right" />
+                      <th className="th th-right">Vegas Home ML</th>
+                      <th className="th th-right">My Home ML</th>
+                      <th className="th th-right">My Home Win %</th>
+                      <th className="th th-right">Vegas Home Win %</th>
+                      <th className="th th-right">Home EV</th>
+                      <th className="th">Bet</th>
+                      <th className="th">Filtered Bet</th>
                       <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Proj. Winner" sortKey="projWinner" active={sortKey === "projWinner"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Act. Winner" sortKey="actWinner" active={sortKey === "actWinner"} dir={sortDir} onClick={handleSort} />
                     </tr>
                   )}
@@ -834,6 +903,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       mode={mode}
                       selected={selectedGameIds.has(c.game.id)}
                       onToggleSelect={toggleSelect}
+                      mlEvThreshold={mlEvThreshold}
                     />
                   ))}
                 </tbody>
