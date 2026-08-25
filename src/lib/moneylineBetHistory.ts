@@ -360,32 +360,53 @@ export function aggregateMlRowsFiltered(rows: MlGameRow[], evThreshold: number):
 }
 
 // ---------------------------------------------------------------------
-// Home / Away / Favorite / Underdog splits. Favorite/underdog reads off
-// myAwaySpread's sign (negative = away favored, this file's own
-// away-oriented convention, documented on MlGameRow above) — a true
-// pick'em (spread exactly 0) has no favorite, so it's excluded from that
-// split only (still counted in home/away). Combo cuts aren't broken out
-// separately — too small a sample size for now.
+// Home / Away / Favorite / Underdog / Home-Fav / Home-Dog / Away-Fav /
+// Away-Dog splits. Favorite/underdog reads off myAwayWinPct (>0.5 =
+// away favored) rather than myAwaySpread's sign — Bill R Method leaves
+// myAwaySpread null by design (it skips the spread number entirely), so
+// keying off win% instead works for both methods identically. A true
+// pick'em (exactly 0.5) has no favorite, so it's excluded from every
+// favorite/dog-based split, though still counted in home/away.
 // ---------------------------------------------------------------------
 export interface MlSplitBucket {
   home: MlTally;
   away: MlTally;
   favorite: MlTally;
   underdog: MlTally;
+  homeFav: MlTally;
+  homeDog: MlTally;
+  awayFav: MlTally;
+  awayDog: MlTally;
 }
 
 function emptyMlSplitBucket(): MlSplitBucket {
-  return { home: emptyMlTally(), away: emptyMlTally(), favorite: emptyMlTally(), underdog: emptyMlTally() };
+  return {
+    home: emptyMlTally(),
+    away: emptyMlTally(),
+    favorite: emptyMlTally(),
+    underdog: emptyMlTally(),
+    homeFav: emptyMlTally(),
+    homeDog: emptyMlTally(),
+    awayFav: emptyMlTally(),
+    awayDog: emptyMlTally(),
+  };
 }
 
 function addSplitRow(bucket: MlSplitBucket, row: MlGameRow) {
   if (row.betSide == null) return;
-  addToTally(row.betSide === "home" ? bucket.home : bucket.away, row);
+  const isHome = row.betSide === "home";
+  addToTally(isHome ? bucket.home : bucket.away, row);
 
-  if (row.myAwaySpread != null && row.myAwaySpread !== 0) {
-    const favoriteIsAway = row.myAwaySpread < 0;
+  if (row.myAwayWinPct != null && row.myAwayWinPct !== 0.5) {
+    const favoriteIsAway = row.myAwayWinPct > 0.5;
     const pickedAway = row.betSide === "away";
-    addToTally(pickedAway === favoriteIsAway ? bucket.favorite : bucket.underdog, row);
+    const isFavorite = pickedAway === favoriteIsAway;
+    addToTally(isFavorite ? bucket.favorite : bucket.underdog, row);
+
+    if (isHome && isFavorite) addToTally(bucket.homeFav, row);
+    else if (isHome && !isFavorite) addToTally(bucket.homeDog, row);
+    else if (!isHome && isFavorite) addToTally(bucket.awayFav, row);
+    else addToTally(bucket.awayDog, row);
   }
 }
 

@@ -89,19 +89,41 @@ function StakingModeSummary({
   );
 }
 
-function SplitsTable({ every, filtered, evThreshold }: { every: MlSplitBucket; filtered: MlSplitBucket; evThreshold: number }) {
+function SplitsTable({
+  every,
+  filtered,
+  evThreshold,
+  stakingMode,
+  currency,
+  dollarsPerUnit,
+}: {
+  every: MlSplitBucket;
+  filtered: MlSplitBucket;
+  evThreshold: number;
+  stakingMode: "toWin1" | "flat1";
+  currency: "units" | "dollars";
+  dollarsPerUnit: number;
+}) {
   const rows: { key: keyof MlSplitBucket; label: string }[] = [
     { key: "home", label: "Home" },
     { key: "away", label: "Away" },
     { key: "favorite", label: "Favorite" },
     { key: "underdog", label: "Underdog" },
+    { key: "homeFav", label: "Home Favorite" },
+    { key: "homeDog", label: "Home Underdog" },
+    { key: "awayFav", label: "Away Favorite" },
+    { key: "awayDog", label: "Away Underdog" },
   ];
+  function tallyUnits(t: MlTally) {
+    return stakingMode === "toWin1" ? t.toWin1Units : t.flat1Units;
+  }
   return (
     <div style={{ marginBottom: "1.5rem" }}>
       <div className="section-label">Home / Away / Favorite / Underdog</div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
-        Favorite/underdog comes from my projected spread (true pick'ems excluded from that split).
-        Combo cuts aren't broken out separately — too small a sample size for now.
+        Favorite/underdog comes from my win% (&gt;50% = favorite; true pick'ems excluded from
+        those splits). Home Favorite/Underdog and Away Favorite/Underdog are the 4 combo cuts of
+        the same thing.
       </p>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
@@ -109,20 +131,34 @@ function SplitsTable({ every, filtered, evThreshold }: { every: MlSplitBucket; f
             <tr>
               <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}></th>
               <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Every Bet</th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Units</th>
               <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                 Filtered (EV &gt; {evThreshold.toFixed(1)}%)
               </th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Units</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(({ key, label }) => {
               const e = every[key];
               const f = filtered[key];
+              const eUnits = tallyUnits(e);
+              const fUnits = tallyUnits(f);
               return (
                 <tr key={key}>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{label}</td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {e.w}-{e.l} <span style={{ color: "var(--chalk-dim)" }}>({mlWinPct(e).toFixed(1)}%)</span>
+                  </td>
+                  <td
+                    style={{
+                      padding: "0.4rem 0.6rem",
+                      borderBottom: "1px solid var(--hash)",
+                      textAlign: "right",
+                      color: e.w + e.l > 0 ? (eUnits >= 0 ? "var(--gold)" : "#e05a5a") : "var(--chalk-dim)",
+                    }}
+                  >
+                    {e.w + e.l > 0 ? fmtUnits(eUnits, currency, dollarsPerUnit) : "–"}
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {f.w + f.l > 0 ? (
@@ -132,6 +168,16 @@ function SplitsTable({ every, filtered, evThreshold }: { every: MlSplitBucket; f
                     ) : (
                       "–"
                     )}
+                  </td>
+                  <td
+                    style={{
+                      padding: "0.4rem 0.6rem",
+                      borderBottom: "1px solid var(--hash)",
+                      textAlign: "right",
+                      color: f.w + f.l > 0 ? (fUnits >= 0 ? "var(--gold)" : "#e05a5a") : "var(--chalk-dim)",
+                    }}
+                  >
+                    {f.w + f.l > 0 ? fmtUnits(fUnits, currency, dollarsPerUnit) : "–"}
                   </td>
                 </tr>
               );
@@ -217,7 +263,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [evThreshold, setEvThreshold] = useState(0);
   // Bill R Method only applies to live games (no BET_HISTORY entry for the
   // season) — see buildMlRowsFromLiveRatingsBillR's doc comment for why.
-  const [conversionMethod, setConversionMethod] = useState<"current" | "billR">("current");
+  const [conversionMethod, setConversionMethod] = useState<"old" | "billR">("billR");
   const [billRDivisor, setBillRDivisor] = useState(BILL_R_DEFAULT_DIVISOR);
   // Flat HFA (site-wide 2.4 constant) vs each home team's own saved HFA —
   // only applies to the "Current conversion" live path; Bill R Method uses
@@ -369,7 +415,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         Every game, both sides' moneyline converted to Vegas's implied win% (vig included, same convention as the
         Matchups pages' EV column), compared against my own fair win% from that game's projected spread. Whichever
         side is positive EV is the bet — if neither side is positive (the vig eating both, which is the normal case),
-        no bet. Current conversion: 2024/2025 use the historical prediction actually made at the time (from Bet
+        no bet. Old conversion: 2024/2025 use the historical prediction actually made at the time (from Bet
         History); 2026 onward uses live power ratings as each week is synced. Bill R Method: available for any
         season with real per-team-per-week ratings on file — 2025 (archived) and 2026 (live) — since it derives a
         win probability directly from each team's own rating rather than a single graded spread number.
@@ -471,10 +517,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
         <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>My win% derivation:</span>
         <button
-          className={`mode-btn ${conversionMethod === "current" ? "mode-btn-active" : ""}`}
-          onClick={() => setConversionMethod("current")}
+          className={`mode-btn ${conversionMethod === "old" ? "mode-btn-active" : ""}`}
+          onClick={() => setConversionMethod("old")}
         >
-          Current conversion
+          Old conversion
         </button>
         <button
           className={`mode-btn ${conversionMethod === "billR" ? "mode-btn-active" : ""}`}
@@ -503,7 +549,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         )}
       </div>
 
-      {!hasBetHistoryForSeason && conversionMethod === "current" && (
+      {!hasBetHistoryForSeason && conversionMethod === "old" && (
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
           <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>HFA:</span>
           <select value={hfaMode} onChange={(e) => setHfaMode(e.target.value as "team" | "flat")}>
@@ -655,7 +701,14 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
             </div>
           )}
 
-          <SplitsTable every={everySplits} filtered={filteredSplits} evThreshold={evThreshold} />
+          <SplitsTable
+            every={everySplits}
+            filtered={filteredSplits}
+            evThreshold={evThreshold}
+            stakingMode={stakingMode}
+            currency={displayCurrency}
+            dollarsPerUnit={dollarsPerUnit}
+          />
 
           <AlsoBetSpreadBlock weekRows={weekRows} season={season} stakingMode={stakingMode} hasBetHistoryForSeason={hasBetHistoryForSeason} />
 
