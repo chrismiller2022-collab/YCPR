@@ -74,6 +74,7 @@ export default function PoolsMenuPanel({
           onClick={() => onSelectPool("brit")}
         />
         <PoolTile label="Peay Pool" description="ATS pool vs a custom line, all FBS vs FBS games." onClick={() => onSelectPool("peay")} />
+        <PoolTile label="Westgate Supercontest" description="ATS pool vs a custom line, all FBS vs FBS games." onClick={() => onSelectPool("westgate")} />
         <PoolTile
           label="CBS Splash"
           description="ATS pool vs a custom line, all FBS vs FBS games."

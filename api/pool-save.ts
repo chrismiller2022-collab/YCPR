@@ -111,6 +111,32 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Westgate Supercontest: same shape as Peay/CBS Splash, own table/field names ---
+    if (pool === "westgate") {
+      if (action !== "saveWeek") {
+        res.status(400).json({ error: `Unknown action for westgate: ${action}` });
+        return;
+      }
+      const { season, week, rows } = req.body;
+      if (!season || !week || !Array.isArray(rows)) {
+        res.status(400).json({ error: "Missing season, week, or rows" });
+        return;
+      }
+      const cleanRows = rows.map((r: any) => ({
+        season,
+        week,
+        game_id: r.game_id,
+        westgate_line: r.westgate_line ?? null,
+        picked_side: r.picked_side ?? null,
+        is_key_pick: !!r.is_key_pick,
+        updated_at: new Date().toISOString(),
+      }));
+      const { error } = await supabaseAdmin.from("westgate_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
+      if (error) throw error;
+      res.status(200).json({ ok: true, saved: cleanRows.length });
+      return;
+    }
+
     // --- Brit / ESPN ML / ESPN Spreads / ESPN Confidence / CBS Pickem ---
     const table = POOL_TABLES[pool];
     const specialField = SPECIAL_FIELD[pool];
