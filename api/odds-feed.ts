@@ -1,11 +1,23 @@
-// Read-only proxy to The Odds API (the-odds-api.com), scoped to college
-// football spread/moneyline/total markets from Bovada, BetOnline, and
-// Novig (plus whatever mainstream US books come along for free in the
-// same call — DraftKings/FanDuel/BetMGM etc.). Proxied server-side, same
-// as every other external API in this repo, so ODDS_API_KEY never ships
-// to the browser and this function controls exactly when a credit-metered
-// request actually fires (on page open / manual refresh only — no
-// polling, per Chris wanting to stay under quota).
+// Read-only proxy to The Odds API (the-odds-api.com). Two modes:
+//   - Default (game odds): college football spread/moneyline/total
+//     markets from Bovada, BetOnline, and Novig (plus whatever
+//     mainstream US books come along for free in the same call —
+//     DraftKings/FanDuel/BetMGM etc.).
+//   - mode=futures: the NCAAF Championship Winner outrights market — a
+//     separate sport from game-level americanfootball_ncaaf, confirmed
+//     via their own widget builder's sport list ("American Football:
+//     NCAAF Championship Winner"), following the same naming convention
+//     as americanfootball_nfl_super_bowl_winner. Its sport_key is
+//     resolved dynamically from the free, non-metered /v4/sports listing
+//     by matching on title, rather than hardcoding a guessed key —
+//     safer if it's ever renamed (breaks loudly/empty instead of
+//     silently guessing wrong).
+// Both proxied server-side, same as every other external API in this
+// repo, so ODDS_API_KEY never ships to the browser and this function
+// controls exactly when a credit-metered request actually fires (on
+// page open / manual refresh only — no polling, per Chris wanting to
+// stay under quota). Kept as one function (not two) to stay within
+// Vercel Hobby's 12-serverless-function limit.
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
@@ -24,7 +36,7 @@ interface OddsApiOutcome {
   point?: number;
 }
 interface OddsApiMarket {
-  key: "spreads" | "h2h" | "totals";
+  key: "spreads" | "h2h" | "totals" | "outrights";
   outcomes: OddsApiOutcome[];
 }
 interface OddsApiBookmaker {
@@ -40,6 +52,53 @@ interface OddsApiGame {
   away_team: string;
   bookmakers: OddsApiBookmaker[];
 }
+interface OddsApiSport {
+  key: string;
+  title: string;
+  has_outrights: boolean;
+}
+
+async function handleFutures(res: any) {
+  const sportsRes = await fetch(`${ODDS_API_BASE}/sports/?apiKey=${ODDS_API_KEY}`);
+  if (!sportsRes.ok) {
+    const text = await sportsRes.text().catch(() => "");
+    throw new Error(`The Odds API /sports request failed (${sportsRes.status}): ${text || sportsRes.statusText}`);
+  }
+  const sports = (await sportsRes.json()) as OddsApiSport[];
+  const sport = sports.find((s) => s.title === "NCAAF Championship Winner" && s.has_outrights);
+  if (!sport) {
+    res.status(200).json({ outcomes: [], warning: "NCAAF Championship Winner sport not found in /v4/sports right now" });
+    return;
+  }
+
+  const qs = new URLSearchParams({
+    apiKey: ODDS_API_KEY!,
+    regions: "us,us_ex",
+    markets: "outrights",
+    oddsFormat: "american",
+  });
+  const url = `${ODDS_API_BASE}/sports/${sport.key}/odds/?${qs.toString()}`;
+  const upstream = await fetch(url);
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`The Odds API outrights request failed (${upstream.status}): ${text || upstream.statusText}`);
+  }
+  const events = (await upstream.json()) as { bookmakers: OddsApiBookmaker[] }[];
+
+  // Outrights come back as a single "event" per bookmaker with one
+  // outcome per team — flatten to {team, book, price} rows.
+  const rows: { team: string; book: string; price: number }[] = [];
+  for (const event of events) {
+    for (const book of event.bookmakers ?? []) {
+      const market = book.markets.find((m) => m.key === "outrights");
+      if (!market) continue;
+      for (const outcome of market.outcomes) {
+        rows.push({ team: outcome.name, book: book.key, price: outcome.price });
+      }
+    }
+  }
+  res.status(200).json({ outcomes: rows });
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
@@ -52,6 +111,11 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    if (req.query?.mode === "futures") {
+      await handleFutures(res);
+      return;
+    }
+
     const qs = new URLSearchParams({
       apiKey: ODDS_API_KEY,
       regions: "us,us_ex",

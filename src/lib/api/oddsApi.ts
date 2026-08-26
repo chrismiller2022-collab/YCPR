@@ -58,3 +58,25 @@ export const BOOK_META: Record<string, { label: string; url: string; color: stri
 };
 
 export const BOOK_ORDER = ["novig", "kalshi", "betonlineag", "bovada"];
+
+export interface OddsApiFuturesOutcome {
+  team: string;
+  book: string;
+  price: number;
+}
+
+async function fetchOddsFuturesUncached(): Promise<OddsApiFuturesOutcome[]> {
+  const res = await fetch("/api/odds-feed?mode=futures");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to fetch championship futures");
+  return data.outcomes as OddsApiFuturesOutcome[];
+}
+
+/** NCAAF Championship Winner outrights — same no-polling, manual-refresh-only caching as fetchOddsFeed. */
+export function fetchOddsFutures(): Promise<OddsApiFuturesOutcome[]> {
+  return cachedFetch("odds-futures:championship", fetchOddsFuturesUncached, 15 * 60 * 1000);
+}
+
+export function invalidateOddsFutures(): void {
+  invalidateCacheKey("odds-futures:championship");
+}

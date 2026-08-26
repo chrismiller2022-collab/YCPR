@@ -1,4 +1,4 @@
-import { cachedFetch } from "./cache";
+import { cachedFetch, invalidateCacheKey } from "./cache";
 
 export interface KalshiTeamMarket {
   name: string;
@@ -44,4 +44,51 @@ async function fetchKalshiCfbMarketsUncached(): Promise<KalshiGame[]> {
 // session rather than serving stale market prices.
 export function fetchKalshiCfbMarkets(): Promise<KalshiGame[]> {
   return cachedFetch("kalshi-cfb-markets", fetchKalshiCfbMarketsUncached, 60_000);
+}
+
+export interface KalshiFuturesOutcome {
+  ticker: string;
+  name: string;
+  title: string | null;
+  yesBid: number;
+  yesAsk: number;
+  volume: number;
+}
+export interface KalshiFuturesEvent {
+  eventTicker: string;
+  outcomes: KalshiFuturesOutcome[];
+}
+
+// Confirmed series tickers (from Chris's own market links) — add more as
+// they're confirmed rather than guessing at conference ticker patterns,
+// since a wrong guess just 404s silently into an empty list.
+export const KALSHI_FUTURES_SERIES = {
+  championship: "KXNCAAF",
+  championshipConference: "KXNCAAFCONF", // which conference the champion comes from — a meta-market, not a specific conference's own bracket
+  playoffQualifier: "KXNCAAFPLAYOFF",
+  finalist: "KXNCAAFFINALIST",
+  semifinalist: "KXNCAAFSF",
+  quarterfinalist: "KXNCAAFQF",
+  undefeatedRegularSeason: "KXNCAAFUNDEFEATED",
+  winTotals: "KXNCAAFWINS", // whole series = every team's win-total ladder in one call
+  conferenceChampion: {
+    Big12: "KXNCAAFB12",
+    // more conferences to add once confirmed — same KXNCAAF<CONF> pattern
+  },
+} as const;
+
+async function fetchKalshiFuturesUncached(seriesTicker: string): Promise<KalshiFuturesEvent[]> {
+  const res = await fetch(`/api/kalshi-markets?mode=futures&series_ticker=${encodeURIComponent(seriesTicker)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Failed to fetch Kalshi futures for ${seriesTicker}`);
+  return data.events as KalshiFuturesEvent[];
+}
+
+/** Same short-TTL live-snapshot caching as fetchKalshiCfbMarkets — one cache entry per series. */
+export function fetchKalshiFutures(seriesTicker: string): Promise<KalshiFuturesEvent[]> {
+  return cachedFetch(`kalshi-futures:${seriesTicker}`, () => fetchKalshiFuturesUncached(seriesTicker), 60_000);
+}
+
+export function invalidateKalshiFutures(): void {
+  invalidateCacheKey("kalshi-futures:", true);
 }
