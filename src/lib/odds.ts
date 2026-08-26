@@ -53,6 +53,16 @@ export function fairMoneylineFromWinPct(winPct) {
   return p >= 0.5 ? -100 * (p / (1 - p)) : 100 * ((1 - p) / p);
 }
 
+// Inverse of fairMoneylineFromWinPct — the implied win% a moneyline
+// carries (vig included, since this is meant for real market prices,
+// not our own fair-value output). Several places had this exact formula
+// duplicated inline (AdminMatchupsPanel's home-side EV, for one) before
+// this existed; new code should use this instead of re-deriving it.
+export function moneylineToImpliedWinPct(price) {
+  if (price == null || Number.isNaN(price)) return null;
+  return price > 0 ? 100 / (price + 100) : Math.abs(price) / (Math.abs(price) + 100);
+}
+
 // Green = favorite (more negative), red = underdog (more positive),
 // with a neutral gray around a pick'em (0).
 function spreadRGB(value) {

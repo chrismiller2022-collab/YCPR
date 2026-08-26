@@ -59,10 +59,30 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const seriesTicker = typeof req.query?.series_ticker === "string" ? req.query.series_ticker : "KXNCAAFGAME";
-  const mode = req.query?.mode === "futures" ? "futures" : "game";
+  const mode = req.query?.mode === "futures" ? "futures" : req.query?.mode === "discover" ? "discover" : "game";
 
   try {
+    if (mode === "discover") {
+      // Auto-discovers every NCAAF-prefixed series (conference championships
+      // especially — Chris only had to hand us a handful of example links,
+      // this finds the rest without needing every one individually).
+      const allSeries: { ticker: string; title: string; category: string }[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < 20; page++) {
+        const qs = new URLSearchParams({ limit: "200" });
+        if (cursor) qs.set("cursor", cursor);
+        const data = await kalshiFetch(`/series?${qs.toString()}`);
+        const pageSeries: { ticker: string; title: string; category: string }[] = data.series ?? [];
+        allSeries.push(...pageSeries);
+        cursor = data.cursor || null;
+        if (!cursor || pageSeries.length === 0) break;
+      }
+      const ncaaf = allSeries.filter((s) => s.ticker.startsWith("KXNCAAF"));
+      res.status(200).json({ series: ncaaf });
+      return;
+    }
+
+    const seriesTicker = typeof req.query?.series_ticker === "string" ? req.query.series_ticker : "KXNCAAFGAME";
     const allMarkets = await fetchAllMarketsForSeries(seriesTicker);
 
     if (mode === "futures") {

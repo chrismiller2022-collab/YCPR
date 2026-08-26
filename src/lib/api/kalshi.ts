@@ -89,6 +89,24 @@ export function fetchKalshiFutures(seriesTicker: string): Promise<KalshiFuturesE
   return cachedFetch(`kalshi-futures:${seriesTicker}`, () => fetchKalshiFuturesUncached(seriesTicker), 60_000);
 }
 
+export interface KalshiSeriesInfo {
+  ticker: string;
+  title: string;
+  category: string;
+}
+
+async function discoverKalshiNcaafSeriesUncached(): Promise<KalshiSeriesInfo[]> {
+  const res = await fetch("/api/kalshi-markets?mode=discover");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to discover Kalshi NCAAF series");
+  return data.series as KalshiSeriesInfo[];
+}
+
+/** All KXNCAAF-prefixed series Kalshi currently has — used to auto-find conference championship series without needing every ticker hand-fed. */
+export function discoverKalshiNcaafSeries(): Promise<KalshiSeriesInfo[]> {
+  return cachedFetch("kalshi-discover-ncaaf", discoverKalshiNcaafSeriesUncached, 60 * 60 * 1000);
+}
+
 export function invalidateKalshiFutures(): void {
   invalidateCacheKey("kalshi-futures:", true);
 }

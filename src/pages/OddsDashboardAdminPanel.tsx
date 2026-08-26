@@ -12,6 +12,7 @@ import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotals
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+import { useFuturesMarkets, useFuturesWinTotals, type FuturesMarketGroup, type FuturesOutcomeRow } from "../lib/futuresData";
 
 // ---------------------------------------------------------------------
 // Bet signals for the Game Cards / filters — reuses the exact same
@@ -883,9 +884,213 @@ function GameCard({ row, signal }: { row: OddsMatchRow; signal: OddsBetSignal | 
 }
 
 // ---------------------------------------------------------------------
+// Futures — a market picker (championship / conference / playoff-tree
+// qualifiers / undefeated / win totals) with the same Cards/Oddscreen
+// choice as the game-level views above, comparing Kalshi + Odds API +
+// ESPN prices per team for whichever market's selected.
+// ---------------------------------------------------------------------
+function fmtProb(p: number | null): string {
+  return p == null ? "–" : `${p.toFixed(1)}%`;
+}
+
+function FuturesOutcomeCard({ row }: { row: FuturesOutcomeRow }) {
+  return (
+    <div
+      style={{
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: "12px",
+        padding: "0.85rem 1rem",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+        <TeamLogo team={row.team} size={26} />
+        <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{row.team}</span>
+        <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--chalk-dim)" }}>{fmtProb(row.bestProbPct)}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+        {row.sources.map((s, i) => (
+          <div
+            key={i}
+            style={{
+              fontSize: "0.72rem",
+              padding: "0.2rem 0.5rem",
+              borderRadius: 6,
+              background: row.bestProbPct != null && s.impliedProbPct === row.bestProbPct ? BEST_LINE_BG : "rgba(255,255,255,0.04)",
+            }}
+          >
+            <div style={{ color: "var(--chalk-dim)" }}>{s.label}</div>
+            <div style={{ fontWeight: 700 }}>{fmtPrice(s.americanOdds)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FuturesOddscreenTable({ group }: { group: FuturesMarketGroup }) {
+  const allLabels = Array.from(new Set(group.outcomes.flatMap((o) => o.sources.map((s) => s.label))));
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
+        <thead>
+          <tr>
+            <th style={{ ...TH, textAlign: "left" }}>Team</th>
+            {allLabels.map((label) => (
+              <th key={label} style={{ ...TH, textAlign: "right" }}>
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {group.outcomes.map((row) => {
+            const byLabel = new Map(row.sources.map((s) => [s.label, s]));
+            return (
+              <tr key={row.team} style={{ borderTop: "1px solid var(--hash)" }}>
+                <td style={TD}>
+                  <TeamLogo team={row.team} size={20} /> {row.team}
+                </td>
+                {allLabels.map((label) => {
+                  const s = byLabel.get(label);
+                  const isBest = s?.impliedProbPct != null && s.impliedProbPct === row.bestProbPct;
+                  return (
+                    <td key={label} style={{ ...TD, textAlign: "right", background: isBest ? BEST_LINE_BG : undefined }}>
+                      {s ? fmtPrice(s.americanOdds) : "–"}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FuturesWinTotalsTable() {
+  const { outcomes, loading, error } = useFuturesWinTotals();
+  if (loading) return <div className="empty">Loading win totals…</div>;
+  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+  if (outcomes.length === 0) return <div className="empty">No win-total markets found (KXNCAAFWINS may be closed right now).</div>;
+
+  const allThresholds = Array.from(new Set(outcomes.flatMap((o) => o.ladder.map((l) => l.threshold))));
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+        <thead>
+          <tr>
+            <th style={{ ...TH, textAlign: "left" }}>Team</th>
+            {allThresholds.map((t) => (
+              <th key={t} style={{ ...TH, textAlign: "right" }}>
+                {t}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {outcomes.map((row) => {
+            const byThreshold = new Map(row.ladder.map((l) => [l.threshold, l.impliedProbPct]));
+            return (
+              <tr key={row.team} style={{ borderTop: "1px solid var(--hash)" }}>
+                <td style={TD}>
+                  <TeamLogo team={row.team} size={20} /> {row.team}
+                </td>
+                {allThresholds.map((t) => (
+                  <td key={t} style={{ ...TD, textAlign: "right" }}>
+                    {fmtProb(byThreshold.get(t) ?? null)}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FuturesTab() {
+  const { groups, loading, error } = useFuturesMarkets();
+  const [marketKey, setMarketKey] = useState<string>("championship");
+  const [view, setView] = useState<"cards" | "oddscreen">("oddscreen");
+
+  const nonConfGroups = groups.filter((g) => !g.key.startsWith("conf-"));
+  const confGroups = groups.filter((g) => g.key.startsWith("conf-"));
+
+  const selectedGroup = marketKey === "wintotals" ? null : groups.find((g) => g.key === marketKey);
+
+  return (
+    <div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: 0, marginBottom: "0.75rem" }}>
+        Kalshi (prediction market, converted to a fair moneyline for comparison), Odds API's bookmakers, and ESPN's
+        own futures board (ESPN BET and others) — same team, compared across every source available for that market.
+        Best price per row highlighted.
+      </p>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.75rem", alignItems: "center" }}>
+        {nonConfGroups.map((g) => (
+          <button key={g.key} className={`mode-btn ${marketKey === g.key ? "mode-btn-active" : ""}`} onClick={() => setMarketKey(g.key)}>
+            {g.label}
+          </button>
+        ))}
+        <button className={`mode-btn ${marketKey === "wintotals" ? "mode-btn-active" : ""}`} onClick={() => setMarketKey("wintotals")}>
+          Win Totals
+        </button>
+        {confGroups.length > 0 && (
+          <>
+            <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>Conference:</span>
+            <select value={confGroups.some((g) => g.key === marketKey) ? marketKey : ""} onChange={(e) => setMarketKey(e.target.value)}>
+              <option value="" disabled>
+                Choose a conference…
+              </option>
+              {confGroups.map((g) => (
+                <option key={g.key} value={g.key}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {marketKey !== "wintotals" && (
+          <span style={{ marginLeft: "auto", display: "flex", gap: "0.4rem" }}>
+            <button className={`mode-btn ${view === "cards" ? "mode-btn-active" : ""}`} onClick={() => setView("cards")}>
+              Cards
+            </button>
+            <button className={`mode-btn ${view === "oddscreen" ? "mode-btn-active" : ""}`} onClick={() => setView("oddscreen")}>
+              Oddscreen
+            </button>
+          </span>
+        )}
+      </div>
+
+      {marketKey === "wintotals" ? (
+        <FuturesWinTotalsTable />
+      ) : loading ? (
+        <div className="empty">Loading futures…</div>
+      ) : error ? (
+        <p style={{ color: "crimson" }}>{error}</p>
+      ) : !selectedGroup || selectedGroup.outcomes.length === 0 ? (
+        <div className="empty">No prices found for this market right now.</div>
+      ) : view === "cards" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "0.75rem" }}>
+          {selectedGroup.outcomes.map((row) => (
+            <FuturesOutcomeCard key={row.team} row={row} />
+          ))}
+        </div>
+      ) : (
+        <FuturesOddscreenTable group={selectedGroup} />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------
-type TopView = "cards" | "oddscreen";
+type TopView = "cards" | "oddscreen" | "futures";
 type OddscreenTab = "spread" | "moneyline" | "total";
 
 export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void }) {
@@ -1049,57 +1254,66 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
           <button className={`mode-btn ${topView === "oddscreen" ? "mode-btn-active" : ""}`} onClick={() => setTopView("oddscreen")}>
             Oddscreen
           </button>
+          <button className={`mode-btn ${topView === "futures" ? "mode-btn-active" : ""}`} onClick={() => setTopView("futures")}>
+            Futures
+          </button>
         </div>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
-        <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input type="checkbox" checked={betOnly} onChange={(e) => setBetOnly(e.target.checked)} />
-          Bets only
-        </label>
-        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Bet type:</span>
-        {(["spread", "moneyline", "total"] as const).map((t) => (
-          <button key={t} className={`mode-btn ${betTypeFilter.has(t) ? "mode-btn-active" : ""}`} onClick={() => toggleBetType(t)}>
-            {t === "spread" ? "Spread" : t === "moneyline" ? "Moneyline" : "Total"}
-          </button>
-        ))}
-        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>Sort:</span>
-        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
-          <option value="week">Week / kickoff</option>
-          <option value="betPriority">Bet priority</option>
-          <option value="mlEv">Moneyline EV</option>
-          <option value="spreadAmountOff">Spread amount off</option>
-          <option value="spreadSigmaOff">Spread sigma off</option>
-          <option value="totalAmountOff">Total amount off</option>
-        </select>
-      </div>
+      {topView !== "futures" && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+            <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <input type="checkbox" checked={betOnly} onChange={(e) => setBetOnly(e.target.checked)} />
+              Bets only
+            </label>
+            <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Bet type:</span>
+            {(["spread", "moneyline", "total"] as const).map((t) => (
+              <button key={t} className={`mode-btn ${betTypeFilter.has(t) ? "mode-btn-active" : ""}`} onClick={() => toggleBetType(t)}>
+                {t === "spread" ? "Spread" : t === "moneyline" ? "Moneyline" : "Total"}
+              </button>
+            ))}
+            <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>Sort:</span>
+            <select value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
+              <option value="week">Week / kickoff</option>
+              <option value="betPriority">Bet priority</option>
+              <option value="mlEv">Moneyline EV</option>
+              <option value="spreadAmountOff">Spread amount off</option>
+              <option value="spreadSigmaOff">Spread sigma off</option>
+              <option value="totalAmountOff">Total amount off</option>
+            </select>
+          </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", marginBottom: "1rem" }}>
-        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Weeks:</span>
-        <button className="mode-btn" onClick={selectThisWeekAndLater}>
-          This week &amp; later
-        </button>
-        {weekFilter.size > 0 && (
-          <button className="mode-btn" onClick={() => setWeekFilter(new Set())}>
-            Clear
-          </button>
-        )}
-        {availableWeeks.map((w) => (
-          <button
-            key={w}
-            className={`mode-btn ${weekFilter.size === 0 || weekFilter.has(w) ? "mode-btn-active" : ""}`}
-            style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }}
-            onClick={() => toggleWeek(w)}
-          >
-            Wk {w}
-          </button>
-        ))}
-      </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", marginBottom: "1rem" }}>
+            <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Weeks:</span>
+            <button className="mode-btn" onClick={selectThisWeekAndLater}>
+              This week &amp; later
+            </button>
+            {weekFilter.size > 0 && (
+              <button className="mode-btn" onClick={() => setWeekFilter(new Set())}>
+                Clear
+              </button>
+            )}
+            {availableWeeks.map((w) => (
+              <button
+                key={w}
+                className={`mode-btn ${weekFilter.size === 0 || weekFilter.has(w) ? "mode-btn-active" : ""}`}
+                style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }}
+                onClick={() => toggleWeek(w)}
+              >
+                Wk {w}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {siteError && <p style={{ color: "crimson" }}>{siteError}</p>}
       {oddsError && <p style={{ color: "crimson" }}>Odds feed: {oddsError}</p>}
 
-      {loading ? (
+      {topView === "futures" ? (
+        <FuturesTab />
+      ) : loading ? (
         <div className="empty">Loading…</div>
       ) : topView === "cards" ? (
         <div>

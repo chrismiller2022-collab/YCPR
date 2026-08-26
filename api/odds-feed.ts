@@ -1,4 +1,5 @@
-// Read-only proxy to The Odds API (the-odds-api.com). Two modes:
+// Read-only proxy to The Odds API (the-odds-api.com) and ESPN's public
+// futures API. Three modes:
 //   - Default (game odds): college football spread/moneyline/total
 //     markets from Bovada, BetOnline, and Novig (plus whatever
 //     mainstream US books come along for free in the same call —
@@ -12,12 +13,18 @@
 //     by matching on title, rather than hardcoding a guessed key —
 //     safer if it's ever renamed (breaks loudly/empty instead of
 //     silently guessing wrong).
-// Both proxied server-side, same as every other external API in this
-// repo, so ODDS_API_KEY never ships to the browser and this function
-// controls exactly when a credit-metered request actually fires (on
-// page open / manual refresh only — no polling, per Chris wanting to
-// stay under quota). Kept as one function (not two) to stay within
-// Vercel Hobby's 12-serverless-function limit.
+//   - mode=espn-futures: ESPN's own futures board (national championship,
+//     conference winners, awards), same public core-api.espn.com
+//     endpoint the cfbfastR R package wraps (sports.core.api.espn.com/
+//     v2/sports/football/leagues/college-football/seasons/{year}/
+//     futures) — no API key needed, it's the same public data ESPN's own
+//     site reads. Lets us compare NCAAF Championship pricing across
+//     Odds API's books AND ESPN's, not just one source.
+// All proxied server-side, so ODDS_API_KEY never ships to the browser
+// and this function controls exactly when a credit-metered request
+// fires (on page open / manual refresh only — no polling, per Chris
+// wanting to stay under quota). Kept as one function (not several) to
+// stay within Vercel Hobby's 12-serverless-function limit.
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
@@ -100,17 +107,99 @@ async function handleFutures(res: any) {
   res.status(200).json({ outcomes: rows });
 }
 
+const ESPN_CORE_BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/college-football";
+
+interface EspnFuturesOutcome {
+  team?: { $ref: string };
+  athlete?: { $ref: string };
+  value: string; // American odds as a string, e.g. "-400"
+}
+interface EspnFuturesBook {
+  provider?: { id: string; name: string };
+  outcomes?: EspnFuturesOutcome[];
+}
+interface EspnFuturesMarket {
+  id: string;
+  name: string;
+  type?: { id: string; name: string };
+  displayName: string;
+  books?: EspnFuturesBook[];
+}
+
+// Parses the numeric ESPN team id out of a team $ref URL
+// (".../teams/194?...") without a second network round trip — the
+// client already has an id->name mapping for free via the numeric ids
+// already embedded in every team's logo URL (src/data/logos.ts).
+function parseEspnTeamId(ref: string | undefined): string | null {
+  if (!ref) return null;
+  const m = /\/teams\/(\d+)/.exec(ref);
+  return m ? m[1] : null;
+}
+
+async function handleEspnFutures(res: any) {
+  const season = new Date().getFullYear();
+  const indexRes = await fetch(`${ESPN_CORE_BASE}/seasons/${season}/futures?lang=en&region=us`);
+  if (!indexRes.ok) {
+    const text = await indexRes.text().catch(() => "");
+    throw new Error(`ESPN futures index request failed (${indexRes.status}): ${text || indexRes.statusText}`);
+  }
+  const index = await indexRes.json();
+  const refs: string[] = (index.items ?? []).map((i: any) => i.$ref).filter(Boolean);
+
+  // Cap how many markets get dereferenced — ESPN's futures board also
+  // carries player awards (Heisman etc.) we don't need, and a hard cap
+  // keeps one bad season from turning into 100+ requests.
+  const capped = refs.slice(0, 40);
+  const markets = await Promise.all(
+    capped.map(async (ref) => {
+      try {
+        const r = await fetch(ref);
+        if (!r.ok) return null;
+        return (await r.json()) as EspnFuturesMarket;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const teamMarkets = markets
+    .filter((m): m is EspnFuturesMarket => m != null)
+    .filter((m) => (m.books ?? []).some((b) => (b.outcomes ?? []).some((o) => o.team)))
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      displayName: m.displayName,
+      typeName: m.type?.name ?? null,
+      providers: (m.books ?? []).map((b) => ({
+        providerId: b.provider?.id ?? null,
+        providerName: b.provider?.name ?? null,
+        outcomes: (b.outcomes ?? [])
+          .filter((o) => o.team)
+          .map((o) => ({ espnTeamId: parseEspnTeamId(o.team?.$ref), price: parseInt(o.value, 10) }))
+          .filter((o) => o.espnTeamId != null && !Number.isNaN(o.price)),
+      })),
+    }));
+
+  res.status(200).json({ markets: teamMarkets });
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  if (!ODDS_API_KEY) {
-    res.status(500).json({ error: "ODDS_API_KEY is not configured on the server" });
-    return;
-  }
 
   try {
+    if (req.query?.mode === "espn-futures") {
+      await handleEspnFutures(res);
+      return;
+    }
+
+    if (!ODDS_API_KEY) {
+      res.status(500).json({ error: "ODDS_API_KEY is not configured on the server" });
+      return;
+    }
+
     if (req.query?.mode === "futures") {
       await handleFutures(res);
       return;

@@ -77,6 +77,35 @@ export function fetchOddsFutures(): Promise<OddsApiFuturesOutcome[]> {
   return cachedFetch("odds-futures:championship", fetchOddsFuturesUncached, 15 * 60 * 1000);
 }
 
-export function invalidateOddsFutures(): void {
-  invalidateCacheKey("odds-futures:championship");
+export interface EspnFuturesOutcome {
+  espnTeamId: string;
+  price: number;
+}
+export interface EspnFuturesProvider {
+  providerId: string | null;
+  providerName: string | null;
+  outcomes: EspnFuturesOutcome[];
+}
+export interface EspnFuturesMarket {
+  id: string;
+  name: string;
+  displayName: string;
+  typeName: string | null;
+  providers: EspnFuturesProvider[];
+}
+
+async function fetchEspnFuturesUncached(): Promise<EspnFuturesMarket[]> {
+  const res = await fetch("/api/odds-feed?mode=espn-futures");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to fetch ESPN futures");
+  return data.markets as EspnFuturesMarket[];
+}
+
+/** ESPN's futures board (national championship, conference winners) — same no-polling, manual-refresh-only caching as fetchOddsFeed. */
+export function fetchEspnFutures(): Promise<EspnFuturesMarket[]> {
+  return cachedFetch("espn-futures", fetchEspnFuturesUncached, 15 * 60 * 1000);
+}
+
+export function invalidateEspnFutures(): void {
+  invalidateCacheKey("espn-futures");
 }
