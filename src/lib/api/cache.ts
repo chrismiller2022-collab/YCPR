@@ -44,3 +44,20 @@ export function cachedFetch<T>(key: string, fetcher: () => Promise<T>, ttlMs = 5
 export function invalidateCache(): void {
   cache.clear();
 }
+
+/**
+ * Clear one cached key (or every key starting with a prefix, when
+ * `prefix` is true) — for a manual "Refresh" button that should force a
+ * fresh fetch of just its own data without evicting everything else
+ * currently cached (e.g. the season's games/lines a different tab is
+ * mid-render with).
+ */
+export function invalidateCacheKey(key: string, prefix = false): void {
+  if (!prefix) {
+    cache.delete(key);
+    return;
+  }
+  for (const k of cache.keys()) {
+    if (k.startsWith(key)) cache.delete(k);
+  }
+}

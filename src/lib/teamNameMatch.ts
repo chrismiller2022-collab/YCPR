@@ -832,6 +832,25 @@ export function matchTeamName(input: string): TeamMatchResult {
   return { input, matched: null, confidence: "none" };
 }
 
+// Several external feeds (Kalshi, The Odds API's exchange listings) give
+// team names as "School Mascot" (e.g. "Ohio State Buckeyes") rather than
+// just the school name our canonical roster uses. Try the string as-is
+// first (matchTeamName already knows plenty of "School Mascot ABBR" forms
+// from other sources), then progressively drop trailing words — the
+// canonical name is almost always a strict prefix of the "School Mascot"
+// form.
+export function matchSchoolMascotName(input: string): string | null {
+  let result = matchTeamName(input);
+  if (result.matched) return result.matched;
+
+  const words = input.split(" ");
+  for (let cut = 1; cut <= 2 && words.length - cut >= 1; cut++) {
+    result = matchTeamName(words.slice(0, words.length - cut).join(" "));
+    if (result.matched) return result.matched;
+  }
+  return null;
+}
+
 export interface BulkMatchResult<T> {
   matched: { row: T; team: string; confidence: "exact" | "alias" | "fuzzy" }[];
   unmatched: T[];
