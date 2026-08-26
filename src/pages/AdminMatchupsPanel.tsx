@@ -3,7 +3,7 @@ import TeamLogo from "../components/TeamLogo";
 import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, type MatchupComputed } from "../lib/matchupsCompute";
+import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
 import SortHeader from "../components/SortHeader";
 
 // Deliberately dense — this table is for actually placing bets, not for
@@ -29,36 +29,7 @@ function pseudoSpreadColor(winPct: number | null): string | undefined {
   return spreadColor((0.5 - winPct) * 30);
 }
 
-// Home-side values aren't stored on MatchupComputed (only the away side
-// is — projMoneyline/projWinPct/vegasWinPct/ev), so both the row
-// renderer and sortValue() need to derive them the same way. Centralized
-// here so the two can't quietly drift apart.
-function homeSideValues(c: MatchupComputed) {
-  const homeWinPct = c.projWinPct != null ? 1 - c.projWinPct : null;
-  const homeMoneyline = homeWinPct != null ? fairMoneylineFromWinPct(homeWinPct) : null;
-  const vegasHomeMoneyline = c.line?.home_moneyline ?? null;
-  const vegasHomeWinPct =
-    vegasHomeMoneyline != null
-      ? vegasHomeMoneyline > 0
-        ? 100 / (vegasHomeMoneyline + 100)
-        : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
-      : null;
-  const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
-  return { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome };
-}
-
-// Whichever side is positive EV (mirrors the Every-Bet rule) — both
-// sortValue() and the row renderer need this same pick.
-function mlBetSideFor(c: MatchupComputed): "away" | "home" | null {
-  const { evHome } = homeSideValues(c);
-  if (c.ev != null && evHome != null) {
-    if (c.ev > 0 && !(evHome > 0)) return "away";
-    if (evHome > 0 && !(c.ev > 0)) return "home";
-  }
-  return null;
-}
-
-function pctLabel(w: number, l: number) {
+export function pctLabel(w: number, l: number) {
   const decided = w + l;
   return decided === 0 ? "–" : `${((w / decided) * 100).toFixed(1)}%`;
 }
@@ -455,9 +426,9 @@ function MatchupsRow({
     // but Vegas's two win%s are each computed independently from their
     // own moneyline (so they sum to slightly more than 1, the vig) —
     // same convention as the Moneyline Bet History engine. Shared with
-    // sortValue() via homeSideValues()/mlBetSideFor() so the two can't
+    // sortValue() via homeSideMlValues()/mlBetSideFor() so the two can't
     // quietly drift apart.
-    const { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome } = homeSideValues(computed);
+    const { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome } = homeSideMlValues(computed);
     const evAway = ev;
     const mlBetSide = mlBetSideFor(computed);
     const mlBetEv = mlBetSide === "away" ? evAway : mlBetSide === "home" ? evHome : null;
@@ -595,24 +566,24 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
       case "vegasHomeML":
         return c.line?.home_moneyline ?? null;
       case "projHomeML":
-        return homeSideValues(c).homeMoneyline;
+        return homeSideMlValues(c).homeMoneyline;
       case "homeWinPct":
-        return homeSideValues(c).homeWinPct;
+        return homeSideMlValues(c).homeWinPct;
       case "vegasHomeWinPct":
-        return homeSideValues(c).vegasHomeWinPct;
+        return homeSideMlValues(c).vegasHomeWinPct;
       case "evHome":
-        return homeSideValues(c).evHome;
+        return homeSideMlValues(c).evHome;
       case "betSide": {
         const side = mlBetSideFor(c);
         return side ? (side === "away" ? c.game.away_team : c.game.home_team) : null;
       }
       case "filteredBetSide": {
         const side = mlBetSideFor(c);
-        const ev = side === "away" ? c.ev : side === "home" ? homeSideValues(c).evHome : null;
+        const ev = side === "away" ? c.ev : side === "home" ? homeSideMlValues(c).evHome : null;
         return side && ev != null && ev > 0 ? (side === "away" ? c.game.away_team : c.game.home_team) : null;
       }
       case "bestEv": {
-        const { evHome } = homeSideValues(c);
+        const { evHome } = homeSideMlValues(c);
         const vals = [c.ev, evHome].filter((v): v is number => v != null);
         return vals.length > 0 ? Math.max(...vals) : null;
       }

@@ -2,13 +2,127 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadToWinPct, fairMoneylineFromWinPct } from "../lib/odds";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows } from "../lib/gameTotalsEngine";
 import { fetchOddsFeed, invalidateOddsFeed, BOOK_META, BOOK_ORDER } from "../lib/api/oddsApi";
 import { fetchKalshiCfbMarkets, type KalshiGame } from "../lib/api/kalshi";
 import type { OddsGame } from "../lib/api/oddsApi";
 import { matchOddsGames, type OddsMatchRow, type BookOdds } from "../lib/oddsMatch";
 import { moneylineEdgePct, spreadEdgePts, totalCall, bestIndex, SPREAD_EDGE_THRESHOLD, TOTAL_EDGE_THRESHOLD, ML_EDGE_THRESHOLD } from "../lib/oddsValue";
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { computeRow, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+
+// ---------------------------------------------------------------------
+// Bet signals for the Game Cards / filters — reuses the exact same
+// canonical logic as Admin Matchups (spread: filteredBetTeam/
+// weightedFilteredBetTeam/nwfbTeam; moneyline: mlBetSideFor) and the
+// Totals admin page (buildBetRows), rather than a third parallel
+// definition of "what counts as a bet" specific to this dashboard.
+// Spread/moneyline need the Supabase consensus lines (matchupsCompute's
+// own data source) — a second source alongside the Odds-API feed this
+// page already has — matched to each odds-board game by team + week.
+// ---------------------------------------------------------------------
+export interface OddsBetSignal {
+  spreadTier: "NWFB" | "WFB" | "Filtered" | null;
+  spreadTeam: string | null;
+  mlBet: boolean;
+  mlSide: "away" | "home" | null;
+  mlEv: number | null; // whichever side is the play
+  totalBet: boolean;
+  totalCall: "Over" | "Under" | null;
+  totalAmountOff: number | null;
+  totalStdDevOff: number | null;
+  spreadAmountOff: number | null; // |ours - vegas|, for sorting
+  spreadSigmaOff: number | null;
+}
+
+function spreadTierFor(c: MatchupComputed): { tier: OddsBetSignal["spreadTier"]; team: string | null } {
+  if (c.nwfbTeam) return { tier: "NWFB", team: c.nwfbTeam === "away" ? c.game.away_team : c.game.home_team };
+  if (c.weightedFilteredBetTeam)
+    return { tier: "WFB", team: c.weightedFilteredBetTeam === "away" ? c.game.away_team : c.game.home_team };
+  if (c.filteredBetTeam)
+    return { tier: "Filtered", team: c.filteredBetTeam === "away" ? c.game.away_team : c.game.home_team };
+  return { tier: null, team: null };
+}
+
+function useOddsBetSignals(season: number, matched: OddsMatchRow[], siteRows: ReturnType<typeof filterRowsByDivision>, filterThresholdMultiplier: number) {
+  const [linesGames, setLinesGames] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGamesWithLines(season)
+      .then((rows) => {
+        if (!cancelled) setLinesGames(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const weekNumbers = useMemo(() => Array.from(new Set(matched.map((r) => r.game.game.week))), [matched]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
+
+  const totalBetByGameId = useMemo(() => {
+    const rows = buildBetRows(siteRows, filterThresholdMultiplier);
+    const map = new Map<string, ReturnType<typeof buildBetRows>[number]>();
+    for (const r of rows) map.set(r.row.game.id, r);
+    return map;
+  }, [siteRows, filterThresholdMultiplier]);
+
+  return useMemo(() => {
+    const map = new Map<string, OddsBetSignal>();
+    for (const row of matched) {
+      const g = row.game.game;
+      const lineMatch = linesGames.find(
+        (lg) =>
+          lg.week === g.week &&
+          ((lg.home_team === g.homeTeam && lg.away_team === g.awayTeam) ||
+            (lg.home_team === g.awayTeam && lg.away_team === g.homeTeam))
+      );
+
+      let spreadTier: OddsBetSignal["spreadTier"] = null;
+      let spreadTeam: string | null = null;
+      let mlBet = false;
+      let mlSide: "away" | "home" | null = null;
+      let mlEv: number | null = null;
+      let spreadAmountOff: number | null = null;
+      let spreadSigmaOff: number | null = null;
+
+      if (lineMatch) {
+        const computed = computeRow(lineMatch, ratingsByWeek[g.week] ?? {});
+        const tier = spreadTierFor(computed);
+        spreadTier = tier.tier;
+        spreadTeam = tier.team;
+        spreadAmountOff = computed.absAmountOff;
+        spreadSigmaOff = computed.sigmaOff;
+        mlSide = mlBetSideFor(computed);
+        if (mlSide) {
+          mlBet = true;
+          mlEv = mlSide === "away" ? computed.ev : homeSideMlValues(computed).evHome;
+        }
+      }
+
+      const totalRow = totalBetByGameId.get(g.id);
+
+      map.set(g.id, {
+        spreadTier,
+        spreadTeam,
+        mlBet,
+        mlSide,
+        mlEv,
+        totalBet: totalRow?.isFiltered ?? false,
+        totalCall: totalRow?.call ?? null,
+        totalAmountOff: totalRow?.amountOff ?? null,
+        totalStdDevOff: totalRow?.stdDevOff ?? null,
+        spreadAmountOff,
+        spreadSigmaOff,
+      });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matched, linesGames, ratingsByWeek, totalBetByGameId]);
+}
 
 const GOOD_VALUE_BG = "rgba(63, 185, 80, 0.18)";
 const BEST_LINE_BG = "rgba(255, 200, 87, 0.14)";
@@ -647,7 +761,25 @@ function ValueChip({ label, best, book, onClick }: { label: string; best: string
   );
 }
 
-function GameCard({ row }: { row: OddsMatchRow }) {
+function BetBadge({ label, tone }: { label: string; tone: "gold" | "green" }) {
+  return (
+    <span
+      style={{
+        fontSize: "0.62rem",
+        fontWeight: 700,
+        padding: "0.15rem 0.4rem",
+        borderRadius: 4,
+        background: tone === "gold" ? "rgba(255, 200, 87, 0.18)" : "rgba(63, 185, 80, 0.2)",
+        color: tone === "gold" ? "var(--gold)" : "#8fd39a",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function GameCard({ row, signal }: { row: OddsMatchRow; signal: OddsBetSignal | undefined }) {
   const [expanded, setExpanded] = useState(false);
   const bestAwaySpread = bestSpread(row, "away");
   const bestHomeSpread = bestSpread(row, "home");
@@ -656,15 +788,39 @@ function GameCard({ row }: { row: OddsMatchRow }) {
   const bestOver = bestTotal(row, "over");
   const bestUnder = bestTotal(row, "under");
 
-  const teamRow = (team: string, spread: { book: string; value: number } | null, ml: { book: string; value: number } | null) => (
+  const myHomeSpread = row.game.myHomeSpread;
+  const myAwaySpread = myHomeSpread != null ? -myHomeSpread : null;
+  const myAwayWinPct = myAwaySpread != null ? spreadToWinPct(myAwaySpread) : null;
+  const myHomeWinPct = myAwayWinPct != null ? 1 - myAwayWinPct : null;
+  const myAwayMl = myAwayWinPct != null ? fairMoneylineFromWinPct(myAwayWinPct) : null;
+  const myHomeMl = myHomeWinPct != null ? fairMoneylineFromWinPct(myHomeWinPct) : null;
+  const myTotal = row.game.projection?.projectedTotal ?? null;
+
+  const teamRow = (
+    team: string,
+    spread: { book: string; value: number } | null,
+    ml: { book: string; value: number } | null,
+    mySpread: number | null,
+    myMl: number | null
+  ) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.4rem 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
         <TeamLogo team={team} size={26} />
         <span style={{ fontWeight: 700, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team}</span>
       </div>
-      <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
-        <ValueChip label="Spread" best={spread ? fmtPoint(spread.value) : "–"} book={spread?.book} />
-        <ValueChip label="ML" best={ml ? fmtPrice(ml.value) : "–"} book={ml?.book} />
+      <div style={{ display: "flex", gap: "1rem", flexShrink: 0, textAlign: "right" }}>
+        <div>
+          <ValueChip label="Spread" best={spread ? fmtPoint(spread.value) : "–"} book={spread?.book} />
+          <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)", marginTop: "0.1rem" }}>
+            Me: {fmtPoint(mySpread)}
+          </div>
+        </div>
+        <div>
+          <ValueChip label="ML" best={ml ? fmtPrice(ml.value) : "–"} book={ml?.book} />
+          <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)", marginTop: "0.1rem" }}>
+            Me: {fmtPrice(myMl)}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -683,13 +839,20 @@ function GameCard({ row }: { row: OddsMatchRow }) {
       onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--gold-dim)")}
       onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--hash)")}
     >
-      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>
-        Wk {row.game.game.week} · {dateLabel(row.game.game.startDate)} · {kickoffLabel(row.game.game.startDate)}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.3rem" }}>
+        <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
+          Wk {row.game.game.week} · {dateLabel(row.game.game.startDate)} · {kickoffLabel(row.game.game.startDate)}
+        </div>
+        <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "55%" }}>
+          {signal?.spreadTier && <BetBadge label={`Spread: ${signal.spreadTier}`} tone="gold" />}
+          {signal?.mlBet && <BetBadge label="ML: Bet" tone="green" />}
+          {signal?.totalBet && <BetBadge label="Total: Bet" tone="green" />}
+        </div>
       </div>
 
-      {teamRow(row.game.game.awayTeam, bestAwaySpread, bestAwayMl)}
+      {teamRow(row.game.game.awayTeam, bestAwaySpread, bestAwayMl, myAwaySpread, myAwayMl)}
       <div style={{ borderTop: "1px solid var(--hash)" }} />
-      {teamRow(row.game.game.homeTeam, bestHomeSpread, bestHomeMl)}
+      {teamRow(row.game.game.homeTeam, bestHomeSpread, bestHomeMl, myHomeSpread, myHomeMl)}
 
       <div
         style={{
@@ -701,7 +864,9 @@ function GameCard({ row }: { row: OddsMatchRow }) {
           justifyContent: "space-between",
         }}
       >
-        <span style={{ fontSize: "0.62rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Total</span>
+        <span style={{ fontSize: "0.62rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Total {myTotal != null && <span style={{ textTransform: "none" }}>· Me: {myTotal.toFixed(1)}</span>}
+        </span>
         <div style={{ display: "flex", gap: "1rem" }}>
           <ValueChip label="Over" best={bestOver ? bestOver.value.toString() : "–"} book={bestOver?.book} />
           <ValueChip label="Under" best={bestUnder ? bestUnder.value.toString() : "–"} book={bestUnder?.book} />
@@ -726,7 +891,7 @@ type OddscreenTab = "spread" | "moneyline" | "total";
 export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [division, setDivision] = useState("FBS");
-  const { rows: allRows, loading: loadingSite, error: siteError } = useGameTotalsEngine(season);
+  const { rows: allRows, settings, loading: loadingSite, error: siteError } = useGameTotalsEngine(season);
   const siteRows = filterRowsByDivision(allRows, division);
 
   const [oddsGames, setOddsGames] = useState<OddsGame[]>([]);
@@ -763,7 +928,101 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
   }
 
   const matched = useMemo(() => matchOddsGames(oddsGames, kalshiGames, siteRows), [oddsGames, kalshiGames, siteRows]);
+  const betSignals = useOddsBetSignals(season, matched, siteRows, settings.filterThresholdMultiplier);
   const loading = loadingSite || loadingOdds;
+
+  // Filters — apply to both Game Cards and Oddscreen.
+  const availableWeeks = useMemo(() => Array.from(new Set(matched.map((r) => r.game.game.week))).sort((a, b) => a - b), [matched]);
+  const [weekFilter, setWeekFilter] = useState<Set<number>>(new Set());
+  const [betOnly, setBetOnly] = useState(false);
+  const [betTypeFilter, setBetTypeFilter] = useState<Set<"spread" | "moneyline" | "total">>(
+    new Set(["spread", "moneyline", "total"])
+  );
+  type SortMode = "week" | "betPriority" | "mlEv" | "spreadAmountOff" | "spreadSigmaOff" | "totalAmountOff";
+  const [sortMode, setSortMode] = useState<SortMode>("week");
+
+  // "This week & later" — the earliest week among games that haven't
+  // been played yet (no score), rather than today's calendar date, so
+  // it still makes sense mid-week before every game in the current week
+  // has kicked off.
+  function selectThisWeekAndLater() {
+    const upcoming = matched.filter((r) => !r.game.game.completed);
+    const weeks = upcoming.length > 0 ? upcoming.map((r) => r.game.game.week) : matched.map((r) => r.game.game.week);
+    const currentWeek = Math.min(...weeks);
+    setWeekFilter(new Set(availableWeeks.filter((w) => w >= currentWeek)));
+  }
+  function toggleWeek(w: number) {
+    setWeekFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(w)) next.delete(w);
+      else next.add(w);
+      return next;
+    });
+  }
+  function toggleBetType(t: "spread" | "moneyline" | "total") {
+    setBetTypeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  }
+
+  function rowHasBetOfSelectedType(row: OddsMatchRow): boolean {
+    const sig = betSignals.get(row.game.game.id);
+    if (!sig) return false;
+    if (betTypeFilter.has("spread") && sig.spreadTier != null) return true;
+    if (betTypeFilter.has("moneyline") && sig.mlBet) return true;
+    if (betTypeFilter.has("total") && sig.totalBet) return true;
+    return false;
+  }
+
+  const filteredMatched = useMemo(() => {
+    return matched.filter((row) => {
+      if (weekFilter.size > 0 && !weekFilter.has(row.game.game.week)) return false;
+      if (betOnly && !rowHasBetOfSelectedType(row)) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matched, weekFilter, betOnly, betTypeFilter, betSignals]);
+
+  const spreadTierRank: Record<string, number> = { NWFB: 3, WFB: 2, Filtered: 1 };
+  function sortedRows(rows: OddsMatchRow[]): OddsMatchRow[] {
+    const withSignal = rows.map((r) => ({ r, sig: betSignals.get(r.game.game.id) }));
+    withSignal.sort((a, b) => {
+      switch (sortMode) {
+        case "betPriority": {
+          const av = a.sig ? Math.max(spreadTierRank[a.sig.spreadTier ?? ""] ?? 0, a.sig.mlBet ? 2 : 0, a.sig.totalBet ? 2 : 0) : 0;
+          const bv = b.sig ? Math.max(spreadTierRank[b.sig.spreadTier ?? ""] ?? 0, b.sig.mlBet ? 2 : 0, b.sig.totalBet ? 2 : 0) : 0;
+          return bv - av;
+        }
+        case "mlEv": {
+          const av = a.sig?.mlEv ?? -Infinity;
+          const bv = b.sig?.mlEv ?? -Infinity;
+          return bv - av;
+        }
+        case "spreadAmountOff": {
+          const av = a.sig?.spreadAmountOff ?? -Infinity;
+          const bv = b.sig?.spreadAmountOff ?? -Infinity;
+          return bv - av;
+        }
+        case "spreadSigmaOff": {
+          const av = a.sig?.spreadSigmaOff ?? -Infinity;
+          const bv = b.sig?.spreadSigmaOff ?? -Infinity;
+          return bv - av;
+        }
+        case "totalAmountOff": {
+          const av = a.sig?.totalAmountOff ?? -Infinity;
+          const bv = b.sig?.totalAmountOff ?? -Infinity;
+          return bv - av;
+        }
+        case "week":
+        default:
+          return a.r.game.game.week - b.r.game.game.week || String(a.r.game.game.startDate).localeCompare(String(b.r.game.game.startDate));
+      }
+    });
+    return withSignal.map((x) => x.r);
+  }
 
   return (
     <div>
@@ -777,7 +1036,7 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
         refresh only — nothing polls in the background, to stay well under the API quota.
       </p>
 
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
         <SeasonPicker season={season} setSeason={setSeason} />
         <DivisionPicker division={division} setDivision={setDivision} />
         <button className="menu-btn" onClick={handleRefresh} disabled={loadingOdds}>
@@ -793,6 +1052,50 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
         </div>
       </div>
 
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+        <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={betOnly} onChange={(e) => setBetOnly(e.target.checked)} />
+          Bets only
+        </label>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Bet type:</span>
+        {(["spread", "moneyline", "total"] as const).map((t) => (
+          <button key={t} className={`mode-btn ${betTypeFilter.has(t) ? "mode-btn-active" : ""}`} onClick={() => toggleBetType(t)}>
+            {t === "spread" ? "Spread" : t === "moneyline" ? "Moneyline" : "Total"}
+          </button>
+        ))}
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>Sort:</span>
+        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
+          <option value="week">Week / kickoff</option>
+          <option value="betPriority">Bet priority</option>
+          <option value="mlEv">Moneyline EV</option>
+          <option value="spreadAmountOff">Spread amount off</option>
+          <option value="spreadSigmaOff">Spread sigma off</option>
+          <option value="totalAmountOff">Total amount off</option>
+        </select>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", marginBottom: "1rem" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Weeks:</span>
+        <button className="mode-btn" onClick={selectThisWeekAndLater}>
+          This week &amp; later
+        </button>
+        {weekFilter.size > 0 && (
+          <button className="mode-btn" onClick={() => setWeekFilter(new Set())}>
+            Clear
+          </button>
+        )}
+        {availableWeeks.map((w) => (
+          <button
+            key={w}
+            className={`mode-btn ${weekFilter.size === 0 || weekFilter.has(w) ? "mode-btn-active" : ""}`}
+            style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }}
+            onClick={() => toggleWeek(w)}
+          >
+            Wk {w}
+          </button>
+        ))}
+      </div>
+
       {siteError && <p style={{ color: "crimson" }}>{siteError}</p>}
       {oddsError && <p style={{ color: "crimson" }}>Odds feed: {oddsError}</p>}
 
@@ -800,14 +1103,11 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
         <div className="empty">Loading…</div>
       ) : topView === "cards" ? (
         <div>
-          {matched.length === 0 && <div className="empty">No matched games yet for this season/division.</div>}
+          {filteredMatched.length === 0 && <div className="empty">No games match these filters.</div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
-            {matched
-              .slice()
-              .sort((a, b) => a.game.game.week - b.game.game.week || String(a.game.game.startDate).localeCompare(String(b.game.game.startDate)))
-              .map((row) => (
-                <GameCard key={row.game.game.id} row={row} />
-              ))}
+            {sortedRows(filteredMatched).map((row) => (
+              <GameCard key={row.game.game.id} row={row} signal={betSignals.get(row.game.game.id)} />
+            ))}
           </div>
         </div>
       ) : (
@@ -823,9 +1123,9 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
               Total
             </button>
           </div>
-          {oddscreenTab === "spread" && <OddscreenSpread rows={matched} />}
-          {oddscreenTab === "moneyline" && <OddscreenMoneyline rows={matched} />}
-          {oddscreenTab === "total" && <OddscreenTotal rows={matched} />}
+          {oddscreenTab === "spread" && <OddscreenSpread rows={sortedRows(filteredMatched)} />}
+          {oddscreenTab === "moneyline" && <OddscreenMoneyline rows={sortedRows(filteredMatched)} />}
+          {oddscreenTab === "total" && <OddscreenTotal rows={sortedRows(filteredMatched)} />}
         </div>
       )}
     </div>

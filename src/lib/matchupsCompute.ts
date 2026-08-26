@@ -1,5 +1,5 @@
 import { TEAMS_BY_NAME } from "../data/teams";
-import { HFA, hfaFor, spreadToMoneyline, spreadToWinPct } from "./odds";
+import { HFA, hfaFor, spreadToMoneyline, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
@@ -432,4 +432,34 @@ export function computeRow(
     betCategory,
     betSizePct,
   };
+}
+
+// Home-side moneyline values aren't stored on MatchupComputed (only the
+// away side is — projMoneyline/projWinPct/vegasWinPct/ev), so anywhere
+// that needs the home side (Admin Matchups' Moneyline tab, the Odds
+// Dashboard's bet badges) derives it here instead of separately —
+// centralized so none of them can quietly drift apart from each other.
+export function homeSideMlValues(c: MatchupComputed) {
+  const homeWinPct = c.projWinPct != null ? 1 - c.projWinPct : null;
+  const homeMoneyline = homeWinPct != null ? fairMoneylineFromWinPct(homeWinPct) : null;
+  const vegasHomeMoneyline = c.line?.home_moneyline ?? null;
+  const vegasHomeWinPct =
+    vegasHomeMoneyline != null
+      ? vegasHomeMoneyline > 0
+        ? 100 / (vegasHomeMoneyline + 100)
+        : Math.abs(vegasHomeMoneyline) / (Math.abs(vegasHomeMoneyline) + 100)
+      : null;
+  const evHome = homeWinPct != null && vegasHomeWinPct != null ? (homeWinPct - vegasHomeWinPct) * 100 : null;
+  return { homeWinPct, homeMoneyline, vegasHomeMoneyline, vegasHomeWinPct, evHome };
+}
+
+// Whichever side is positive EV (mirrors the Every-Bet rule) — used
+// anywhere a single moneyline "the bet is X" pick is needed.
+export function mlBetSideFor(c: MatchupComputed): "away" | "home" | null {
+  const { evHome } = homeSideMlValues(c);
+  if (c.ev != null && evHome != null) {
+    if (c.ev > 0 && !(evHome > 0)) return "away";
+    if (evHome > 0 && !(c.ev > 0)) return "home";
+  }
+  return null;
 }
