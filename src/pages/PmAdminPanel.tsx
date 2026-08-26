@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { fairMoneylineFromWinPct } from "../lib/odds";
+import { fairMoneylineFromWinPct, fairYesNoPct } from "../lib/odds";
 import { undefeatedPct, type TeamSimResult } from "../lib/montecarlo/engine";
 import { fetchMonteCarloRuns, fetchMonteCarloRun, type MonteCarloRunSummary } from "../lib/api/monteCarlo";
 
@@ -15,9 +15,7 @@ import { fetchMonteCarloRuns, fetchMonteCarloRun, type MonteCarloRunSummary } fr
 type PriceMode = "cents" | "american";
 
 function yesNoPct(pct: number | null | undefined): { yes: number; no: number } | null {
-  if (pct == null || Number.isNaN(pct)) return null;
-  const yes = Math.min(100, Math.max(0, pct));
-  return { yes, no: 100 - yes };
+  return fairYesNoPct(pct ?? null);
 }
 
 function fmtCents(pct: number) {

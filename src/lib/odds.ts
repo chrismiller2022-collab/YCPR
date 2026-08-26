@@ -63,6 +63,16 @@ export function moneylineToImpliedWinPct(price) {
   return price > 0 ? 100 / (price + 100) : Math.abs(price) / (Math.abs(price) + 100);
 }
 
+// Shared with PmAdminPanel's Yes/No pricing (Kalshi-style cents, 0-100 =
+// implied probability directly) — a "Yes" at pct% probability has a "No"
+// at exactly 100-pct%, since these are our own fair-value numbers, not
+// live market prices carrying a vig.
+export function fairYesNoPct(pct) {
+  if (pct == null || Number.isNaN(pct)) return null;
+  const yes = Math.min(100, Math.max(0, pct));
+  return { yes, no: 100 - yes };
+}
+
 // Green = favorite (more negative), red = underdog (more positive),
 // with a neutral gray around a pick'em (0).
 function spreadRGB(value) {
