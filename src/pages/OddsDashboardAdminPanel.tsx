@@ -1017,6 +1017,7 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
   const { rows, thresholds, loading, error } = useFuturesWinTotals(season);
   const [sortThreshold, setSortThreshold] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortMetric, setSortMetric] = useState<"value" | "kalshi">("value");
   const [valueOnly, setValueOnly] = useState(false);
 
   if (loading) return <div className="empty">Loading win totals…</div>;
@@ -1028,8 +1029,9 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
     sortThreshold == null
       ? filtered
       : [...filtered].sort((a, b) => {
-          const av = a.byThreshold[sortThreshold]?.kalshiPct ?? -1;
-          const bv = b.byThreshold[sortThreshold]?.kalshiPct ?? -1;
+          const field = sortMetric === "value" ? "valuePct" : "kalshiPct";
+          const av = a.byThreshold[sortThreshold]?.[field] ?? -Infinity;
+          const bv = b.byThreshold[sortThreshold]?.[field] ?? -Infinity;
           return sortDir === "asc" ? av - bv : bv - av;
         });
 
@@ -1043,13 +1045,21 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
 
   return (
     <div>
-      <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.6rem" }}>
-        <input type="checkbox" checked={valueOnly} onChange={(e) => setValueOnly(e.target.checked)} />
-        Only show teams with value somewhere on the ladder
-      </label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "0.6rem" }}>
+        <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={valueOnly} onChange={(e) => setValueOnly(e.target.checked)} />
+          Only show teams with value somewhere on the ladder
+        </label>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort headers by:</span>
+        <select value={sortMetric} onChange={(e) => setSortMetric(e.target.value as "value" | "kalshi")}>
+          <option value="value">Value</option>
+          <option value="kalshi">Kalshi price</option>
+        </select>
+      </div>
       <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: 0 }}>
         Each cell: Kalshi's price (top) / mine (bottom). Green background = I'm higher than Kalshi (Yes has value);
-        red = Kalshi's higher than me (No has value). Click a threshold header to sort by Kalshi's price there.
+        red = Kalshi's higher than me (No has value). Click a threshold header to sort every row by that column's{" "}
+        {sortMetric === "value" ? "value" : "Kalshi price"}.
       </p>
       <div style={{ overflow: "auto", maxHeight: "70vh", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", fontSize: "0.76rem" }}>
