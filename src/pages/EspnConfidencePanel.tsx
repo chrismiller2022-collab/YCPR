@@ -3,6 +3,7 @@ import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import {
   fetchFbsGamesForWeek,
   fetchEspnConfidencePicksForWeek,
@@ -199,6 +200,16 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const totalsRowByGame = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsRows]);
 
   function load() {
     setLoading(true);
@@ -367,7 +378,12 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     <TeamLogo team={g.away_team} /> {g.away_team}
                     {p.is_key_game && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
-                        Key game{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
+                        Key game
+                        {p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
+                        {(() => {
+                          const myTotal = g ? totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) : null;
+                          return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                        })()}
                       </div>
                     )}
                   </td>

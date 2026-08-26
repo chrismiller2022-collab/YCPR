@@ -197,7 +197,19 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
-          d[p.id] = { picked_side: p.picked_side };
+          // Default to whichever side covers per my model vs CBS's own
+          // line, if nothing's been picked yet — same ATS logic as ESPN
+          // Spreads. Chris can still change it before submitting.
+          const autoPick: "away" | "home" | null =
+            p.picked_side ??
+            (p.myProjAwaySpread == null || p.cbsAwaySpread == null
+              ? null
+              : p.myProjAwaySpread < p.cbsAwaySpread
+              ? "away"
+              : p.myProjAwaySpread > p.cbsAwaySpread
+              ? "home"
+              : null);
+          d[p.id] = { picked_side: autoPick };
         }
         setDraft(d);
       })
