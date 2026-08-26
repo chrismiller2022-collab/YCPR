@@ -50,6 +50,7 @@ function GameSelectionStep({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gameSearch, setGameSearch] = useState("");
 
   function load() {
     setLoading(true);
@@ -113,16 +114,25 @@ function GameSelectionStep({
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="section-label">
           1. Select this week's games (FBS vs FBS){" "}
           <span style={{ color: selected.size >= MAX_GAMES ? "#a15c00" : "var(--chalk-dim)", fontWeight: 400 }}>
             · {selected.size}/{MAX_GAMES}
           </span>
         </div>
-        <button className="menu-btn" onClick={handleResetGames} disabled={saving}>
-          Reset games
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <input
+            type="text"
+            placeholder="Search teams…"
+            value={gameSearch}
+            onChange={(e) => setGameSearch(e.target.value)}
+            style={{ width: 160 }}
+          />
+          <button className="menu-btn" onClick={handleResetGames} disabled={saving}>
+            Reset games
+          </button>
+        </div>
       </div>
       {available.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
@@ -131,7 +141,14 @@ function GameSelectionStep({
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "1rem" }}>
-          {available.map((g) => {
+          {available
+            .filter(
+              (g) =>
+                gameSearch.trim() === "" ||
+                g.away_team.toLowerCase().includes(gameSearch.trim().toLowerCase()) ||
+                g.home_team.toLowerCase().includes(gameSearch.trim().toLowerCase())
+            )
+            .map((g) => {
             const atCap = selected.size >= MAX_GAMES && !selected.has(g.id);
             return (
               <label
@@ -450,15 +467,26 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>ESPN Confidence</h2>
-        <a
-          href="https://fantasy.espn.com/games/college-football-pickem-2026/picks"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="menu-btn"
-          style={{ textDecoration: "none" }}
-        >
-          Open ESPN Pick'em ↗
-        </a>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <a
+            href="https://fantasy.espn.com/games/college-football-pickem-2026/picks?id=2cd903c0-86ad-11f1-9e6e-c5424dfb4a18"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="menu-btn"
+            style={{ textDecoration: "none" }}
+          >
+            Entry 1 ↗
+          </a>
+          <a
+            href="https://fantasy.espn.com/games/college-football-pickem-2026/picks?id=c8e4fb70-86ad-11f1-9e6e-c5424dfb4a18"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="menu-btn"
+            style={{ textDecoration: "none" }}
+          >
+            Entry 2 ↗
+          </a>
+        </div>
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Pick straight-up winners and rank them by confidence — 1 for your least confident

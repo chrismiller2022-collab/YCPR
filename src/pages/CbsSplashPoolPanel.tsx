@@ -50,6 +50,8 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [showPickedOnly, setShowPickedOnly] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [gameSearch, setGameSearch] = useState("");
+  const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
@@ -74,6 +76,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     try {
       await splashSave(season, week, rows);
       setSaveMsg("Saved.");
+      setSortMode("bestBet");
       load();
     } catch (err: any) {
       setError(err.message);
@@ -132,19 +135,33 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
 
   const visibleRows = useMemo(() => {
     let list = showPickedOnly ? rows.filter((r) => r.picked_side != null) : rows;
-    list = [...list].sort((a, b) => {
-      const av = accessor(a, sortKey);
-      const bv = accessor(b, sortKey);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === "string") {
-        return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      return sortDir === "asc" ? av - bv : bv - av;
-    });
+    if (gameSearch.trim() !== "") {
+      const q = gameSearch.trim().toLowerCase();
+      list = list.filter((r) => r.game.away_team.toLowerCase().includes(q) || r.game.home_team.toLowerCase().includes(q));
+    }
+    if (sortMode === "bestBet") {
+      list = [...list].sort((a, b) => {
+        const av = splashVsMineLive(a);
+        const bv = splashVsMineLive(b);
+        const aAbs = av == null ? -Infinity : Math.abs(av);
+        const bAbs = bv == null ? -Infinity : Math.abs(bv);
+        return bAbs - aAbs;
+      });
+    } else {
+      list = [...list].sort((a, b) => {
+        const av = accessor(a, sortKey);
+        const bv = accessor(b, sortKey);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === "string") {
+          return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+        }
+        return sortDir === "asc" ? av - bv : bv - av;
+      });
+    }
     return list;
-  }, [rows, showPickedOnly, sortKey, sortDir]);
+  }, [rows, showPickedOnly, sortKey, sortDir, gameSearch, sortMode]);
 
   const keyPickCount = rows.filter((r) => r.is_key_pick).length;
   const pickedCount = rows.filter((r) => r.picked_side != null).length;
@@ -206,6 +223,27 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           Picked: {pickedCount}/{rows.length} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""}
         </span>
+        <input
+          type="text"
+          placeholder="Search teams…"
+          value={gameSearch}
+          onChange={(e) => setGameSearch(e.target.value)}
+          style={{ width: 150 }}
+        />
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort:</span>
+        <button className={`mode-btn ${sortMode === "bestBet" ? "mode-btn-active" : ""}`} onClick={() => setSortMode("bestBet")}>
+          Best Bets
+        </button>
+        <button
+          className={`mode-btn ${sortMode === "time" ? "mode-btn-active" : ""}`}
+          onClick={() => {
+            setSortMode("time");
+            setSortKey("start_date");
+            setSortDir("asc");
+          }}
+        >
+          Time
+        </button>
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}

@@ -55,6 +55,7 @@ function GameSelectionStep({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gameSearch, setGameSearch] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -106,7 +107,16 @@ function GameSelectionStep({
 
   return (
     <div>
-      <div className="section-label">1. Select this week's games (FBS vs FBS)</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+        <div className="section-label">1. Select this week's games (FBS vs FBS)</div>
+        <input
+          type="text"
+          placeholder="Search teams…"
+          value={gameSearch}
+          onChange={(e) => setGameSearch(e.target.value)}
+          style={{ width: 160 }}
+        />
+      </div>
       {available.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
           No FBS-vs-FBS games saved for {season} week {week} yet — sync this week from Games &
@@ -114,7 +124,14 @@ function GameSelectionStep({
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "1rem" }}>
-          {available.map((g) => (
+          {available
+            .filter(
+              (g) =>
+                gameSearch.trim() === "" ||
+                g.away_team.toLowerCase().includes(gameSearch.trim().toLowerCase()) ||
+                g.home_team.toLowerCase().includes(gameSearch.trim().toLowerCase())
+            )
+            .map((g) => (
             <label
               key={g.id}
               style={{
