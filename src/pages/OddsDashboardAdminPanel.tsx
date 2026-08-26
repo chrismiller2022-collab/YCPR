@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import SortHeader from "../components/SortHeader";
+import TeamLogo from "../components/TeamLogo";
 import { spreadToWinPct, fairMoneylineFromWinPct } from "../lib/odds";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import { fetchOddsFeed, invalidateOddsFeed, BOOK_META, BOOK_ORDER } from "../lib/api/oddsApi";
@@ -9,9 +10,15 @@ import { matchOddsGames, type OddsMatchRow, type BookOdds } from "../lib/oddsMat
 import { moneylineEdgePct, spreadEdgePts, totalCall, bestIndex, SPREAD_EDGE_THRESHOLD, TOTAL_EDGE_THRESHOLD, ML_EDGE_THRESHOLD } from "../lib/oddsValue";
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
 
-const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
-const GOOD_VALUE_BG = "rgba(90, 168, 105, 0.28)";
-const BEST_LINE_BG = "rgba(212, 175, 55, 0.22)";
+const GOOD_VALUE_BG = "rgba(63, 185, 80, 0.18)";
+const BEST_LINE_BG = "rgba(255, 200, 87, 0.14)";
+
+// Slightly roomier than the ultra-dense admin tables elsewhere on the
+// site (Totals, Matchups) — this page compares up to 5 sources per game
+// side by side, so it needs a bit more air to stay readable rather than
+// maximum row density.
+const TD: CSSProperties = { padding: "0.6rem 0.75rem", verticalAlign: "middle" };
+const TH: CSSProperties = { padding: "0.7rem 0.75rem" };
 
 function fmtPoint(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return "–";
@@ -30,13 +37,95 @@ function kickoffLabel(iso: string | null): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function BookLink({ bookKey, children }: { bookKey: string; children: ReactNode }) {
+function BookLink({ bookKey, children, block }: { bookKey: string; children: ReactNode; block?: boolean }) {
   const meta = BOOK_META[bookKey];
   if (!meta) return <>{children}</>;
   return (
-    <a href={meta.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
+    <a
+      href={meta.url}
+      target="_blank"
+      rel="noreferrer"
+      style={{ color: "inherit", textDecoration: "none", display: block ? "block" : undefined }}
+    >
       {children}
     </a>
+  );
+}
+
+function BookBadge({ bookKey }: { bookKey: string }) {
+  const meta = BOOK_META[bookKey];
+  if (!meta) return null;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        background: meta.color,
+        color: "#14152b",
+        fontSize: "0.62rem",
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        borderRadius: "999px",
+        padding: "0.08rem 0.4rem",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+// One column standing in for what used to be separate Away/Home columns
+// — stacked so it reads top-to-bottom exactly like every value column
+// next to it (My Line, Best, per-book), instead of sitting side-by-side
+// while every other column stacks its away/home values vertically.
+function TeamStack({ away, home }: { away: string; home: string }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.15rem 0" }}>
+        <TeamLogo team={away} size={18} />
+        <span>{away}</span>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.4rem",
+          padding: "0.15rem 0",
+          borderTop: "1px solid var(--hash)",
+        }}
+      >
+        <TeamLogo team={home} size={18} />
+        <span>{home}</span>
+      </div>
+    </div>
+  );
+}
+
+// Same top/bottom split as TeamStack, used for every value column so the
+// top line always means "away" (or "over") and the bottom line always
+// means "home" (or "under") — reading straight across a row now lines up
+// team-to-number correctly instead of teams sitting in separate columns
+// from their numbers.
+function SplitCell({ top, bottom, bg, link }: { top: ReactNode; bottom: ReactNode; bg?: string; link?: string }) {
+  const content = (
+    <div style={{ background: bg }}>
+      <div style={{ padding: "0.3rem 0.6rem" }}>{top}</div>
+      <div style={{ padding: "0.3rem 0.6rem", borderTop: "1px solid var(--hash)" }}>{bottom}</div>
+    </div>
+  );
+  if (!link) return content;
+  return <BookLink bookKey={link} block>{content}</BookLink>;
+}
+
+function WhenCell({ week, iso }: { week: number; iso: string | null }) {
+  return (
+    <div>
+      <div style={{ fontSize: "0.78rem" }}>
+        Wk {week} · {dateLabel(iso)}
+      </div>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{kickoffLabel(iso)}</div>
+    </div>
   );
 }
 
@@ -77,31 +166,6 @@ function booksPresent(row: OddsMatchRow): string[] {
   return BOOK_ORDER.filter((k) => row.books[k]);
 }
 
-// ---------------------------------------------------------------------
-// Spread tab
-// ---------------------------------------------------------------------
-function SpreadCell({ book, odds, my }: { book: string; odds: BookOdds | undefined; my: MyLine }) {
-  if (!odds || (odds.spreadHome == null && odds.spreadAway == null)) {
-    return <td style={{ ...CP, textAlign: "center", color: "var(--chalk-dim)" }}>–</td>;
-  }
-  const awayEdge = spreadEdgePts(my.myAwaySpread, odds.spreadAway);
-  const homeEdge = spreadEdgePts(my.myHomeSpread, odds.spreadHome);
-  const goodAway = awayEdge != null && awayEdge >= SPREAD_EDGE_THRESHOLD;
-  const goodHome = homeEdge != null && homeEdge >= SPREAD_EDGE_THRESHOLD;
-  return (
-    <td style={{ ...CP, textAlign: "center", padding: 0 }}>
-      <BookLink bookKey={book}>
-        <div style={{ padding: "0.15rem 0.5rem", background: goodAway ? GOOD_VALUE_BG : undefined }}>
-          {fmtPoint(odds.spreadAway)} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.spreadAwayPrice)}</span>
-        </div>
-        <div style={{ padding: "0.15rem 0.5rem", background: goodHome ? GOOD_VALUE_BG : undefined }}>
-          {fmtPoint(odds.spreadHome)} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.spreadHomePrice)}</span>
-        </div>
-      </BookLink>
-    </td>
-  );
-}
-
 function bestSpread(row: OddsMatchRow, side: "away" | "home"): { book: string; value: number } | null {
   const books = booksPresent(row);
   const values = books.map((b) => (side === "away" ? row.books[b]!.spreadAway : row.books[b]!.spreadHome));
@@ -109,14 +173,36 @@ function bestSpread(row: OddsMatchRow, side: "away" | "home"): { book: string; v
   return i === -1 ? null : { book: books[i], value: values[i]! };
 }
 
-type SpreadSortKey = "week" | "date" | "awayTeam" | "homeTeam" | "bestAway" | "bestHome";
+function bestMoneyline(row: OddsMatchRow, side: "away" | "home"): { book: string; value: number } | null {
+  const books = booksPresent(row);
+  const values = books.map((b) => (side === "away" ? row.books[b]!.mlAway : row.books[b]!.mlHome));
+  // Best price for the bettor: for a favorite (negative) the least negative wins; for a dog (positive) the most positive wins.
+  // Comparing raw American-odds values with ">" happens to get this right in both cases (-105 > -110, +250 > +200).
+  const i = bestIndex(values, (a, b) => a > b);
+  return i === -1 ? null : { book: books[i], value: values[i]! };
+}
 
-function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
-  const [sortKey, setSortKey] = useState<SpreadSortKey>("week");
+function bestTotal(row: OddsMatchRow, side: "over" | "under"): { book: string; value: number } | null {
+  const books = booksPresent(row);
+  const values = books.map((b) => row.books[b]!.totalPoint);
+  // Best Over = lowest total (easiest to clear); best Under = highest total (easiest to stay below).
+  const i = bestIndex(values, side === "over" ? (a, b) => a < b : (a, b) => a > b);
+  return i === -1 ? null : { book: books[i], value: values[i]! };
+}
+
+// ---------------------------------------------------------------------
+// Shared sortable-table shell for the three Oddscreen tabs — same
+// Matchup/When columns and sort plumbing each time, only the value
+// columns differ.
+// ---------------------------------------------------------------------
+type CoreSortKey = "when" | "matchup";
+
+function useOddscreenSort<ExtraKey extends string>(extraVal: (r: OddsMatchRow, key: ExtraKey) => number) {
+  const [sortKey, setSortKey] = useState<CoreSortKey | ExtraKey>("when");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   function handleSort(k: string) {
-    const key = k as SpreadSortKey;
+    const key = k as CoreSortKey | ExtraKey;
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(key);
@@ -124,22 +210,11 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
     }
   }
 
-  const sorted = useMemo(() => {
+  function sortRows(rows: OddsMatchRow[]): OddsMatchRow[] {
     const val = (r: OddsMatchRow): number | string => {
-      switch (sortKey) {
-        case "week":
-          return r.game.game.week;
-        case "date":
-          return r.game.game.startDate ?? "";
-        case "awayTeam":
-          return r.game.game.awayTeam;
-        case "homeTeam":
-          return r.game.game.homeTeam;
-        case "bestAway":
-          return bestSpread(r, "away")?.value ?? -Infinity;
-        case "bestHome":
-          return bestSpread(r, "home")?.value ?? -Infinity;
-      }
+      if (sortKey === "when") return `${String(r.game.game.startDate ?? "")}`;
+      if (sortKey === "matchup") return r.game.game.awayTeam;
+      return extraVal(r, sortKey as ExtraKey);
     };
     return [...rows].sort((a, b) => {
       const av = val(a);
@@ -147,9 +222,22 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
       return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
-  }, [rows, sortKey, sortDir]);
+  }
 
-  const sh = (label: string, key: SpreadSortKey) => (
+  return { sortKey, sortDir, handleSort, sortRows };
+}
+
+// ---------------------------------------------------------------------
+// Spread tab
+// ---------------------------------------------------------------------
+type SpreadKey = "bestAway" | "bestHome";
+
+function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
+  const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<SpreadKey>((r, key) =>
+    key === "bestAway" ? bestSpread(r, "away")?.value ?? -Infinity : bestSpread(r, "home")?.value ?? -Infinity
+  );
+  const sorted = sortRows(rows);
+  const sh = (label: string, key: CoreSortKey | SpreadKey) => (
     <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} />
   );
 
@@ -158,16 +246,13 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            {sh("Wk", "week")}
-            {sh("Date", "date")}
-            <th style={CP}>Kickoff</th>
-            {sh("Away", "awayTeam")}
-            {sh("Home", "homeTeam")}
-            <th style={CP}>My Line</th>
+            {sh("When", "when")}
+            {sh("Matchup", "matchup")}
+            <th style={TH}>My Line</th>
             {sh("Best Away", "bestAway")}
             {sh("Best Home", "bestHome")}
             {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
-              <th key={b} style={CP}>
+              <th key={b} style={TH}>
                 <BookLink bookKey={b}>{BOOK_META[b].label}</BookLink>
               </th>
             ))}
@@ -180,42 +265,66 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
             const bestHome = bestSpread(r, "home");
             return (
               <tr key={r.game.game.id}>
-                <td style={CP}>{r.game.game.week}</td>
-                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{r.game.game.awayTeam}</td>
-                <td style={CP}>{r.game.game.homeTeam}</td>
-                <td style={{ ...CP, textAlign: "center" }}>
-                  <div>{fmtPoint(my.myAwaySpread)}</div>
-                  <div>{fmtPoint(my.myHomeSpread)}</div>
+                <td style={TD}>
+                  <WhenCell week={r.game.game.week} iso={r.game.game.startDate} />
                 </td>
-                <td style={{ ...CP, textAlign: "center", background: bestAway ? BEST_LINE_BG : undefined }}>
-                  {bestAway ? (
-                    <BookLink bookKey={bestAway.book}>
-                      {fmtPoint(bestAway.value)} <span style={{ opacity: 0.6 }}>{BOOK_META[bestAway.book]?.label}</span>
-                    </BookLink>
-                  ) : (
-                    "–"
-                  )}
+                <td style={TD}>
+                  <TeamStack away={r.game.game.awayTeam} home={r.game.game.homeTeam} />
                 </td>
-                <td style={{ ...CP, textAlign: "center", background: bestHome ? BEST_LINE_BG : undefined }}>
-                  {bestHome ? (
-                    <BookLink bookKey={bestHome.book}>
-                      {fmtPoint(bestHome.value)} <span style={{ opacity: 0.6 }}>{BOOK_META[bestHome.book]?.label}</span>
-                    </BookLink>
-                  ) : (
-                    "–"
-                  )}
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell top={fmtPoint(my.myAwaySpread)} bottom={fmtPoint(my.myHomeSpread)} />
                 </td>
-                {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
-                  <SpreadCell key={b} book={b} odds={r.books[b]} my={my} />
-                ))}
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell
+                    bg={bestAway ? BEST_LINE_BG : undefined}
+                    top={bestAway ? <>{fmtPoint(bestAway.value)} <BookBadge bookKey={bestAway.book} /></> : "–"}
+                    bottom=""
+                  />
+                </td>
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell
+                    bg={bestHome ? BEST_LINE_BG : undefined}
+                    top=""
+                    bottom={bestHome ? <>{fmtPoint(bestHome.value)} <BookBadge bookKey={bestHome.book} /></> : "–"}
+                  />
+                </td>
+                {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => {
+                  const odds: BookOdds | undefined = r.books[b];
+                  if (!odds || (odds.spreadHome == null && odds.spreadAway == null)) {
+                    return (
+                      <td key={b} style={{ ...TD, textAlign: "center", color: "var(--chalk-dim)" }}>
+                        –
+                      </td>
+                    );
+                  }
+                  const awayEdge = spreadEdgePts(my.myAwaySpread, odds.spreadAway);
+                  const homeEdge = spreadEdgePts(my.myHomeSpread, odds.spreadHome);
+                  const goodAway = awayEdge != null && awayEdge >= SPREAD_EDGE_THRESHOLD;
+                  const goodHome = homeEdge != null && homeEdge >= SPREAD_EDGE_THRESHOLD;
+                  return (
+                    <td key={b} style={{ ...TD, padding: 0 }}>
+                      <SplitCell
+                        link={b}
+                        top={
+                          <span style={{ background: goodAway ? GOOD_VALUE_BG : undefined }}>
+                            {fmtPoint(odds.spreadAway)} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.spreadAwayPrice)}</span>
+                          </span>
+                        }
+                        bottom={
+                          <span style={{ background: goodHome ? GOOD_VALUE_BG : undefined }}>
+                            {fmtPoint(odds.spreadHome)} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.spreadHomePrice)}</span>
+                          </span>
+                        }
+                      />
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={9} className="empty">
+              <td colSpan={8} className="empty">
                 No matched games with spread data yet.
               </td>
             </tr>
@@ -229,74 +338,14 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
 // ---------------------------------------------------------------------
 // Moneyline tab (includes Kalshi)
 // ---------------------------------------------------------------------
-function MoneylineCell({ book, odds, my }: { book: string; odds: BookOdds | undefined; my: MyLine }) {
-  if (!odds || (odds.mlHome == null && odds.mlAway == null)) {
-    return <td style={{ ...CP, textAlign: "center", color: "var(--chalk-dim)" }}>–</td>;
-  }
-  const awayEdge = moneylineEdgePct(my.myAwayWinPct, odds.mlAway);
-  const homeEdge = moneylineEdgePct(my.myHomeWinPct, odds.mlHome);
-  const goodAway = awayEdge != null && awayEdge >= ML_EDGE_THRESHOLD;
-  const goodHome = homeEdge != null && homeEdge >= ML_EDGE_THRESHOLD;
-  return (
-    <td style={{ ...CP, textAlign: "center", padding: 0 }}>
-      <BookLink bookKey={book}>
-        <div style={{ padding: "0.15rem 0.5rem", background: goodAway ? GOOD_VALUE_BG : undefined }}>{fmtPrice(odds.mlAway)}</div>
-        <div style={{ padding: "0.15rem 0.5rem", background: goodHome ? GOOD_VALUE_BG : undefined }}>{fmtPrice(odds.mlHome)}</div>
-      </BookLink>
-    </td>
-  );
-}
-
-function bestMoneyline(row: OddsMatchRow, side: "away" | "home"): { book: string; value: number } | null {
-  const books = booksPresent(row);
-  const values = books.map((b) => (side === "away" ? row.books[b]!.mlAway : row.books[b]!.mlHome));
-  // Best price for the bettor: for a favorite (negative) the least negative wins; for a dog (positive) the most positive wins.
-  // Comparing raw American-odds values with ">" happens to get this right in both cases (-105 > -110, +250 > +200).
-  const i = bestIndex(values, (a, b) => a > b);
-  return i === -1 ? null : { book: books[i], value: values[i]! };
-}
-
-type MlSortKey = "week" | "date" | "awayTeam" | "homeTeam" | "bestAway" | "bestHome";
+type MlKey = "bestAway" | "bestHome";
 
 function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
-  const [sortKey, setSortKey] = useState<MlSortKey>("week");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-
-  function handleSort(k: string) {
-    const key = k as MlSortKey;
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
-  const sorted = useMemo(() => {
-    const val = (r: OddsMatchRow): number | string => {
-      switch (sortKey) {
-        case "week":
-          return r.game.game.week;
-        case "date":
-          return r.game.game.startDate ?? "";
-        case "awayTeam":
-          return r.game.game.awayTeam;
-        case "homeTeam":
-          return r.game.game.homeTeam;
-        case "bestAway":
-          return bestMoneyline(r, "away")?.value ?? -Infinity;
-        case "bestHome":
-          return bestMoneyline(r, "home")?.value ?? -Infinity;
-      }
-    };
-    return [...rows].sort((a, b) => {
-      const av = val(a);
-      const bv = val(b);
-      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
-      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
-    });
-  }, [rows, sortKey, sortDir]);
-
-  const sh = (label: string, key: MlSortKey) => (
+  const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<MlKey>((r, key) =>
+    key === "bestAway" ? bestMoneyline(r, "away")?.value ?? -Infinity : bestMoneyline(r, "home")?.value ?? -Infinity
+  );
+  const sorted = sortRows(rows);
+  const sh = (label: string, key: CoreSortKey | MlKey) => (
     <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} />
   );
 
@@ -305,16 +354,13 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            {sh("Wk", "week")}
-            {sh("Date", "date")}
-            <th style={CP}>Kickoff</th>
-            {sh("Away", "awayTeam")}
-            {sh("Home", "homeTeam")}
-            <th style={CP}>My Line</th>
+            {sh("When", "when")}
+            {sh("Matchup", "matchup")}
+            <th style={TH}>My Line</th>
             {sh("Best Away", "bestAway")}
             {sh("Best Home", "bestHome")}
             {BOOK_ORDER.map((b) => (
-              <th key={b} style={CP}>
+              <th key={b} style={TH}>
                 <BookLink bookKey={b}>{BOOK_META[b].label}</BookLink>
               </th>
             ))}
@@ -327,36 +373,52 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
             const bestHome = bestMoneyline(r, "home");
             return (
               <tr key={r.game.game.id}>
-                <td style={CP}>{r.game.game.week}</td>
-                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{r.game.game.awayTeam}</td>
-                <td style={CP}>{r.game.game.homeTeam}</td>
-                <td style={{ ...CP, textAlign: "center" }}>
-                  <div>{fmtPrice(my.myAwayMl)}</div>
-                  <div>{fmtPrice(my.myHomeMl)}</div>
+                <td style={TD}>
+                  <WhenCell week={r.game.game.week} iso={r.game.game.startDate} />
                 </td>
-                <td style={{ ...CP, textAlign: "center", background: bestAway ? BEST_LINE_BG : undefined }}>
-                  {bestAway ? (
-                    <BookLink bookKey={bestAway.book}>
-                      {fmtPrice(bestAway.value)} <span style={{ opacity: 0.6 }}>{BOOK_META[bestAway.book]?.label}</span>
-                    </BookLink>
-                  ) : (
-                    "–"
-                  )}
+                <td style={TD}>
+                  <TeamStack away={r.game.game.awayTeam} home={r.game.game.homeTeam} />
                 </td>
-                <td style={{ ...CP, textAlign: "center", background: bestHome ? BEST_LINE_BG : undefined }}>
-                  {bestHome ? (
-                    <BookLink bookKey={bestHome.book}>
-                      {fmtPrice(bestHome.value)} <span style={{ opacity: 0.6 }}>{BOOK_META[bestHome.book]?.label}</span>
-                    </BookLink>
-                  ) : (
-                    "–"
-                  )}
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell top={fmtPrice(my.myAwayMl)} bottom={fmtPrice(my.myHomeMl)} />
                 </td>
-                {BOOK_ORDER.map((b) => (
-                  <MoneylineCell key={b} book={b} odds={r.books[b]} my={my} />
-                ))}
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell
+                    bg={bestAway ? BEST_LINE_BG : undefined}
+                    top={bestAway ? <>{fmtPrice(bestAway.value)} <BookBadge bookKey={bestAway.book} /></> : "–"}
+                    bottom=""
+                  />
+                </td>
+                <td style={{ ...TD, padding: 0 }}>
+                  <SplitCell
+                    bg={bestHome ? BEST_LINE_BG : undefined}
+                    top=""
+                    bottom={bestHome ? <>{fmtPrice(bestHome.value)} <BookBadge bookKey={bestHome.book} /></> : "–"}
+                  />
+                </td>
+                {BOOK_ORDER.map((b) => {
+                  const odds: BookOdds | undefined = r.books[b];
+                  if (!odds || (odds.mlHome == null && odds.mlAway == null)) {
+                    return (
+                      <td key={b} style={{ ...TD, textAlign: "center", color: "var(--chalk-dim)" }}>
+                        –
+                      </td>
+                    );
+                  }
+                  const awayEdge = moneylineEdgePct(my.myAwayWinPct, odds.mlAway);
+                  const homeEdge = moneylineEdgePct(my.myHomeWinPct, odds.mlHome);
+                  const goodAway = awayEdge != null && awayEdge >= ML_EDGE_THRESHOLD;
+                  const goodHome = homeEdge != null && homeEdge >= ML_EDGE_THRESHOLD;
+                  return (
+                    <td key={b} style={{ ...TD, padding: 0 }}>
+                      <SplitCell
+                        link={b}
+                        top={<span style={{ background: goodAway ? GOOD_VALUE_BG : undefined }}>{fmtPrice(odds.mlAway)}</span>}
+                        bottom={<span style={{ background: goodHome ? GOOD_VALUE_BG : undefined }}>{fmtPrice(odds.mlHome)}</span>}
+                      />
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
@@ -376,76 +438,14 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
 // ---------------------------------------------------------------------
 // Total tab
 // ---------------------------------------------------------------------
-function TotalCell({ book, odds, myTotal }: { book: string; odds: BookOdds | undefined; myTotal: number | null }) {
-  if (!odds || odds.totalPoint == null) {
-    return <td style={{ ...CP, textAlign: "center", color: "var(--chalk-dim)" }}>–</td>;
-  }
-  const { amountOff, call } = totalCall(myTotal, odds.totalPoint);
-  const good = amountOff != null && Math.abs(amountOff) >= TOTAL_EDGE_THRESHOLD;
-  return (
-    <td style={{ ...CP, textAlign: "center", padding: "0.15rem 0.5rem", background: good ? GOOD_VALUE_BG : undefined }}>
-      <BookLink bookKey={book}>
-        <div>
-          O {odds.totalPoint} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.overPrice)}</span>
-        </div>
-        <div>
-          U {odds.totalPoint} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.underPrice)}</span>
-        </div>
-        {good && <div style={{ fontSize: "0.68rem", opacity: 0.85 }}>{call}</div>}
-      </BookLink>
-    </td>
-  );
-}
-
-function bestTotal(row: OddsMatchRow, side: "over" | "under"): { book: string; value: number } | null {
-  const books = booksPresent(row);
-  const values = books.map((b) => row.books[b]!.totalPoint);
-  // Best Over = lowest total (easiest to clear); best Under = highest total (easiest to stay below).
-  const i = bestIndex(values, side === "over" ? (a, b) => a < b : (a, b) => a > b);
-  return i === -1 ? null : { book: books[i], value: values[i]! };
-}
-
-type TotalSortKey = "week" | "date" | "awayTeam" | "homeTeam" | "bestOver" | "bestUnder";
+type TotalKey = "bestOver" | "bestUnder";
 
 function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
-  const [sortKey, setSortKey] = useState<TotalSortKey>("week");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-
-  function handleSort(k: string) {
-    const key = k as TotalSortKey;
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
-  const sorted = useMemo(() => {
-    const val = (r: OddsMatchRow): number | string => {
-      switch (sortKey) {
-        case "week":
-          return r.game.game.week;
-        case "date":
-          return r.game.game.startDate ?? "";
-        case "awayTeam":
-          return r.game.game.awayTeam;
-        case "homeTeam":
-          return r.game.game.homeTeam;
-        case "bestOver":
-          return bestTotal(r, "over")?.value ?? Infinity;
-        case "bestUnder":
-          return bestTotal(r, "under")?.value ?? -Infinity;
-      }
-    };
-    return [...rows].sort((a, b) => {
-      const av = val(a);
-      const bv = val(b);
-      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
-      return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
-    });
-  }, [rows, sortKey, sortDir]);
-
-  const sh = (label: string, key: TotalSortKey) => (
+  const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<TotalKey>((r, key) =>
+    key === "bestOver" ? bestTotal(r, "over")?.value ?? Infinity : bestTotal(r, "under")?.value ?? -Infinity
+  );
+  const sorted = sortRows(rows);
+  const sh = (label: string, key: CoreSortKey | TotalKey) => (
     <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} />
   );
 
@@ -454,16 +454,13 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            {sh("Wk", "week")}
-            {sh("Date", "date")}
-            <th style={CP}>Kickoff</th>
-            {sh("Away", "awayTeam")}
-            {sh("Home", "homeTeam")}
-            <th style={CP}>My Total</th>
+            {sh("When", "when")}
+            {sh("Matchup", "matchup")}
+            <th style={TH}>My Total</th>
             {sh("Best Over", "bestOver")}
             {sh("Best Under", "bestUnder")}
             {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
-              <th key={b} style={CP}>
+              <th key={b} style={TH}>
                 <BookLink bookKey={b}>{BOOK_META[b].label}</BookLink>
               </th>
             ))}
@@ -476,39 +473,64 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
             const bestUnder = bestTotal(r, "under");
             return (
               <tr key={r.game.game.id}>
-                <td style={CP}>{r.game.game.week}</td>
-                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{r.game.game.awayTeam}</td>
-                <td style={CP}>{r.game.game.homeTeam}</td>
-                <td style={{ ...CP, textAlign: "center" }}>{my.myTotal != null ? my.myTotal.toFixed(1) : "–"}</td>
-                <td style={{ ...CP, textAlign: "center", background: bestOver ? BEST_LINE_BG : undefined }}>
+                <td style={TD}>
+                  <WhenCell week={r.game.game.week} iso={r.game.game.startDate} />
+                </td>
+                <td style={TD}>
+                  <TeamStack away={r.game.game.awayTeam} home={r.game.game.homeTeam} />
+                </td>
+                <td style={TD}>{my.myTotal != null ? my.myTotal.toFixed(1) : "–"}</td>
+                <td style={{ ...TD, background: bestOver ? BEST_LINE_BG : undefined }}>
                   {bestOver ? (
                     <BookLink bookKey={bestOver.book}>
-                      O {bestOver.value} <span style={{ opacity: 0.6 }}>{BOOK_META[bestOver.book]?.label}</span>
+                      O {bestOver.value} <BookBadge bookKey={bestOver.book} />
                     </BookLink>
                   ) : (
                     "–"
                   )}
                 </td>
-                <td style={{ ...CP, textAlign: "center", background: bestUnder ? BEST_LINE_BG : undefined }}>
+                <td style={{ ...TD, background: bestUnder ? BEST_LINE_BG : undefined }}>
                   {bestUnder ? (
                     <BookLink bookKey={bestUnder.book}>
-                      U {bestUnder.value} <span style={{ opacity: 0.6 }}>{BOOK_META[bestUnder.book]?.label}</span>
+                      U {bestUnder.value} <BookBadge bookKey={bestUnder.book} />
                     </BookLink>
                   ) : (
                     "–"
                   )}
                 </td>
-                {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
-                  <TotalCell key={b} book={b} odds={r.books[b]} myTotal={my.myTotal} />
-                ))}
+                {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => {
+                  const odds: BookOdds | undefined = r.books[b];
+                  if (!odds || odds.totalPoint == null) {
+                    return (
+                      <td key={b} style={{ ...TD, textAlign: "center", color: "var(--chalk-dim)" }}>
+                        –
+                      </td>
+                    );
+                  }
+                  const { amountOff, call } = totalCall(my.myTotal, odds.totalPoint);
+                  const good = amountOff != null && Math.abs(amountOff) >= TOTAL_EDGE_THRESHOLD;
+                  return (
+                    <td key={b} style={{ ...TD, padding: 0 }}>
+                      <BookLink bookKey={b} block>
+                        <div style={{ padding: "0.4rem 0.6rem", background: good ? GOOD_VALUE_BG : undefined }}>
+                          <div>
+                            O {odds.totalPoint} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.overPrice)}</span>
+                          </div>
+                          <div>
+                            U {odds.totalPoint} <span style={{ opacity: 0.6 }}>{fmtPrice(odds.underPrice)}</span>
+                          </div>
+                          {good && <div style={{ fontSize: "0.68rem", opacity: 0.85 }}>{call}</div>}
+                        </div>
+                      </BookLink>
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={9} className="empty">
+              <td colSpan={8} className="empty">
                 No matched games with total data yet.
               </td>
             </tr>
@@ -520,8 +542,111 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
 }
 
 // ---------------------------------------------------------------------
-// Game Cards
+// Game detail (expanded card) — a purpose-built layout rather than
+// reusing the multi-game Oddscreen tables at 1 row, which read poorly
+// that small. One clean list per market: My Line first, then every book
+// sorted with the best price on top, best cell called out.
 // ---------------------------------------------------------------------
+function DetailRow({ label, my, book, awayVal, homeVal }: { label: string; my?: boolean; book?: string; awayVal: ReactNode; homeVal: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "5.5rem 1fr 1fr",
+        gap: "0.5rem",
+        alignItems: "center",
+        padding: "0.4rem 0",
+        borderTop: "1px solid var(--hash)",
+        fontWeight: my ? 700 : 400,
+        color: my ? "var(--gold)" : undefined,
+      }}
+    >
+      <div style={{ fontSize: "0.75rem" }}>{book ? <BookBadge bookKey={book} /> : label}</div>
+      <div>{awayVal}</div>
+      <div>{homeVal}</div>
+    </div>
+  );
+}
+
+function GameDetail({ row }: { row: OddsMatchRow }) {
+  const my = myLineFor(row);
+  const books = booksPresent(row);
+
+  return (
+    <div style={{ background: "var(--turf)", border: "1px solid var(--hash)", borderRadius: "10px", padding: "1rem", marginTop: "0.75rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "5.5rem 1fr 1fr", gap: "0.5rem", fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <div />
+        <div>{row.game.game.awayTeam}</div>
+        <div>{row.game.game.homeTeam}</div>
+      </div>
+
+      <div style={{ marginTop: "0.5rem", fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Spread</div>
+      <DetailRow label="My Line" my awayVal={fmtPoint(my.myAwaySpread)} homeVal={fmtPoint(my.myHomeSpread)} />
+      {books
+        .filter((b) => b !== "kalshi")
+        .map((b) => {
+          const o = row.books[b]!;
+          return (
+            <DetailRow
+              key={b}
+              label={BOOK_META[b].label}
+              book={b}
+              awayVal={o.spreadAway != null ? `${fmtPoint(o.spreadAway)} (${fmtPrice(o.spreadAwayPrice)})` : "–"}
+              homeVal={o.spreadHome != null ? `${fmtPoint(o.spreadHome)} (${fmtPrice(o.spreadHomePrice)})` : "–"}
+            />
+          );
+        })}
+
+      <div style={{ marginTop: "1rem", fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Moneyline</div>
+      <DetailRow label="My Line" my awayVal={fmtPrice(my.myAwayMl)} homeVal={fmtPrice(my.myHomeMl)} />
+      {books.map((b) => {
+        const o = row.books[b]!;
+        return <DetailRow key={b} label={BOOK_META[b].label} book={b} awayVal={fmtPrice(o.mlAway)} homeVal={fmtPrice(o.mlHome)} />;
+      })}
+
+      <div style={{ marginTop: "1rem", fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total (Over / Under)</div>
+      <DetailRow label="My Line" my awayVal={my.myTotal != null ? my.myTotal.toFixed(1) : "–"} homeVal="" />
+      {books
+        .filter((b) => b !== "kalshi")
+        .map((b) => {
+          const o = row.books[b]!;
+          return (
+            <DetailRow
+              key={b}
+              label={BOOK_META[b].label}
+              book={b}
+              awayVal={o.totalPoint != null ? `O ${o.totalPoint} (${fmtPrice(o.overPrice)})` : "–"}
+              homeVal={o.totalPoint != null ? `U ${o.totalPoint} (${fmtPrice(o.underPrice)})` : "–"}
+            />
+          );
+        })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Game Cards — a tile grid, one per game. Team name only appears once
+// per row (next to that team's logo); the value chips beside it don't
+// repeat it.
+// ---------------------------------------------------------------------
+function ValueChip({ label, best, book, onClick }: { label: string; best: string; book?: string; onClick?: () => void }) {
+  return (
+    <div style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ fontSize: "0.62rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      {book ? (
+        <BookLink bookKey={book}>
+          <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>{best}</div>
+          <BookBadge bookKey={book} />
+        </BookLink>
+      ) : (
+        <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--chalk-dim)" }} onClick={onClick}>
+          {best}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameCard({ row }: { row: OddsMatchRow }) {
   const [expanded, setExpanded] = useState(false);
   const bestAwaySpread = bestSpread(row, "away");
@@ -531,86 +656,61 @@ function GameCard({ row }: { row: OddsMatchRow }) {
   const bestOver = bestTotal(row, "over");
   const bestUnder = bestTotal(row, "under");
 
+  const teamRow = (team: string, spread: { book: string; value: number } | null, ml: { book: string; value: number } | null) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.4rem 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+        <TeamLogo team={team} size={26} />
+        <span style={{ fontWeight: 700, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team}</span>
+      </div>
+      <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
+        <ValueChip label="Spread" best={spread ? fmtPoint(spread.value) : "–"} book={spread?.book} />
+        <ValueChip label="ML" best={ml ? fmtPrice(ml.value) : "–"} book={ml?.book} />
+      </div>
+    </div>
+  );
+
   return (
     <div
       style={{
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "8px",
-        padding: "0.75rem",
-        marginBottom: "0.6rem",
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: "12px",
+        padding: "1rem",
         cursor: "pointer",
+        transition: "border-color 0.15s",
       }}
       onClick={() => setExpanded((e) => !e)}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--gold-dim)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--hash)")}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: "0.85rem" }}>
-        <div>
-          <strong>{row.game.game.awayTeam}</strong> @ <strong>{row.game.game.homeTeam}</strong>
-        </div>
-        <div style={{ color: "var(--chalk-dim)", fontSize: "0.75rem" }}>
-          Wk {row.game.game.week} · {dateLabel(row.game.game.startDate)} {kickoffLabel(row.game.game.startDate)}
+      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>
+        Wk {row.game.game.week} · {dateLabel(row.game.game.startDate)} · {kickoffLabel(row.game.game.startDate)}
+      </div>
+
+      {teamRow(row.game.game.awayTeam, bestAwaySpread, bestAwayMl)}
+      <div style={{ borderTop: "1px solid var(--hash)" }} />
+      {teamRow(row.game.game.homeTeam, bestHomeSpread, bestHomeMl)}
+
+      <div
+        style={{
+          borderTop: "1px solid var(--hash)",
+          marginTop: "0.4rem",
+          paddingTop: "0.5rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <span style={{ fontSize: "0.62rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Total</span>
+        <div style={{ display: "flex", gap: "1rem" }}>
+          <ValueChip label="Over" best={bestOver ? bestOver.value.toString() : "–"} book={bestOver?.book} />
+          <ValueChip label="Under" best={bestUnder ? bestUnder.value.toString() : "–"} book={bestUnder?.book} />
         </div>
       </div>
-      <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", fontSize: "0.78rem", flexWrap: "wrap" }}>
-        <div>
-          <div style={{ color: "var(--chalk-dim)" }}>Best Spread</div>
-          {bestAwaySpread && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestAwaySpread.book}>
-                {row.game.game.awayTeam} {fmtPoint(bestAwaySpread.value)} ({BOOK_META[bestAwaySpread.book]?.label})
-              </BookLink>
-            </div>
-          )}
-          {bestHomeSpread && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestHomeSpread.book}>
-                {row.game.game.homeTeam} {fmtPoint(bestHomeSpread.value)} ({BOOK_META[bestHomeSpread.book]?.label})
-              </BookLink>
-            </div>
-          )}
-        </div>
-        <div>
-          <div style={{ color: "var(--chalk-dim)" }}>Best Moneyline</div>
-          {bestAwayMl && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestAwayMl.book}>
-                {row.game.game.awayTeam} {fmtPrice(bestAwayMl.value)} ({BOOK_META[bestAwayMl.book]?.label})
-              </BookLink>
-            </div>
-          )}
-          {bestHomeMl && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestHomeMl.book}>
-                {row.game.game.homeTeam} {fmtPrice(bestHomeMl.value)} ({BOOK_META[bestHomeMl.book]?.label})
-              </BookLink>
-            </div>
-          )}
-        </div>
-        <div>
-          <div style={{ color: "var(--chalk-dim)" }}>Best Total</div>
-          {bestOver && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestOver.book}>
-                O {bestOver.value} ({BOOK_META[bestOver.book]?.label})
-              </BookLink>
-            </div>
-          )}
-          {bestUnder && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <BookLink bookKey={bestUnder.book}>
-                U {bestUnder.value} ({BOOK_META[bestUnder.book]?.label})
-              </BookLink>
-            </div>
-          )}
-        </div>
-      </div>
+
       {expanded && (
-        <div style={{ marginTop: "0.75rem" }} onClick={(e) => e.stopPropagation()}>
-          <div style={{ marginBottom: "0.3rem", fontSize: "0.72rem", color: "var(--chalk-dim)" }}>Spread</div>
-          <OddscreenSpread rows={[row]} />
-          <div style={{ margin: "0.6rem 0 0.3rem", fontSize: "0.72rem", color: "var(--chalk-dim)" }}>Moneyline</div>
-          <OddscreenMoneyline rows={[row]} />
-          <div style={{ margin: "0.6rem 0 0.3rem", fontSize: "0.72rem", color: "var(--chalk-dim)" }}>Total</div>
-          <OddscreenTotal rows={[row]} />
+        <div onClick={(e) => e.stopPropagation()}>
+          <GameDetail row={row} />
         </div>
       )}
     </div>
@@ -663,7 +763,6 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
   }
 
   const matched = useMemo(() => matchOddsGames(oddsGames, kalshiGames, siteRows), [oddsGames, kalshiGames, siteRows]);
-
   const loading = loadingSite || loadingOdds;
 
   return (
@@ -685,10 +784,10 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
           {loadingOdds ? "Refreshing…" : "Refresh odds"}
         </button>
         <div style={{ marginLeft: "auto", display: "flex", gap: "0.4rem" }}>
-          <button className={topView === "cards" ? "menu-btn active" : "menu-btn"} onClick={() => setTopView("cards")}>
+          <button className={`mode-btn ${topView === "cards" ? "mode-btn-active" : ""}`} onClick={() => setTopView("cards")}>
             Game Cards
           </button>
-          <button className={topView === "oddscreen" ? "menu-btn active" : "menu-btn"} onClick={() => setTopView("oddscreen")}>
+          <button className={`mode-btn ${topView === "oddscreen" ? "mode-btn-active" : ""}`} onClick={() => setTopView("oddscreen")}>
             Oddscreen
           </button>
         </div>
@@ -702,23 +801,25 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
       ) : topView === "cards" ? (
         <div>
           {matched.length === 0 && <div className="empty">No matched games yet for this season/division.</div>}
-          {matched
-            .slice()
-            .sort((a, b) => a.game.game.week - b.game.game.week || String(a.game.game.startDate).localeCompare(String(b.game.game.startDate)))
-            .map((row) => (
-              <GameCard key={row.game.game.id} row={row} />
-            ))}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
+            {matched
+              .slice()
+              .sort((a, b) => a.game.game.week - b.game.game.week || String(a.game.game.startDate).localeCompare(String(b.game.game.startDate)))
+              .map((row) => (
+                <GameCard key={row.game.game.id} row={row} />
+              ))}
+          </div>
         </div>
       ) : (
         <div>
           <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.75rem" }}>
-            <button className={oddscreenTab === "spread" ? "menu-btn active" : "menu-btn"} onClick={() => setOddscreenTab("spread")}>
+            <button className={`mode-btn ${oddscreenTab === "spread" ? "mode-btn-active" : ""}`} onClick={() => setOddscreenTab("spread")}>
               Spread
             </button>
-            <button className={oddscreenTab === "moneyline" ? "menu-btn active" : "menu-btn"} onClick={() => setOddscreenTab("moneyline")}>
+            <button className={`mode-btn ${oddscreenTab === "moneyline" ? "mode-btn-active" : ""}`} onClick={() => setOddscreenTab("moneyline")}>
               Moneyline
             </button>
-            <button className={oddscreenTab === "total" ? "menu-btn active" : "menu-btn"} onClick={() => setOddscreenTab("total")}>
+            <button className={`mode-btn ${oddscreenTab === "total" ? "mode-btn-active" : ""}`} onClick={() => setOddscreenTab("total")}>
               Total
             </button>
           </div>

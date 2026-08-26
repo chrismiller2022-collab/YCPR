@@ -50,11 +50,11 @@ export function invalidateOddsFeed(): void {
 // Where each book's header/best-line link should point. Deep links into a
 // specific bet slip aren't available from the odds data (none of these
 // books expose one) — this goes to the book's general CFB odds page.
-export const BOOK_META: Record<string, { label: string; url: string }> = {
-  bovada: { label: "Bovada", url: "https://www.bovada.lv/sports/football/college-football" },
-  betonlineag: { label: "BetOnline", url: "https://www.betonline.ag/sportsbook/football/ncaa" },
-  novig: { label: "Novig", url: "https://www.novig.us/" },
-  kalshi: { label: "Kalshi", url: "https://kalshi.com/markets/kxncaafgame" },
+export const BOOK_META: Record<string, { label: string; url: string; color: string }> = {
+  novig: { label: "Novig", url: "https://www.novig.us/", color: "#4f8ff7" },
+  kalshi: { label: "Kalshi", url: "https://kalshi.com/markets/kxncaafgame", color: "#00d4a0" },
+  betonlineag: { label: "BetOnline", url: "https://www.betonline.ag/sportsbook/football/ncaa", color: "#e8792e" },
+  bovada: { label: "Bovada", url: "https://www.bovada.lv/sports/football/college-football", color: "#c9a84c" },
 };
 
 export const BOOK_ORDER = ["novig", "kalshi", "betonlineag", "bovada"];
