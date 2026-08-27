@@ -46,6 +46,7 @@ function GameSelectionStep({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gameSearch, setGameSearch] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
 
   function load() {
     setLoading(true);
@@ -82,6 +83,7 @@ function GameSelectionStep({
     try {
       await cbsPickemSave({ action: "selectGames", season, week, gameIds: Array.from(selected), keyGameId });
       onSaved();
+      setCollapsed(true);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -117,19 +119,29 @@ function GameSelectionStep({
           </span>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <input
-            type="text"
-            placeholder="Search teams…"
-            value={gameSearch}
-            onChange={(e) => setGameSearch(e.target.value)}
-            style={{ width: 160 }}
-          />
-          <button className="menu-btn" onClick={handleResetGames} disabled={saving}>
-            Reset games
-          </button>
+          {collapsed ? (
+            <button className="menu-btn" onClick={() => setCollapsed(false)}>
+              Show games
+            </button>
+          ) : (
+            <>
+              <input
+                type="text"
+                placeholder="Search teams…"
+                value={gameSearch}
+                onChange={(e) => setGameSearch(e.target.value)}
+                style={{ width: 160 }}
+              />
+              <button className="menu-btn" onClick={handleResetGames} disabled={saving}>
+                Reset games
+              </button>
+            </>
+          )}
         </div>
       </div>
-      {available.length === 0 ? (
+      {collapsed ? (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>Saved — {selected.size} games selected.</p>
+      ) : available.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
           No FBS-vs-FBS games saved for {season} week {week} yet — sync this week from Games &
           Lines first.
@@ -174,9 +186,11 @@ function GameSelectionStep({
           })}
         </div>
       )}
-      <button onClick={handleSave} disabled={saving || selected.size === 0}>
-        {saving ? "Saving…" : "Save selected games"}
-      </button>
+      {!collapsed && (
+        <button onClick={handleSave} disabled={saving || selected.size === 0}>
+          {saving ? "Saving…" : "Save selected games"}
+        </button>
+      )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
     </div>
   );

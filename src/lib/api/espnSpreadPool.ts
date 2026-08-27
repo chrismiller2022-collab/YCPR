@@ -1,17 +1,6 @@
 import { supabase } from "../supabaseClient";
-import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor } from "../odds";
-import type { GameRow, BettingLineRow } from "./gamesLines";
-
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+import { fetchGamesWithLines, type GameRow, type BettingLineRow } from "./gamesLines";
+import { computeRow } from "../matchupsCompute";
 
 export interface EspnSpreadPickRow {
   id: number;
@@ -50,7 +39,13 @@ export async function fetchFbsGamesForWeek(season: number, week: number): Promis
   return data ?? [];
 }
 
-/** This week's selected ESPN Spreads games, with projections/ESPN spread attached. */
+/**
+ * This week's selected ESPN Spreads games, with projections/ESPN spread
+ * attached. See espnMlPool.ts for why this reuses computeRow() (Admin
+ * Matchups' own calculation) instead of computing its own — same
+ * reasoning applies here, even though this pool doesn't need the
+ * moneyline fields.
+ */
 export async function fetchEspnSpreadPicksForWeek(
   season: number,
   week: number,
@@ -65,41 +60,24 @@ export async function fetchEspnSpreadPicksForWeek(
   if (picksError) throw picksError;
   if (!picks || picks.length === 0) return [];
 
-  const gameIds = picks.map((p) => p.game_id);
-  const [{ data: games, error: gamesError }, { data: lines, error: linesError }] = await Promise.all([
-    supabase.from("games").select("*").in("id", gameIds),
-    supabase.from("betting_lines").select("*").in("game_id", gameIds),
-  ]);
-  if (gamesError) throw gamesError;
-  if (linesError) throw linesError;
-
-  const gamesById = new Map((games ?? []).map((g) => [g.id, g]));
-  const linesByGame = new Map<string, BettingLineRow[]>();
-  for (const l of lines ?? []) {
-    const list = linesByGame.get(l.game_id) ?? [];
-    list.push(l);
-    linesByGame.set(l.game_id, list);
-  }
+  const gamesWithLines = await fetchGamesWithLines(season, week);
+  const byGameId = new Map(gamesWithLines.map((g) => [g.id, g]));
 
   return picks.map((p) => {
-    const g = gamesById.get(p.game_id) ?? null;
-    const gameLines = linesByGame.get(p.game_id) ?? [];
-    const line = pickLine(gameLines);
+    const gwl = byGameId.get(p.game_id) ?? null;
+    if (!gwl) {
+      return { ...p, game: null, lines: [], myProjAwaySpread: null, espnAwaySpread: null, vegasTotal: null };
+    }
 
-    const awayTeam = g ? TEAMS_BY_NAME[g.away_team] : null;
-    const homeTeam = g ? TEAMS_BY_NAME[g.home_team] : null;
-    const awayRating = awayTeam ? liveByTeam[g!.away_team]?.rating ?? awayTeam.rating : null;
-    const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
-    const myProjAwaySpread =
-      g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
+    const computed = computeRow(gwl, liveByTeam);
 
     return {
       ...p,
-      game: g,
-      lines: gameLines,
-      myProjAwaySpread,
-      espnAwaySpread: line?.spread != null ? -line.spread : null,
-      vegasTotal: line?.over_under ?? null,
+      game: gwl,
+      lines: gwl.lines,
+      myProjAwaySpread: computed.projAwaySpread,
+      espnAwaySpread: computed.vegasAwaySpread,
+      vegasTotal: computed.line?.over_under ?? null,
     };
   });
 }

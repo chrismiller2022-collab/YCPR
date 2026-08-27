@@ -1,5 +1,6 @@
 import { TEAMS_BY_NAME } from "../data/teams";
-import { HFA, hfaFor, spreadToMoneyline, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
+import { HFA, hfaFor, fairMoneylineFromWinPct } from "./odds";
+import { billRAwayWinPct } from "./moneylineBetHistory";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
@@ -320,8 +321,14 @@ export function computeRow(
 
   const amountOff = projAwaySpread != null && vegasAwaySpread != null ? projAwaySpread - vegasAwaySpread : null;
 
-  const projWinPct = projAwaySpread != null ? spreadToWinPct(projAwaySpread) : null;
-  const projMoneyline = projAwaySpread != null ? spreadToMoneyline(projAwaySpread) : null;
+  // Bill R Method (win% from the raw rating gap via a fixed-HFA z-score
+  // + normal CDF, not the spread-derived curve) is the canonical
+  // moneyline model site-wide — Admin Matchups' Moneyline tab, every
+  // pool that shows a moneyline, all read from this one calculation now,
+  // so there's exactly one "My ML" for a given game, not several
+  // disagreeing ones depending on which page computed it.
+  const projWinPct = awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+  const projMoneyline = projWinPct != null ? fairMoneylineFromWinPct(projWinPct) : null;
   const vegasMoneyline = line?.away_moneyline ?? null;
 
   // Standard moneyline-to-implied-probability conversion. This includes

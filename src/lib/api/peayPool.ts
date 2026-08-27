@@ -1,17 +1,7 @@
 import { supabase } from "../supabaseClient";
-import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor } from "../odds";
-import type { GameRow, BettingLineRow } from "./gamesLines";
-
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+import { fetchGamesWithLines } from "./gamesLines";
+import { computeRow } from "../matchupsCompute";
+import type { GameRow } from "./gamesLines";
 
 export interface PeayRow {
   game_id: string;
@@ -40,59 +30,39 @@ export function gradePeayPick(row: PeayRow): PeayGrade {
 }
 
 /**
- * Every FBS-vs-FBS game for the week, merged with any saved Peay line/pick.
- * Unlike Brit, there's no separate "selection" step — every FBS-vs-FBS
- * game is in scope automatically.
+ * Every FBS-vs-FBS game for the week, merged with any saved Peay
+ * line/pick. Unlike Brit, there's no separate "selection" step — every
+ * FBS-vs-FBS game is in scope automatically. Uses computeRow() (Admin
+ * Matchups' own calculation) for myProjAwaySpread/vegasAwaySpread —
+ * see espnMlPool.ts for the full reasoning.
  */
 export async function fetchPeayWeek(season: number, week: number, liveByTeam: Record<string, any> = {}): Promise<PeayRow[]> {
-  const [{ data: games, error: gamesError }, { data: lines, error: linesError }, { data: peay, error: peayError }] =
-    await Promise.all([
-      supabase
-        .from("games")
-        .select("*")
-        .eq("season", season)
-        .eq("week", week)
-        .eq("home_classification", "fbs")
-        .eq("away_classification", "fbs")
-        .order("start_date", { ascending: true }),
-      supabase.from("betting_lines").select("*").eq("season", season).eq("week", week),
-      supabase.from("peay_picks").select("*").eq("season", season).eq("week", week),
-    ]);
-  if (gamesError) throw gamesError;
-  if (linesError) throw linesError;
+  const [gamesWithLines, { data: peay, error: peayError }] = await Promise.all([
+    fetchGamesWithLines(season, week),
+    supabase.from("peay_picks").select("*").eq("season", season).eq("week", week),
+  ]);
   if (peayError) throw peayError;
 
-  const linesByGame = new Map<string, BettingLineRow[]>();
-  for (const l of lines ?? []) {
-    const list = linesByGame.get(l.game_id) ?? [];
-    list.push(l);
-    linesByGame.set(l.game_id, list);
-  }
+  const fbsGames = gamesWithLines.filter(
+    (g) => (g.home_classification ?? "").toLowerCase() === "fbs" && (g.away_classification ?? "").toLowerCase() === "fbs"
+  );
   const peayByGame = new Map((peay ?? []).map((p) => [p.game_id, p]));
 
-  return (games ?? []).map((g) => {
-    const line = pickLine(linesByGame.get(g.id) ?? []);
-    const awayTeam = TEAMS_BY_NAME[g.away_team];
-    const homeTeam = TEAMS_BY_NAME[g.home_team];
-    const awayRating = awayTeam ? liveByTeam[g.away_team]?.rating ?? awayTeam.rating : null;
-    const homeRating = homeTeam ? liveByTeam[g.home_team]?.rating ?? homeTeam.rating : null;
-    const myProjAwaySpread =
-      awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
-    const vegasAwaySpread = line?.spread != null ? -line.spread : null;
-
-    const saved = peayByGame.get(g.id);
+  return fbsGames.map((gwl) => {
+    const computed = computeRow(gwl, liveByTeam);
+    const saved = peayByGame.get(gwl.id);
     const peayLine = saved?.peay_line ?? null;
 
     return {
-      game_id: g.id,
-      game: g,
+      game_id: gwl.id,
+      game: gwl,
       peay_line: peayLine,
       picked_side: saved?.picked_side ?? null,
       is_key_pick: saved?.is_key_pick ?? false,
-      myProjAwaySpread,
-      vegasAwaySpread,
-      peayVsMine: peayLine != null && myProjAwaySpread != null ? peayLine - myProjAwaySpread : null,
-      peayVsVegas: peayLine != null && vegasAwaySpread != null ? peayLine - vegasAwaySpread : null,
+      myProjAwaySpread: computed.projAwaySpread,
+      vegasAwaySpread: computed.vegasAwaySpread,
+      peayVsMine: peayLine != null && computed.projAwaySpread != null ? peayLine - computed.projAwaySpread : null,
+      peayVsVegas: peayLine != null && computed.vegasAwaySpread != null ? peayLine - computed.vegasAwaySpread : null,
     };
   });
 }

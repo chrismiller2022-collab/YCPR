@@ -56,6 +56,7 @@ function GameSelectionStep({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gameSearch, setGameSearch] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -96,6 +97,7 @@ function GameSelectionStep({
         specialGameId: specialId,
       });
       onSaved();
+      setCollapsed(true);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -109,15 +111,23 @@ function GameSelectionStep({
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="section-label">1. Select this week's games (FBS vs FBS)</div>
-        <input
-          type="text"
-          placeholder="Search teams…"
-          value={gameSearch}
-          onChange={(e) => setGameSearch(e.target.value)}
-          style={{ width: 160 }}
-        />
+        {collapsed ? (
+          <button className="menu-btn" onClick={() => setCollapsed(false)}>
+            Show games
+          </button>
+        ) : (
+          <input
+            type="text"
+            placeholder="Search teams…"
+            value={gameSearch}
+            onChange={(e) => setGameSearch(e.target.value)}
+            style={{ width: 160 }}
+          />
+        )}
       </div>
-      {available.length === 0 ? (
+      {collapsed ? (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>Saved — {selected.size} games selected.</p>
+      ) : available.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
           No FBS-vs-FBS games saved for {season} week {week} yet — sync this week from Games &
           Lines first.
@@ -163,9 +173,11 @@ function GameSelectionStep({
           ))}
         </div>
       )}
-      <button onClick={handleSave} disabled={saving || selected.size === 0}>
-        {saving ? "Saving…" : "Save selected games"}
-      </button>
+      {!collapsed && (
+        <button onClick={handleSave} disabled={saving || selected.size === 0}>
+          {saving ? "Saving…" : "Save selected games"}
+        </button>
+      )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
     </div>
   );

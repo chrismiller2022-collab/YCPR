@@ -1,17 +1,6 @@
 import { supabase } from "../supabaseClient";
-import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor, spreadToWinPct, spreadToMoneyline, fairMoneylineFromWinPct } from "../odds";
-import type { GameRow, BettingLineRow } from "./gamesLines";
-
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+import { fetchGamesWithLines, type GameRow, type BettingLineRow } from "./gamesLines";
+import { computeRow, homeSideMlValues } from "../matchupsCompute";
 
 export interface EspnMlPickRow {
   id: number;
@@ -48,7 +37,17 @@ export async function fetchFbsGamesForWeek(season: number, week: number): Promis
   return data ?? [];
 }
 
-/** This week's selected ESPN Moneyline games, with projections/vegas info attached. */
+/**
+ * This week's selected ESPN Moneyline games, with projections/vegas info
+ * attached. Every projection/vegas field is derived by running the exact
+ * same computeRow() Admin Matchups' Moneyline tab uses on the exact same
+ * fetchGamesWithLines() data — previously this pool computed its own
+ * separate awayRating/homeRating/spread math from scratch, which is how
+ * two different bugs (the wrong model, and a stale-ratings race) ended
+ * up living here independently of Admin Matchups despite both showing
+ * numbers for the same game. One computation, reused everywhere, so a
+ * fix in one place is a fix everywhere.
+ */
 export async function fetchEspnMlPicksForWeek(
   season: number,
   week: number,
@@ -63,52 +62,38 @@ export async function fetchEspnMlPicksForWeek(
   if (picksError) throw picksError;
   if (!picks || picks.length === 0) return [];
 
-  const gameIds = picks.map((p) => p.game_id);
-  const [{ data: games, error: gamesError }, { data: lines, error: linesError }] = await Promise.all([
-    supabase.from("games").select("*").in("id", gameIds),
-    supabase.from("betting_lines").select("*").in("game_id", gameIds),
-  ]);
-  if (gamesError) throw gamesError;
-  if (linesError) throw linesError;
-
-  const gamesById = new Map((games ?? []).map((g) => [g.id, g]));
-  const linesByGame = new Map<string, BettingLineRow[]>();
-  for (const l of lines ?? []) {
-    const list = linesByGame.get(l.game_id) ?? [];
-    list.push(l);
-    linesByGame.set(l.game_id, list);
-  }
+  const gamesWithLines = await fetchGamesWithLines(season, week);
+  const byGameId = new Map(gamesWithLines.map((g) => [g.id, g]));
 
   return picks.map((p) => {
-    const g = gamesById.get(p.game_id) ?? null;
-    const gameLines = linesByGame.get(p.game_id) ?? [];
-    const line = pickLine(gameLines);
+    const gwl = byGameId.get(p.game_id) ?? null;
+    if (!gwl) {
+      return {
+        ...p,
+        game: null,
+        lines: [],
+        myProjAwaySpread: null,
+        myProjAwayMoneyline: null,
+        myProjHomeMoneyline: null,
+        vegasAwayMoneyline: null,
+        vegasHomeMoneyline: null,
+        vegasTotal: null,
+      };
+    }
 
-    const awayTeam = g ? TEAMS_BY_NAME[g.away_team] : null;
-    const homeTeam = g ? TEAMS_BY_NAME[g.home_team] : null;
-    const awayRating = awayTeam ? liveByTeam[g!.away_team]?.rating ?? awayTeam.rating : null;
-    const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
-    const myProjAwaySpread =
-      g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
-    // Same formulas as Admin Matchups' Moneyline tab (matchupsCompute.ts) —
-    // this previously used the Bill R Method (a different, fixed-HFA
-    // z-score model), which gave a "My ML" here that could differ wildly
-    // from the number shown in Admin Matchups for the exact same game.
-    // One method, one number, everywhere.
-    const myProjAwayWinPct = myProjAwaySpread != null ? spreadToWinPct(myProjAwaySpread) : null;
-    const myProjAwayMoneyline = myProjAwaySpread != null ? spreadToMoneyline(myProjAwaySpread) : null;
-    const myProjHomeMoneyline = myProjAwayWinPct != null ? fairMoneylineFromWinPct(1 - myProjAwayWinPct) : null;
+    const computed = computeRow(gwl, liveByTeam);
+    const { homeMoneyline } = homeSideMlValues(computed);
 
     return {
       ...p,
-      game: g,
-      lines: gameLines,
-      myProjAwaySpread,
-      myProjAwayMoneyline,
-      myProjHomeMoneyline,
-      vegasAwayMoneyline: line?.away_moneyline ?? null,
-      vegasHomeMoneyline: line?.home_moneyline ?? null,
-      vegasTotal: line?.over_under ?? null,
+      game: gwl,
+      lines: gwl.lines,
+      myProjAwaySpread: computed.projAwaySpread,
+      myProjAwayMoneyline: computed.projMoneyline,
+      myProjHomeMoneyline: homeMoneyline,
+      vegasAwayMoneyline: computed.line?.away_moneyline ?? null,
+      vegasHomeMoneyline: computed.line?.home_moneyline ?? null,
+      vegasTotal: computed.line?.over_under ?? null,
     };
   });
 }
