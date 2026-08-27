@@ -1,5 +1,5 @@
 import { TEAMS, type Team } from "../data/teams";
-import { SURVIVOR_WEEKS, type SurvivorWeek, gameForTeamInWeek, opponentOf, teamWinPct } from "./survivor";
+import { SURVIVOR_WEEKS, type SurvivorWeek, gameForTeamInWeek, opponentOf, teamWinPct, isOpponentEligible } from "./survivor";
 import type { TeamSimResult } from "./montecarlo/engine";
 
 export type SurvivorObjective = "maxSurvivalProb" | "maxExpectedWeeks";
@@ -44,7 +44,12 @@ function areOpponentsThisWeek(teamA: string, teamB: string, week: SurvivorWeek):
  * the right stand-in probability for a survivor pick that week, not an
  * approximation requiring further derivation.
  */
-export function estimateWinProb(team: Team, week: SurvivorWeek, mcResults: TeamSimResult[] | null): number | null {
+export function estimateWinProb(
+  team: Team,
+  week: SurvivorWeek,
+  mcResults: TeamSimResult[] | null,
+  selectedConfs: Set<string>
+): number | null {
   if (week.key === "champ") {
     const mc = mcResults?.find((r) => r.team === team.team);
     return mc ? mc.confTitlePct / 100 : null;
@@ -52,8 +57,12 @@ export function estimateWinProb(team: Team, week: SurvivorWeek, mcResults: TeamS
   const game = gameForTeamInWeek(team.team, week.dataWeek);
   if (!game) return null; // bye — not eligible this week
   const opp = opponentOf(game, team.team);
-  if (!opp) return null;
-  return teamWinPct(team, opp, game);
+  // Same eligibility rule as the interactive grid (cellStatus/
+  // isOpponentEligible): the opponent has to be an FBS team in a
+  // currently-selected conference, or this cell would show as
+  // "ineligible" and can't actually be picked in the pool.
+  if (!isOpponentEligible(opp, selectedConfs)) return null;
+  return teamWinPct(team, opp!, game);
 }
 
 function fbsTeams(): Team[] {
@@ -80,7 +89,8 @@ function optimizeMaxSurvivalProb(
   slots: OptimizerSlot[],
   weeksByKey: Map<string, SurvivorWeek>,
   candidateTeams: Team[],
-  mcResults: TeamSimResult[] | null
+  mcResults: TeamSimResult[] | null,
+  selectedConfs: Set<string>
 ): OptimizerResult {
   const scores = new Map<string, Map<string, number>>(); // slotKey -> team -> log(winProb)
   const winProbs = new Map<string, Map<string, number>>(); // slotKey -> team -> raw winProb
@@ -94,7 +104,7 @@ function optimizeMaxSurvivalProb(
     const teamScores = new Map<string, number>();
     const teamProbs = new Map<string, number>();
     for (const team of candidateTeams) {
-      const p = estimateWinProb(team, week, mcResults);
+      const p = estimateWinProb(team, week, mcResults, selectedConfs);
       if (p != null && p > 0) {
         teamScores.set(team.team, Math.log(p));
         teamProbs.set(team.team, p);
@@ -210,7 +220,8 @@ function optimizeMaxExpectedWeeks(
   slots: OptimizerSlot[],
   weeksByKey: Map<string, SurvivorWeek>,
   candidateTeams: Team[],
-  mcResults: TeamSimResult[] | null
+  mcResults: TeamSimResult[] | null,
+  selectedConfs: Set<string>
 ): OptimizerResult {
   const weekOrder = Array.from(new Set(slots.map((s) => s.weekKey))).sort(
     (a, b) => weeksByKey.get(a)!.dataWeek - weeksByKey.get(b)!.dataWeek
@@ -220,7 +231,7 @@ function optimizeMaxExpectedWeeks(
   for (const team of candidateTeams) {
     const byWeek = new Map<string, number>();
     for (const weekKey of weekOrder) {
-      const p = estimateWinProb(team, weeksByKey.get(weekKey)!, mcResults);
+      const p = estimateWinProb(team, weeksByKey.get(weekKey)!, mcResults, selectedConfs);
       if (p != null && p > 0) byWeek.set(weekKey, p);
     }
     probByTeamWeek.set(team.team, byWeek);
@@ -292,7 +303,8 @@ function optimizeMaxExpectedWeeks(
 export function optimizeSurvivorPath(
   currentPicks: Record<string, string[]>,
   objective: SurvivorObjective,
-  mcResults: TeamSimResult[] | null
+  mcResults: TeamSimResult[] | null,
+  selectedConfs: Set<string>
 ): OptimizerResult {
   const lockedWeekKeys = new Set(SURVIVOR_WEEKS.filter((w) => (currentPicks[w.key] || []).length === 2).map((w) => w.key));
   const usedTeams = new Set(Object.values(currentPicks).flat());
@@ -303,10 +315,14 @@ export function optimizeSurvivorPath(
     { weekKey: w.key, slotIndex: 0 as const },
     { weekKey: w.key, slotIndex: 1 as const },
   ]);
-  const candidateTeams = fbsTeams().filter((t) => !usedTeams.has(t.team));
+  // Same eligibility rule as the interactive grid's rowTeams(): a team
+  // can only be picked at all if its own conference is currently
+  // selected in the filter, on top of estimateWinProb() separately
+  // checking the opponent's eligibility each week.
+  const candidateTeams = fbsTeams().filter((t) => !usedTeams.has(t.team) && selectedConfs.has(t.conf));
 
   if (objective === "maxExpectedWeeks") {
-    return optimizeMaxExpectedWeeks(slots, weeksByKey, candidateTeams, mcResults);
+    return optimizeMaxExpectedWeeks(slots, weeksByKey, candidateTeams, mcResults, selectedConfs);
   }
-  return optimizeMaxSurvivalProb(slots, weeksByKey, candidateTeams, mcResults);
+  return optimizeMaxSurvivalProb(slots, weeksByKey, candidateTeams, mcResults, selectedConfs);
 }

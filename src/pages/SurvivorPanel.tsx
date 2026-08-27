@@ -71,7 +71,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [showOptimizer, setShowOptimizer] = useState(false);
 
   function handleRunOptimizer() {
-    setOptimizerResult(optimizeSurvivorPath(picks, objective, mcResults));
+    setOptimizerResult(optimizeSurvivorPath(picks, objective, mcResults, selectedConfs));
   }
 
   function handleApplyOptimizerResult() {
@@ -332,8 +332,11 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
           <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>Optimizer</div>
           <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: 0 }}>
             Only optimizes weeks that don't already have 2 saved picks — anything already locked in is left alone,
-            and those teams come off the board. Conference Championship week has no real matchups yet, so it uses
-            each team's Monte Carlo odds to win their conference outright as the estimated win probability there.
+            and those teams come off the board. Respects the conference filter below: a team is only a candidate
+            pick if its own conference is checked, and only weeks against another checked-conference FBS opponent
+            count — same eligibility rule as the grid itself, so it never suggests a game the grid would show as
+            ineligible. Conference Championship week has no real matchups yet, so it uses each team's Monte Carlo
+            odds to win their conference outright as the estimated win probability there.
           </p>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
             <button className={`mode-btn ${objective === "maxSurvivalProb" ? "mode-btn-active" : ""}`} onClick={() => setObjective("maxSurvivalProb")}>
