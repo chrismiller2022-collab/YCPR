@@ -5,6 +5,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useLatestMonteCarloRun } from "../lib/futuresData";
 import {
   scoreWatchability,
   kickoffWindowET,
@@ -96,7 +97,7 @@ function WeightSlider({
 }
 
 function WeightsEditor({ weights, setWeights }: { weights: WatchabilityWeights; setWeights: (w: WatchabilityWeights) => void }) {
-  const shareSum = weights.quality + weights.total + weights.spread;
+  const shareSum = weights.quality + weights.total + weights.spread + weights.wins;
   return (
     <div
       style={{
@@ -113,14 +114,15 @@ function WeightsEditor({ weights, setWeights }: { weights: WatchabilityWeights; 
       <WeightSlider label="Team quality" value={weights.quality} onChange={(v) => setWeights({ ...weights, quality: v })} />
       <WeightSlider label="Spread closeness" value={weights.spread} onChange={(v) => setWeights({ ...weights, spread: v })} />
       <WeightSlider label="Proj. total" value={weights.total} onChange={(v) => setWeights({ ...weights, total: v })} />
+      <WeightSlider label="Combined win totals" value={weights.wins} onChange={(v) => setWeights({ ...weights, wins: v })} />
       <WeightSlider label="Conference bonus" value={weights.conferenceBonus} onChange={(v) => setWeights({ ...weights, conferenceBonus: v })} />
       <button className="menu-btn" onClick={() => setWeights(DEFAULT_WEIGHTS)}>
         Reset to default
       </button>
       {shareSum > 0 && Math.abs(shareSum - 1) > 0.001 && (
         <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
-          (Quality/Spread/Total are normalized against each other regardless of whether they sum to 100% — the
-          conference bonus is a flat add-on, not part of that split.)
+          (Quality/Spread/Total/Win Totals are normalized against each other regardless of whether they sum to
+          100% — the conference bonus is a flat add-on, not part of that split.)
         </span>
       )}
     </div>
@@ -149,6 +151,12 @@ function useWatchabilityInputs(season: number) {
   const weekNumbers = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
   const { rows: totalsRows, loading: totalsLoading } = useGameTotalsEngine(season);
+  const { results: mcResults, loading: mcLoading } = useLatestMonteCarloRun(season);
+  const meanWinsByTeam = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of mcResults ?? []) map.set(r.team, r.meanWins);
+    return map;
+  }, [mcResults]);
 
   const totalByGame = useMemo(() => {
     const map = new Map<string, number>();
@@ -175,12 +183,16 @@ function useWatchabilityInputs(season: number) {
           avgRating,
           mySpread: computed.projAwaySpread,
           myTotal: totalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) ?? null,
+          combinedProjWins:
+            meanWinsByTeam.has(g.away_team) && meanWinsByTeam.has(g.home_team)
+              ? meanWinsByTeam.get(g.away_team)! + meanWinsByTeam.get(g.home_team)!
+              : null,
           isConferenceGame: g.conference_game,
         };
       });
-  }, [games, ratingsByWeek, totalByGame]);
+  }, [games, ratingsByWeek, totalByGame, meanWinsByTeam]);
 
-  return { inputs, weekNumbers, loading: loading || totalsLoading };
+  return { inputs, weekNumbers, loading: loading || totalsLoading || mcLoading };
 }
 
 type TopView = "overall" | "windows";
