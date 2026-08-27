@@ -76,6 +76,7 @@ export default function PoolsMenuPanel({
         />
         <PoolTile label="Peay Pool" description="ATS pool vs a custom line, all FBS vs FBS games." onClick={() => onSelectPool("peay")} />
         <PoolTile label="Westgate Supercontest" description="ATS pool vs a custom line, all FBS vs FBS games." onClick={() => onSelectPool("westgate")} />
+        <PoolTile label="Pool History" description="Spread-vs-Vegas record by season, plus a top-N-picks-per-week contest backtest." onClick={() => onSelectPool("poolhistory")} />
         <PoolTile
           label="CBS Splash"
           description="ATS pool vs a custom line, all FBS vs FBS games."

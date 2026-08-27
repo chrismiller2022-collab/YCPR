@@ -12,6 +12,7 @@ import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
 import WestgatePoolPanel from "./WestgatePoolPanel";
+import PoolHistoryPanel from "./PoolHistoryPanel";
 import CbsSplashPoolPanel from "./CbsSplashPoolPanel";
 import EspnMoneylinePanel from "./EspnMoneylinePanel";
 import EspnSpreadPanel from "./EspnSpreadPanel";
@@ -219,6 +220,7 @@ type AdminView =
   | "brit"
   | "peay"
   | "westgate"
+  | "poolhistory"
   | "cbssplash"
   | "espnml"
   | "espnspread"
@@ -520,6 +522,7 @@ const POOL_SUBVIEWS: AdminView[] = [
   "survivor",
   "peay",
   "westgate",
+  "poolhistory",
   "cbssplash",
   "espnml",
   "espnspread",
@@ -844,6 +847,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "peay" && <PeayPoolPanel onBack={() => setView("pools")} />}
           {view === "westgate" && <WestgatePoolPanel onBack={() => setView("pools")} />}
+          {view === "poolhistory" && <PoolHistoryPanel onBack={() => setView("pools")} />}
           {view === "cbssplash" && <CbsSplashPoolPanel onBack={() => setView("pools")} />}
 
           {view === "espnml" && <EspnMoneylinePanel onBack={() => setView("pools")} />}
