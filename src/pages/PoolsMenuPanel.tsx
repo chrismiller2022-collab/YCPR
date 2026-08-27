@@ -66,6 +66,7 @@ export default function PoolsMenuPanel({
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
         <PoolTile label="ESPN Confidence" description="Confidence pick'em pool." onClick={() => onSelectPool("espnconfidence")} />
+        <PoolTile label="Survivor" description="Personal survivor pool planner — spread/moneyline projections, save a path." onClick={() => onSelectPool("survivor")} />
         <PoolTile label="ESPN Moneyline" description="Straight-up moneyline pool." onClick={() => onSelectPool("espnml")} />
         <PoolTile label="ESPN Spreads" description="Against-the-spread pool." onClick={() => onSelectPool("espnspread")} />
         <PoolTile

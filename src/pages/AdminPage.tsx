@@ -484,7 +484,6 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "upload", label: "Data Upload" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
-      { key: "survivor", label: "Survivor" },
       { key: "pools", label: "Pools" },
     ],
   },
@@ -518,6 +517,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 const POOL_SUBVIEWS: AdminView[] = [
   "brit",
+  "survivor",
   "peay",
   "westgate",
   "cbssplash",
@@ -823,7 +823,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
             <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
           )}
 
-          {view === "survivor" && <SurvivorPanel onBack={() => setView("home")} />}
+          {view === "survivor" && <SurvivorPanel onBack={() => setView("pools")} />}
 
           {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
 

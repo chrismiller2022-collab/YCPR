@@ -178,6 +178,15 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             Reset all
           </button>
           <a
+            href="https://app.splashsports.com/contest/fd3afd3f-9fe8-4d70-a68f-085efb6c99b2/entries/overall"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="menu-btn"
+            style={{ textDecoration: "none" }}
+          >
+            Open Survivor Pool ↗
+          </a>
+          <a
             href="#"
             onClick={(e) => {
               e.preventDefault();
@@ -186,7 +195,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             className="menu-btn"
             style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
           >
-            ← Admin
+            ← Pools
           </a>
         </div>
       </div>

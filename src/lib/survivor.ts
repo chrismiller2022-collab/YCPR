@@ -1,6 +1,7 @@
 import { TEAMS, TEAMS_BY_NAME, type Team } from "../data/teams";
 import { GAMES, type Game } from "../data/games";
-import { hfaFor, spreadToWinPct } from "./odds";
+import { hfaFor } from "./odds";
+import { billRAwayWinPct } from "./moneylineBetHistory";
 
 // ---------------------------------------------------------------------
 // Week configuration — matches the actual contest pick sheet (dates/
@@ -97,9 +98,17 @@ export function teamSpread(team: Team, opp: Team, game: Game, liveByTeam?: Recor
     : teamRating - oppRating + hfaFor(opp.team, liveByTeam);
 }
 
-/** `team`'s own fair win probability for this game, derived from teamSpread via the site's calibrated spread->win% curve. */
+/**
+ * `team`'s own fair win probability for this game — Bill R Method
+ * (site-wide standard for moneyline), not the spread-derived curve
+ * teamSpread()/the Spread view use. Confirmed via Chris: the Survivor
+ * Moneyline view was still on the old method before this.
+ */
 export function teamWinPct(team: Team, opp: Team, game: Game, liveByTeam?: Record<string, any>): number {
-  return spreadToWinPct(teamSpread(team, opp, game, liveByTeam));
+  const isHome = game.home === team.team;
+  const teamRating = liveByTeam?.[team.team]?.rating ?? team.rating;
+  const oppRating = liveByTeam?.[opp.team]?.rating ?? opp.rating;
+  return isHome ? 1 - billRAwayWinPct(oppRating, teamRating) : billRAwayWinPct(teamRating, oppRating);
 }
 
 // ---------------------------------------------------------------------
