@@ -199,7 +199,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const { rows: totalsRows } = useGameTotalsEngine(season);
   const totalsRowByGame = useMemo(() => {
     const map = new Map<string, number>();
@@ -226,7 +226,15 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week, refreshToken]);
+  // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —
+  // same missing-dependency bug (this effect never used to re-run once
+  // live ratings actually arrived) produced a different, wrong "My ML"
+  // for the same game depending on cache timing between page loads.
+  useEffect(() => {
+    if (ratingsLoading) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, week, refreshToken, ratingsLoading]);
 
   function updateDraft(id: number, patch: any) {
     setDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -309,6 +317,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picks, draft, sortKey, sortDir]);
 
+  if (ratingsLoading) return <p>Loading live ratings…</p>;
   if (loading) return <p>Loading picks…</p>;
   if (picks.length === 0) return null;
 

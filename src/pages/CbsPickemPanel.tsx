@@ -188,7 +188,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   function load() {
     setLoading(true);
@@ -217,7 +217,17 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week, refreshToken]);
+  // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —
+  // without it, this effect ran once at mount using whatever liveByTeam
+  // was at that instant (often {} on a cold load, before live ratings
+  // finish fetching) and never re-ran once real data arrived, so the
+  // same game could show a different "My" number on different page
+  // loads depending on cache timing.
+  useEffect(() => {
+    if (ratingsLoading) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, week, refreshToken, ratingsLoading]);
 
   function updateDraft(id: number, patch: any) {
     setDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -251,6 +261,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     }
   }
 
+  if (ratingsLoading) return <p>Loading live ratings…</p>;
   if (loading) return <p>Loading picks…</p>;
   if (picks.length === 0) return null;
 

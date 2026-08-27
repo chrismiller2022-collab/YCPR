@@ -53,7 +53,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [gameSearch, setGameSearch] = useState("");
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   function load() {
     setLoading(true);
@@ -64,7 +64,17 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week]);
+  // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —
+  // without it, this effect ran once at mount using whatever liveByTeam
+  // was at that instant (often {} on a cold load, before live ratings
+  // finish fetching) and never re-ran once real data arrived, so the
+  // same game could show a different "My" number on different page
+  // loads depending on cache timing.
+  useEffect(() => {
+    if (ratingsLoading) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, week, ratingsLoading]);
 
   function updateRow(gameId: string, patch: Partial<CbsSplashRow>) {
     setRows((prev) => prev.map((r) => (r.game_id === gameId ? { ...r, ...patch } : r)));
@@ -247,6 +257,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {ratingsLoading && <p>Loading live ratings…</p>}
       {loading && <p>Loading…</p>}
 
       {!loading && rows.length === 0 && (

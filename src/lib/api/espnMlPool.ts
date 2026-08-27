@@ -1,7 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor, fairMoneylineFromWinPct } from "../odds";
-import { billRAwayWinPct } from "../moneylineBetHistory";
+import { hfaFor, spreadToWinPct, spreadToMoneyline, fairMoneylineFromWinPct } from "../odds";
 import type { GameRow, BettingLineRow } from "./gamesLines";
 
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
@@ -91,10 +90,14 @@ export async function fetchEspnMlPicksForWeek(
     const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
     const myProjAwaySpread =
       g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
-    // Bill R Method — see espnConfidencePool.ts for the full explanation.
-    const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating) : null;
-    const myProjAwayMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(awayWinPct) : null;
-    const myProjHomeMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(1 - awayWinPct) : null;
+    // Same formulas as Admin Matchups' Moneyline tab (matchupsCompute.ts) —
+    // this previously used the Bill R Method (a different, fixed-HFA
+    // z-score model), which gave a "My ML" here that could differ wildly
+    // from the number shown in Admin Matchups for the exact same game.
+    // One method, one number, everywhere.
+    const myProjAwayWinPct = myProjAwaySpread != null ? spreadToWinPct(myProjAwaySpread) : null;
+    const myProjAwayMoneyline = myProjAwaySpread != null ? spreadToMoneyline(myProjAwaySpread) : null;
+    const myProjHomeMoneyline = myProjAwayWinPct != null ? fairMoneylineFromWinPct(1 - myProjAwayWinPct) : null;
 
     return {
       ...p,

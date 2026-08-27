@@ -1,7 +1,6 @@
 import { supabase } from "../supabaseClient";
 import { TEAMS_BY_NAME } from "../../data/teams";
-import { hfaFor, fairMoneylineFromWinPct } from "../odds";
-import { billRAwayWinPct } from "../moneylineBetHistory";
+import { hfaFor, spreadToWinPct, spreadToMoneyline, fairMoneylineFromWinPct } from "../odds";
 import type { GameRow, BettingLineRow } from "./gamesLines";
 
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
@@ -92,14 +91,14 @@ export async function fetchEspnConfidencePicksForWeek(
     const homeRating = homeTeam ? liveByTeam[g!.home_team]?.rating ?? homeTeam.rating : null;
     const myProjAwaySpread =
       g && awayRating != null && homeRating != null ? awayRating - homeRating + hfaFor(g.home_team, liveByTeam) : null;
-    // Bill R Method: win% derived directly from the rating gap (its own
-    // fixed 2.5 HFA, independent of myProjAwaySpread above), then converted
-    // to American odds via the standard win%-to-moneyline formula. Replaces
-    // the old ML_TABLE chart lookup for this pool; spreadToMoneyline is
-    // still available in odds.ts if the chart method is ever wanted again.
-    const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating) : null;
-    const myProjAwayMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(awayWinPct) : null;
-    const myProjHomeMoneyline = awayWinPct != null ? fairMoneylineFromWinPct(1 - awayWinPct) : null;
+    // Same formulas as Admin Matchups' Moneyline tab (matchupsCompute.ts),
+    // not the Bill R Method (a separate, fixed-HFA z-score model) this
+    // used to use — that meant "My ML" here could disagree with the same
+    // game's number in Admin Matchups, confusing at best and dangerous
+    // for a real-money pool at worst. One method, one number, everywhere.
+    const myProjAwayWinPct = myProjAwaySpread != null ? spreadToWinPct(myProjAwaySpread) : null;
+    const myProjAwayMoneyline = myProjAwaySpread != null ? spreadToMoneyline(myProjAwaySpread) : null;
+    const myProjHomeMoneyline = myProjAwayWinPct != null ? fairMoneylineFromWinPct(1 - myProjAwayWinPct) : null;
 
     return {
       ...p,

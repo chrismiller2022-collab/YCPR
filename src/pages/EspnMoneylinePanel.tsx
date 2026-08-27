@@ -189,7 +189,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const { rows: totalsRows } = useGameTotalsEngine(season);
   const totalsRowByGame = useMemo(() => {
     const map = new Map<string, number>();
@@ -221,7 +221,21 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week, refreshToken]);
+  // Waits for live ratings to actually finish loading before computing
+  // anything — this fetch previously ran on mount regardless of
+  // liveByTeam's state, so on a cold load it would compute "My ML" from
+  // the static preseason ratings (liveByTeam still {} at that instant),
+  // and — since liveByTeam wasn't in this effect's dependencies — never
+  // recomputed once live ratings actually arrived. Depending on cache
+  // timing between page loads, that produced a different, wrong number
+  // each time for the same game. Now it only runs once real live data is
+  // in hand, so the number shown is always the same one Admin Matchups
+  // shows, and never changes out from under a saved pick.
+  useEffect(() => {
+    if (ratingsLoading) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, week, refreshToken, ratingsLoading]);
 
   function updateDraft(id: number, patch: any) {
     setDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -255,6 +269,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     }
   }
 
+  if (ratingsLoading) return <p>Loading live ratings…</p>;
   if (loading) return <p>Loading picks…</p>;
   if (picks.length === 0) return null;
 
