@@ -52,10 +52,10 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [selectedConfs, setSelectedConfs] = useState<Set<string>>(new Set(DEFAULT_CONFERENCES));
   const [hideUsed, setHideUsed] = useState(false);
-  const [view, setView] = useState<"spread" | "moneyline">("spread");
+  const [view, setView] = useState<"spread" | "moneyline" | "winpct">("spread");
   const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [showPicksOrder, setShowPicksOrder] = useState(false);
+  const [sortByPicks, setSortByPicks] = useState(false);
 
   const [savedPaths, setSavedPaths] = useState<SurvivorSavedPath[]>([]);
   const [savingPath, setSavingPath] = useState(false);
@@ -162,7 +162,36 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
     [teams, hideUsed, usedTeams]
   );
 
+  // Pick order index: earliest picked slot (Week 1 Pick 1) = 0, next = 1,
+  // etc. — used to reorder the grid's rows to match the reference layout
+  // Chris wants (row order = order teams get used in, not alphabetical).
+  const pickOrderIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    let idx = 0;
+    for (const week of SURVIVOR_WEEKS) {
+      const weekPicks = picks[week.key] || [];
+      for (let i = 0; i < 2; i++) {
+        if (weekPicks[i]) map.set(weekPicks[i], idx);
+        idx++;
+      }
+    }
+    return map;
+  }, [picks]);
+
   const sortedTeams = useMemo(() => {
+    if (sortByPicks) {
+      // Picked teams first, in the order they're used (Week 1 Pick 1,
+      // Week 1 Pick 2, Week 2 Pick 1, ...); everything else follows in
+      // its normal alphabetical order, same as the reference grid.
+      return [...visibleTeams].sort((a, b) => {
+        const ia = pickOrderIndex.get(a.team);
+        const ib = pickOrderIndex.get(b.team);
+        if (ia == null && ib == null) return a.team.localeCompare(b.team);
+        if (ia == null) return 1;
+        if (ib == null) return -1;
+        return ia - ib;
+      });
+    }
     if (!sortWeekKey) return visibleTeams;
     return [...visibleTeams].sort((a, b) => {
       const sa = spreadForWeek(a, sortWeekKey);
@@ -172,7 +201,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
       if (sb == null) return -1;
       return sortDir === "asc" ? sa - sb : sb - sa;
     });
-  }, [visibleTeams, sortWeekKey, sortDir]);
+  }, [visibleTeams, sortWeekKey, sortDir, sortByPicks, pickOrderIndex]);
 
   function toggleConf(conf: string) {
     setSelectedConfs((prev) => {
@@ -256,6 +285,12 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             Moneyline
           </button>
           <button
+            className={`mode-btn ${view === "winpct" ? "mode-btn-active" : ""}`}
+            onClick={() => setView("winpct")}
+          >
+            Win %
+          </button>
+          <button
             className="menu-btn"
             onClick={() => setHideUsed((v) => !v)}
             style={{ opacity: hideUsed ? 1 : 0.7 }}
@@ -263,10 +298,11 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             {hideUsed ? "Showing eligible only" : "Hide used teams"}
           </button>
           <button
-            className={`mode-btn ${showPicksOrder ? "mode-btn-active" : ""}`}
-            onClick={() => setShowPicksOrder((v) => !v)}
+            className={`mode-btn ${sortByPicks ? "mode-btn-active" : ""}`}
+            onClick={() => setSortByPicks((v) => !v)}
+            title="Reorders these rows to match pick order (Week 1's picks first, then Week 2's, ...) instead of alphabetical"
           >
-            {showPicksOrder ? "Show pick grid" : "Sort by picks"}
+            Sort by picks
           </button>
           <button className="menu-btn" onClick={resetAll}>
             Reset all
@@ -477,65 +513,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
         })}
       </div>
 
-      {showPicksOrder ? (
-        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginBottom: "1.5rem" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.85rem" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Row</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Team</th>
-                <th style={{ textAlign: "right", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>
-                  {view === "spread" ? "Spread" : "Win %"}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                let rowNum = 0;
-                return SURVIVOR_WEEKS.flatMap((week) => {
-                  const weekPicks = picks[week.key] || [];
-                  return [0, 1].map((i) => {
-                    rowNum++;
-                    const teamName = weekPicks[i];
-                    const team = teamName ? TEAMS_BY_NAME[teamName] : null;
-                    let valueLabel = "–";
-                    if (teamName && team) {
-                      const game = gameForTeamInWeek(teamName, week.dataWeek);
-                      const opp = game ? opponentOf(game, teamName) : undefined;
-                      if (game && opp) {
-                        valueLabel =
-                          view === "spread"
-                            ? teamSpread(team, opp, game).toFixed(1)
-                            : `${(teamWinPct(team, opp, game) * 100).toFixed(1)}%`;
-                      }
-                    }
-                    return (
-                      <tr key={`${week.key}-${i}`} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <td style={{ padding: "0.4rem 0.75rem", color: "var(--chalk-dim)" }}>{rowNum}</td>
-                        <td style={{ padding: "0.4rem 0.75rem" }}>{week.label}</td>
-                        <td style={{ padding: "0.4rem 0.75rem" }}>Pick {i + 1}</td>
-                        <td style={{ padding: "0.4rem 0.75rem" }}>
-                          {teamName ? (
-                            <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                              <TeamLogo team={teamName} size={20} /> {teamName}
-                            </span>
-                          ) : (
-                            <span style={{ color: "var(--chalk-dim)" }}>not set</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "0.4rem 0.75rem", textAlign: "right" }}>{valueLabel}</td>
-                      </tr>
-                    );
-                  });
-                });
-              })()}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div ref={exportGridRef} style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, background: "var(--turf)" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
           <thead>
             <tr>
@@ -695,6 +673,9 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                             })()}
                           </div>
                         )}
+                        {view === "winpct" && winPct != null && (
+                          <div style={{ fontSize: "0.68rem", opacity: 0.75 }}>{(winPct * 100).toFixed(1)}%</div>
+                        )}
                         {rank && (
                           <div
                             style={{
@@ -739,43 +720,6 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
               ))}
           </tbody>
         </table>
-      </div>
-      )}
-
-      {/* Off-screen export grid — captured by html2canvas via exportGridRef,
-          never actually visible in the interactive UI. Reading order:
-          Week 1 Pick 1, Week 1 Pick 2, Week 2 Pick 1, Week 2 Pick 2, ...,
-          wrapped into a fixed-column grid so the whole season reads left-
-          to-right, top-to-bottom in one image (4 columns — tell Chris if
-          a different width reads better). */}
-      <div style={{ position: "absolute", top: -99999, left: -99999 }}>
-        <div ref={exportGridRef} style={{ background: "#1a1b2e", padding: "1.5rem", width: 900 }}>
-          <div style={{ color: "#fff", fontSize: "1.2rem", fontWeight: 800, marginBottom: "1rem" }}>Survivor Path</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.5rem" }}>
-            {SURVIVOR_WEEKS.flatMap((week) =>
-              (picks[week.key] || []).map((teamName, i) => (
-                <div
-                  key={`${week.key}-${i}`}
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    borderRadius: 6,
-                    padding: "0.5rem",
-                    color: "#fff",
-                    fontSize: "0.8rem",
-                  }}
-                >
-                  <div style={{ color: "#a3a8c3", fontSize: "0.68rem", marginBottom: "0.2rem" }}>
-                    {week.label} · Pick {i + 1}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 700 }}>
-                    <TeamLogo team={teamName} size={18} />
-                    {teamName}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
