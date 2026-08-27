@@ -165,6 +165,29 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Survivor excluded teams: a simple "don't use" list ---
+    if (pool === "survivorexcluded") {
+      const { team } = req.body;
+      if (!team || typeof team !== "string") {
+        res.status(400).json({ error: "Missing team" });
+        return;
+      }
+      if (action === "add") {
+        const { error } = await supabaseAdmin.from("survivor_excluded_teams").upsert({ team }, { onConflict: "team" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (action === "remove") {
+        const { error } = await supabaseAdmin.from("survivor_excluded_teams").delete().eq("team", team);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for survivorexcluded: ${action}` });
+      return;
+    }
+
     // --- Brit / ESPN ML / ESPN Spreads / ESPN Confidence / CBS Pickem ---
     const table = POOL_TABLES[pool];
     const specialField = SPECIAL_FIELD[pool];

@@ -304,7 +304,8 @@ export function optimizeSurvivorPath(
   currentPicks: Record<string, string[]>,
   objective: SurvivorObjective,
   mcResults: TeamSimResult[] | null,
-  selectedConfs: Set<string>
+  selectedConfs: Set<string>,
+  excludedTeams: Set<string> = new Set()
 ): OptimizerResult {
   const lockedWeekKeys = new Set(SURVIVOR_WEEKS.filter((w) => (currentPicks[w.key] || []).length === 2).map((w) => w.key));
   const usedTeams = new Set(Object.values(currentPicks).flat());
@@ -318,8 +319,12 @@ export function optimizeSurvivorPath(
   // Same eligibility rule as the interactive grid's rowTeams(): a team
   // can only be picked at all if its own conference is currently
   // selected in the filter, on top of estimateWinProb() separately
-  // checking the opponent's eligibility each week.
-  const candidateTeams = fbsTeams().filter((t) => !usedTeams.has(t.team) && selectedConfs.has(t.conf));
+  // checking the opponent's eligibility each week. excludedTeams is
+  // Chris's own "don't use" list — mainly meant for Conference
+  // Championship week, where the win probability is a Monte Carlo
+  // estimate rather than a real scheduled game he may not trust for a
+  // given team, but it applies to any week.
+  const candidateTeams = fbsTeams().filter((t) => !usedTeams.has(t.team) && selectedConfs.has(t.conf) && !excludedTeams.has(t.team));
 
   if (objective === "maxExpectedWeeks") {
     return optimizeMaxExpectedWeeks(slots, weeksByKey, candidateTeams, mcResults, selectedConfs);

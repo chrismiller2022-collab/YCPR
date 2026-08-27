@@ -17,6 +17,7 @@ import {
 } from "../lib/survivor";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import { fetchSavedPaths, saveSurvivorPath, deleteSurvivorPath, type SurvivorSavedPath } from "../lib/api/survivorPaths";
+import { fetchExcludedTeams, setTeamExcluded } from "../lib/api/survivorExcludedTeams";
 import { exportNodeAsPng } from "../lib/exportPng";
 import { optimizeSurvivorPath, type SurvivorObjective, type OptimizerResult } from "../lib/survivorOptimizer";
 import { useLatestMonteCarloRun } from "../lib/futuresData";
@@ -69,9 +70,40 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [objective, setObjective] = useState<SurvivorObjective>("maxSurvivalProb");
   const [optimizerResult, setOptimizerResult] = useState<OptimizerResult | null>(null);
   const [showOptimizer, setShowOptimizer] = useState(false);
+  const [excludedTeams, setExcludedTeams] = useState<Set<string>>(new Set());
+  const [showExcludedTeams, setShowExcludedTeams] = useState(false);
+  const [excludedTeamSearch, setExcludedTeamSearch] = useState("");
+
+  function loadExcludedTeams() {
+    fetchExcludedTeams()
+      .then(setExcludedTeams)
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    loadExcludedTeams();
+  }, []);
+
+  async function handleToggleExcluded(team: string) {
+    const nowExcluded = !excludedTeams.has(team);
+    // Optimistic update — feels instant, and this is a low-stakes toggle
+    // (worst case a quick re-fetch corrects it) rather than something
+    // that needs to wait on a round trip like Save Path does.
+    setExcludedTeams((prev) => {
+      const next = new Set(prev);
+      if (nowExcluded) next.add(team);
+      else next.delete(team);
+      return next;
+    });
+    try {
+      await setTeamExcluded(team, nowExcluded);
+    } catch {
+      loadExcludedTeams();
+    }
+  }
 
   function handleRunOptimizer() {
-    setOptimizerResult(optimizeSurvivorPath(picks, objective, mcResults, selectedConfs));
+    setOptimizerResult(optimizeSurvivorPath(picks, objective, mcResults, selectedConfs, excludedTeams));
   }
 
   function handleApplyOptimizerResult() {
@@ -384,7 +416,47 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             <button className="menu-btn" onClick={handleRunOptimizer}>
               Run optimizer
             </button>
+            <button className="menu-btn" onClick={() => setShowExcludedTeams((v) => !v)}>
+              {showExcludedTeams ? "Hide" : "Show"} don't-use list ({excludedTeams.size})
+            </button>
           </div>
+
+          {showExcludedTeams && (
+            <div
+              style={{
+                marginBottom: "0.75rem",
+                padding: "0.6rem",
+                background: "rgba(0,0,0,0.15)",
+                borderRadius: 6,
+                maxHeight: 260,
+                overflowY: "auto",
+              }}
+            >
+              <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "0.5rem" }}>
+                Checked teams are never suggested by the optimizer, in any week — mainly useful for Conference
+                Championship week, where the win probability is a Monte Carlo estimate for a game that hasn't been
+                set yet, so this lets you rule out a team you don't trust that estimate for. Saved immediately, no
+                need to hit Run again to persist it.
+              </p>
+              <input
+                type="text"
+                placeholder="Search teams…"
+                value={excludedTeamSearch}
+                onChange={(e) => setExcludedTeamSearch(e.target.value)}
+                style={{ width: 200, marginBottom: "0.5rem" }}
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "0.3rem" }}>
+                {teams
+                  .filter((t) => t.team.toLowerCase().includes(excludedTeamSearch.trim().toLowerCase()))
+                  .map((t) => (
+                    <label key={t.team} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
+                      <input type="checkbox" checked={excludedTeams.has(t.team)} onChange={() => handleToggleExcluded(t.team)} />
+                      <TeamLogo team={t.team} size={16} /> {t.team}
+                    </label>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {optimizerResult && (
             <div>
