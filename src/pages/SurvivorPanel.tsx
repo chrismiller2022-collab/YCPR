@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import { TEAMS_BY_NAME } from "../data/teams";
 import {
   SURVIVOR_WEEKS,
   availableConferences,
@@ -54,6 +55,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [view, setView] = useState<"spread" | "moneyline">("spread");
   const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [showPicksOrder, setShowPicksOrder] = useState(false);
 
   const [savedPaths, setSavedPaths] = useState<SurvivorSavedPath[]>([]);
   const [savingPath, setSavingPath] = useState(false);
@@ -259,6 +261,12 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
             style={{ opacity: hideUsed ? 1 : 0.7 }}
           >
             {hideUsed ? "Showing eligible only" : "Hide used teams"}
+          </button>
+          <button
+            className={`mode-btn ${showPicksOrder ? "mode-btn-active" : ""}`}
+            onClick={() => setShowPicksOrder((v) => !v)}
+          >
+            {showPicksOrder ? "Show pick grid" : "Sort by picks"}
           </button>
           <button className="menu-btn" onClick={resetAll}>
             Reset all
@@ -466,7 +474,65 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
         })}
       </div>
 
-      <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+      {showPicksOrder ? (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginBottom: "1.5rem" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.85rem" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Row</th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>Team</th>
+                <th style={{ textAlign: "right", padding: "0.5rem 0.75rem", borderBottom: "1px solid var(--hash)" }}>
+                  {view === "spread" ? "Spread" : "Win %"}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                let rowNum = 0;
+                return SURVIVOR_WEEKS.flatMap((week) => {
+                  const weekPicks = picks[week.key] || [];
+                  return [0, 1].map((i) => {
+                    rowNum++;
+                    const teamName = weekPicks[i];
+                    const team = teamName ? TEAMS_BY_NAME[teamName] : null;
+                    let valueLabel = "–";
+                    if (teamName && team) {
+                      const game = gameForTeamInWeek(teamName, week.dataWeek);
+                      const opp = game ? opponentOf(game, teamName) : undefined;
+                      if (game && opp) {
+                        valueLabel =
+                          view === "spread"
+                            ? teamSpread(team, opp, game).toFixed(1)
+                            : `${(teamWinPct(team, opp, game) * 100).toFixed(1)}%`;
+                      }
+                    }
+                    return (
+                      <tr key={`${week.key}-${i}`} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <td style={{ padding: "0.4rem 0.75rem", color: "var(--chalk-dim)" }}>{rowNum}</td>
+                        <td style={{ padding: "0.4rem 0.75rem" }}>{week.label}</td>
+                        <td style={{ padding: "0.4rem 0.75rem" }}>Pick {i + 1}</td>
+                        <td style={{ padding: "0.4rem 0.75rem" }}>
+                          {teamName ? (
+                            <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                              <TeamLogo team={teamName} size={20} /> {teamName}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--chalk-dim)" }}>not set</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "0.4rem 0.75rem", textAlign: "right" }}>{valueLabel}</td>
+                      </tr>
+                    );
+                  });
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.78rem" }}>
           <thead>
             <tr>
@@ -671,6 +737,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Off-screen export grid — captured by html2canvas via exportGridRef,
           never actually visible in the interactive UI. Reading order:
