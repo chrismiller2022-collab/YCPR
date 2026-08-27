@@ -48,6 +48,7 @@ export interface MatchupComputed {
   amountOff: number | null;
   absAmountOff: number | null;
   relativeOff: number | null;
+  absRelativeOff: number | null;
   sigmaOff: number | null; // absAmountOff / 15.7 (site's game-outcome stddev) — how many "standard game swings" off the market
   projWinPct: number | null;
   projMoneyline: number | null;
@@ -355,6 +356,10 @@ export function computeRow(
   const absBettingLine = vegasAwaySpread != null ? Math.abs(vegasAwaySpread) : null;
   const relativeOff =
     amountOff != null && vegasAwaySpread != null && vegasAwaySpread !== 0 ? Math.abs(amountOff) / vegasAwaySpread : null;
+  // Display/ranking-only variant — WFB's own pos/neg threshold check
+  // still needs relativeOff's sign (favorite vs. underdog direction), so
+  // this is a separate field rather than replacing it.
+  const absRelativeOff = relativeOff != null ? Math.abs(relativeOff) : null;
 
   const filteredBetTeam =
     absAmountOff != null && absAmountOff > customParams.filterThreshold ? projCoverTeam : null;
@@ -424,6 +429,7 @@ export function computeRow(
     amountOff,
     absAmountOff,
     relativeOff,
+    absRelativeOff,
     sigmaOff,
     projWinPct,
     projMoneyline,

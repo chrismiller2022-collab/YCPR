@@ -296,7 +296,7 @@ function MatchupsRow({
     projAwaySpread,
     vegasAwaySpread,
     absAmountOff,
-    relativeOff,
+    absRelativeOff,
     sigmaOff,
     projWinPct,
     projMoneyline,
@@ -343,6 +343,7 @@ function MatchupsRow({
           )}
         </td>
         <td style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
+        <td style={{ ...CP, color: "var(--chalk-dim)", textAlign: "center" }}>{game.week}</td>
         <td style={CP}>
           {awayTeam ? (
             <>
@@ -405,7 +406,7 @@ function MatchupsRow({
           )}
         </td>
         <td style={{ ...CP, textAlign: "right" }}>{absAmountOff != null ? absAmountOff.toFixed(1) : "–"}</td>
-        <td style={{ ...CP, textAlign: "right" }}>{relativeOff != null ? relativeOff.toFixed(2) : "–"}</td>
+        <td style={{ ...CP, textAlign: "right" }}>{absRelativeOff != null ? absRelativeOff.toFixed(2) : "–"}</td>
         <td style={{ ...CP, textAlign: "right" }}>{sigmaOff != null ? sigmaOff.toFixed(2) : "–"}</td>
       </tr>
     );
@@ -437,6 +438,7 @@ function MatchupsRow({
     return (
       <tr>
         <td className="game-date-cell">{dateLabel}</td>
+        <td className="game-date-cell" style={{ textAlign: "center" }}>{game.week}</td>
         <TeamNameCell team={awayTeam} name={game.away_team} />
         <TeamNameCell team={homeTeam} name={game.home_team} />
         <td className="matchups-projected-cell" style={{ color: pseudoSpreadColor(vegasWinPct) }}>
@@ -481,6 +483,7 @@ function MatchupsRow({
   return (
     <tr>
       <td className="game-date-cell">{dateLabel}</td>
+      <td className="game-date-cell" style={{ textAlign: "center" }}>{game.week}</td>
       <TeamNameCell team={awayTeam} name={game.away_team} />
       <TeamNameCell team={homeTeam} name={game.home_team} />
       <td className="matchups-projected-cell">{line?.over_under != null ? line.over_under : "–"}</td>
@@ -505,6 +508,8 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
   switch (key) {
     case "date":
       return c.game.start_date ? new Date(c.game.start_date).getTime() : null;
+    case "week":
+      return c.game.week;
     case "away":
       return c.game.away_team;
     case "home":
@@ -523,7 +528,7 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
       case "amountOff":
         return c.absAmountOff;
       case "relativeOff":
-        return c.relativeOff;
+        return c.absRelativeOff;
       case "sigmaOff":
         return c.sigmaOff;
       case "projCover":
@@ -872,6 +877,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                     <tr>
                       <th className="th">Bet?</th>
                       <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={handleSort} align="right" />
@@ -895,6 +901,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                   {mode === "moneyline" && (
                     <tr>
                       <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Vegas Away ML" sortKey="vegasML" active={sortKey === "vegasML"} dir={sortDir} onClick={handleSort} align="right" />
@@ -917,6 +924,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                   {mode === "totals" && (
                     <tr>
                       <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Vegas Total" sortKey="vegasTotal" active={sortKey === "vegasTotal"} dir={sortDir} onClick={handleSort} align="right" />

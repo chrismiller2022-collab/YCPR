@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { BET_HISTORY } from "../data/betHistory.data";
-import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS, type CustomParams } from "../lib/betHistory";
+import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -10,9 +10,6 @@ import {
   simulateTier,
   simulateBestBets,
   contestWinPct,
-  weeksReachingTopN,
-  loadSavedParams,
-  saveParams,
   type ContestCandidate,
   type ContestTier,
   type ContestSeasonResult,
@@ -25,9 +22,13 @@ function isFbsGame(homeTeam: string, awayTeam: string): boolean {
   return TEAMS_BY_NAME[homeTeam]?.div === "FBS" && TEAMS_BY_NAME[awayTeam]?.div === "FBS";
 }
 
-function candidatesFromBetHistory(season: number, params: CustomParams): ContestCandidate[] {
+// Filtered/WFB/NWFB are pure rankings now (no threshold gate, no
+// editable parameters) — every week always gets its top N by whichever
+// metric. Best Bets is the one place real threshold gating still
+// happens (via qualifiesFiltered/Wfb/Nwfb, always at DEFAULT_CUSTOM_PARAMS).
+function candidatesFromBetHistory(season: number): ContestCandidate[] {
   return BET_HISTORY.filter((r) => r.season === season && r.week <= MAX_WEEK && isFbsGame(r.homeTeam, r.awayTeam)).map((r) => {
-    const graded = computeCustomGrading(r, params);
+    const graded = computeCustomGrading(r, DEFAULT_CUSTOM_PARAMS);
     return {
       week: r.week,
       awayTeam: r.awayTeam,
@@ -35,6 +36,7 @@ function candidatesFromBetHistory(season: number, params: CustomParams): Contest
       pick: graded.everyBetTeam,
       grade: graded.everyBetResult,
       absAmountOff: graded.absAmountOff,
+      absRelativeOff: graded.relativeAmountOff != null ? Math.abs(graded.relativeAmountOff) : null,
       myAwaySpread: r.prediction != null ? -r.prediction : null, // BET_HISTORY is home-perspective; site convention is away-perspective
       vegasAwaySpread: r.spread != null ? -r.spread : null,
       awayScore: r.awayScore,
@@ -46,15 +48,11 @@ function candidatesFromBetHistory(season: number, params: CustomParams): Contest
   });
 }
 
-function candidatesFromLive(
-  games: GameWithLines[],
-  ratingsByWeek: Record<number, Record<string, any>>,
-  params: CustomParams
-): ContestCandidate[] {
+function candidatesFromLive(games: GameWithLines[], ratingsByWeek: Record<number, Record<string, any>>): ContestCandidate[] {
   return games
     .filter((g) => g.week <= MAX_WEEK && isFbsGame(g.home_team, g.away_team))
     .map((g) => {
-      const computed = computeRow(g, ratingsByWeek[g.week] ?? {}, "team", params);
+      const computed = computeRow(g, ratingsByWeek[g.week] ?? {}, "team", DEFAULT_CUSTOM_PARAMS);
       if (computed.projCoverTeam == null || computed.line == null) return null;
       const pick = computed.projCoverTeam === "away" ? g.away_team : g.home_team;
       let grade: ContestCandidate["grade"] = null;
@@ -68,6 +66,7 @@ function candidatesFromLive(
         pick,
         grade,
         absAmountOff: computed.absAmountOff,
+        absRelativeOff: computed.absRelativeOff,
         myAwaySpread: computed.projAwaySpread,
         vegasAwaySpread: computed.vegasAwaySpread,
         awayScore: g.away_points,
@@ -245,93 +244,6 @@ function StrategyResultCard({
   );
 }
 
-function ParamSlider({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-  step,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  min: number;
-  max: number;
-  step: number;
-}) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem" }}>
-      <span style={{ minWidth: 130, color: "var(--chalk-dim)" }}>{label}</span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(parseFloat(e.target.value))} />
-      <span style={{ fontWeight: 700, minWidth: 40 }}>{value}</span>
-    </label>
-  );
-}
-
-function TierParamsEditor({
-  tier,
-  params,
-  setParams,
-  candidates,
-  topN,
-}: {
-  tier: Exclude<ContestTier, "bestBets">;
-  params: CustomParams;
-  setParams: (p: CustomParams) => void;
-  candidates: ContestCandidate[];
-  topN: number;
-}) {
-  const { weeksAtOrAboveTopN, totalWeeks } = useMemo(() => weeksReachingTopN(candidates, topN, tier), [candidates, topN, tier]);
-
-  return (
-    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.75rem 1rem", marginBottom: "1rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-        <div style={{ fontWeight: 700 }}>{TIER_LABELS[tier]} criteria</div>
-        <div style={{ fontSize: "0.82rem" }}>
-          <strong style={{ color: weeksAtOrAboveTopN === totalWeeks ? "#8fd39a" : undefined }}>
-            {weeksAtOrAboveTopN} / {totalWeeks}
-          </strong>{" "}
-          <span style={{ color: "var(--chalk-dim)" }}>weeks reach {topN}+ qualifying games</span>
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.6rem" }}>
-        {tier === "filtered" && (
-          <ParamSlider
-            label="Filter threshold"
-            value={params.filterThreshold}
-            min={1}
-            max={15}
-            step={0.5}
-            onChange={(v) => setParams({ ...params, filterThreshold: v })}
-          />
-        )}
-        {tier === "wfb" && (
-          <>
-            <ParamSlider label="Min abs line" value={params.minAbsLine} min={0} max={10} step={0.5} onChange={(v) => setParams({ ...params, minAbsLine: v })} />
-            <ParamSlider label="Pos threshold" value={params.posThreshold} min={0.5} max={5} step={0.1} onChange={(v) => setParams({ ...params, posThreshold: v })} />
-            <ParamSlider label="Neg threshold" value={params.negThreshold} min={-5} max={-0.1} step={0.1} onChange={(v) => setParams({ ...params, negThreshold: v })} />
-          </>
-        )}
-        {tier === "nwfb" && (
-          <>
-            <ParamSlider label="Sigma threshold" value={params.sigmaThreshold} min={0.1} max={1.5} step={0.05} onChange={(v) => setParams({ ...params, sigmaThreshold: v })} />
-            <ParamSlider label="Sigma divisor" value={params.sigmaDivisor} min={5} max={25} step={0.5} onChange={(v) => setParams({ ...params, sigmaDivisor: v })} />
-          </>
-        )}
-      </div>
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button className="menu-btn" onClick={() => saveParams(params)}>
-          Save these parameters
-        </button>
-        <button className="menu-btn" onClick={() => setParams(DEFAULT_CUSTOM_PARAMS)}>
-          Reset to default
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function useLiveGames(season: number, currentSeason: number) {
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
@@ -364,27 +276,19 @@ export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
   const [topN, setTopN] = useState<5 | 7>(5);
   const [tier, setTier] = useState<ContestTier>("filtered");
   const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
-  const [params, setParams] = useState<CustomParams>(() => loadSavedParams(DEFAULT_CUSTOM_PARAMS));
 
   const isLive = season === currentSeason;
   const { games, ratingsByWeek, loading: liveLoading } = useLiveGames(season, currentSeason);
 
-  // Two candidate sets: one with Chris's adjustable params (Filtered/WFB/NWFB
-  // tabs), one always at the real site-wide defaults (Best Bets — "no
-  // opening parameters for these").
-  const adjustedCandidates = useMemo(
-    () => (isLive ? candidatesFromLive(games, ratingsByWeek, params) : candidatesFromBetHistory(season, params)),
-    [isLive, games, ratingsByWeek, params, season]
-  );
-  const defaultCandidates = useMemo(
-    () => (isLive ? candidatesFromLive(games, ratingsByWeek, DEFAULT_CUSTOM_PARAMS) : candidatesFromBetHistory(season, DEFAULT_CUSTOM_PARAMS)),
+  const candidates = useMemo(
+    () => (isLive ? candidatesFromLive(games, ratingsByWeek) : candidatesFromBetHistory(season)),
     [isLive, games, ratingsByWeek, season]
   );
 
   const result = useMemo(() => {
-    if (tier === "bestBets") return simulateBestBets(defaultCandidates, topN);
-    return simulateTier(adjustedCandidates, topN, tier);
-  }, [tier, topN, adjustedCandidates, defaultCandidates]);
+    if (tier === "bestBets") return simulateBestBets(candidates, topN);
+    return simulateTier(candidates, topN, tier);
+  }, [tier, topN, candidates]);
 
   return (
     <div>
@@ -409,15 +313,22 @@ export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
 
       {isLive && liveLoading ? (
         <p>Loading live season data…</p>
-      ) : adjustedCandidates.length === 0 ? (
+      ) : candidates.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No graded games for {season} yet.</p>
       ) : (
         <>
-          <SeasonAtsRecord candidates={defaultCandidates} />
+          <SeasonAtsRecord candidates={candidates} />
 
           <div className="section-label" style={{ marginBottom: "0.5rem" }}>
             Contest Simulator — top N picks per week
           </div>
+          <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+            Filtered and NWFB rank by amount off (Sigma Off is amount off divided by a fixed constant, so it's the
+            same order) — no qualifying bar, every week gets its top {topN} however far off that Nth game actually
+            is. WFB ranks by |relative off| instead. Best Bets is the one tab with a real bar: NWFB games first, then
+            WFB, then Filtered if still short of {topN} — always at the real site-wide default parameters (same as
+            Bet History/Admin Matchups), so it can come up short of {topN} in a given week.
+          </p>
 
           <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
             <button className={`mode-btn ${topN === 5 ? "mode-btn-active" : ""}`} onClick={() => setTopN(5)}>
@@ -435,17 +346,6 @@ export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
               </button>
             ))}
           </div>
-
-          {tier !== "bestBets" && (
-            <TierParamsEditor tier={tier} params={params} setParams={setParams} candidates={adjustedCandidates} topN={topN} />
-          )}
-          {tier === "bestBets" && (
-            <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-              NWFB games first, then WFB, then Filtered if still short of {topN} — always using the real site-wide
-              default parameters (same as Bet History/Admin Matchups), not whatever Filtered/WFB/NWFB above are set
-              to.
-            </p>
-          )}
 
           <StrategyResultCard
             result={result}

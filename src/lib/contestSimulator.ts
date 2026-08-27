@@ -1,5 +1,3 @@
-import type { CustomParams } from "./betHistory";
-
 export type ContestGrade = "win" | "loss" | "push" | null;
 export type ContestTier = "filtered" | "wfb" | "nwfb" | "bestBets";
 
@@ -10,6 +8,7 @@ export interface ContestCandidate {
   pick: string | null; // team picked, per the site's own model (everyBetTeam / projCoverTeam)
   grade: ContestGrade; // null = not yet played
   absAmountOff: number | null;
+  absRelativeOff: number | null;
   myAwaySpread: number | null;
   vegasAwaySpread: number | null;
   awayScore: number | null;
@@ -58,13 +57,23 @@ function qualifies(c: ContestCandidate, tier: Exclude<ContestTier, "bestBets">):
   return c.qualifiesNwfb;
 }
 
+// Filtered and NWFB both rank by absAmountOff — Sigma Off is just
+// absAmountOff divided by a fixed constant, so it produces the exact
+// same order. WFB ranks by |relative off| instead, per Chris. None of
+// these gate on a real threshold anymore: every week always gets its
+// top N by whichever metric, however far "off" that Nth game actually
+// is — no sliders, no qualifying bar, since for a contest that requires
+// N picks every week regardless, a pure ranking is what's wanted here
+// (Best Bets, below, is where the real threshold gating lives).
+function sortKeyFor(c: ContestCandidate, tier: Exclude<ContestTier, "bestBets">): number {
+  if (tier === "wfb") return c.absRelativeOff ?? -Infinity;
+  return c.absAmountOff ?? -Infinity;
+}
+
 /**
- * Filtered/WFB/NWFB are real threshold gates (same definitions as Admin
- * Matchups/Bet History — see matchupsCompute.ts's computeRow), not a
- * pure ranking — a week only gets as many picks as actually clear that
- * tier's bar, up to topN, sorted by absAmountOff within the qualifying
- * set. A week can show fewer than topN picks; that's the real
- * constraint of the tier, not a bug.
+ * Top N by magnitude for the given tier's metric — no threshold gate,
+ * so every week gets exactly N picks (or as many candidates as exist
+ * that week, if fewer than N games were even played).
  */
 export function simulateTier(candidates: ContestCandidate[], topN: number, tier: Exclude<ContestTier, "bestBets">): ContestSeasonResult {
   const byWeek = new Map<number, ContestCandidate[]>();
@@ -80,8 +89,8 @@ export function simulateTier(candidates: ContestCandidate[], topN: number, tier:
   let totalPushes = 0;
 
   for (const week of Array.from(byWeek.keys()).sort((a, b) => a - b)) {
-    const pool = byWeek.get(week)!.filter((c) => c.pick != null && qualifies(c, tier));
-    const sorted = [...pool].sort((a, b) => (b.absAmountOff ?? 0) - (a.absAmountOff ?? 0));
+    const pool = byWeek.get(week)!.filter((c) => c.pick != null);
+    const sorted = [...pool].sort((a, b) => sortKeyFor(b, tier) - sortKeyFor(a, tier));
     const picks = sorted.slice(0, topN).map(toDetail).filter((p): p is ContestPickDetail => p != null);
 
     let wins = 0;
@@ -165,35 +174,4 @@ export function simulateBestBets(candidates: ContestCandidate[], topN: number): 
 export function contestWinPct(r: { totalWins: number; totalLosses: number }): number | null {
   const decided = r.totalWins + r.totalLosses;
   return decided > 0 ? (r.totalWins / decided) * 100 : null;
-}
-
-/** How many of the weeks present in `candidates` have at least `topN` qualifying games for this tier — the live feedback Chris asked for while adjusting a tier's parameters. */
-export function weeksReachingTopN(candidates: ContestCandidate[], topN: number, tier: Exclude<ContestTier, "bestBets">): { weeksAtOrAboveTopN: number; totalWeeks: number } {
-  const byWeek = new Map<number, ContestCandidate[]>();
-  for (const c of candidates) {
-    const list = byWeek.get(c.week) ?? [];
-    list.push(c);
-    byWeek.set(c.week, list);
-  }
-  let weeksAtOrAboveTopN = 0;
-  for (const list of byWeek.values()) {
-    const qualifyingCount = list.filter((c) => c.pick != null && qualifies(c, tier)).length;
-    if (qualifyingCount >= topN) weeksAtOrAboveTopN++;
-  }
-  return { weeksAtOrAboveTopN, totalWeeks: byWeek.size };
-}
-
-export const PARAM_STORAGE_KEY = "pool_history_custom_params_v1";
-
-export function loadSavedParams(defaults: CustomParams): CustomParams {
-  try {
-    const raw = localStorage.getItem(PARAM_STORAGE_KEY);
-    return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
-  } catch {
-    return defaults;
-  }
-}
-
-export function saveParams(params: CustomParams): void {
-  localStorage.setItem(PARAM_STORAGE_KEY, JSON.stringify(params));
 }
