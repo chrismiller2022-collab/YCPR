@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import {
   SURVIVOR_WEEKS,
@@ -15,6 +15,8 @@ import {
   computeSpreadRanks,
 } from "../lib/survivor";
 import { fairMoneylineFromWinPct } from "../lib/odds";
+import { fetchSavedPaths, saveSurvivorPath, deleteSurvivorPath, type SurvivorSavedPath } from "../lib/api/survivorPaths";
+import { exportNodeAsPng } from "../lib/exportPng";
 
 // Heat-map coloring for the grid — brighter gold = higher win probability
 // (a "safer" week to burn that team), purple = the single best matchup of
@@ -50,6 +52,63 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [view, setView] = useState<"spread" | "moneyline">("spread");
   const [sortWeekKey, setSortWeekKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const [savedPaths, setSavedPaths] = useState<SurvivorSavedPath[]>([]);
+  const [savingPath, setSavingPath] = useState(false);
+  const [pathError, setPathError] = useState<string | null>(null);
+  const [showSavedPaths, setShowSavedPaths] = useState(false);
+  const exportGridRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+
+  function loadSavedPaths() {
+    fetchSavedPaths()
+      .then(setSavedPaths)
+      .catch((err) => setPathError(err.message));
+  }
+
+  useEffect(() => {
+    loadSavedPaths();
+  }, []);
+
+  async function handleSavePath() {
+    const name = prompt("Name this path (e.g. \"Safe start\", \"Save Ohio State for champ week\"):");
+    if (!name) return;
+    setSavingPath(true);
+    setPathError(null);
+    try {
+      await saveSurvivorPath(name, picks);
+      loadSavedPaths();
+    } catch (err: any) {
+      setPathError(err.message);
+    } finally {
+      setSavingPath(false);
+    }
+  }
+
+  async function handleDeletePath(id: number) {
+    if (!confirm("Delete this saved path?")) return;
+    try {
+      await deleteSurvivorPath(id);
+      loadSavedPaths();
+    } catch (err: any) {
+      setPathError(err.message);
+    }
+  }
+
+  function handleLoadPath(path: SurvivorSavedPath) {
+    if (!confirm(`Load "${path.name}"? This replaces your current working picks (not saved paths, just the picks you're actively editing).`)) return;
+    setPicks(path.picks);
+  }
+
+  async function handleExportPng() {
+    if (!exportGridRef.current) return;
+    setExporting(true);
+    try {
+      await exportNodeAsPng(exportGridRef.current, "survivor-path");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   useEffect(() => {
     setPicks(loadPicks());
@@ -177,6 +236,15 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
           <button className="menu-btn" onClick={resetAll}>
             Reset all
           </button>
+          <button className="menu-btn" onClick={handleSavePath} disabled={savingPath}>
+            {savingPath ? "Saving…" : "Save path"}
+          </button>
+          <button className="menu-btn" onClick={() => setShowSavedPaths((v) => !v)}>
+            {showSavedPaths ? "Hide" : "Show"} saved paths ({savedPaths.length})
+          </button>
+          <button className="menu-btn" onClick={handleExportPng} disabled={exporting}>
+            {exporting ? "Exporting…" : "Export path as PNG"}
+          </button>
           <a
             href="https://app.splashsports.com/contest/fd3afd3f-9fe8-4d70-a68f-085efb6c99b2/entries/overall"
             target="_blank"
@@ -210,6 +278,49 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
         />
         Purple = biggest favorite of that week
       </div>
+
+      {pathError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{pathError}</p>}
+
+      {showSavedPaths && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem",
+            background: "var(--turf-panel)",
+            border: "1px solid var(--hash)",
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Saved paths</div>
+          {savedPaths.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", margin: 0 }}>No paths saved yet.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {savedPaths.map((p) => {
+                const weeksSet = Object.values(p.picks).filter((t) => t.length > 0).length;
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+                    <span>
+                      <strong>{p.name}</strong>{" "}
+                      <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>
+                        · {weeksSet} weeks set · {new Date(p.created_at).toLocaleDateString()}
+                      </span>
+                    </span>
+                    <span style={{ display: "flex", gap: "0.4rem" }}>
+                      <button className="menu-btn" onClick={() => handleLoadPath(p)}>
+                        Load
+                      </button>
+                      <button className="menu-btn" onClick={() => handleDeletePath(p.id)}>
+                        Delete
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div
         style={{
@@ -452,6 +563,42 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
               ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Off-screen export grid — captured by html2canvas via exportGridRef,
+          never actually visible in the interactive UI. Reading order:
+          Week 1 Pick 1, Week 1 Pick 2, Week 2 Pick 1, Week 2 Pick 2, ...,
+          wrapped into a fixed-column grid so the whole season reads left-
+          to-right, top-to-bottom in one image (4 columns — tell Chris if
+          a different width reads better). */}
+      <div style={{ position: "absolute", top: -99999, left: -99999 }}>
+        <div ref={exportGridRef} style={{ background: "#1a1b2e", padding: "1.5rem", width: 900 }}>
+          <div style={{ color: "#fff", fontSize: "1.2rem", fontWeight: 800, marginBottom: "1rem" }}>Survivor Path</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.5rem" }}>
+            {SURVIVOR_WEEKS.flatMap((week) =>
+              (picks[week.key] || []).map((teamName, i) => (
+                <div
+                  key={`${week.key}-${i}`}
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    borderRadius: 6,
+                    padding: "0.5rem",
+                    color: "#fff",
+                    fontSize: "0.8rem",
+                  }}
+                >
+                  <div style={{ color: "#a3a8c3", fontSize: "0.68rem", marginBottom: "0.2rem" }}>
+                    {week.label} · Pick {i + 1}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 700 }}>
+                    <TeamLogo team={teamName} size={18} />
+                    {teamName}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
