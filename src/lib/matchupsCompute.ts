@@ -2,7 +2,7 @@ import { TEAMS_BY_NAME } from "../data/teams";
 import { HFA, hfaFor, fairMoneylineFromWinPct } from "./odds";
 import { billRAwayWinPct } from "./moneylineBetHistory";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
-import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
+import { DEFAULT_CUSTOM_PARAMS, type CustomParams } from "./betHistory";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
 
 // ---------------------------------------------------------------------
@@ -298,7 +298,8 @@ export function computeWatchSignal(
 export function computeRow(
   game: GameWithLines,
   liveByTeam: Record<string, any>,
-  hfaMode: "team" | "flat" = "team"
+  hfaMode: "team" | "flat" = "team",
+  customParams: CustomParams = DEFAULT_CUSTOM_PARAMS
 ): MatchupComputed {
   const line = pickLine(game.lines);
   const staticAwayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
@@ -356,7 +357,7 @@ export function computeRow(
     amountOff != null && vegasAwaySpread != null && vegasAwaySpread !== 0 ? Math.abs(amountOff) / vegasAwaySpread : null;
 
   const filteredBetTeam =
-    absAmountOff != null && absAmountOff > DEFAULT_CUSTOM_PARAMS.filterThreshold ? projCoverTeam : null;
+    absAmountOff != null && absAmountOff > customParams.filterThreshold ? projCoverTeam : null;
 
   // Favorite flip — Vegas and our model disagree on which side is even
   // favored at all, not just by how much. Computed here (before Weighted
@@ -377,22 +378,23 @@ export function computeRow(
   }
 
   const weightedFilteredBetTeam =
-    wtfTeam != null && absBettingLine != null && absBettingLine > DEFAULT_CUSTOM_PARAMS.minAbsLine
+    wtfTeam != null && absBettingLine != null && absBettingLine > customParams.minAbsLine
       ? projCoverTeam
       : absBettingLine != null &&
-        absBettingLine > DEFAULT_CUSTOM_PARAMS.minAbsLine &&
+        absBettingLine > customParams.minAbsLine &&
         relativeOff != null &&
-        (relativeOff > DEFAULT_CUSTOM_PARAMS.posThreshold || relativeOff < DEFAULT_CUSTOM_PARAMS.negThreshold)
+        (relativeOff > customParams.posThreshold || relativeOff < customParams.negThreshold)
       ? projCoverTeam
       : null;
 
   // Sigma Off: absAmountOff expressed in units of the site's own
-  // game-outcome standard deviation (15.7, from the Monte Carlo
-  // methodology) — "how many standard game swings is this disagreement
-  // worth," independent of the size of the line itself.
-  const sigmaOff = absAmountOff != null ? absAmountOff / 15.7 : null;
+  // game-outcome standard deviation (customParams.sigmaDivisor, default
+  // 15.7, from the Monte Carlo methodology) — "how many standard game
+  // swings is this disagreement worth," independent of the size of the
+  // line itself.
+  const sigmaOff = absAmountOff != null ? absAmountOff / customParams.sigmaDivisor : null;
 
-  const nwfbTeam = sigmaOff != null && sigmaOff > 0.4 ? projCoverTeam : null;
+  const nwfbTeam = sigmaOff != null && sigmaOff > customParams.sigmaThreshold ? projCoverTeam : null;
 
   const betTeam = filteredBetTeam ?? weightedFilteredBetTeam ?? nwfbTeam;
 
