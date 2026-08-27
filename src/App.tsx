@@ -31,6 +31,7 @@ const AdminPage = lazy(() => import("./pages/AdminPage"));
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
+import WatchabilityPage from "./pages/WatchabilityPage";
 import BetHistoryPage from "./pages/BetHistoryPage";
 
 export default function App() {
@@ -480,6 +481,7 @@ export default function App() {
       {page.type === "weekreport" && <WeekReportPage onHome={handleHome} />}
 
       {page.type === "cfbsurvivor" && <CfbSurvivorToolPage onHome={handleHome} />}
+      {page.type === "watchability" && <WatchabilityPage onHome={handleHome} />}
 
       <SiteFooter />
     </div>

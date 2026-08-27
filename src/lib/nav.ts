@@ -33,6 +33,7 @@ export const NAV: any[] = [
       { key: "playoff24", label: "24 Team Playoff (FCS Style)", pageType: "playoff24" },
       { key: "weekreport", label: "Week Report (PDF)", pageType: "weekreport" },
       { key: "cfbsurvivor", label: "CFB Survivor", pageType: "cfbsurvivor" },
+      { key: "watchability", label: "Watchability Chart", pageType: "watchability" },
     ],
   },
   {
