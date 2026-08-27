@@ -24,6 +24,18 @@ export interface OptimizerResult {
 }
 
 /**
+ * True if teamA and teamB play each other in this week — picking both
+ * of them as a week's two picks would make surviving that week
+ * mathematically impossible (at most one can win), so this has to be a
+ * hard exclusion, not just a low-scoring option, in both objectives.
+ */
+function areOpponentsThisWeek(teamA: string, teamB: string, week: SurvivorWeek): boolean {
+  const game = gameForTeamInWeek(teamA, week.dataWeek);
+  if (!game) return false;
+  return game.home === teamB || game.away === teamB;
+}
+
+/**
  * A team's estimated win probability for a given week. Real weeks use
  * teamWinPct() (Bill R) against that week's actual scheduled opponent.
  * Conference Championship week has no scheduled matchups yet (no
@@ -102,12 +114,21 @@ function optimizeMaxSurvivalProb(
   const used = new Set<string>();
   const assignment = new Map<string, string | null>();
 
+  function siblingSlotKey(s: OptimizerSlot): string {
+    return slotKey({ weekKey: s.weekKey, slotIndex: s.slotIndex === 0 ? 1 : 0 });
+  }
+
   for (const slot of orderedSlots) {
     const teamScores = scores.get(slotKey(slot))!;
+    const week = weeksByKey.get(slot.weekKey)!;
+    const siblingTeam = assignment.get(siblingSlotKey(slot)) ?? null;
     let best: string | null = null;
     let bestScore = -Infinity;
     for (const [team, score] of teamScores) {
       if (used.has(team)) continue;
+      // Can't pick two opponents as the same week's two picks — at most
+      // one of them can win, so surviving that week would be impossible.
+      if (siblingTeam && areOpponentsThisWeek(team, siblingTeam, week)) continue;
       if (score > bestScore) {
         bestScore = score;
         best = team;
@@ -124,11 +145,20 @@ function optimizeMaxSurvivalProb(
     iterations++;
     for (let i = 0; i < slots.length; i++) {
       for (let j = i + 1; j < slots.length; j++) {
-        const keyA = slotKey(slots[i]);
-        const keyB = slotKey(slots[j]);
+        const slotA = slots[i];
+        const slotB = slots[j];
+        const keyA = slotKey(slotA);
+        const keyB = slotKey(slotB);
         const teamA = assignment.get(keyA) ?? null;
         const teamB = assignment.get(keyB) ?? null;
         if (teamA === teamB) continue;
+
+        // Reject a swap that would pit either slot's new team against its
+        // own sibling in the same week — same reasoning as the greedy pass.
+        const siblingOfA = assignment.get(siblingSlotKey(slotA)) ?? null;
+        const siblingOfB = assignment.get(siblingSlotKey(slotB)) ?? null;
+        if (teamB && siblingOfA && siblingOfA !== teamA && areOpponentsThisWeek(teamB, siblingOfA, weeksByKey.get(slotA.weekKey)!)) continue;
+        if (teamA && siblingOfB && siblingOfB !== teamB && areOpponentsThisWeek(teamA, siblingOfB, weeksByKey.get(slotB.weekKey)!)) continue;
 
         const scoreA_now = teamA ? scores.get(keyA)!.get(teamA) ?? -Infinity : 0;
         const scoreB_now = teamB ? scores.get(keyB)!.get(teamB) ?? -Infinity : 0;
@@ -225,7 +255,14 @@ function optimizeMaxExpectedWeeks(
       .filter((c): c is { team: string; prob: number; value: number } => c != null)
       .sort((a, b) => b.value - a.value);
 
-    const chosen = candidates.slice(0, 2);
+    // Pick the top candidate, then the next-best candidate that isn't
+    // that team's opponent this week — two opponents can't both win, so
+    // pairing them would make surviving this week impossible no matter
+    // how good either one looks individually.
+    const week = weeksByKey.get(weekKey)!;
+    const first = candidates[0] ?? null;
+    const second = first ? candidates.slice(1).find((c) => !areOpponentsThisWeek(c.team, first.team, week)) ?? null : null;
+    const chosen = [first, second].filter((c): c is { team: string; prob: number; value: number } => c != null);
     for (let i = 0; i < 2; i++) {
       const c = chosen[i];
       assignment.set(`${weekKey}:${i}`, c ? c.team : null);
