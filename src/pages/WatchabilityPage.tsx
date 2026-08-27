@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import ExportPngButton from "../components/ExportPngButton";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
-import { scoreWatchability, kickoffWindowET, isSaturdayET, type WatchabilityInput, type WatchabilityScore, type KickoffWindow } from "../lib/watchability";
+import {
+  scoreWatchability,
+  kickoffWindowET,
+  isSaturdayET,
+  DEFAULT_WEIGHTS,
+  type WatchabilityInput,
+  type WatchabilityScore,
+  type WatchabilityWeights,
+  type KickoffWindow,
+} from "../lib/watchability";
 
 const WINDOW_LABELS: Record<KickoffWindow, string> = {
   early: "Early Slate (before 2:01 PM ET)",
@@ -28,40 +38,91 @@ function GameRow({ g, rank }: { g: WatchabilityScore; rank: number }) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "1rem",
-        padding: "0.7rem 1rem",
+        gap: "0.75rem",
+        padding: "0.6rem 0.85rem",
         borderBottom: "1px solid var(--hash)",
       }}
     >
-      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--gold)", width: 32, textAlign: "center" }}>{rank}</div>
+      <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--gold)", width: 24, textAlign: "center" }}>{rank}</div>
       <div
         style={{
-          fontSize: "1.1rem",
+          fontSize: "1rem",
           fontWeight: 800,
-          width: 50,
+          width: 44,
           textAlign: "center",
           background: "rgba(255,200,87,0.12)",
           borderRadius: 6,
           padding: "0.2rem 0",
+          flexShrink: 0,
         }}
       >
         {g.score.toFixed(1)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
-          <TeamLogo team={g.awayTeam} size={22} /> {g.awayTeam}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 700, flexWrap: "wrap", fontSize: "0.92rem" }}>
+          <TeamLogo team={g.awayTeam} size={20} /> {g.awayTeam}
           <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}>@</span>
-          <TeamLogo team={g.homeTeam} size={22} /> {g.homeTeam}
+          <TeamLogo team={g.homeTeam} size={20} /> {g.homeTeam}
           {g.isConferenceGame && (
-            <span style={{ fontSize: "0.68rem", padding: "0.1rem 0.4rem", borderRadius: 4, background: "rgba(143,211,154,0.15)", color: "#8fd39a" }}>
+            <span style={{ fontSize: "0.64rem", padding: "0.1rem 0.35rem", borderRadius: 4, background: "rgba(143,211,154,0.15)", color: "#8fd39a" }}>
               CONF
             </span>
           )}
         </div>
-        <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>
+        <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.1rem" }}>
           {fmtKickoff(g.startDate)} · Spread {fmtSpread(g.mySpread)} · Total {g.myTotal != null ? g.myTotal.toFixed(1) : "–"}
         </div>
       </div>
+    </div>
+  );
+}
+
+function WeightSlider({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem" }}>
+      <span style={{ minWidth: 100, color: "var(--chalk-dim)" }}>{label}</span>
+      <input type="range" min={0} max={1} step={0.05} value={value} onChange={(e) => onChange(parseFloat(e.target.value))} />
+      <span style={{ fontWeight: 700, minWidth: 40 }}>{Math.round(value * 100)}%</span>
+    </label>
+  );
+}
+
+function WeightsEditor({ weights, setWeights }: { weights: WatchabilityWeights; setWeights: (w: WatchabilityWeights) => void }) {
+  const shareSum = weights.quality + weights.total + weights.spread;
+  return (
+    <div
+      style={{
+        border: "1px solid var(--hash)",
+        borderRadius: 8,
+        padding: "0.75rem 1rem",
+        marginBottom: "1rem",
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "0.75rem 1.5rem",
+        alignItems: "center",
+      }}
+    >
+      <WeightSlider label="Team quality" value={weights.quality} onChange={(v) => setWeights({ ...weights, quality: v })} />
+      <WeightSlider label="Spread closeness" value={weights.spread} onChange={(v) => setWeights({ ...weights, spread: v })} />
+      <WeightSlider label="Proj. total" value={weights.total} onChange={(v) => setWeights({ ...weights, total: v })} />
+      <WeightSlider label="Conference bonus" value={weights.conferenceBonus} onChange={(v) => setWeights({ ...weights, conferenceBonus: v })} />
+      <button className="menu-btn" onClick={() => setWeights(DEFAULT_WEIGHTS)}>
+        Reset to default
+      </button>
+      {shareSum > 0 && Math.abs(shareSum - 1) > 0.001 && (
+        <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+          (Quality/Spread/Total are normalized against each other regardless of whether they sum to 100% — the
+          conference bonus is a flat add-on, not part of that split.)
+        </span>
+      )}
     </div>
   );
 }
@@ -132,6 +193,8 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
   const [week, setWeek] = useState<number | null>(null);
   const [topView, setTopView] = useState<TopView>("overall");
   const [saturdaysOnly, setSaturdaysOnly] = useState(false);
+  const [weights, setWeights] = useState<WatchabilityWeights>(DEFAULT_WEIGHTS);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (week == null && weekNumbers.length > 0) setWeek(weekNumbers[0]);
@@ -143,8 +206,8 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
     return list;
   }, [inputs, week, saturdaysOnly]);
 
-  const weeklyScored = useMemo(() => scoreWatchability(weeklyInputs).sort((a, b) => b.score - a.score), [weeklyInputs]);
-  const seasonScored = useMemo(() => scoreWatchability(inputs).sort((a, b) => b.score - a.score), [inputs]);
+  const weeklyScored = useMemo(() => scoreWatchability(weeklyInputs, weights).sort((a, b) => b.score - a.score), [weeklyInputs, weights]);
+  const seasonScored = useMemo(() => scoreWatchability(inputs, weights).sort((a, b) => b.score - a.score), [inputs, weights]);
 
   const byWindow = useMemo(() => {
     const groups: Record<KickoffWindow, WatchabilityScore[]> = { early: [], afternoon: [], night: [] };
@@ -158,7 +221,7 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
   return (
     <div className="page">
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" onClick={onHome} data-export-exclude="true">
           ‹ All tools
         </button>
         <div className="eyebrow">Tools</div>
@@ -169,74 +232,89 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }} data-export-exclude="true">
         <button className={`mode-btn ${scope === "weekly" ? "mode-btn-active" : ""}`} onClick={() => setScope("weekly")}>
           Weekly View
         </button>
         <button className={`mode-btn ${scope === "season" ? "mode-btn-active" : ""}`} onClick={() => setScope("season")}>
           Full Season View
         </button>
+        <span style={{ marginLeft: "auto" }}>
+          <ExportPngButton
+            targetRef={exportRef}
+            filename={() => `watchability-${scope === "season" ? "season" : `week${week}`}`}
+            tweetText="Watchability rankings for this week's college football slate 🏈"
+          />
+        </span>
       </div>
 
-      {loading ? (
-        <p>Loading…</p>
-      ) : scope === "season" ? (
-        <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
-          {seasonScored.slice(0, 10).map((g, i) => (
-            <GameRow key={g.gameId} g={g} rank={i + 1} />
-          ))}
-          {seasonScored.length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games yet.</p>}
-        </div>
-      ) : (
-        <>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }}>
-            <select value={week ?? ""} onChange={(e) => setWeek(parseInt(e.target.value, 10))}>
-              {weekNumbers.map((w) => (
-                <option key={w} value={w}>
-                  Week {w}
-                </option>
-              ))}
-            </select>
-            <button className={`mode-btn ${topView === "overall" ? "mode-btn-active" : ""}`} onClick={() => setTopView("overall")}>
-              Overall Top 10
-            </button>
-            <button className={`mode-btn ${topView === "windows" ? "mode-btn-active" : ""}`} onClick={() => setTopView("windows")}>
-              By Time Window
-            </button>
-            <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }}>
-              <input type="checkbox" checked={saturdaysOnly} onChange={(e) => setSaturdaysOnly(e.target.checked)} />
-              Saturdays only
-            </label>
-          </div>
+      <div data-export-exclude="true">
+        <WeightsEditor weights={weights} setWeights={setWeights} />
+      </div>
 
-          {topView === "overall" ? (
-            <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
-              {weeklyScored.slice(0, 10).map((g, i) => (
-                <GameRow key={g.gameId} g={g} rank={i + 1} />
-              ))}
-              {weeklyScored.length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games this week.</p>}
+      <div ref={exportRef}>
+        {loading ? (
+          <p>Loading…</p>
+        ) : scope === "season" ? (
+          <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
+            {seasonScored.slice(0, 10).map((g, i) => (
+              <GameRow key={g.gameId} g={g} rank={i + 1} />
+            ))}
+            {seasonScored.length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games yet.</p>}
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }} data-export-exclude="true">
+              <select value={week ?? ""} onChange={(e) => setWeek(parseInt(e.target.value, 10))}>
+                {weekNumbers.map((w) => (
+                  <option key={w} value={w}>
+                    Week {w}
+                  </option>
+                ))}
+              </select>
+              <button className={`mode-btn ${topView === "overall" ? "mode-btn-active" : ""}`} onClick={() => setTopView("overall")}>
+                Overall Top 10
+              </button>
+              <button className={`mode-btn ${topView === "windows" ? "mode-btn-active" : ""}`} onClick={() => setTopView("windows")}>
+                By Time Window
+              </button>
+              <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }}>
+                <input type="checkbox" checked={saturdaysOnly} onChange={(e) => setSaturdaysOnly(e.target.checked)} />
+                Saturdays only
+              </label>
             </div>
-          ) : (
-            (["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
-              <div key={w} style={{ marginBottom: "1.5rem" }}>
-                <div className="section-label" style={{ marginBottom: "0.5rem" }}>
-                  {WINDOW_LABELS[w]}
-                </div>
-                <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
-                  {byWindow[w]
-                    .slice()
-                    .sort((a, b) => b.score - a.score)
-                    .slice(0, 10)
-                    .map((g, i) => (
-                      <GameRow key={g.gameId} g={g} rank={i + 1} />
-                    ))}
-                  {byWindow[w].length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games in this window.</p>}
-                </div>
+
+            {topView === "overall" ? (
+              <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
+                {weeklyScored.slice(0, 10).map((g, i) => (
+                  <GameRow key={g.gameId} g={g} rank={i + 1} />
+                ))}
+                {weeklyScored.length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games this week.</p>}
               </div>
-            ))
-          )}
-        </>
-      )}
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem" }}>
+                {(["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
+                  <div key={w}>
+                    <div className="section-label" style={{ marginBottom: "0.5rem", fontSize: "0.72rem" }}>
+                      {WINDOW_LABELS[w]}
+                    </div>
+                    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, overflow: "hidden" }}>
+                      {byWindow[w]
+                        .slice()
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, 10)
+                        .map((g, i) => (
+                          <GameRow key={g.gameId} g={g} rank={i + 1} />
+                        ))}
+                      {byWindow[w].length === 0 && <p style={{ padding: "1rem", color: "var(--chalk-dim)" }}>No games in this window.</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

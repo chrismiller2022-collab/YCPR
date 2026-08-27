@@ -25,16 +25,19 @@ function percentileRank(value: number, all: number[]): number {
   return (below + equal / 2) / all.length;
 }
 
-// Weights are a starting point, not calibrated against any real
-// "how much did I enjoy this game" data — quality and closeness matter
-// most for whether a game is worth watching start to finish, total
-// matters some (fun offense), conference stakes are a flat bonus on
-// top rather than blended into the ranking (a binary yes/no doesn't
-// have a meaningful percentile the way a continuous stat does).
-const WEIGHT_QUALITY = 0.4;
-const WEIGHT_TOTAL = 0.3;
-const WEIGHT_SPREAD = 0.3;
-const CONFERENCE_BONUS = 1; // added to the 1-10 score, capped at 10
+export interface WatchabilityWeights {
+  quality: number;
+  total: number;
+  spread: number;
+  conferenceBonus: number;
+}
+
+export const DEFAULT_WEIGHTS: WatchabilityWeights = {
+  quality: 0.5,
+  total: 0.15,
+  spread: 0.35,
+  conferenceBonus: 0.5,
+};
 
 /**
  * Scores every game in `games` RELATIVE TO EACH OTHER — percentile rank
@@ -47,7 +50,7 @@ const CONFERENCE_BONUS = 1; // added to the 1-10 score, capped at 10
  * absolute cutoffs that would need recalibrating as ratings shift
  * season to season.
  */
-export function scoreWatchability(games: WatchabilityInput[]): WatchabilityScore[] {
+export function scoreWatchability(games: WatchabilityInput[], weights: WatchabilityWeights = DEFAULT_WEIGHTS): WatchabilityScore[] {
   const ratings = games.map((g) => g.avgRating).filter((v): v is number => v != null).map((v) => -v); // negate: YC convention is lower = stronger
   const totals = games.map((g) => g.myTotal).filter((v): v is number => v != null);
   const absSpreads = games.map((g) => (g.mySpread != null ? -Math.abs(g.mySpread) : null)).filter((v): v is number => v != null); // negate abs spread: smaller = better, so rank ascending-good the same way as the others
@@ -58,15 +61,15 @@ export function scoreWatchability(games: WatchabilityInput[]): WatchabilityScore
     const spreadPctile = g.mySpread != null ? percentileRank(-Math.abs(g.mySpread), absSpreads) : null;
 
     const parts: { pctile: number; weight: number }[] = [];
-    if (qualityPctile != null) parts.push({ pctile: qualityPctile, weight: WEIGHT_QUALITY });
-    if (totalPctile != null) parts.push({ pctile: totalPctile, weight: WEIGHT_TOTAL });
-    if (spreadPctile != null) parts.push({ pctile: spreadPctile, weight: WEIGHT_SPREAD });
+    if (qualityPctile != null) parts.push({ pctile: qualityPctile, weight: weights.quality });
+    if (totalPctile != null) parts.push({ pctile: totalPctile, weight: weights.total });
+    if (spreadPctile != null) parts.push({ pctile: spreadPctile, weight: weights.spread });
 
     const totalWeight = parts.reduce((s, p) => s + p.weight, 0);
     const blended = totalWeight > 0 ? parts.reduce((s, p) => s + p.pctile * p.weight, 0) / totalWeight : 0.5;
 
     let score = 1 + blended * 8; // 1-9 from the blended factors
-    if (g.isConferenceGame) score = Math.min(10, score + CONFERENCE_BONUS);
+    if (g.isConferenceGame) score = Math.min(10, score + weights.conferenceBonus);
 
     return { ...g, score: Math.round(score * 10) / 10, qualityPctile, totalPctile, spreadPctile };
   });
