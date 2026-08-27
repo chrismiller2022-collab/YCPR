@@ -17,6 +17,8 @@ import {
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import { fetchSavedPaths, saveSurvivorPath, deleteSurvivorPath, type SurvivorSavedPath } from "../lib/api/survivorPaths";
 import { exportNodeAsPng } from "../lib/exportPng";
+import { optimizeSurvivorPath, type SurvivorObjective, type OptimizerResult } from "../lib/survivorOptimizer";
+import { useLatestMonteCarloRun } from "../lib/futuresData";
 
 // Heat-map coloring for the grid — brighter gold = higher win probability
 // (a "safer" week to burn that team), purple = the single best matchup of
@@ -59,6 +61,31 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
   const [showSavedPaths, setShowSavedPaths] = useState(false);
   const exportGridRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
+
+  const currentSeason = new Date().getFullYear();
+  const { results: mcResults } = useLatestMonteCarloRun(currentSeason);
+  const [objective, setObjective] = useState<SurvivorObjective>("maxSurvivalProb");
+  const [optimizerResult, setOptimizerResult] = useState<OptimizerResult | null>(null);
+  const [showOptimizer, setShowOptimizer] = useState(false);
+
+  function handleRunOptimizer() {
+    setOptimizerResult(optimizeSurvivorPath(picks, objective, mcResults));
+  }
+
+  function handleApplyOptimizerResult() {
+    if (!optimizerResult) return;
+    setPicks((prev) => {
+      const next = { ...prev };
+      for (const p of optimizerResult.picks) {
+        if (!p.team) continue;
+        const weekPicks = next[p.weekKey] ? [...next[p.weekKey]] : [];
+        weekPicks[p.slotIndex] = p.team;
+        next[p.weekKey] = weekPicks.filter(Boolean);
+      }
+      return next;
+    });
+    setOptimizerResult(null);
+  }
 
   function loadSavedPaths() {
     fetchSavedPaths()
@@ -245,6 +272,9 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
           <button className="menu-btn" onClick={handleExportPng} disabled={exporting}>
             {exporting ? "Exporting…" : "Export path as PNG"}
           </button>
+          <button className="menu-btn" onClick={() => setShowOptimizer((v) => !v)}>
+            {showOptimizer ? "Hide" : "Show"} optimizer
+          </button>
           <a
             href="https://app.splashsports.com/contest/fd3afd3f-9fe8-4d70-a68f-085efb6c99b2/entries/overall"
             target="_blank"
@@ -280,6 +310,83 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
       </div>
 
       {pathError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{pathError}</p>}
+
+      {showOptimizer && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem",
+            background: "var(--turf-panel)",
+            border: "1px solid var(--hash)",
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>Optimizer</div>
+          <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+            Only optimizes weeks that don't already have 2 saved picks — anything already locked in is left alone,
+            and those teams come off the board. Conference Championship week has no real matchups yet, so it uses
+            each team's Monte Carlo odds to win their conference outright as the estimated win probability there.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+            <button className={`mode-btn ${objective === "maxSurvivalProb" ? "mode-btn-active" : ""}`} onClick={() => setObjective("maxSurvivalProb")}>
+              Maximize full-season survival odds
+            </button>
+            <button className={`mode-btn ${objective === "maxExpectedWeeks" ? "mode-btn-active" : ""}`} onClick={() => setObjective("maxExpectedWeeks")}>
+              Maximize expected weeks survived
+            </button>
+            <button className="menu-btn" onClick={handleRunOptimizer}>
+              Run optimizer
+            </button>
+          </div>
+
+          {optimizerResult && (
+            <div>
+              <div style={{ marginBottom: "0.5rem" }}>
+                {optimizerResult.survivalProb != null && (
+                  <span style={{ marginRight: "1.5rem" }}>
+                    <strong>{(optimizerResult.survivalProb * 100).toFixed(2)}%</strong>{" "}
+                    <span style={{ color: "var(--chalk-dim)" }}>chance of clearing every optimized week</span>
+                  </span>
+                )}
+                {optimizerResult.expectedWeeksAdded != null && (
+                  <span>
+                    <strong>{optimizerResult.expectedWeeksAdded.toFixed(2)}</strong>{" "}
+                    <span style={{ color: "var(--chalk-dim)" }}>expected weeks added</span>
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "0.6rem" }}>
+                {SURVIVOR_WEEKS.map((week) => {
+                  const weekPicks = optimizerResult.picks.filter((p) => p.weekKey === week.key);
+                  if (weekPicks.length === 0) return null;
+                  return (
+                    <div key={week.key} style={{ display: "flex", gap: "0.75rem", alignItems: "center", fontSize: "0.85rem" }}>
+                      <span style={{ width: 130, color: "var(--chalk-dim)" }}>{week.label}</span>
+                      {weekPicks.map((p, i) => (
+                        <span key={i} style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                          {p.team ? (
+                            <>
+                              <TeamLogo team={p.team} size={18} /> {p.team}{" "}
+                              <span style={{ color: "var(--chalk-dim)" }}>
+                                {p.winProb != null ? `(${(p.winProb * 100).toFixed(1)}%)` : ""}
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ color: "var(--chalk-dim)" }}>no eligible team</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+              <button className="menu-btn" onClick={handleApplyOptimizerResult}>
+                Apply to working picks
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {showSavedPaths && (
         <div
