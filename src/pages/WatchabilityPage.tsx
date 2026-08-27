@@ -18,9 +18,9 @@ import {
 } from "../lib/watchability";
 
 const WINDOW_LABELS: Record<KickoffWindow, string> = {
-  early: "Early Slate (before 2:01 PM ET)",
-  afternoon: "Afternoon Slate (2:01 - 6:59 PM ET)",
-  night: "Night Slate (7:00 PM ET or later)",
+  early: "Early Slate",
+  afternoon: "Afternoon Slate",
+  night: "Night Slate",
 };
 
 function fmtKickoff(iso: string | null): string {
@@ -80,24 +80,44 @@ function GameRow({ g, rank }: { g: WatchabilityScore; rank: number }) {
 
 function WeightSlider({
   label,
+  leftLabel,
+  rightLabel,
   value,
   onChange,
 }: {
   label: string;
+  leftLabel: string;
+  rightLabel: string;
   value: number;
   onChange: (v: number) => void;
 }) {
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem" }}>
-      <span style={{ minWidth: 100, color: "var(--chalk-dim)" }}>{label}</span>
-      <input type="range" min={0} max={1} step={0.05} value={value} onChange={(e) => onChange(parseFloat(e.target.value))} />
-      <span style={{ fontWeight: 700, minWidth: 40 }}>{Math.round(value * 100)}%</span>
-    </label>
+    <div style={{ fontSize: "0.8rem", minWidth: 220 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.15rem" }}>
+        <span style={{ color: "var(--chalk-dim)" }}>{label}</span>
+        <span style={{ fontWeight: 700 }}>
+          {value > 0 ? "+" : ""}
+          {Math.round(value * 100)}%
+        </span>
+      </div>
+      <input
+        type="range"
+        min={-1}
+        max={1}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{ width: "100%" }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.66rem", color: "var(--chalk-dim)" }}>
+        <span>{leftLabel}</span>
+        <span>{rightLabel}</span>
+      </div>
+    </div>
   );
 }
 
 function WeightsEditor({ weights, setWeights }: { weights: WatchabilityWeights; setWeights: (w: WatchabilityWeights) => void }) {
-  const shareSum = weights.quality + weights.total + weights.spread + weights.wins;
   return (
     <div
       style={{
@@ -105,26 +125,54 @@ function WeightsEditor({ weights, setWeights }: { weights: WatchabilityWeights; 
         borderRadius: 8,
         padding: "0.75rem 1rem",
         marginBottom: "1rem",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "0.75rem 1.5rem",
-        alignItems: "center",
       }}
     >
-      <WeightSlider label="Team quality" value={weights.quality} onChange={(v) => setWeights({ ...weights, quality: v })} />
-      <WeightSlider label="Spread closeness" value={weights.spread} onChange={(v) => setWeights({ ...weights, spread: v })} />
-      <WeightSlider label="Proj. total" value={weights.total} onChange={(v) => setWeights({ ...weights, total: v })} />
-      <WeightSlider label="Combined win totals" value={weights.wins} onChange={(v) => setWeights({ ...weights, wins: v })} />
-      <WeightSlider label="Conference bonus" value={weights.conferenceBonus} onChange={(v) => setWeights({ ...weights, conferenceBonus: v })} />
-      <button className="menu-btn" onClick={() => setWeights(DEFAULT_WEIGHTS)}>
+      <p style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "0.75rem" }}>
+        Each dial runs worst to best for that thing, not "how much it matters" — +100% weights fully toward the best
+        possible on that dimension, -100% fully toward the worst, 0% has no effect either way. A -50% and a +50%
+        pull equally hard, just toward opposite ends. They don't need to add up to anything in particular; each dial
+        just adds its own pull in its own direction.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem 1.5rem", alignItems: "flex-start" }}>
+        <WeightSlider
+          label="Team quality"
+          leftLabel="Worst teams"
+          rightLabel="Best teams"
+          value={weights.quality}
+          onChange={(v) => setWeights({ ...weights, quality: v })}
+        />
+        <WeightSlider
+          label="Spread closeness"
+          leftLabel="Blowouts"
+          rightLabel="Close games"
+          value={weights.spread}
+          onChange={(v) => setWeights({ ...weights, spread: v })}
+        />
+        <WeightSlider
+          label="Proj. total"
+          leftLabel="Low-scoring"
+          rightLabel="High-scoring"
+          value={weights.total}
+          onChange={(v) => setWeights({ ...weights, total: v })}
+        />
+        <WeightSlider
+          label="Combined win totals"
+          leftLabel="Fewest wins"
+          rightLabel="Most wins"
+          value={weights.wins}
+          onChange={(v) => setWeights({ ...weights, wins: v })}
+        />
+        <WeightSlider
+          label="Conference bonus"
+          leftLabel="Non-conference"
+          rightLabel="Conference"
+          value={weights.conferenceBonus}
+          onChange={(v) => setWeights({ ...weights, conferenceBonus: v })}
+        />
+      </div>
+      <button className="menu-btn" onClick={() => setWeights(DEFAULT_WEIGHTS)} style={{ marginTop: "0.75rem" }}>
         Reset to default
       </button>
-      {shareSum > 0 && Math.abs(shareSum - 1) > 0.001 && (
-        <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
-          (Quality/Spread/Total/Win Totals are normalized against each other regardless of whether they sum to
-          100% — the conference bonus is a flat add-on, not part of that split.)
-        </span>
-      )}
     </div>
   );
 }

@@ -52,11 +52,11 @@ export interface WatchabilityWeights {
 }
 
 export const DEFAULT_WEIGHTS: WatchabilityWeights = {
-  quality: 0.4,
-  total: 0.15,
-  spread: 0.3,
-  wins: 0.15,
-  conferenceBonus: 0.5,
+  quality: 1.0,
+  total: 0.05,
+  spread: 0.35,
+  wins: 0.5,
+  conferenceBonus: 0,
 };
 
 /**
@@ -71,11 +71,28 @@ export const DEFAULT_WEIGHTS: WatchabilityWeights = {
  * produces a game that's literally the best on every axis at once, so
  * without this rescale the ceiling quietly sits well below 10 even for
  * a genuinely great slate.
+ *
+ * Each weight is bidirectional, -1 to +1: +1 means "fully toward the
+ * best" for that component (e.g. the two best teams possible), -1
+ * means "fully toward the worst" (the two worst teams possible) —
+ * flipping the sign inverts which end of that component's own scale
+ * counts as good, rather than just turning its influence up or down.
+ * 0 means the component has no effect either way. Magnitude (not raw
+ * signed value) is what's used for the actual blend weighting, so a
+ * -50% and a +50% carry equal influence, just pointed at opposite ends.
  */
 export function scoreWatchability(games: WatchabilityInput[], weights: WatchabilityWeights = DEFAULT_WEIGHTS): WatchabilityScore[] {
   const ratings = games.map((g) => g.avgRating).filter((v): v is number => v != null).map((v) => -v); // negate: YC convention is lower = stronger
   const totals = games.map((g) => g.myTotal).filter((v): v is number => v != null);
   const winsAll = games.map((g) => g.combinedProjWins).filter((v): v is number => v != null);
+
+  // Applies a bidirectional weight to a 0-1 "good direction" value: a
+  // negative weight inverts which end counts as good (1 - value)
+  // instead of just scaling the value down, and contributes using the
+  // weight's magnitude so +/-50% carry equal influence.
+  function directional(value: number, weight: number): { value: number; magnitude: number } {
+    return { value: weight >= 0 ? value : 1 - value, magnitude: Math.abs(weight) };
+  }
 
   const raw = games.map((g) => {
     const qualityPctile = g.avgRating != null ? percentileRank(-g.avgRating, ratings) : null;
@@ -83,15 +100,20 @@ export function scoreWatchability(games: WatchabilityInput[], weights: Watchabil
     const spreadCloseness = g.mySpread != null ? spreadClosenessScore(g.mySpread) : null;
     const winsPctile = g.combinedProjWins != null ? percentileRank(g.combinedProjWins, winsAll) : null;
 
-    const parts: { pctile: number; weight: number }[] = [];
-    if (qualityPctile != null) parts.push({ pctile: qualityPctile, weight: weights.quality });
-    if (totalPctile != null) parts.push({ pctile: totalPctile, weight: weights.total });
-    if (spreadCloseness != null) parts.push({ pctile: spreadCloseness, weight: weights.spread });
-    if (winsPctile != null) parts.push({ pctile: winsPctile, weight: weights.wins });
+    const parts: { value: number; magnitude: number }[] = [];
+    if (qualityPctile != null) parts.push(directional(qualityPctile, weights.quality));
+    if (totalPctile != null) parts.push(directional(totalPctile, weights.total));
+    if (spreadCloseness != null) parts.push(directional(spreadCloseness, weights.spread));
+    if (winsPctile != null) parts.push(directional(winsPctile, weights.wins));
 
-    const totalWeight = parts.reduce((s, p) => s + p.weight, 0);
-    const blended = totalWeight > 0 ? parts.reduce((s, p) => s + p.pctile * p.weight, 0) / totalWeight : 0.5;
+    const totalMagnitude = parts.reduce((s, p) => s + p.magnitude, 0);
+    const blended = totalMagnitude > 0 ? parts.reduce((s, p) => s + p.value * p.magnitude, 0) / totalMagnitude : 0.5;
 
+    // Conference bonus is a flat add/subtract on conference games only
+    // (there's no "opposite end" of a yes/no flag the way there is for
+    // a continuous stat) — a negative weight penalizes conference games
+    // instead of rewarding them; non-conference games are unaffected
+    // either way.
     const conferenceAdd = g.isConferenceGame ? weights.conferenceBonus : 0;
 
     return { g, qualityPctile, totalPctile, spreadCloseness, winsPctile, rawScore: blended + conferenceAdd };
