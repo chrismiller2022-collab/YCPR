@@ -78,6 +78,30 @@ function GameRow({ g, rank }: { g: WatchabilityScore; rank: number }) {
   );
 }
 
+function MobileGameRow({ g, rank }: { g: WatchabilityScore; rank: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.3rem 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "#ffc857", width: 16, textAlign: "right", flexShrink: 0 }}>{rank}</div>
+      <div style={{ fontSize: "0.82rem", fontWeight: 800, width: 30, textAlign: "center", background: "rgba(255,200,87,0.15)", borderRadius: 4, flexShrink: 0 }}>
+        {g.score.toFixed(1)}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: "0.35rem", flexWrap: "wrap" }}>
+        <span style={{ color: "#fff", fontWeight: 700, fontSize: "0.78rem" }}>
+          <TeamLogo team={g.awayTeam} size={14} /> {g.awayTeam} @ <TeamLogo team={g.homeTeam} size={14} /> {g.homeTeam}
+        </span>
+        {g.isConferenceGame && (
+          <span style={{ fontSize: "0.56rem", padding: "0.05rem 0.25rem", borderRadius: 3, background: "rgba(143,211,154,0.18)", color: "#8fd39a" }}>
+            CONF
+          </span>
+        )}
+        <span style={{ color: "#a3a8c3", fontSize: "0.66rem" }}>
+          {fmtSpread(g.mySpread)} · {g.myTotal != null ? g.myTotal.toFixed(1) : "–"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function WeightSlider({
   label,
   leftLabel,
@@ -255,6 +279,7 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
   const [saturdaysOnly, setSaturdaysOnly] = useState(false);
   const [weights, setWeights] = useState<WatchabilityWeights>(DEFAULT_WEIGHTS);
   const exportRef = useRef<HTMLDivElement>(null);
+  const mobileExportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (week == null && weekNumbers.length > 0) setWeek(weekNumbers[0]);
@@ -301,7 +326,7 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
         </button>
         <span style={{ marginLeft: "auto" }}>
           <ExportPngButton
-            targetRef={exportRef}
+            targetRef={mobileExportRef}
             filename={() => `watchability-${scope === "season" ? "season" : `week${week}`}`}
             tweetText="Watchability rankings for this week's college football slate 🏈"
           />
@@ -374,6 +399,42 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
             )}
           </>
         )}
+      </div>
+
+      {/* Hidden mobile-width export layout -- captured by html2canvas via
+          mobileExportRef instead of the on-screen version, which is a
+          wide 3-column grid for time-window view and doesn't include the
+          page header. Chris exports from desktop but shares to mobile,
+          so this is sized for a phone screen and includes its own title
+          regardless of what's on screen, with tighter spacing than the
+          interactive rows (less dead space between team names and the
+          spread/total line). */}
+      <div style={{ position: "absolute", top: -99999, left: -99999 }}>
+        <div ref={mobileExportRef} style={{ background: "#1a1b2e", padding: "1.25rem 1rem", width: 480 }}>
+          <div style={{ color: "#fff", fontSize: "1.1rem", fontWeight: 800, marginBottom: "0.2rem" }}>Watchability Chart</div>
+          <div style={{ color: "#a3a8c3", fontSize: "0.72rem", marginBottom: "1rem" }}>
+            {scope === "season" ? "Full Season" : `Week ${week}`}
+            {scope === "weekly" && topView === "windows" ? " \u00b7 By Time Window" : ""}
+            {scope === "weekly" && saturdaysOnly ? " \u00b7 Saturdays only" : ""}
+          </div>
+
+          {scope === "season"
+            ? seasonScored.slice(0, 10).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
+            : topView === "overall"
+            ? weeklyScored.slice(0, 10).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
+            : (["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
+                <div key={w} style={{ marginBottom: "0.75rem" }}>
+                  <div style={{ color: "#ffc857", fontSize: "0.72rem", fontWeight: 700, marginBottom: "0.3rem" }}>{WINDOW_LABELS[w]}</div>
+                  {byWindow[w]
+                    .slice()
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 10)
+                    .map((g, i) => (
+                      <MobileGameRow key={g.gameId} g={g} rank={i + 1} />
+                    ))}
+                </div>
+              ))}
+        </div>
       </div>
     </div>
   );
