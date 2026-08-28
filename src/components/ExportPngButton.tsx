@@ -26,6 +26,7 @@ export default function ExportPngButton({
   showTweet = true,
   tweetText = "",
   rowModes,
+  tighten,
 }: {
   targetRef: RefObject<HTMLElement>;
   filename: string | (() => string);
@@ -37,6 +38,9 @@ export default function ExportPngButton({
   // When provided, replaces the Top-N prompt with buttons for each mode,
   // still only shown once the row count clears TOP_N_PROMPT_THRESHOLD.
   rowModes?: ExportRowMode[];
+  // Tightens every cell's padding for capture only — for wide multi-
+  // column tables that read sparse once shrunk down for mobile viewing.
+  tighten?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
@@ -47,7 +51,7 @@ export default function ExportPngButton({
     setBusy(true);
     try {
       const name = typeof filename === "function" ? filename() : filename;
-      await exportNodeAsPng(targetRef.current, name, topN, rowMatch);
+      await exportNodeAsPng(targetRef.current, name, topN, rowMatch, tighten);
     } catch (err) {
       console.error("PNG export failed", err);
     } finally {

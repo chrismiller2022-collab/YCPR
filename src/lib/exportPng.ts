@@ -61,6 +61,26 @@ export function filterRowsByMatch(root: HTMLElement, match: (row: HTMLTableRowEl
   return () => restores.forEach((restore) => restore());
 }
 
+// Wide data tables (many columns, each with its normal interactive
+// padding) read fine on desktop but look sparse once exported and
+// viewed shrunk down on a phone — there's no good way to reflow a
+// 13-column table into a narrow single column the way a ranked list
+// can be (see Watchability's dedicated mobile export layout), so this
+// instead tightens padding across every cell for the capture only,
+// closing up the dead space between columns without changing the
+// on-page interactive table at all.
+function tightenPadding(root: HTMLElement): () => void {
+  const cells = Array.from(root.querySelectorAll<HTMLElement>("th, td"));
+  const restores = cells.map((cell) => {
+    const prevPadding = cell.style.padding;
+    cell.style.padding = "0.25rem 0.4rem";
+    return () => {
+      cell.style.padding = prevPadding;
+    };
+  });
+  return () => restores.forEach((restore) => restore());
+}
+
 // Wrapper containers use `.table-scroll` (max-height + overflow: auto) so
 // long tables scroll on-page instead of stretching the layout. html-to-image
 // only captures what's actually rendered, so a scrolled container would
@@ -132,10 +152,12 @@ async function withCapturePrep<T>(
   node: HTMLElement,
   capture: () => Promise<T>,
   topN?: number,
-  rowMatch?: (row: HTMLTableRowElement) => boolean
+  rowMatch?: (row: HTMLTableRowElement) => boolean,
+  tighten?: boolean
 ): Promise<T> {
   const restoreTopN = topN != null ? limitToTopN(node, topN) : () => {};
   const restoreMatch = rowMatch != null ? filterRowsByMatch(node, rowMatch) : () => {};
+  const restoreTighten = tighten ? tightenPadding(node) : () => {};
   const restoreScroll = expandScrollAreas(node);
   const removeBranding = appendBrandingFooter(node);
   try {
@@ -143,6 +165,7 @@ async function withCapturePrep<T>(
   } finally {
     removeBranding();
     restoreScroll();
+    restoreTighten();
     restoreMatch();
     restoreTopN();
   }
@@ -157,9 +180,18 @@ const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: should
  * @param rowMatch - For non-ranking pages: hides any row this predicate
  * returns false for (e.g. only completed games), instead of a
  * positional Top N cut.
+ * @param tighten - Reduces every cell's padding for capture only —
+ * for wide multi-column tables that read sparse once shrunk down for
+ * mobile viewing.
  */
-export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean) {
-  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN, rowMatch);
+export async function exportNodeAsPng(
+  node: HTMLElement,
+  filename: string,
+  topN?: number,
+  rowMatch?: (row: HTMLTableRowElement) => boolean,
+  tighten?: boolean
+) {
+  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN, rowMatch, tighten);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
@@ -168,9 +200,14 @@ export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?
   link.remove();
 }
 
-/** Same rasterization (branding + scroll-area expansion + optional Top N truncation or row-match filter) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
-export async function exportNodeAsPngBlob(node: HTMLElement, topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean): Promise<Blob> {
-  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN, rowMatch);
+/** Same rasterization (branding + scroll-area expansion + optional Top N truncation, row-match filter, or padding tighten) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
+export async function exportNodeAsPngBlob(
+  node: HTMLElement,
+  topN?: number,
+  rowMatch?: (row: HTMLTableRowElement) => boolean,
+  tighten?: boolean
+): Promise<Blob> {
+  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN, rowMatch, tighten);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }

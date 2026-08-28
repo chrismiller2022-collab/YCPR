@@ -514,6 +514,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         <ExportPngButton
           targetRef={exportRef}
           filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")}
+          tighten
           rowModes={[
             { label: "Full Card", match: () => true },
             { label: "Completed Games Only", match: (row) => row.dataset.completed === "true" },
