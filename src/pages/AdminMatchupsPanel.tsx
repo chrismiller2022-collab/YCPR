@@ -4,6 +4,7 @@ import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
+import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
 
 // Deliberately dense — this table is for actually placing bets, not for
@@ -27,6 +28,44 @@ const CP: CSSProperties = {
 function pseudoSpreadColor(winPct: number | null): string | undefined {
   if (winPct == null) return undefined;
   return spreadColor((0.5 - winPct) * 30);
+}
+
+// Builds the modal's per-bet-type defaults from whatever's already
+// computed for this game — "keep the price shown" per Chris means the
+// default should be the real market number already visible in that
+// row (vegas spread/vegas moneyline/vegas total), not my own
+// projection, since a placed bet is against the market's price.
+function buildPlaceBetContext(computed: MatchupComputed): PlaceBetContext {
+  const { game, betTeam, projCoverTeam, vegasAwaySpread, vegasMoneyline, totalResult, line } = computed;
+  const { vegasHomeMoneyline } = homeSideMlValues(computed);
+  const mlSide = mlBetSideFor(computed);
+
+  function getDefaultsForType(betType: "spread" | "moneyline" | "total") {
+    if (betType === "spread") {
+      const side = betTeam ?? projCoverTeam;
+      const team = side === "home" ? game.home_team : game.away_team;
+      const lineValue = side === "home" ? (vegasAwaySpread != null ? -vegasAwaySpread : null) : vegasAwaySpread;
+      return { side: team, lineValue, price: -110 };
+    }
+    if (betType === "moneyline") {
+      const team = mlSide === "home" ? game.home_team : game.away_team;
+      const price = mlSide === "home" ? vegasHomeMoneyline : vegasMoneyline;
+      return { side: team, lineValue: null, price: price ?? -110 };
+    }
+    // total
+    const side = totalResult === "Under" ? "under" : "over";
+    return { side, lineValue: line?.over_under ?? null, price: -110 };
+  }
+
+  return {
+    gameId: game.id,
+    season: game.season,
+    week: game.week,
+    awayTeam: game.away_team,
+    homeTeam: game.home_team,
+    initialBetType: "spread",
+    getDefaultsForType,
+  };
 }
 
 export function pctLabel(w: number, l: number) {
@@ -280,12 +319,14 @@ function MatchupsRow({
   mode,
   selected,
   onToggleSelect,
+  onPlaceBet,
   mlEvThreshold = 0,
 }: {
   computed: MatchupComputed;
   mode: string;
   selected?: boolean;
   onToggleSelect?: (computed: MatchupComputed) => void;
+  onPlaceBet?: (computed: MatchupComputed) => void;
   mlEvThreshold?: number;
 }) {
   const {
@@ -337,7 +378,15 @@ function MatchupsRow({
       <tr>
         <td style={{ ...CP, textAlign: "center" }}>
           {betTeam || projCoverTeam ? (
-            <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(computed)} />
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={() => {
+                const wasSelected = !!selected;
+                onToggleSelect?.(computed);
+                if (!wasSelected) onPlaceBet?.(computed);
+              }}
+            />
           ) : (
             "–"
           )}
@@ -662,6 +711,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  const [betModalContext, setBetModalContext] = useState<PlaceBetContext | null>(null);
+  const [betSavedMessage, setBetSavedMessage] = useState<string | null>(null);
+
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
@@ -956,6 +1008,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       mode={mode}
                       selected={selectedGameIds.has(c.game.id)}
                       onToggleSelect={toggleSelect}
+                      onPlaceBet={(computed) => setBetModalContext(buildPlaceBetContext(computed))}
                       mlEvThreshold={mlEvThreshold}
                     />
                   ))}
@@ -997,6 +1050,22 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         Projected Total isn't modeled yet (that's the future Game Totals tile) — only
         Vegas Total and, for completed games, the actual Over/Under result are shown.
       </div>
+      {betModalContext && (
+        <PlaceBetModal
+          context={betModalContext}
+          onClose={() => setBetModalContext(null)}
+          onSaved={() => {
+            setBetModalContext(null);
+            setBetSavedMessage("Bet logged.");
+            setTimeout(() => setBetSavedMessage(null), 3000);
+          }}
+        />
+      )}
+      {betSavedMessage && (
+        <div style={{ position: "fixed", bottom: 20, right: 20, background: "#8fd39a", color: "#1a1b2e", padding: "0.6rem 1rem", borderRadius: 8, fontWeight: 700, zIndex: 1001 }}>
+          {betSavedMessage}
+        </div>
+      )}
     </div>
   );
 }

@@ -108,6 +108,31 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    if (action === "savePlacedBet") {
+      const { bet } = req.body;
+      if (!bet || !bet.gameId || !bet.book || !bet.betType || !bet.side || bet.price == null) {
+        res.status(400).json({ error: "Missing required bet fields" });
+        return;
+      }
+
+      const { error } = await supabaseAdmin.from("placed_bets").insert({
+        game_id: bet.gameId,
+        season: bet.season,
+        week: bet.week,
+        away_team: bet.awayTeam,
+        home_team: bet.homeTeam,
+        book: bet.book,
+        bet_type: bet.betType,
+        side: bet.side,
+        line_value: bet.lineValue ?? null,
+        price: bet.price,
+      });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "Save failed" });
