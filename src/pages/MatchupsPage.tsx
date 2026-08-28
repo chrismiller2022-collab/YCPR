@@ -19,6 +19,19 @@ function teamLabel(computed: MatchupComputed, side: "away" | "home" | "push" | n
   return side === "away" ? computed.game.away_team : computed.game.home_team;
 }
 
+// Green check / red X once the game's actually final — a pick made
+// before kickoff either matched the real cover result or it didn't, no
+// ambiguity once actCoverTeam is known. Nothing shown for an unplayed
+// game (actCoverTeam is still null) or a tier with no pick at all.
+function CorrectnessIcon({ predicted, actual }: { predicted: "away" | "home" | "push" | null; actual: "away" | "home" | "push" | null }) {
+  if (predicted == null || actual == null) return null;
+  if (actual === "push") return <span style={{ color: "var(--chalk-dim)", marginLeft: "0.35rem" }}>–</span>;
+  const correct = predicted === actual;
+  return (
+    <span style={{ color: correct ? "#8fd39a" : "#c45c52", marginLeft: "0.35rem", fontWeight: 700 }}>{correct ? "✓" : "✗"}</span>
+  );
+}
+
 function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; onNavigateTeam: any }) {
   const {
     game,
@@ -26,6 +39,7 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
     homeTeam,
     projAwaySpread,
     vegasAwaySpread,
+    line,
     amountOff,
     projCoverTeam,
     filteredBetTeam,
@@ -34,12 +48,16 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
     actCoverTeam,
   } = computed;
   if (!awayTeam || !homeTeam || projAwaySpread == null) return null;
+  const openingAwaySpread = line?.opening_spread != null ? -line.opening_spread : null;
 
   return (
-    <tr>
+    <tr data-completed={String(computed.game.completed)}>
       <td className="game-date-cell">{dateLabel(game)}</td>
       <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
       <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
+      <td className="matchups-vegas-cell" style={openingAwaySpread != null ? { color: spreadColor(openingAwaySpread) } : undefined}>
+        {openingAwaySpread != null ? `${openingAwaySpread > 0 ? "+" : ""}${openingAwaySpread.toFixed(1)}` : "–"}
+      </td>
       <td className="matchups-vegas-cell" style={vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : undefined}>
         {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
       </td>
@@ -50,9 +68,18 @@ function SpreadsRow({ computed, onNavigateTeam }: { computed: MatchupComputed; o
       <td className="matchups-empty-cell">{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
       <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
       <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
-      <td className="matchups-winner-cell">{teamLabel(computed, projCoverTeam)}</td>
-      <td className="matchups-winner-cell">{teamLabel(computed, filteredBetTeam)}</td>
-      <td className="matchups-winner-cell">{teamLabel(computed, weightedFilteredBetTeam)}</td>
+      <td className="matchups-winner-cell">
+        {teamLabel(computed, projCoverTeam)}
+        <CorrectnessIcon predicted={projCoverTeam} actual={actCoverTeam} />
+      </td>
+      <td className="matchups-winner-cell">
+        {teamLabel(computed, filteredBetTeam)}
+        {filteredBetTeam != null && <CorrectnessIcon predicted={filteredBetTeam} actual={actCoverTeam} />}
+      </td>
+      <td className="matchups-winner-cell">
+        {teamLabel(computed, weightedFilteredBetTeam)}
+        {weightedFilteredBetTeam != null && <CorrectnessIcon predicted={weightedFilteredBetTeam} actual={actCoverTeam} />}
+      </td>
       <td className="matchups-winner-cell" style={wtfTeam ? { color: "#c45c52", fontWeight: 700 } : undefined}>
         {wtfTeam ? `${teamLabel(computed, wtfTeam)} ⚠️` : "–"}
       </td>
@@ -76,7 +103,7 @@ function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed;
       : "–";
 
   return (
-    <tr>
+    <tr data-completed={String(computed.game.completed)}>
       <td className="game-date-cell">{dateLabel(game)}</td>
       <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
       <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
@@ -115,7 +142,7 @@ function TotalsRow({ computed, projTotalByGame, onNavigateTeam }: { computed: Ma
       : null;
 
   return (
-    <tr>
+    <tr data-completed={String(computed.game.completed)}>
       <td className="game-date-cell">{dateLabel(game)}</td>
       <TeamCell team={awayTeam} onNavigateTeam={onNavigateTeam} />
       <TeamCell team={homeTeam} onNavigateTeam={onNavigateTeam} />
@@ -145,6 +172,7 @@ function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: 
               <th className="th">Date</th>
               <th className="th">Away (PR)</th>
               <th className="th">Home (PR)</th>
+              <th className="th th-right">Opening Line</th>
               <th className="th th-right">Vegas Line</th>
               <th className="th th-right">Projected Spread</th>
               <th className="th th-right">Amount Off</th>
@@ -376,6 +404,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
   const [hideNoLine, setHideNoLine] = useState(true);
+  const [completedOnly, setCompletedOnly] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -430,10 +459,11 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
     [filteredGames, ratingsByWeek]
   );
 
-  const visibleRows = useMemo(
-    () => (hideNoLine ? computedRows.filter((c) => c.vegasAwaySpread != null) : computedRows),
-    [computedRows, hideNoLine]
-  );
+  const visibleRows = useMemo(() => {
+    let rows = hideNoLine ? computedRows.filter((c) => c.vegasAwaySpread != null) : computedRows;
+    if (completedOnly) rows = rows.filter((c) => c.actCoverTeam != null);
+    return rows;
+  }, [computedRows, hideNoLine, completedOnly]);
 
   const groupedByWeek = useMemo(() => {
     if (!isAll) return null;
@@ -477,7 +507,19 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
           <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
           Hide games with no Vegas line
         </label>
-        <ExportPngButton targetRef={exportRef} filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")} />
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={completedOnly} onChange={(e) => setCompletedOnly(e.target.checked)} />
+          Completed games only
+        </label>
+        <ExportPngButton
+          targetRef={exportRef}
+          filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")}
+          rowModes={[
+            { label: "Full Card", match: () => true },
+            { label: "Completed Games Only", match: (row) => row.dataset.completed === "true" },
+            { label: "Future Games", match: (row) => row.dataset.completed === "false" },
+          ]}
+        />
       </div>
 
       <div className="mode-toggle" data-export-exclude="true">

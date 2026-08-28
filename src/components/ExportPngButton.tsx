@@ -10,6 +10,11 @@ import TweetButton from "./TweetButton";
 // meaningfully different, more shareable export," not just "has rows."
 const TOP_N_PROMPT_THRESHOLD = 25;
 
+export interface ExportRowMode {
+  label: string;
+  match: (row: HTMLTableRowElement) => boolean;
+}
+
 // Renders Export PNG next to a Tweet button everywhere this component is
 // already used, site-wide — a single change here instead of touching
 // every page that has an export button. Pass showTweet={false} to opt a
@@ -20,23 +25,29 @@ export default function ExportPngButton({
   label = "Export PNG",
   showTweet = true,
   tweetText = "",
+  rowModes,
 }: {
   targetRef: RefObject<HTMLElement>;
   filename: string | (() => string);
   label?: string;
   showTweet?: boolean;
   tweetText?: string | (() => string);
+  // For non-ranking pages where "Top 25" doesn't mean anything — e.g.
+  // Weekly Matchups' Full Card / Completed Games Only / Future Games.
+  // When provided, replaces the Top-N prompt with buttons for each mode,
+  // still only shown once the row count clears TOP_N_PROMPT_THRESHOLD.
+  rowModes?: ExportRowMode[];
 }) {
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
 
-  const runExport = async (topN?: number) => {
+  const runExport = async (topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean) => {
     if (!targetRef.current || busy) return;
     setChoosing(false);
     setBusy(true);
     try {
       const name = typeof filename === "function" ? filename() : filename;
-      await exportNodeAsPng(targetRef.current, name, topN);
+      await exportNodeAsPng(targetRef.current, name, topN, rowMatch);
     } catch (err) {
       console.error("PNG export failed", err);
     } finally {
@@ -58,12 +69,22 @@ export default function ExportPngButton({
     return (
       <span style={{ display: "inline-flex", gap: "0.4rem", alignItems: "center" }} data-export-exclude="true">
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Export:</span>
-        <button type="button" className="export-png-btn" onClick={() => void runExport()} disabled={busy}>
-          Full List
-        </button>
-        <button type="button" className="export-png-btn" onClick={() => void runExport(25)} disabled={busy}>
-          Top 25
-        </button>
+        {rowModes ? (
+          rowModes.map((mode) => (
+            <button key={mode.label} type="button" className="export-png-btn" onClick={() => void runExport(undefined, mode.match)} disabled={busy}>
+              {mode.label}
+            </button>
+          ))
+        ) : (
+          <>
+            <button type="button" className="export-png-btn" onClick={() => void runExport()} disabled={busy}>
+              Full List
+            </button>
+            <button type="button" className="export-png-btn" onClick={() => void runExport(25)} disabled={busy}>
+              Top 25
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="export-png-btn"

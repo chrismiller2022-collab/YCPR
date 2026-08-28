@@ -34,6 +34,8 @@ export interface BettingLineRow {
   home_moneyline: number | null;
   away_moneyline: number | null;
   pulled_at: string;
+  opening_spread: number | null;
+  opening_over_under: number | null;
 }
 
 export interface GameWithLines extends GameRow {
@@ -47,7 +49,7 @@ export interface GameWithLines extends GameRow {
 // exactly, field for field.
 const GAME_COLUMNS =
   "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, away_team, away_classification, away_conference, away_points, away_postgame_win_probability";
-const LINE_COLUMNS = "id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at";
+const LINE_COLUMNS = "id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under";
 
 /**
  * Games for a given season, each with its betting lines attached. Pass a

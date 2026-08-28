@@ -41,6 +41,26 @@ function limitToTopN(root: HTMLElement, n: number): () => void {
   return () => restores.forEach((restore) => restore());
 }
 
+// For pages that aren't a ranking (Weekly Matchups, etc.) — "Top 25"
+// doesn't mean anything there, but showing/hiding rows by some other
+// real property (e.g. completed vs. not-yet-played) does. Rows are
+// matched by a predicate instead of position; anything not matching is
+// hidden for capture only, same restore pattern as limitToTopN.
+export function filterRowsByMatch(root: HTMLElement, match: (row: HTMLTableRowElement) => boolean): () => void {
+  const rows = Array.from(root.querySelectorAll<HTMLTableRowElement>("table tbody > tr"));
+  const restores: (() => void)[] = [];
+  for (const row of rows) {
+    if (!match(row)) {
+      const prevDisplay = row.style.display;
+      row.style.display = "none";
+      restores.push(() => {
+        row.style.display = prevDisplay;
+      });
+    }
+  }
+  return () => restores.forEach((restore) => restore());
+}
+
 // Wrapper containers use `.table-scroll` (max-height + overflow: auto) so
 // long tables scroll on-page instead of stretching the layout. html-to-image
 // only captures what's actually rendered, so a scrolled container would
@@ -108,8 +128,14 @@ function appendBrandingFooter(root: HTMLElement): () => void {
   return () => bar.remove();
 }
 
-async function withCapturePrep<T>(node: HTMLElement, capture: () => Promise<T>, topN?: number): Promise<T> {
+async function withCapturePrep<T>(
+  node: HTMLElement,
+  capture: () => Promise<T>,
+  topN?: number,
+  rowMatch?: (row: HTMLTableRowElement) => boolean
+): Promise<T> {
   const restoreTopN = topN != null ? limitToTopN(node, topN) : () => {};
+  const restoreMatch = rowMatch != null ? filterRowsByMatch(node, rowMatch) : () => {};
   const restoreScroll = expandScrollAreas(node);
   const removeBranding = appendBrandingFooter(node);
   try {
@@ -117,6 +143,7 @@ async function withCapturePrep<T>(node: HTMLElement, capture: () => Promise<T>, 
   } finally {
     removeBranding();
     restoreScroll();
+    restoreMatch();
     restoreTopN();
   }
 }
@@ -127,9 +154,12 @@ const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: should
  * @param topN - When set (e.g. from the Top 25 choice), body rows past
  * the Nth in every table are hidden for capture only, then restored.
  * Omit for the Full List export.
+ * @param rowMatch - For non-ranking pages: hides any row this predicate
+ * returns false for (e.g. only completed games), instead of a
+ * positional Top N cut.
  */
-export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?: number) {
-  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN);
+export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean) {
+  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN, rowMatch);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
@@ -138,9 +168,9 @@ export async function exportNodeAsPng(node: HTMLElement, filename: string, topN?
   link.remove();
 }
 
-/** Same rasterization (branding + scroll-area expansion + optional Top N truncation) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
-export async function exportNodeAsPngBlob(node: HTMLElement, topN?: number): Promise<Blob> {
-  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN);
+/** Same rasterization (branding + scroll-area expansion + optional Top N truncation or row-match filter) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
+export async function exportNodeAsPngBlob(node: HTMLElement, topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean): Promise<Blob> {
+  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN, rowMatch);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }

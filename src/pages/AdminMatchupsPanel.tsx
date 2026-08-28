@@ -362,6 +362,15 @@ function MatchupsRow({
             game.home_team
           )}
         </td>
+        <td
+          style={{
+            ...CP,
+            textAlign: "right",
+            ...(line?.opening_spread != null ? { color: spreadColor(-line.opening_spread) } : {}),
+          }}
+        >
+          {line?.opening_spread != null ? `${-line.opening_spread > 0 ? "+" : ""}${(-line.opening_spread).toFixed(1)}` : "–"}
+        </td>
         <td style={{ ...CP, textAlign: "right", ...(vegasAwaySpread != null ? { color: spreadColor(vegasAwaySpread) } : {}) }}>
           {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
         </td>
@@ -521,6 +530,8 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
   }
   if (mode === "spreads") {
     switch (key) {
+      case "openingLine":
+        return c.line?.opening_spread != null ? -c.line.opening_spread : null;
       case "vegasLine":
         return c.vegasAwaySpread;
       case "projSpread":
@@ -880,6 +891,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
                       <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
+                      <SortHeader label="Opening Line" sortKey="openingLine" active={sortKey === "openingLine"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Projected Spread" sortKey="projSpread" active={sortKey === "projSpread"} dir={sortDir} onClick={handleSort} align="right" />
                       <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
