@@ -313,7 +313,12 @@ function bestTotal(row: OddsMatchRow, side: "over" | "under"): { book: string; v
 type CoreSortKey = "when" | "matchup";
 
 function useOddscreenSort<ExtraKey extends string>(extraVal: (r: OddsMatchRow, key: ExtraKey) => number) {
-  const [sortKey, setSortKey] = useState<CoreSortKey | ExtraKey>("when");
+  // Starts with no in-table sort active (not "when") so the order the
+  // page-level Sort control (bet priority, moneyline EV, etc.) already
+  // established survives into these tables untouched — clicking a
+  // column header here is a more specific request that then takes over,
+  // but until that happens this must not silently re-sort every render.
+  const [sortKey, setSortKey] = useState<CoreSortKey | ExtraKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   function handleSort(k: string) {
@@ -326,6 +331,7 @@ function useOddscreenSort<ExtraKey extends string>(extraVal: (r: OddsMatchRow, k
   }
 
   function sortRows(rows: OddsMatchRow[]): OddsMatchRow[] {
+    if (sortKey == null) return rows;
     const val = (r: OddsMatchRow): number | string => {
       if (sortKey === "when") return `${String(r.game.game.startDate ?? "")}`;
       if (sortKey === "matchup") return r.game.game.awayTeam;
@@ -345,11 +351,15 @@ function useOddscreenSort<ExtraKey extends string>(extraVal: (r: OddsMatchRow, k
 // ---------------------------------------------------------------------
 // Spread tab
 // ---------------------------------------------------------------------
-type SpreadKey = "bestAway" | "bestHome";
+type SpreadKey = "bestAway" | "bestHome" | "amountOff";
 
-function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
+function OddscreenSpread({ rows, betSignals }: { rows: OddsMatchRow[]; betSignals: Map<string, OddsBetSignal> }) {
   const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<SpreadKey>((r, key) =>
-    key === "bestAway" ? bestSpread(r, "away")?.value ?? -Infinity : bestSpread(r, "home")?.value ?? -Infinity
+    key === "bestAway"
+      ? bestSpread(r, "away")?.value ?? -Infinity
+      : key === "bestHome"
+      ? bestSpread(r, "home")?.value ?? -Infinity
+      : betSignals.get(r.game.game.id)?.spreadAmountOff ?? -Infinity
   );
   const sorted = sortRows(rows);
   const sh = (label: string, key: CoreSortKey | SpreadKey) => (
@@ -364,6 +374,7 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
             {sh("When", "when")}
             {sh("Matchup", "matchup")}
             <th style={TH}>My Line</th>
+            {sh("Amount Off", "amountOff")}
             {sh("Best Away", "bestAway")}
             {sh("Best Home", "bestHome")}
             {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
@@ -378,6 +389,7 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
             const my = myLineFor(r);
             const bestAway = bestSpread(r, "away");
             const bestHome = bestSpread(r, "home");
+            const amountOff = betSignals.get(r.game.game.id)?.spreadAmountOff ?? null;
             return (
               <tr key={r.game.game.id}>
                 <td style={TD}>
@@ -389,6 +401,7 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
                 <td style={{ ...TD, padding: 0 }}>
                   <SplitCell top={fmtPoint(my.myAwaySpread)} bottom={fmtPoint(my.myHomeSpread)} />
                 </td>
+                <td style={TD}>{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
                 <td style={{ ...TD, padding: 0 }}>
                   <SplitCell
                     bg={bestAway ? BEST_LINE_BG : undefined}
@@ -453,11 +466,15 @@ function OddscreenSpread({ rows }: { rows: OddsMatchRow[] }) {
 // ---------------------------------------------------------------------
 // Moneyline tab (includes Kalshi)
 // ---------------------------------------------------------------------
-type MlKey = "bestAway" | "bestHome";
+type MlKey = "bestAway" | "bestHome" | "ev";
 
-function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
+function OddscreenMoneyline({ rows, betSignals }: { rows: OddsMatchRow[]; betSignals: Map<string, OddsBetSignal> }) {
   const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<MlKey>((r, key) =>
-    key === "bestAway" ? bestMoneyline(r, "away")?.value ?? -Infinity : bestMoneyline(r, "home")?.value ?? -Infinity
+    key === "bestAway"
+      ? bestMoneyline(r, "away")?.value ?? -Infinity
+      : key === "bestHome"
+      ? bestMoneyline(r, "home")?.value ?? -Infinity
+      : betSignals.get(r.game.game.id)?.mlEv ?? -Infinity
   );
   const sorted = sortRows(rows);
   const sh = (label: string, key: CoreSortKey | MlKey) => (
@@ -472,6 +489,7 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
             {sh("When", "when")}
             {sh("Matchup", "matchup")}
             <th style={TH}>My Line</th>
+            {sh("EV", "ev")}
             {sh("Best Away", "bestAway")}
             {sh("Best Home", "bestHome")}
             {BOOK_ORDER.map((b) => (
@@ -486,6 +504,7 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
             const my = myLineFor(r);
             const bestAway = bestMoneyline(r, "away");
             const bestHome = bestMoneyline(r, "home");
+            const ev = betSignals.get(r.game.game.id)?.mlEv ?? null;
             return (
               <tr key={r.game.game.id}>
                 <td style={TD}>
@@ -496,6 +515,9 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
                 </td>
                 <td style={{ ...TD, padding: 0 }}>
                   <SplitCell top={fmtPrice(my.myAwayMl)} bottom={fmtPrice(my.myHomeMl)} />
+                </td>
+                <td style={{ ...TD, color: ev != null && ev > 0 ? "#8fd39a" : undefined }}>
+                  {ev != null ? `${ev > 0 ? "+" : ""}${ev.toFixed(1)}%` : "–"}
                 </td>
                 <td style={{ ...TD, padding: 0 }}>
                   <SplitCell
@@ -553,11 +575,15 @@ function OddscreenMoneyline({ rows }: { rows: OddsMatchRow[] }) {
 // ---------------------------------------------------------------------
 // Total tab
 // ---------------------------------------------------------------------
-type TotalKey = "bestOver" | "bestUnder";
+type TotalKey = "bestOver" | "bestUnder" | "amountOff";
 
-function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
+function OddscreenTotal({ rows, betSignals }: { rows: OddsMatchRow[]; betSignals: Map<string, OddsBetSignal> }) {
   const { sortKey, sortDir, handleSort, sortRows } = useOddscreenSort<TotalKey>((r, key) =>
-    key === "bestOver" ? bestTotal(r, "over")?.value ?? Infinity : bestTotal(r, "under")?.value ?? -Infinity
+    key === "bestOver"
+      ? bestTotal(r, "over")?.value ?? Infinity
+      : key === "bestUnder"
+      ? bestTotal(r, "under")?.value ?? -Infinity
+      : betSignals.get(r.game.game.id)?.totalAmountOff ?? -Infinity
   );
   const sorted = sortRows(rows);
   const sh = (label: string, key: CoreSortKey | TotalKey) => (
@@ -572,6 +598,7 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
             {sh("When", "when")}
             {sh("Matchup", "matchup")}
             <th style={TH}>My Total</th>
+            {sh("Amount Off", "amountOff")}
             {sh("Best Over", "bestOver")}
             {sh("Best Under", "bestUnder")}
             {BOOK_ORDER.filter((b) => b !== "kalshi").map((b) => (
@@ -586,6 +613,7 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
             const my = myLineFor(r);
             const bestOver = bestTotal(r, "over");
             const bestUnder = bestTotal(r, "under");
+            const amountOff = betSignals.get(r.game.game.id)?.totalAmountOff ?? null;
             return (
               <tr key={r.game.game.id}>
                 <td style={TD}>
@@ -595,6 +623,7 @@ function OddscreenTotal({ rows }: { rows: OddsMatchRow[] }) {
                   <TeamStack away={r.game.game.awayTeam} home={r.game.game.homeTeam} />
                 </td>
                 <td style={TD}>{my.myTotal != null ? my.myTotal.toFixed(1) : "–"}</td>
+                <td style={TD}>{amountOff != null ? amountOff.toFixed(1) : "–"}</td>
                 <td style={{ ...TD, background: bestOver ? BEST_LINE_BG : undefined }}>
                   {bestOver ? (
                     <BookLink bookKey={bestOver.book}>
@@ -1463,9 +1492,9 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
               Total
             </button>
           </div>
-          {oddscreenTab === "spread" && <OddscreenSpread rows={sortedRows(filteredMatched)} />}
-          {oddscreenTab === "moneyline" && <OddscreenMoneyline rows={sortedRows(filteredMatched)} />}
-          {oddscreenTab === "total" && <OddscreenTotal rows={sortedRows(filteredMatched)} />}
+          {oddscreenTab === "spread" && <OddscreenSpread rows={sortedRows(filteredMatched)} betSignals={betSignals} />}
+          {oddscreenTab === "moneyline" && <OddscreenMoneyline rows={sortedRows(filteredMatched)} betSignals={betSignals} />}
+          {oddscreenTab === "total" && <OddscreenTotal rows={sortedRows(filteredMatched)} betSignals={betSignals} />}
         </div>
       )}
     </div>
