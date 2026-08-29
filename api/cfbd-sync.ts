@@ -186,27 +186,46 @@ export default async function handler(req: any, res: any) {
     const trackedGames = (cfbdGames ?? []).filter(isTrackedGame);
     const trackedGameIds = new Set(trackedGames.map((g: any) => String(g.id)));
 
-    const gameRows = trackedGames.map((g: any) => ({
-      id: String(g.id),
-      season: g.season,
-      week: g.week,
-      season_type: g.seasonType ?? stype,
-      start_date: g.startDate ?? null,
-      neutral_site: !!g.neutralSite,
-      conference_game: !!g.conferenceGame,
-      completed: !!g.completed,
-      home_team: g.homeTeam,
-      home_classification: g.homeClassification ?? null,
-      home_conference: g.homeConference ?? null,
-      home_points: g.homePoints ?? null,
-      home_postgame_win_probability: g.homePostgameWinProbability ?? null,
-      away_team: g.awayTeam,
-      away_classification: g.awayClassification ?? null,
-      away_conference: g.awayConference ?? null,
-      away_points: g.awayPoints ?? null,
-      away_postgame_win_probability: g.awayPostgameWinProbability ?? null,
-      updated_at: new Date().toISOString(),
-    }));
+    // TV/radio/streaming outlet per game — best-effort merge by game id;
+    // a game with no media entry yet (announced late) just has null
+    // tv_outlet/media_type until the next sync.
+    const cfbdMedia = await cfbdFetch(`/games/media?year=${year}${weekParam}&seasonType=${stype}`).catch(() => []);
+    const mediaByGameId = new Map<string, { outlet: string | null; mediaType: string | null }>();
+    for (const m of cfbdMedia ?? []) {
+      // Prefer a "tv" entry over radio/web/etc if a game has more than
+      // one outlet listed; otherwise take whatever's first.
+      const existing = mediaByGameId.get(String(m.id));
+      if (!existing || (m.mediaType === "tv" && existing.mediaType !== "tv")) {
+        mediaByGameId.set(String(m.id), { outlet: m.outlet ?? null, mediaType: m.mediaType ?? null });
+      }
+    }
+
+    const gameRows = trackedGames.map((g: any) => {
+      const media = mediaByGameId.get(String(g.id));
+      return {
+        id: String(g.id),
+        season: g.season,
+        week: g.week,
+        season_type: g.seasonType ?? stype,
+        start_date: g.startDate ?? null,
+        neutral_site: !!g.neutralSite,
+        conference_game: !!g.conferenceGame,
+        completed: !!g.completed,
+        home_team: g.homeTeam,
+        home_classification: g.homeClassification ?? null,
+        home_conference: g.homeConference ?? null,
+        home_points: g.homePoints ?? null,
+        home_postgame_win_probability: g.homePostgameWinProbability ?? null,
+        away_team: g.awayTeam,
+        away_classification: g.awayClassification ?? null,
+        away_conference: g.awayConference ?? null,
+        away_points: g.awayPoints ?? null,
+        away_postgame_win_probability: g.awayPostgameWinProbability ?? null,
+        tv_outlet: media?.outlet ?? null,
+        media_type: media?.mediaType ?? null,
+        updated_at: new Date().toISOString(),
+      };
+    });
 
     let gamesUpserted = 0;
     if (gameRows.length > 0) {

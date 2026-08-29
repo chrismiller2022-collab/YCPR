@@ -21,6 +21,8 @@ export interface GameRow {
   away_conference: string | null;
   away_points: number | null;
   away_postgame_win_probability: number | null;
+  tv_outlet: string | null;
+  media_type: string | null;
 }
 
 export interface BettingLineRow {
@@ -48,7 +50,7 @@ export interface GameWithLines extends GameRow {
 // multiplied by every one of those. Matches GameRow/BettingLineRow above
 // exactly, field for field.
 const GAME_COLUMNS =
-  "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, away_team, away_classification, away_conference, away_points, away_postgame_win_probability";
+  "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, away_team, away_classification, away_conference, away_points, away_postgame_win_probability, tv_outlet, media_type";
 const LINE_COLUMNS = "id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under";
 
 /**
