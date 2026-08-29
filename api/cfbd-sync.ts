@@ -7,10 +7,19 @@ import { createClient } from "@supabase/supabase-js";
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const CFBD_API_KEY = process.env.CFBD_API_KEY;
+// Separate from CFBD_API_KEY on purpose — CFBD's own docs are explicit
+// that the Model Pick'em prediction token is a different credential
+// from the main data-API key and the two "cannot be used
+// interchangeably." This token also expires monthly (obtained from
+// predictions.collegefootballdata.com/api/auth/token while logged in),
+// so it'll periodically need updating in Vercel's env vars — there's no
+// way to auto-refresh it from here.
+const CFBD_PREDICTIONS_TOKEN = process.env.CFBD_PREDICTIONS_TOKEN;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const CFBD_BASE = "https://api.collegefootballdata.com";
+const PREDICTIONS_BASE = "https://predictionsapi.collegefootballdata.com/api";
 
 const TRACKED_CLASSIFICATIONS = new Set(["fbs", "fcs"]);
 
@@ -18,6 +27,86 @@ function isTrackedGame(g: any): boolean {
   const home = String(g.homeClassification ?? "").toLowerCase();
   const away = String(g.awayClassification ?? "").toLowerCase();
   return TRACKED_CLASSIFICATIONS.has(home) || TRACKED_CLASSIFICATIONS.has(away);
+}
+
+interface PredictionsPick {
+  id: number;
+  homeTeam: string;
+  awayTeam: string;
+}
+
+const DEFAULT_HFA = 2.4;
+
+// Auto-fills and submits a prediction for every game CFBD's Model
+// Pick'em contest currently has open, using this site's own live power
+// ratings — same formula/sign convention as CfbdPickemPanel.tsx's
+// manual paste tool (negative = home favored), just without the
+// copy/paste round trip. Re-derives hfaFor()'s tiny lookup inline
+// rather than importing src/lib/odds.ts — every other api/*.ts file in
+// this repo is self-contained (Vercel bundles this directory in
+// isolation from the Vite client build), so this follows the same
+// convention instead of introducing a cross-directory import.
+async function syncPredictions(res: any) {
+  const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+
+  const [picksRes] = await Promise.all([fetch(`${PREDICTIONS_BASE}/picks`, { headers: { authorization: `Bearer ${CFBD_PREDICTIONS_TOKEN}` } })]);
+
+  if (!picksRes.ok) {
+    const text = await picksRes.text().catch(() => "");
+    throw new Error(`CFBD predictions API request failed (${picksRes.status}): ${text || picksRes.statusText}`);
+  }
+  const picks: PredictionsPick[] = await picksRes.json();
+
+  // "latest" isn't a real week label in weekly_team_stats — resolve the
+  // actual most-recent week first, same as the rest of the site does.
+  const { data: weeks } = await supabaseAdmin
+    .from("weekly_team_stats")
+    .select("week, week_number")
+    .order("week_number", { ascending: false })
+    .limit(1);
+  const latestWeek = weeks?.[0]?.week;
+  if (!latestWeek) throw new Error("No weekly_team_stats rows found to resolve the latest week");
+
+  const { data: ratingRows, error: ratingsError } = await supabaseAdmin
+    .from("weekly_team_stats")
+    .select("team, rating, hfa")
+    .eq("week", latestWeek);
+  if (ratingsError) throw ratingsError;
+
+  const ratingByTeam = new Map<string, { rating: number; hfa: number | null }>();
+  for (const r of ratingRows ?? []) ratingByTeam.set(r.team, { rating: r.rating, hfa: r.hfa });
+
+  let submitted = 0;
+  const unmatched: string[] = [];
+  const failures: string[] = [];
+
+  for (const pick of picks) {
+    const home = ratingByTeam.get(pick.homeTeam);
+    const away = ratingByTeam.get(pick.awayTeam);
+    if (!home || !away) {
+      if (!home) unmatched.push(pick.homeTeam);
+      if (!away) unmatched.push(pick.awayTeam);
+      continue;
+    }
+    const hfa = home.hfa ?? DEFAULT_HFA;
+    const predicted = Math.round((home.rating - away.rating - hfa) * 100) / 100;
+
+    const submitRes = await fetch(`${PREDICTIONS_BASE}/picks`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${CFBD_PREDICTIONS_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ gameId: pick.id, pick: predicted }),
+    });
+    if (submitRes.ok) submitted++;
+    else failures.push(`${pick.awayTeam} @ ${pick.homeTeam}`);
+  }
+
+  res.status(200).json({
+    ok: true,
+    totalGames: picks.length,
+    submitted,
+    unmatchedTeams: Array.from(new Set(unmatched)),
+    failedSubmits: failures,
+  });
 }
 
 async function cfbdFetch(path: string) {
@@ -44,12 +133,31 @@ export default async function handler(req: any, res: any) {
     res.status(500).json({ error: "ADMIN_PASSWORD is not configured on the server" });
     return;
   }
-  if (!CFBD_API_KEY) {
-    res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
-    return;
-  }
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     res.status(500).json({ error: "Supabase server env vars are not configured" });
+    return;
+  }
+
+  if (req.body?.mode === "predictions") {
+    const { password } = req.body ?? {};
+    if (password !== ADMIN_PASSWORD) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_PREDICTIONS_TOKEN) {
+      res.status(500).json({ error: "CFBD_PREDICTIONS_TOKEN is not configured on the server" });
+      return;
+    }
+    try {
+      await syncPredictions(res);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Predictions sync failed" });
+    }
+    return;
+  }
+
+  if (!CFBD_API_KEY) {
+    res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
     return;
   }
 

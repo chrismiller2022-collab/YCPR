@@ -33,6 +33,34 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
   const [copied, setCopied] = useState(false);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  async function handleSyncNow() {
+    const password = sessionStorage.getItem("admin_password") ?? "";
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/cfbd-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, mode: "predictions" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+      let msg = `Submitted ${data.submitted} of ${data.totalGames} games.`;
+      if (data.unmatchedTeams?.length > 0) msg += ` No rating found for: ${data.unmatchedTeams.join(", ")}.`;
+      if (data.failedSubmits?.length > 0) msg += ` Failed to submit: ${data.failedSubmits.join(", ")}.`;
+      setSyncResult(msg);
+    } catch (err: any) {
+      setSyncError(err.message ?? "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   function fillPredictions() {
     setCopied(false);
     const rows = parseCsv(input);
@@ -55,7 +83,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         const homeRating = liveByTeam[r.home]?.rating ?? homeTeam.rating;
         const awayRating = liveByTeam[r.away]?.rating ?? awayTeam.rating;
         const margin = homeRating - awayRating - hfaFor(r.home, liveByTeam);
-        predicted = String(Math.round(margin));
+        predicted = margin.toFixed(2);
       } else {
         if (!homeTeam) missing.add(r.home);
         if (!awayTeam) missing.add(r.away);
@@ -96,6 +124,22 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         (home loses by that many). Copy the result back into the pool's site. Nothing here
         is saved; it's a straight paste-in / paste-out tool.
       </p>
+
+      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.85rem 1rem", margin: "1rem 0" }}>
+        <div style={{ fontWeight: 700, marginBottom: "0.3rem" }}>Sync directly via CFBD's API</div>
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", marginTop: 0 }}>
+          Pulls every game CFBD currently has open for picks, computes the same prediction as
+          above for each, and submits them straight to the contest — no weekly copy/paste
+          needed. Requires CFBD_PREDICTIONS_TOKEN to be set in Vercel (a separate credential
+          from the main CFBD_API_KEY, obtained from predictions.collegefootballdata.com/api/auth/token
+          while logged in — it expires monthly, so it'll need refreshing there periodically).
+        </p>
+        <button onClick={handleSyncNow} disabled={syncing}>
+          {syncing ? "Syncing…" : "Sync my picks now"}
+        </button>
+        {syncResult && <p style={{ color: "#8fd39a", fontSize: "0.82rem" }}>{syncResult}</p>}
+        {syncError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{syncError}</p>}
+      </div>
 
       <label style={{ display: "block", margin: "1rem 0 0.25rem", fontWeight: 600 }}>Paste CSV</label>
       <textarea
