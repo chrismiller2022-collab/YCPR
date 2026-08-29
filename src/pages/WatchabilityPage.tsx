@@ -16,6 +16,7 @@ import {
   type WatchabilityWeights,
   type KickoffWindow,
 } from "../lib/watchability";
+import TvGuidePanel from "./TvGuidePanel";
 
 const WINDOW_LABELS: Record<KickoffWindow, string> = {
   early: "Early Slate",
@@ -272,6 +273,7 @@ type WeeklyOrSeason = "weekly" | "season";
 
 export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
   const season = new Date().getFullYear();
+  const [pageTab, setPageTab] = useState<"watchability" | "tvguide">("watchability");
   const { inputs, weekNumbers, loading } = useWatchabilityInputs(season);
   const [scope, setScope] = useState<WeeklyOrSeason>("weekly");
   const [week, setWeek] = useState<number | null>(null);
@@ -317,6 +319,19 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
         </p>
       </div>
 
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+        <button className={`mode-btn ${pageTab === "watchability" ? "mode-btn-active" : ""}`} onClick={() => setPageTab("watchability")}>
+          Watchability
+        </button>
+        <button className={`mode-btn ${pageTab === "tvguide" ? "mode-btn-active" : ""}`} onClick={() => setPageTab("tvguide")}>
+          TV Guide
+        </button>
+      </div>
+
+      {pageTab === "tvguide" ? (
+        <TvGuidePanel />
+      ) : (
+        <>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }} data-export-exclude="true">
         <button className={`mode-btn ${scope === "weekly" ? "mode-btn-active" : ""}`} onClick={() => setScope("weekly")}>
           Weekly View
@@ -436,6 +451,8 @@ export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
               ))}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
