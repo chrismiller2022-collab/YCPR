@@ -30,7 +30,17 @@ export default function RankedTeamsTableGraphic({
       >
         {title}
       </div>
-      <table className="home-table">
+      {/* Inline width:auto overrides the site-wide `table { width: 100% }`
+          rule in global.css. On the live page that rule is fine because
+          .table-wrap gives the table a fixed max-width to stretch against;
+          this graphic has no such ancestor (it's captured off-screen with
+          nothing to anchor a percentage width to), so without this override
+          the table stretched to the full off-screen canvas width with all
+          its content squeezed into one corner. Same fix the site itself
+          already uses elsewhere for this exact rule (see the
+          .preseason-ratings-page .table-scroll table override in
+          global.css). */}
+      <table className="home-table" style={{ width: "auto" }}>
         <thead>
           <tr>
             <th className="th">Team</th>
