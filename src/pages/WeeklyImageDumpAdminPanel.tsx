@@ -1,23 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
-import RankedTeamsTableGraphic from "../components/RankedTeamsTableGraphic";
+import type { CompactRatingRow } from "../lib/compactPowerRatings";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
-import { buildDivisionResolvedTeams, sortByChange, topG6, useWeekPairChange } from "../lib/imageDump";
+import { buildDivisionResolvedTeams, sortByChange, topG6, useWeekPairChange, type ImageDumpTeamRow } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
 
-// Phase 1 of the Weekly Post/Image Dump tool: Power Ratings only (5 images
-// — Full List, Top 25, Top 25 G6, Top 25 Gainers, Top 25 Losers), for both
-// FBS and FCS. This is the proof-of-pattern Chris asked to see reviewed
-// before the same shell gets replicated for Resume Ratings, SOS, Win
-// Totals, and the FCS/Matchups/Bracket/Watchability/TV Guide sections.
+// Phase 1 of the Weekly Post/Image Dump tool: Power Ratings only (9 images
+// — Full List, Top 25, Top 25 G6, Top 25 Gainers, Top 25 Losers for FBS;
+// Full List, Top 25, Top 25 Gainers, Top 25 Losers for FCS). This is the
+// proof-of-pattern Chris asked to see reviewed before the same shell gets
+// replicated for Resume Ratings, SOS, Win Totals, and the FCS/Matchups/
+// Bracket/Watchability/TV Guide sections.
+//
+// Every image is the same compact multi-column grid (CompactPowerRatingsGraphic):
+// Full List at its original ~34-rows-per-column density, Top 25/G6/Gainers/
+// Losers forced to 5 rows per column (5x5 for a 25-team list). An earlier
+// version tried to replicate the live site's wide sortable table for
+// Top 25/G6/Gainers/Losers (RankedTeamsTableGraphic) — that table relies on
+// page-width-relative CSS (a site-wide `table { width: 100% }` rule anchored
+// against .table-wrap's max-width) that has nothing to anchor against when
+// captured off-screen, and kept rendering wide and blank. The compact grid
+// has no such dependency, so it was switched to for all five list types.
 //
 // Every graphic renders off-screen (not display:none — html-to-image needs
 // real layout to capture), gets zipped client-side with JSZip, and the zip
 // downloads as a single file. Nothing here writes to Supabase; it only
 // reads whatever week(s) are already saved.
-
-type Div = "FBS" | "FCS";
 
 interface DumpTarget {
   key: string;
@@ -42,6 +51,14 @@ function OffscreenStage({ children }: { children: React.ReactNode }) {
 }
 
 const CAPTURE_WRAP_STYLE: React.CSSProperties = { display: "inline-block" };
+
+// Gainers/Losers show how much a team's rating MOVED, not its current
+// rating — so the compact grid's value column is repurposed to show
+// `change` instead of `rating` (same shape, different number and column
+// label — see valueLabel="CHANGE" below).
+function toChangeRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
+  return rows.map((r) => ({ rank: r.rank, team: r.team, conf: r.conf, rating: r.change ?? 0 }));
+}
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -105,6 +122,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsLosers = sortByChange(fcsRows, "losers", 25);
 
   const wLabel = weekLabel(currentWeek);
+  const fbsEyebrow = `${wLabel.toUpperCase()} · FBS`;
+  const fcsEyebrow = `${wLabel.toUpperCase()} · FCS`;
 
   const fbsFullRef = useRef<HTMLDivElement>(null);
   const fbsTop25Ref = useRef<HTMLDivElement>(null);
@@ -145,7 +164,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         // read the node's actual laid-out box directly, same fix TV Guide
         // uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
-        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize);
+        // includeBranding:false — these graphics bake in their own
+        // header/footer, so the generic branding bar exportPng.ts adds by
+        // default would double it up.
+        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, false);
         zip.file(`${target.key}.png`, blob);
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -173,9 +195,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
       <h2 style={{ marginTop: 0 }}>Weekly Image Dump</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 640 }}>
-        Phase 1: Power Ratings. Renders the same graphics as the public site (Full List as a
-        compact 4-column grid, Top 25/G6/Gainers/Losers as the real table), then bundles them
-        into one ZIP. Nothing here is saved — it only reads weeks you've already uploaded.
+        Phase 1: Power Ratings. Renders a compact spreadsheet-style grid for each list (Full List,
+        Top 25, Top 25 G6, Top 25 Gainers, Top 25 Losers), then bundles them into one ZIP. Nothing
+        here is saved — it only reads weeks you've already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -223,36 +245,77 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           <OffscreenStage>
             <div ref={fbsFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
-                title={`${wLabel} · FBS Power Ratings — Full List`}
-                sections={[{ title: "FBS", rows: fbsRows }]}
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Full List"
+                sections={[{ title: "", rows: fbsRows }]}
               />
             </div>
             <div ref={fbsTop25Ref} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25`} rows={fbsTop25} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Top 25"
+                sections={[{ title: "", rows: fbsTop25 }]}
+                targetRowsPerColumn={5}
+              />
             </div>
             <div ref={fbsG6Ref} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 G6`} rows={fbsTop25G6} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Top 25 Group of 6"
+                sections={[{ title: "", rows: fbsTop25G6 }]}
+                targetRowsPerColumn={5}
+              />
             </div>
             <div ref={fbsGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 Gainers`} rows={fbsGainers} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Top 25 Gainers"
+                sections={[{ title: "", rows: toChangeRows(fbsGainers) }]}
+                targetRowsPerColumn={5}
+                valueLabel="CHANGE"
+              />
             </div>
             <div ref={fbsLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 Losers`} rows={fbsLosers} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Top 25 Losers"
+                sections={[{ title: "", rows: toChangeRows(fbsLosers) }]}
+                targetRowsPerColumn={5}
+                valueLabel="CHANGE"
+              />
             </div>
             <div ref={fcsFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
-                title={`${wLabel} · FCS Power Ratings — Full List`}
-                sections={[{ title: "FCS", rows: fcsRows }]}
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Full List"
+                sections={[{ title: "", rows: fcsRows }]}
               />
             </div>
             <div ref={fcsTop25Ref} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25`} rows={fcsTop25} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Top 25"
+                sections={[{ title: "", rows: fcsTop25 }]}
+                targetRowsPerColumn={5}
+              />
             </div>
             <div ref={fcsGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25 Gainers`} rows={fcsGainers} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Top 25 Gainers"
+                sections={[{ title: "", rows: toChangeRows(fcsGainers) }]}
+                targetRowsPerColumn={5}
+                valueLabel="CHANGE"
+              />
             </div>
             <div ref={fcsLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25 Losers`} rows={fcsLosers} />
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Top 25 Losers"
+                sections={[{ title: "", rows: toChangeRows(fcsLosers) }]}
+                targetRowsPerColumn={5}
+                valueLabel="CHANGE"
+              />
             </div>
           </OffscreenStage>
         </>

@@ -153,13 +153,19 @@ async function withCapturePrep<T>(
   capture: () => Promise<T>,
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
-  tighten?: boolean
+  tighten?: boolean,
+  includeBranding = true
 ): Promise<T> {
   const restoreTopN = topN != null ? limitToTopN(node, topN) : () => {};
   const restoreMatch = rowMatch != null ? filterRowsByMatch(node, rowMatch) : () => {};
   const restoreTighten = tighten ? tightenPadding(node) : () => {};
   const restoreScroll = expandScrollAreas(node);
-  const removeBranding = appendBrandingFooter(node);
+  // Opt-out for graphics that already bake in their own header/footer
+  // branding (e.g. the Weekly Image Dump's compact grids) — appending this
+  // generic bar on top would double it up. Defaults to true so every
+  // existing call site (which never passed this) keeps behaving exactly
+  // as before.
+  const removeBranding = includeBranding ? appendBrandingFooter(node) : () => {};
   try {
     return await capture();
   } finally {
@@ -198,10 +204,11 @@ export async function exportNodeAsPng(
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
   tighten?: boolean,
-  explicitSize?: { width: number; height: number }
+  explicitSize?: { width: number; height: number },
+  includeBranding = true
 ) {
   const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
-  const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten);
+  const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten, includeBranding);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
@@ -216,10 +223,11 @@ export async function exportNodeAsPngBlob(
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
   tighten?: boolean,
-  explicitSize?: { width: number; height: number }
+  explicitSize?: { width: number; height: number },
+  includeBranding = true
 ): Promise<Blob> {
   const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
-  const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten);
+  const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten, includeBranding);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }
