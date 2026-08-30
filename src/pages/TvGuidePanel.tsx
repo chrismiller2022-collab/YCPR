@@ -4,7 +4,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
-import { scoreWatchability, isSaturdayET, DEFAULT_WEIGHTS, type WatchabilityInput } from "../lib/watchability";
+import { scoreWatchability, DEFAULT_WEIGHTS, type WatchabilityInput } from "../lib/watchability";
 
 // Order matters — channels render in this order, top to bottom, and a
 // channel with zero games in the current week/filter is skipped
@@ -84,7 +84,6 @@ export default function TvGuidePanel() {
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [week, setWeek] = useState<number | null>(null);
-  const [saturdaysOnly, setSaturdaysOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,10 +117,8 @@ export default function TvGuidePanel() {
   }, [totalsRows]);
 
   const weekGames = useMemo(() => {
-    let list = games.filter((g) => g.week === week && g.tv_outlet && g.start_date);
-    if (saturdaysOnly) list = list.filter((g) => isSaturdayET(g.start_date));
-    return list;
-  }, [games, week, saturdaysOnly]);
+    return games.filter((g) => g.week === week && g.tv_outlet && g.start_date);
+  }, [games, week]);
 
   // Default watchability, normalized against exactly this week's (or
   // this week+Saturdays-only) games — not whatever's been customized on
@@ -191,14 +188,6 @@ export default function TvGuidePanel() {
 
   return (
     <div>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        Every game with a known TV/streaming outlet, laid out like a program guide — channel rows in priority order
-        (skipping any with no games this week), kickoff time across the top. Every game is drawn as a fixed 3.5-hour
-        block regardless of actual runtime, since that's what the guide format needs, not a real end time. Spread,
-        total, and Watchability use the site's own default weights, normalized against just this week's slate — not
-        whatever's been customized on the main Watchability tab.
-      </p>
-
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" }}>
         <select value={week ?? ""} onChange={(e) => setWeek(parseInt(e.target.value, 10))}>
           {weekNumbers.map((w) => (
@@ -207,10 +196,6 @@ export default function TvGuidePanel() {
             </option>
           ))}
         </select>
-        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input type="checkbox" checked={saturdaysOnly} onChange={(e) => setSaturdaysOnly(e.target.checked)} />
-          Saturdays only
-        </label>
       </div>
 
       {loading ? (
