@@ -7,6 +7,7 @@ import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
 import { buildSlateRow, filterSlateRowsByDay, type SlateDayFilter } from "../lib/matchupSlate";
+import { isMidweekET, isSaturdayET } from "../lib/watchability";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
 function dateLabel(g: GameWithLines) {
@@ -469,6 +470,20 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
     return rows;
   }, [computedRows, hideNoLine, completedOnly]);
 
+  // The Full Week/Midweek/Saturday toggle originally only scoped the
+  // hidden PNG export target below (slateRows/filteredSlateRows) — the
+  // on-page table and betting stats kept showing every game regardless
+  // of which tab was selected, which looked like the toggle was doing
+  // nothing. Applying the same day split here (single-week view only,
+  // same reasoning as the export: a season-long "All Weeks" table
+  // doesn't have one clean midweek/Saturday split) makes what's on
+  // screen match what's selected.
+  const displayRows = useMemo(() => {
+    if (isAll || slateFilter === "all") return visibleRows;
+    const isDay = slateFilter === "saturday" ? isSaturdayET : isMidweekET;
+    return visibleRows.filter((c) => isDay(c.game.start_date));
+  }, [isAll, visibleRows, slateFilter]);
+
   // Mobile-friendly slate graphic — single-week view only (the "All
   // Weeks" view spans the whole season, where a midweek/Saturday split
   // per Chris's request doesn't map onto one shareable image the way it
@@ -559,7 +574,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
               key={f.key}
               className={`mode-btn ${slateFilter === f.key ? "mode-btn-active" : ""}`}
               onClick={() => setSlateFilter(f.key)}
-              title="Which games the exported slate graphic includes"
+              title="Filters the table below and the exported slate graphic"
             >
               {f.label}
             </button>
@@ -590,10 +605,14 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
             <div className="empty matchups-empty">No games scheduled for {subLabel} yet.</div>
           )}
 
-          {!loading && !isAll && visibleRows.length > 0 && (
+          {!loading && !isAll && visibleRows.length > 0 && displayRows.length === 0 && (
+            <div className="empty matchups-empty">No {slateFilter === "saturday" ? "Saturday" : "midweek"} games for {subLabel}.</div>
+          )}
+
+          {!loading && !isAll && displayRows.length > 0 && (
             <>
-              <MatchupsTable rows={visibleRows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
-              <BettingStatsBlock rows={visibleRows} title={`${subLabel} Betting Stats`} />
+              <MatchupsTable rows={displayRows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
+              <BettingStatsBlock rows={displayRows} title={`${subLabel}${slateFilter === "all" ? "" : ` · ${slateFilter === "saturday" ? "Saturday" : "Midweek"}`} Betting Stats`} />
             </>
           )}
 
