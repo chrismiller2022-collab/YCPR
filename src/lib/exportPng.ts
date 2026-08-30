@@ -183,15 +183,25 @@ const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: should
  * @param tighten - Reduces every cell's padding for capture only —
  * for wide multi-column tables that read sparse once shrunk down for
  * mobile viewing.
+ * @param explicitSize - Forces the node's width/height before capture
+ * (html-to-image's `width`/`height` options). expandScrollAreas only
+ * un-clips vertical overflow (max-height), never horizontal — a node
+ * that's horizontally scrollable (overflowX: auto with content wider
+ * than the box) would otherwise get captured cropped to whatever's
+ * currently visible. Pass the node's own scrollWidth/scrollHeight
+ * (measured after any pre-capture DOM tweaks, e.g. hiding a row) to
+ * capture the full unscrolled content instead.
  */
 export async function exportNodeAsPng(
   node: HTMLElement,
   filename: string,
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
-  tighten?: boolean
+  tighten?: boolean,
+  explicitSize?: { width: number; height: number }
 ) {
-  const dataUrl = await withCapturePrep(node, () => toPng(node, CAPTURE_OPTS), topN, rowMatch, tighten);
+  const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
+  const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
