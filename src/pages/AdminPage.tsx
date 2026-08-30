@@ -8,6 +8,7 @@ import GameTotalsAdminPanel from "./GameTotalsAdminPanel";
 import PredictionsAdminPanel from "./PredictionsAdminPanel";
 import LineMovementAdminPanel from "./LineMovementAdminPanel";
 import OddsDashboardAdminPanel from "./OddsDashboardAdminPanel";
+import WeeklyImageDumpAdminPanel from "./WeeklyImageDumpAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
@@ -237,6 +238,7 @@ type AdminView =
   | "predictions"
   | "linemovement"
   | "odds"
+  | "imagedump"
   | "ratingsystems"
   | "ratingmatchups"
   | "sos"
@@ -513,6 +515,10 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "linemovement", label: "Line Movement" },
       { key: "odds", label: "Odds" },
     ],
+  },
+  {
+    label: "Content",
+    items: [{ key: "imagedump", label: "Weekly Image Dump" }],
   },
   {
     label: "Public tools",
@@ -878,6 +884,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "predictions" && <PredictionsAdminPanel onBack={() => setView("home")} />}
           {view === "linemovement" && <LineMovementAdminPanel onBack={() => setView("home")} />}
           {view === "odds" && <OddsDashboardAdminPanel onBack={() => setView("home")} />}
+          {view === "imagedump" && <WeeklyImageDumpAdminPanel onBack={() => setView("home")} />}
         </div>
       </div>
     </div>
