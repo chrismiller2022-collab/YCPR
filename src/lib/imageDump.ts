@@ -5,6 +5,7 @@ import { TEAMS } from "../data/teams";
 import { TEAM_WIN_TOTALS, buildRankMap } from "./ranks";
 import { bucketFor } from "./conferenceBuckets";
 import { fetchWeeklyStats, type WeeklyTeamStats } from "./api/weeklyStats";
+import type { CompactRatingRow } from "./compactPowerRatings";
 
 // ---------------------------------------------------------------------
 // Shared data layer for the Weekly Image Dump admin tool (Admin > Weekly
@@ -109,26 +110,68 @@ export function buildDivisionResolvedTeams(
     .sort((a, b) => a.rank - b.rank);
 }
 
-/** Top N by rating change — ascending (most negative change) = Top Gainers, since a
- * lower rating is better in this app's convention; descending = Top Losers.
- * Mirrors reportData.ts's topGainersAndLosers sort direction exactly. */
-export function sortByChange(
-  rows: ImageDumpTeamRow[],
-  direction: "gainers" | "losers",
-  limit = 25
-): ImageDumpTeamRow[] {
-  const withChange = rows.filter((r) => r.change != null);
-  const sorted = [...withChange].sort((a, b) =>
-    direction === "gainers" ? (a.change as number) - (b.change as number) : (b.change as number) - (a.change as number)
-  );
-  return sorted.slice(0, limit);
-}
-
 /** Top N G6 teams, in FBS-rank order — filtering the division-scoped rows
  * to Group of 6 teams only, same idea as filtering the live table's
  * conference dropdown to "Group of 6" and reading off the top of the list. */
-export function topG6(rows: ImageDumpTeamRow[], limit = 25): ImageDumpTeamRow[] {
+export function topG6(rows: ImageDumpTeamRow[], limit = 30): ImageDumpTeamRow[] {
   return rows.filter((r) => r.bucket === "G6").slice(0, limit);
+}
+
+/** Plain rank/team/rating rows for the Full List / Top N compact grid,
+ * straight off the power rating (division-scoped rank, already computed
+ * by buildDivisionResolvedTeams). */
+export function toRatingRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
+  return rows.map((r) => ({ rank: r.rank, team: r.team, conf: r.conf, rating: r.rating }));
+}
+
+/** Same idea, but ranked/valued by Resume Rating instead of Power Rating —
+ * teams without a resume rating yet (no live upload, no preseason value)
+ * are dropped rather than shown with a blank rank. */
+export function toResumeRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
+  return rows
+    .filter((r): r is ImageDumpTeamRow & { resumeRating: number; resumeRank: number } => r.resumeRating != null && r.resumeRank != null)
+    .map((r) => ({ rank: r.resumeRank, team: r.team, conf: r.conf, rating: r.resumeRating }))
+    .sort((a, b) => a.rank - b.rank);
+}
+
+/** Same idea, ranked/valued by Strength of Schedule. */
+export function toSosRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
+  return rows
+    .filter((r): r is ImageDumpTeamRow & { sos: number; sosRank: number } => r.sos != null && r.sosRank != null)
+    .map((r) => ({ rank: r.sosRank, team: r.team, conf: r.conf, rating: r.sos }))
+    .sort((a, b) => a.rank - b.rank);
+}
+
+/**
+ * Top N Gainers/Losers for any metric, generalized so it works for Power
+ * Rating, Resume Rating, and SOS alike — the tricky part is that "Gainers"
+ * always means "got better," but which arithmetic direction that is
+ * depends on the metric's own sign convention. Power Rating and SOS are
+ * lower-is-better here (a negative change is an improvement, matching
+ * their rank columns); Resume Rating is higher-is-better (a positive
+ * change is an improvement). Get `higherIsBetter` wrong for a metric and
+ * the "Gainers" list would silently show the teams that got worse.
+ *
+ * `rankSelector` picks which of the row's rank fields to display (e.g.
+ * `r => r.resumeRank` for a Resume Rating list) — the "#" column always
+ * shows the team's rank in that metric, not its overall power rank.
+ */
+export function metricGainersLosers(
+  rows: ImageDumpTeamRow[],
+  rankSelector: (row: ImageDumpTeamRow) => number | null,
+  changeByTeam: Record<string, { change: number | null }>,
+  direction: "gainers" | "losers",
+  higherIsBetter: boolean,
+  limit = 30
+): CompactRatingRow[] {
+  const withChange = rows
+    .map((r) => ({ team: r.team, conf: r.conf, rank: rankSelector(r), change: changeByTeam[r.team]?.change ?? null }))
+    .filter((r): r is { team: string; conf: string; rank: number; change: number } => r.rank != null && r.change != null);
+
+  const wantsPositiveFirst = higherIsBetter ? direction === "gainers" : direction === "losers";
+  const sorted = [...withChange].sort((a, b) => (wantsPositiveFirst ? b.change - a.change : a.change - b.change));
+
+  return sorted.slice(0, limit).map((r) => ({ rank: r.rank, team: r.team, conf: r.conf, rating: r.change }));
 }
 
 interface WeekPairChangeResult {
