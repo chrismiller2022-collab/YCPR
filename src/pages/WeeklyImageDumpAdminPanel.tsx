@@ -25,6 +25,14 @@ interface DumpTarget {
   node: () => HTMLElement | null;
 }
 
+// Rendered off-screen (never display:none — html-to-image needs real
+// layout to capture). Each captured node also gets display:"inline-block"
+// on its own ref'd wrapper (see the refs below) rather than relying on the
+// stage's own shrink-to-fit sizing — a position:fixed ancestor with only
+// `left` set resolves width via shrink-to-fit, which turned out to size
+// wildly wrong here (huge blank canvas, content pinned to one edge).
+// inline-block unambiguously hugs its child's own width no matter what the
+// ancestor chain does, which is the fix.
 function OffscreenStage({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1, pointerEvents: "none" }}>
@@ -32,6 +40,8 @@ function OffscreenStage({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+const CAPTURE_WRAP_STYLE: React.CSSProperties = { display: "inline-block" };
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -127,7 +137,15 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       for (const target of targets) {
         const node = target.node();
         if (!node) continue;
-        const blob = await exportNodeAsPngBlob(node);
+        // Forced explicitly rather than trusting the node's own
+        // getBoundingClientRect() — every capture here is rendered
+        // off-screen (position:fixed, far outside the viewport) for the
+        // batch, and that combination was measuring wildly wrong widths
+        // even with the inline-block wrapper fix. scrollWidth/scrollHeight
+        // read the node's actual laid-out box directly, same fix TV Guide
+        // uses for its horizontally-scrollable export.
+        const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
+        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize);
         zip.file(`${target.key}.png`, blob);
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -203,37 +221,37 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
 
           <OffscreenStage>
-            <div ref={fbsFullRef}>
+            <div ref={fbsFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
                 title={`${wLabel} · FBS Power Ratings — Full List`}
                 sections={[{ title: "FBS", rows: fbsRows }]}
               />
             </div>
-            <div ref={fbsTop25Ref}>
+            <div ref={fbsTop25Ref} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25`} rows={fbsTop25} />
             </div>
-            <div ref={fbsG6Ref}>
+            <div ref={fbsG6Ref} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 G6`} rows={fbsTop25G6} />
             </div>
-            <div ref={fbsGainersRef}>
+            <div ref={fbsGainersRef} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 Gainers`} rows={fbsGainers} />
             </div>
-            <div ref={fbsLosersRef}>
+            <div ref={fbsLosersRef} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FBS Power Ratings — Top 25 Losers`} rows={fbsLosers} />
             </div>
-            <div ref={fcsFullRef}>
+            <div ref={fcsFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
                 title={`${wLabel} · FCS Power Ratings — Full List`}
                 sections={[{ title: "FCS", rows: fcsRows }]}
               />
             </div>
-            <div ref={fcsTop25Ref}>
+            <div ref={fcsTop25Ref} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25`} rows={fcsTop25} />
             </div>
-            <div ref={fcsGainersRef}>
+            <div ref={fcsGainersRef} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25 Gainers`} rows={fcsGainers} />
             </div>
-            <div ref={fcsLosersRef}>
+            <div ref={fcsLosersRef} style={CAPTURE_WRAP_STYLE}>
               <RankedTeamsTableGraphic title={`${wLabel} · FCS Power Ratings — Top 25 Losers`} rows={fcsLosers} />
             </div>
           </OffscreenStage>

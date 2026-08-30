@@ -210,14 +210,16 @@ export async function exportNodeAsPng(
   link.remove();
 }
 
-/** Same rasterization (branding + scroll-area expansion + optional Top N truncation, row-match filter, or padding tighten) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button. */
+/** Same rasterization (branding + scroll-area expansion + optional Top N truncation, row-match filter, or padding tighten) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button and the Weekly Image Dump's batch ZIP. See exportNodeAsPng's explicitSize doc — same reasoning applies here (e.g. nodes rendered off-screen for batch capture, whose shrink-to-fit width can't be trusted). */
 export async function exportNodeAsPngBlob(
   node: HTMLElement,
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
-  tighten?: boolean
+  tighten?: boolean,
+  explicitSize?: { width: number; height: number }
 ): Promise<Blob> {
-  const blob = await withCapturePrep(node, () => toBlob(node, CAPTURE_OPTS), topN, rowMatch, tighten);
+  const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
+  const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }
