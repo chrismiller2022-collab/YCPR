@@ -162,3 +162,13 @@ export function isSaturdayET(iso: string | null): boolean {
   const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(new Date(iso));
   return weekday === "Sat";
 }
+
+// Tue/Wed/Thu/Fri — the "midweek" half of a Matchup Slate split (Saturday
+// is its own bucket via isSaturdayET above; Sun/Mon games, rare in the
+// regular season, fall into neither and only show up in the unsplit "Full
+// Week" view).
+export function isMidweekET(iso: string | null): boolean {
+  if (!iso) return false;
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(new Date(iso));
+  return weekday === "Tue" || weekday === "Wed" || weekday === "Thu" || weekday === "Fri";
+}

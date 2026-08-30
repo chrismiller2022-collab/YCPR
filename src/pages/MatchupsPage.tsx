@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ExportPngButton from "../components/ExportPngButton";
 import TeamCell from "../components/TeamCell";
+import MatchupSlateGraphic from "../components/MatchupSlateGraphic";
 import { spreadColor } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
+import { buildSlateRow, filterSlateRowsByDay, type SlateDayFilter } from "../lib/matchupSlate";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
 function dateLabel(g: GameWithLines) {
@@ -405,7 +407,9 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [mode, setMode] = useState("spreads");
   const [hideNoLine, setHideNoLine] = useState(true);
   const [completedOnly, setCompletedOnly] = useState(false);
+  const [slateFilter, setSlateFilter] = useState<SlateDayFilter>("all");
   const exportRef = useRef<HTMLDivElement>(null);
+  const slateGraphicRef = useRef<HTMLDivElement>(null);
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(false);
@@ -465,6 +469,19 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
     return rows;
   }, [computedRows, hideNoLine, completedOnly]);
 
+  // Mobile-friendly slate graphic — single-week view only (the "All
+  // Weeks" view spans the whole season, where a midweek/Saturday split
+  // per Chris's request doesn't map onto one shareable image the way it
+  // does for a single week's slate). Built off visibleRows so it honors
+  // the same search/matchup-type/hide-no-line/completed-only filters
+  // already applied to the on-page table.
+  const slateRows = useMemo(() => {
+    if (isAll) return [];
+    return visibleRows.map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null));
+  }, [isAll, visibleRows, projTotalByGame]);
+  const filteredSlateRows = useMemo(() => filterSlateRowsByDay(slateRows, slateFilter), [slateRows, slateFilter]);
+  const slateTitle = `${subLabel.toUpperCase()}${slateFilter === "midweek" ? " · MIDWEEK" : slateFilter === "saturday" ? " · SATURDAY" : ""}`;
+
   const groupedByWeek = useMemo(() => {
     if (!isAll) return null;
     const map = new Map<number, MatchupComputed[]>();
@@ -511,17 +528,44 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
           <input type="checkbox" checked={completedOnly} onChange={(e) => setCompletedOnly(e.target.checked)} />
           Completed games only
         </label>
-        <ExportPngButton
-          targetRef={exportRef}
-          filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")}
-          tighten
-          rowModes={[
-            { label: "Full Card", match: () => true },
-            { label: "Completed Games Only", match: (row) => row.dataset.completed === "true" },
-            { label: "Future Games", match: (row) => row.dataset.completed === "false" },
-          ]}
-        />
+        {isAll ? (
+          <ExportPngButton
+            targetRef={exportRef}
+            filename={`matchups-${subLabel}-${mode}`.toLowerCase().replace(/\s+/g, "-")}
+            tighten
+            rowModes={[
+              { label: "Full Card", match: () => true },
+              { label: "Completed Games Only", match: (row) => row.dataset.completed === "true" },
+              { label: "Future Games", match: (row) => row.dataset.completed === "false" },
+            ]}
+          />
+        ) : (
+          <ExportPngButton
+            targetRef={slateGraphicRef}
+            filename={() => `matchups-${subLabel}-slate${slateFilter === "all" ? "" : `-${slateFilter}`}`.toLowerCase().replace(/\s+/g, "-")}
+            label="Export Slate PNG"
+          />
+        )}
       </div>
+
+      {!isAll && (
+        <div className="mode-toggle" data-export-exclude="true">
+          {([
+            { key: "all", label: "Full Week" },
+            { key: "midweek", label: "Midweek (Tue–Fri)" },
+            { key: "saturday", label: "Saturday" },
+          ] as { key: SlateDayFilter; label: string }[]).map((f) => (
+            <button
+              key={f.key}
+              className={`mode-btn ${slateFilter === f.key ? "mode-btn-active" : ""}`}
+              onClick={() => setSlateFilter(f.key)}
+              title="Which games the exported slate graphic includes"
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mode-toggle" data-export-exclude="true">
         {MATCHUPS_MODES.map((m) => (
@@ -530,6 +574,12 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
           </button>
         ))}
       </div>
+
+      {!isAll && (
+        <div ref={slateGraphicRef} style={{ position: "fixed", top: 0, left: -99999, pointerEvents: "none" }} aria-hidden="true">
+          <MatchupSlateGraphic rows={filteredSlateRows} title={slateTitle} />
+        </div>
+      )}
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
 
