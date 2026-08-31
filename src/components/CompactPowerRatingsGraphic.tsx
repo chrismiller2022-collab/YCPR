@@ -42,18 +42,52 @@ const CELL: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-// Site convention: negative = better team (green), positive = worse (red)
-// — true for Power Rating and SOS, but Resume Rating runs the opposite
-// direction (a higher number is the better team). Rather than duplicate
-// the color/threshold logic, higherIsBetter just flips the sign before
-// applying the same thresholds, so "green" still means "good" for
-// whichever metric this grid is showing.
-function ratingColor(value: number, higherIsBetter: boolean) {
-  const v = higherIsBetter ? -value : value;
-  if (v < -10) return "#5aa869";
-  if (v < 0) return "#8fc79a";
-  if (v < 10) return "#e0a95f";
+// Site convention: negative = better team (green), positive = worse (red).
+// These absolute thresholds (±10) are calibrated for Power Rating and SOS,
+// which both run roughly -30..+30 and straddle zero — a natural fit for
+// fixed bands. Used only when higherIsBetter is false.
+function absoluteRatingColor(value: number) {
+  if (value < -10) return "#5aa869";
+  if (value < 0) return "#8fc79a";
+  if (value < 10) return "#e0a95f";
   return "#c45c52";
+}
+
+// Metrics where a higher number is better (Resume Rating, and later Win
+// Totals) don't share Power Rating's numeric range — Resume Rating runs
+// roughly 0..90, always positive, nothing like a ±10 band. A first attempt
+// just flipped the sign before applying the same ±10 thresholds, which
+// technically pointed the right direction but was still wrong: every
+// team's resume rating is well past 10 in magnitude, so the flipped
+// thresholds painted nearly every team green regardless of how good their
+// resume actually was. Coloring by rank percentile instead sidesteps the
+// whole "what's the right absolute threshold for this metric's scale"
+// problem — the best quarter of the list is always green, the worst
+// quarter always red, no matter what units or range the value is in.
+function rankPercentileColor(rank: number, totalRows: number) {
+  const pct = totalRows > 0 ? rank / totalRows : 0;
+  if (pct <= 0.25) return "#5aa869";
+  if (pct <= 0.5) return "#8fc79a";
+  if (pct <= 0.75) return "#e0a95f";
+  return "#c45c52";
+}
+
+function ratingColor(value: number, higherIsBetter: boolean, rank: number, totalRows: number, isChangeValue: boolean) {
+  if (isChangeValue) {
+    // Week-over-week deltas are naturally small and roughly zero-centered
+    // no matter which metric they're measuring (a team's rating rarely
+    // swings more than a handful of points in one week, whether that's
+    // Power Rating, Resume Rating, or SOS) — so the same ±10 bands used
+    // for Power Rating/SOS's raw values work fine here too. Only the sign
+    // needs to flip so "improved" always reads green, regardless of
+    // whether the underlying metric is higher-is-better or lower-is-better.
+    return absoluteRatingColor(higherIsBetter ? -value : value);
+  }
+  // Raw metric values: Power Rating/SOS's absolute thresholds only work
+  // because both run roughly -30..+30. A higher-is-better metric with a
+  // different scale (Resume Rating: roughly 0..90, always positive) needs
+  // percentile-based coloring instead — see rankPercentileColor's comment.
+  return higherIsBetter ? rankPercentileColor(rank, totalRows) : absoluteRatingColor(value);
 }
 
 function CompactSection({
@@ -112,7 +146,7 @@ function CompactSection({
                     <td style={{ ...CELL, textAlign: "left", color: "#fff", fontWeight: 600, padding: "2.5px 8px 2.5px 4px" }}>
                       {r.team}
                     </td>
-                    <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter), fontWeight: 700 }}>
+                    <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter, r.rank, rows.length, valueLabel === "CHANGE"), fontWeight: 700 }}>
                       {r.rating > 0 ? "+" : ""}
                       {r.rating.toFixed(1)}
                     </td>
