@@ -5,24 +5,25 @@ import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats 
 import {
   buildDivisionResolvedTeams,
   metricGainersLosers,
+  toLossesLeftRows,
   toRatingRows,
   toResumeRows,
   toSosRows,
+  toWinsLeftRows,
+  toWinTotalRows,
   topG6,
   useWeekPairChange,
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
 
-// Weekly Post/Image Dump tool. Currently covers Power Ratings (FBS + FCS)
-// and, new in this pass, Resume Ratings and SOS (both FBS-only, per
+// Weekly Post/Image Dump tool. Currently covers Power Ratings and Win
+// Totals (FBS + FCS), and Resume Ratings and SOS (both FBS-only, per
 // Chris's category list — Resume Ratings/SOS were never listed under FCS).
-// Still to come: Win Totals (FBS + FCS, needs a wins-left/losses-left
-// computation this tool doesn't have yet), FBS/FCS Playoff Brackets,
-// Matchups, Watchability Chart, and TV Guide — those need genuinely new
-// pieces (bracket rendering, the slate/watchability/TV Guide graphics
-// already built for other parts of the site) rather than being a
-// mechanical copy of this Power-Ratings-shaped pattern, so they're being
-// tackled as their own follow-up passes.
+// Still to come: FBS/FCS Playoff Brackets, Matchups, Watchability Chart,
+// and TV Guide — those need genuinely new pieces (bracket rendering, the
+// slate/watchability/TV Guide graphics already built for other parts of
+// the site) rather than being a mechanical copy of this Power-Ratings-
+// shaped pattern, so they're being tackled as their own follow-up passes.
 //
 // Every image is the same compact multi-column grid
 // (CompactPowerRatingsGraphic): Full List at its original ~34-rows-per-
@@ -172,6 +173,20 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     .slice(0, 25)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
 
+  // --- Win Totals (FBS + FCS) ---
+  // No Gainers/Losers here — Chris's category list only asked for Full
+  // List, Top 30, Wins Left, Losses Left (unlike PR/Resume/SOS, which all
+  // have a gainers/losers pair too).
+  const fbsWinTotalFull = toWinTotalRows(fbsRows);
+  const fbsWinTotalTop = fbsWinTotalFull.slice(0, TOP_N);
+  const fbsWinsLeft = toWinsLeftRows(fbsRows, TOP_N);
+  const fbsLossesLeft = toLossesLeftRows(fbsRows, TOP_N);
+
+  const fcsWinTotalFull = toWinTotalRows(fcsRows);
+  const fcsWinTotalTop = fcsWinTotalFull.slice(0, TOP_N);
+  const fcsWinsLeft = toWinsLeftRows(fcsRows, TOP_N);
+  const fcsLossesLeft = toLossesLeftRows(fcsRows, TOP_N);
+
   const wLabel = weekLabel(currentWeek);
   const fbsEyebrow = `${wLabel.toUpperCase()} · FBS`;
   const fcsEyebrow = `${wLabel.toUpperCase()} · FCS`;
@@ -195,6 +210,15 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const sosFullRef = useRef<HTMLDivElement>(null);
   const sosHardEasyRef = useRef<HTMLDivElement>(null);
   const sosChangeRef = useRef<HTMLDivElement>(null);
+  // Win Totals refs
+  const fbsWinTotalFullRef = useRef<HTMLDivElement>(null);
+  const fbsWinTotalTopRef = useRef<HTMLDivElement>(null);
+  const fbsWinsLeftRef = useRef<HTMLDivElement>(null);
+  const fbsLossesLeftRef = useRef<HTMLDivElement>(null);
+  const fcsWinTotalFullRef = useRef<HTMLDivElement>(null);
+  const fcsWinTotalTopRef = useRef<HTMLDivElement>(null);
+  const fcsWinsLeftRef = useRef<HTMLDivElement>(null);
+  const fcsLossesLeftRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
     { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current },
@@ -213,6 +237,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "14-fbs-sos-full", node: () => sosFullRef.current },
     { key: "15-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current },
     { key: "16-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current },
+    { key: "17-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current },
+    { key: "18-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current },
+    { key: "19-fbs-win-totals-wins-left", node: () => fbsWinsLeftRef.current },
+    { key: "20-fbs-win-totals-losses-left", node: () => fbsLossesLeftRef.current },
+    { key: "21-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current },
+    { key: "22-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current },
+    { key: "23-fcs-win-totals-wins-left", node: () => fcsWinsLeftRef.current },
+    { key: "24-fcs-win-totals-losses-left", node: () => fcsLossesLeftRef.current },
   ];
 
   async function handleGenerateZip() {
@@ -263,11 +295,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
       <h2 style={{ marginTop: 0 }}>Weekly Image Dump</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 640 }}>
-        Power Ratings (FBS + FCS) and Resume Ratings (FBS) — Full List, Top 30, Gainers, Losers
-        (Power Ratings also gets Top 30 Group of 6). SOS (FBS) — Full List, plus a Hardest/Easiest
-        split and a Got Harder/Got Easier split. Still to come: Win Totals, Playoff Brackets,
-        Matchups, Watchability, and TV Guide. Nothing here is saved — it only reads weeks you've
-        already uploaded.
+        Power Ratings and Win Totals (FBS + FCS), Resume Ratings (FBS) — Full List, Top 30,
+        Gainers/Losers (Power Ratings also gets Top 30 Group of 6; Win Totals gets Wins Left/
+        Losses Left instead of Gainers/Losers). SOS (FBS) — Full List, plus a Hardest/Easiest split
+        and a Got Harder/Got Easier split. Still to come: Playoff Brackets, Matchups, Watchability,
+        and TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -346,10 +378,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
             {/* Resume Ratings — FBS only */}
             <div ref={resumeFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Full List" sections={[{ title: "", rows: fbsResumeFull }]} valueLabel="RESUME" higherIsBetter />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Full List" sections={[{ title: "", rows: fbsResumeFull }]} valueLabel="RESUME" higherIsBetter colorScale="percentile" />
             </div>
             <div ref={resumeTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" higherIsBetter />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" higherIsBetter colorScale="percentile" />
             </div>
             <div ref={resumeGainersRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Gainers" sections={[{ title: "", rows: fbsResumeGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" higherIsBetter />
@@ -392,6 +424,34 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 valueLabel="CHANGE"
                 sideBySide
               />
+            </div>
+
+            {/* Win Totals — FBS */}
+            <div ref={fbsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fbsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fbsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fbsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fbsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fbsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" />
+            </div>
+
+            {/* Win Totals — FCS */}
+            <div ref={fcsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fcsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fcsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fcsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={fcsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fcsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" />
             </div>
           </OffscreenStage>
         </>

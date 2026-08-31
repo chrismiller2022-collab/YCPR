@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { SOS_BY_TEAM } from "../data/sor";
 import { TEAMS } from "../data/teams";
+import { gamesForTeam } from "../data/games";
 import { TEAM_WIN_TOTALS, buildRankMap } from "./ranks";
 import { bucketFor } from "./conferenceBuckets";
 import { fetchWeeklyStats, type WeeklyTeamStats } from "./api/weeklyStats";
@@ -45,6 +46,14 @@ export interface ImageDumpTeamRow {
   // Rating change vs. whatever comparison week the caller picked (see
   // useWeekPairChange below) — null until two weeks are selected/available.
   change: number | null;
+  // Actual results so far this season, for Wins Left / Losses Left. 0 until
+  // a week's live upload actually has live_wins/live_losses filled in —
+  // matches reportData.ts's winsLossesLeft (PDF-only), which hardcodes 0
+  // for the same reason (results aren't tracked anywhere else yet), except
+  // this reads the live upload's actual value when one exists instead of
+  // always assuming 0.
+  liveWins: number;
+  liveLosses: number;
 }
 
 /**
@@ -73,6 +82,8 @@ export function buildDivisionResolvedTeams(
       sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
       resumeRating: live?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
       resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
+      liveWins: live?.live_wins ?? 0,
+      liveLosses: live?.live_losses ?? 0,
     };
   });
 
@@ -106,6 +117,8 @@ export function buildDivisionResolvedTeams(
       sos: t.sos,
       sosRank: t.sos != null ? sosRankByTeam[t.team] : null,
       change: changeByTeam[t.team]?.change ?? null,
+      liveWins: t.liveWins,
+      liveLosses: t.liveLosses,
     }))
     .sort((a, b) => a.rank - b.rank);
 }
@@ -140,6 +153,38 @@ export function toSosRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
     .filter((r): r is ImageDumpTeamRow & { sos: number; sosRank: number } => r.sos != null && r.sosRank != null)
     .map((r) => ({ rank: r.sosRank, team: r.team, conf: r.conf, rating: r.sos }))
     .sort((a, b) => a.rank - b.rank);
+}
+
+/** Same idea, ranked/valued by projected Win Total. */
+export function toWinTotalRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
+  return rows
+    .map((r) => ({ rank: r.winTotalRank, team: r.team, conf: r.conf, rating: r.winTotal }))
+    .sort((a, b) => a.rank - b.rank);
+}
+
+/**
+ * Top N by projected wins remaining (winTotal minus wins already banked
+ * this season) — ranked fresh within just this list (rank 1 = most wins
+ * left), same reasoning as the SOS Hardest/Easiest split: reusing
+ * winTotalRank here would show the team's overall win-total rank, not
+ * their position in a "who has the most winnable games left" list.
+ */
+export function toWinsLeftRows(rows: ImageDumpTeamRow[], limit = 30): CompactRatingRow[] {
+  return rows
+    .map((r) => ({ team: r.team, conf: r.conf, winsLeft: r.winTotal - r.liveWins }))
+    .sort((a, b) => b.winsLeft - a.winsLeft)
+    .slice(0, limit)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.winsLeft }));
+}
+
+/** Same idea for projected losses remaining (total games minus win total
+ * minus losses already taken). */
+export function toLossesLeftRows(rows: ImageDumpTeamRow[], limit = 30): CompactRatingRow[] {
+  return rows
+    .map((r) => ({ team: r.team, conf: r.conf, lossesLeft: gamesForTeam(r.team).length - r.winTotal - r.liveLosses }))
+    .sort((a, b) => b.lossesLeft - a.lossesLeft)
+    .slice(0, limit)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.lossesLeft }));
 }
 
 /**

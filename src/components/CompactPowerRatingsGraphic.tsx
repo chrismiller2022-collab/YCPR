@@ -53,26 +53,35 @@ function absoluteRatingColor(value: number) {
   return "#c45c52";
 }
 
-// Metrics where a higher number is better (Resume Rating, and later Win
-// Totals) don't share Power Rating's numeric range — Resume Rating runs
-// roughly 0..90, always positive, nothing like a ±10 band. A first attempt
-// just flipped the sign before applying the same ±10 thresholds, which
-// technically pointed the right direction but was still wrong: every
-// team's resume rating is well past 10 in magnitude, so the flipped
-// thresholds painted nearly every team green regardless of how good their
-// resume actually was. Coloring by rank percentile instead sidesteps the
-// whole "what's the right absolute threshold for this metric's scale"
-// problem — the best quarter of the list is always green, the worst
-// quarter always red, no matter what units or range the value is in.
-function rankPercentileColor(rank: number, totalRows: number) {
+// Metrics whose raw values don't share Power Rating/SOS's roughly -30..+30,
+// zero-centered range — Resume Rating (0..90, always positive) and Win
+// Totals/Wins Left/Losses Left (0..13ish, always positive) both break the
+// ±10 absolute thresholds: everything lands in the same one or two bands
+// regardless of how good or bad the team actually is. Coloring by rank
+// percentile instead sidesteps the whole "what's the right absolute
+// threshold for this metric's scale" question — the best quarter of the
+// list is always green, the worst quarter always red, no matter what units
+// or range the value is in. `rank1IsBest` says which end of the list (rank
+// 1, always the numerically highest raw value per this file's row
+// builders) should read as green — true for Resume Rating/Win Totals/Wins
+// Left (a high value is good), false for Losses Left (a high value is bad).
+function rankPercentileColor(rank: number, totalRows: number, rank1IsBest: boolean) {
   const pct = totalRows > 0 ? rank / totalRows : 0;
-  if (pct <= 0.25) return "#5aa869";
-  if (pct <= 0.5) return "#8fc79a";
-  if (pct <= 0.75) return "#e0a95f";
+  const effectivePct = rank1IsBest ? pct : 1 - pct;
+  if (effectivePct <= 0.25) return "#5aa869";
+  if (effectivePct <= 0.5) return "#8fc79a";
+  if (effectivePct <= 0.75) return "#e0a95f";
   return "#c45c52";
 }
 
-function ratingColor(value: number, higherIsBetter: boolean, rank: number, totalRows: number, isChangeValue: boolean) {
+function ratingColor(
+  value: number,
+  higherIsBetter: boolean,
+  rank: number,
+  totalRows: number,
+  isChangeValue: boolean,
+  colorScale: "threshold" | "percentile"
+) {
   if (isChangeValue) {
     // Week-over-week deltas are naturally small and roughly zero-centered
     // no matter which metric they're measuring (a team's rating rarely
@@ -83,11 +92,10 @@ function ratingColor(value: number, higherIsBetter: boolean, rank: number, total
     // whether the underlying metric is higher-is-better or lower-is-better.
     return absoluteRatingColor(higherIsBetter ? -value : value);
   }
-  // Raw metric values: Power Rating/SOS's absolute thresholds only work
-  // because both run roughly -30..+30. A higher-is-better metric with a
-  // different scale (Resume Rating: roughly 0..90, always positive) needs
-  // percentile-based coloring instead — see rankPercentileColor's comment.
-  return higherIsBetter ? rankPercentileColor(rank, totalRows) : absoluteRatingColor(value);
+  if (colorScale === "percentile") {
+    return rankPercentileColor(rank, totalRows, higherIsBetter);
+  }
+  return absoluteRatingColor(value);
 }
 
 function CompactSection({
@@ -96,12 +104,14 @@ function CompactSection({
   targetRowsPerColumn,
   valueLabel,
   higherIsBetter,
+  colorScale,
 }: {
   title: string;
   rows: CompactRatingRow[];
   targetRowsPerColumn: number;
   valueLabel: string;
   higherIsBetter: boolean;
+  colorScale: "threshold" | "percentile";
 }) {
   const columns = chunkForCompactGrid(rows, targetRowsPerColumn);
   if (columns.length === 0) return null;
@@ -146,7 +156,7 @@ function CompactSection({
                     <td style={{ ...CELL, textAlign: "left", color: "#fff", fontWeight: 600, padding: "2.5px 8px 2.5px 4px" }}>
                       {r.team}
                     </td>
-                    <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter, r.rank, rows.length, valueLabel === "CHANGE"), fontWeight: 700 }}>
+                    <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter, r.rank, rows.length, valueLabel === "CHANGE", colorScale), fontWeight: 700 }}>
                       {r.rating > 0 ? "+" : ""}
                       {r.rating.toFixed(1)}
                     </td>
@@ -169,6 +179,7 @@ export default function CompactPowerRatingsGraphic({
   valueLabel = "YCPR",
   higherIsBetter = false,
   sideBySide = false,
+  colorScale = "threshold",
 }: {
   /** Small uppercase label above the title, e.g. "WEEK 1 · FBS". */
   eyebrow: string;
@@ -180,11 +191,14 @@ export default function CompactPowerRatingsGraphic({
    * "CHANGE" for a gainers/losers list where the value shown is the
    * week-over-week move rather than the rating itself. */
   valueLabel?: string;
-  /** True for metrics where a higher number is the better team (Resume
-   * Rating). False (default) for Power Rating and SOS, where a lower/more
-   * negative number is better. Flips the value-column color coding —
-   * for a gainers/losers grid it also flips which direction of "change"
-   * reads as green/improved vs. red/declined. */
+  /** For a raw-value column (ignored for a "CHANGE" column, which always
+   * uses the sign-flipped threshold approach — see ratingColor): true for
+   * metrics where a higher number is the better team (Resume Rating, Win
+   * Totals, Wins Left) or, for Losses Left specifically, where a higher
+   * number is worse but the list is still ranked highest-value-first.
+   * False (default) for Power Rating and SOS, where a lower/more negative
+   * number is better. Also flips a "CHANGE" column's sign so "improved"
+   * always reads green. */
   higherIsBetter?: boolean;
   /** Lays multiple sections out left-to-right instead of stacked — for
    * SOS's Hardest/Easiest and Got Harder/Got Easier splits, which are two
@@ -194,6 +208,14 @@ export default function CompactPowerRatingsGraphic({
    * caller should pass a targetRowsPerColumn at least as large as the
    * longer section's row count to keep each side a single column. */
   sideBySide?: boolean;
+  /** How the raw-value column is colored: "threshold" (default) applies
+   * Power Rating/SOS's fixed ±10 green/red bands — only correct for
+   * metrics in roughly that range. "percentile" colors by the row's rank
+   * within the list instead (top quarter green, bottom quarter red) —
+   * use this for any metric with a different scale (Resume Rating, Win
+   * Totals, Wins Left, Losses Left). Doesn't affect "CHANGE" columns,
+   * which always use the threshold approach (see ratingColor). */
+  colorScale?: "threshold" | "percentile";
 }) {
   return (
     <div
@@ -239,6 +261,7 @@ export default function CompactPowerRatingsGraphic({
             targetRowsPerColumn={targetRowsPerColumn}
             valueLabel={valueLabel}
             higherIsBetter={higherIsBetter}
+            colorScale={colorScale}
           />
         ))}
       </div>
