@@ -135,10 +135,42 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsResumeLosers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeChangeByTeam, "losers", true, TOP_N);
 
   // --- SOS (FBS only) ---
+  // SOS convention: positive = harder schedule, negative = easier (see
+  // imageDump.ts's toSosRows). "Top 30 Hardest"/"Top 25 Easiest" are two
+  // independent ranked lists (rank 1 = hardest on the left, rank 1 =
+  // easiest on the right), not two halves of one list — each gets its own
+  // rank computed fresh here rather than reusing sosRank (which is a
+  // single ascending-only rank across the whole division and would show
+  // confusing high numbers at the top of the Hardest side).
   const fbsSosFull = toSosRows(fbsRows);
-  const fbsSosTop = fbsSosFull.slice(0, TOP_N);
-  const fbsSosGainers = metricGainersLosers(fbsRows, (r) => r.sosRank, sosChangeByTeam, "gainers", false, TOP_N);
-  const fbsSosLosers = metricGainersLosers(fbsRows, (r) => r.sosRank, sosChangeByTeam, "losers", false, TOP_N);
+
+  const fbsSosValues = fbsRows
+    .map((r) => ({ team: r.team, conf: r.conf, sos: r.sos }))
+    .filter((r): r is { team: string; conf: string; sos: number } => r.sos != null);
+  const fbsSosHardest = fbsSosValues
+    .filter((r) => r.sos > 0)
+    .sort((a, b) => b.sos - a.sos)
+    .slice(0, TOP_N)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
+  const fbsSosEasiest = fbsSosValues
+    .filter((r) => r.sos < 0)
+    .sort((a, b) => a.sos - b.sos)
+    .slice(0, 25)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
+
+  const fbsSosChanges = fbsRows
+    .map((r) => ({ team: r.team, conf: r.conf, change: sosChangeByTeam[r.team]?.change ?? null }))
+    .filter((r): r is { team: string; conf: string; change: number } => r.change != null);
+  const fbsSosGotHarder = fbsSosChanges
+    .filter((r) => r.change > 0)
+    .sort((a, b) => b.change - a.change)
+    .slice(0, TOP_N)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
+  const fbsSosGotEasier = fbsSosChanges
+    .filter((r) => r.change < 0)
+    .sort((a, b) => a.change - b.change)
+    .slice(0, 25)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
 
   const wLabel = weekLabel(currentWeek);
   const fbsEyebrow = `${wLabel.toUpperCase()} · FBS`;
@@ -161,9 +193,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const resumeLosersRef = useRef<HTMLDivElement>(null);
   // SOS refs
   const sosFullRef = useRef<HTMLDivElement>(null);
-  const sosTopRef = useRef<HTMLDivElement>(null);
-  const sosGainersRef = useRef<HTMLDivElement>(null);
-  const sosLosersRef = useRef<HTMLDivElement>(null);
+  const sosHardEasyRef = useRef<HTMLDivElement>(null);
+  const sosChangeRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
     { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current },
@@ -180,9 +211,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "12-fbs-resume-ratings-gainers", node: () => resumeGainersRef.current },
     { key: "13-fbs-resume-ratings-losers", node: () => resumeLosersRef.current },
     { key: "14-fbs-sos-full", node: () => sosFullRef.current },
-    { key: "15-fbs-sos-top30", node: () => sosTopRef.current },
-    { key: "16-fbs-sos-gainers", node: () => sosGainersRef.current },
-    { key: "17-fbs-sos-losers", node: () => sosLosersRef.current },
+    { key: "15-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current },
+    { key: "16-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current },
   ];
 
   async function handleGenerateZip() {
@@ -233,10 +263,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
       <h2 style={{ marginTop: 0 }}>Weekly Image Dump</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 640 }}>
-        Power Ratings (FBS + FCS), Resume Ratings (FBS), and SOS (FBS) — Full List, Top 30,
-        Gainers, Losers (Power Ratings also gets Top 30 Group of 6). Still to come: Win Totals,
-        Playoff Brackets, Matchups, Watchability, and TV Guide. Nothing here is saved — it only
-        reads weeks you've already uploaded.
+        Power Ratings (FBS + FCS) and Resume Ratings (FBS) — Full List, Top 30, Gainers, Losers
+        (Power Ratings also gets Top 30 Group of 6). SOS (FBS) — Full List, plus a Hardest/Easiest
+        split and a Got Harder/Got Easier split. Still to come: Win Totals, Playoff Brackets,
+        Matchups, Watchability, and TV Guide. Nothing here is saved — it only reads weeks you've
+        already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -315,30 +346,52 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
             {/* Resume Ratings — FBS only */}
             <div ref={resumeFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Full List" sections={[{ title: "", rows: fbsResumeFull }]} valueLabel="RESUME" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Full List" sections={[{ title: "", rows: fbsResumeFull }]} valueLabel="RESUME" higherIsBetter />
             </div>
             <div ref={resumeTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" higherIsBetter />
             </div>
             <div ref={resumeGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Gainers" sections={[{ title: "", rows: fbsResumeGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Gainers" sections={[{ title: "", rows: fbsResumeGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" higherIsBetter />
             </div>
             <div ref={resumeLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Losers" sections={[{ title: "", rows: fbsResumeLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Losers" sections={[{ title: "", rows: fbsResumeLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" higherIsBetter />
             </div>
 
             {/* SOS — FBS only */}
             <div ref={sosFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Full List" sections={[{ title: "", rows: fbsSosFull }]} valueLabel="SOS" />
             </div>
-            <div ref={sosTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Top 30" sections={[{ title: "", rows: fbsSosTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="SOS" />
+            <div ref={sosHardEasyRef} style={CAPTURE_WRAP_STYLE}>
+              {/* Two independent lists side by side, not one list split in
+                  half — left is the 30 toughest schedules (positive SOS),
+                  right is the 25 easiest (negative SOS). Each section is
+                  its own single column (targetRowsPerColumn=30 keeps both
+                  under one column since neither list exceeds 30 rows). */}
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Strength of Schedule — Hardest & Easiest"
+                sections={[
+                  { title: "Top 30 Hardest", rows: fbsSosHardest },
+                  { title: "Top 25 Easiest", rows: fbsSosEasiest },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="SOS"
+                sideBySide
+              />
             </div>
-            <div ref={sosGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Top 30 Gainers" sections={[{ title: "", rows: fbsSosGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
-            </div>
-            <div ref={sosLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Top 30 Losers" sections={[{ title: "", rows: fbsSosLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
+            <div ref={sosChangeRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Strength of Schedule — Got Harder & Got Easier"
+                sections={[
+                  { title: "Top 30 Got Harder", rows: fbsSosGotHarder },
+                  { title: "Top 25 Got Easier", rows: fbsSosGotEasier },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                sideBySide
+              />
             </div>
           </OffscreenStage>
         </>

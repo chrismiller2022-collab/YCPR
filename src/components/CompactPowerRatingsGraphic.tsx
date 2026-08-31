@@ -21,7 +21,7 @@ import { TEAM_LOGOS } from "../data/logos";
 // generic branding bar — the caller should pass includeBranding:false to
 // exportNodeAsPngBlob/exportNodeAsPng to avoid getting both.
 
-const SITE_URL = "https://ycpr.vercel.app/";
+const SITE_URL = "ycpr.vercel.app";
 const TWITTER_HANDLE = "@YCtheflea";
 
 const HEAD_CELL: CSSProperties = {
@@ -42,11 +42,17 @@ const CELL: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-function ratingColor(rating: number) {
-  // Site convention: negative rating = better team (green), positive = worse (red).
-  if (rating < -10) return "#5aa869";
-  if (rating < 0) return "#8fc79a";
-  if (rating < 10) return "#e0a95f";
+// Site convention: negative = better team (green), positive = worse (red)
+// — true for Power Rating and SOS, but Resume Rating runs the opposite
+// direction (a higher number is the better team). Rather than duplicate
+// the color/threshold logic, higherIsBetter just flips the sign before
+// applying the same thresholds, so "green" still means "good" for
+// whichever metric this grid is showing.
+function ratingColor(value: number, higherIsBetter: boolean) {
+  const v = higherIsBetter ? -value : value;
+  if (v < -10) return "#5aa869";
+  if (v < 0) return "#8fc79a";
+  if (v < 10) return "#e0a95f";
   return "#c45c52";
 }
 
@@ -55,11 +61,13 @@ function CompactSection({
   rows,
   targetRowsPerColumn,
   valueLabel,
+  higherIsBetter,
 }: {
   title: string;
   rows: CompactRatingRow[];
   targetRowsPerColumn: number;
   valueLabel: string;
+  higherIsBetter: boolean;
 }) {
   const columns = chunkForCompactGrid(rows, targetRowsPerColumn);
   if (columns.length === 0) return null;
@@ -104,7 +112,7 @@ function CompactSection({
                     <td style={{ ...CELL, textAlign: "left", color: "#fff", fontWeight: 600, padding: "2.5px 8px 2.5px 4px" }}>
                       {r.team}
                     </td>
-                    <td style={{ ...CELL, color: ratingColor(r.rating), fontWeight: 700 }}>
+                    <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter), fontWeight: 700 }}>
                       {r.rating > 0 ? "+" : ""}
                       {r.rating.toFixed(1)}
                     </td>
@@ -125,6 +133,8 @@ export default function CompactPowerRatingsGraphic({
   sections,
   targetRowsPerColumn = 34,
   valueLabel = "YCPR",
+  higherIsBetter = false,
+  sideBySide = false,
 }: {
   /** Small uppercase label above the title, e.g. "WEEK 1 · FBS". */
   eyebrow: string;
@@ -136,6 +146,20 @@ export default function CompactPowerRatingsGraphic({
    * "CHANGE" for a gainers/losers list where the value shown is the
    * week-over-week move rather than the rating itself. */
   valueLabel?: string;
+  /** True for metrics where a higher number is the better team (Resume
+   * Rating). False (default) for Power Rating and SOS, where a lower/more
+   * negative number is better. Flips the value-column color coding —
+   * for a gainers/losers grid it also flips which direction of "change"
+   * reads as green/improved vs. red/declined. */
+  higherIsBetter?: boolean;
+  /** Lays multiple sections out left-to-right instead of stacked — for
+   * SOS's Hardest/Easiest and Got Harder/Got Easier splits, which are two
+   * independent ranked lists shown side by side rather than one list
+   * chunked into columns. Each section still gets its own multi-column
+   * chunking internally if it's longer than targetRowsPerColumn; the
+   * caller should pass a targetRowsPerColumn at least as large as the
+   * longer section's row count to keep each side a single column. */
+  sideBySide?: boolean;
 }) {
   return (
     <div
@@ -172,9 +196,18 @@ export default function CompactPowerRatingsGraphic({
         </div>
       </div>
 
-      {sections.map((s, i) => (
-        <CompactSection key={s.title || i} title={s.title} rows={s.rows} targetRowsPerColumn={targetRowsPerColumn} valueLabel={valueLabel} />
-      ))}
+      <div style={sideBySide ? { display: "flex", gap: 24, alignItems: "flex-start" } : undefined}>
+        {sections.map((s, i) => (
+          <CompactSection
+            key={s.title || i}
+            title={s.title}
+            rows={s.rows}
+            targetRowsPerColumn={targetRowsPerColumn}
+            valueLabel={valueLabel}
+            higherIsBetter={higherIsBetter}
+          />
+        ))}
+      </div>
 
       <div
         style={{
