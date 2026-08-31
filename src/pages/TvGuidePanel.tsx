@@ -128,11 +128,23 @@ function fmtSpread(v: number | null): string {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
-export default function TvGuidePanel() {
+export default function TvGuidePanel({
+  weekOverride,
+  shareRef,
+}: {
+  /** Pins `week` to this value instead of auto-picking the first
+   * available week, and re-pins on every change — used by the Weekly
+   * Image Dump tool to render this page off-screen at a specific
+   * caller-chosen week. */
+  weekOverride?: number;
+  /** Lets the Weekly Image Dump tool grab the same grid node the page's
+   * own Export PNG button targets, instead of a separate capture. */
+  shareRef?: React.RefObject<HTMLDivElement>;
+} = {}) {
   const season = new Date().getFullYear();
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
-  const [week, setWeek] = useState<number | null>(null);
+  const [week, setWeek] = useState<number | null>(weekOverride ?? null);
   // A specific date overrides the week entirely (see below) — mainly
   // for weeks like Week 1 where CFBD's own week numbering can bundle
   // in a Week 0 slate that actually played on a different Saturday, so
@@ -140,7 +152,8 @@ export default function TvGuidePanel() {
   const [dateOverride, setDateOverride] = useState<string>("");
   const [exporting, setExporting] = useState(false);
   const [choosingExport, setChoosingExport] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const internalExportRef = useRef<HTMLDivElement>(null);
+  const exportRef = shareRef ?? internalExportRef;
 
   useEffect(() => {
     let cancelled = false;
@@ -159,8 +172,12 @@ export default function TvGuidePanel() {
 
   const weekNumbers = useMemo(() => Array.from(new Set(games.map((g) => g.week))).sort((a, b) => a - b), [games]);
   useEffect(() => {
+    if (weekOverride != null) {
+      setWeek(weekOverride);
+      return;
+    }
     if (week == null && weekNumbers.length > 0) setWeek(weekNumbers[0]);
-  }, [weekNumbers, week]);
+  }, [weekNumbers, week, weekOverride]);
 
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
   const { rows: totalsRows } = useGameTotalsEngine(season);

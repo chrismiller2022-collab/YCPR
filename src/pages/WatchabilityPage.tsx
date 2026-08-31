@@ -271,21 +271,45 @@ function useWatchabilityInputs(season: number) {
 type TopView = "overall" | "windows";
 type WeeklyOrSeason = "weekly" | "season";
 
-export default function WatchabilityPage({ onHome }: { onHome?: () => void }) {
+export default function WatchabilityPage({
+  onHome,
+  weekOverride,
+  forceSaturdaysOnly,
+  shareRef,
+}: {
+  onHome?: () => void;
+  /** Pins `week` to this value instead of auto-picking the first
+   * available week, and re-pins on every change — for the Weekly Image
+   * Dump tool, which needs this page rendered off-screen at a specific
+   * caller-chosen week rather than whatever it would default to. */
+  weekOverride?: number;
+  /** Seeds `saturdaysOnly` to true (one-time — this only matters for the
+   * Weekly Image Dump's off-screen, never-interacted-with render). */
+  forceSaturdaysOnly?: boolean;
+  /** Lets the Weekly Image Dump tool capture the branded mobile-share
+   * graphic directly (same node the page's own Export PNG button already
+   * targets) instead of the on-page desktop list. */
+  shareRef?: React.RefObject<HTMLDivElement>;
+}) {
   const season = new Date().getFullYear();
   const [pageTab, setPageTab] = useState<"watchability" | "tvguide">("watchability");
   const { inputs, weekNumbers, loading } = useWatchabilityInputs(season);
   const [scope, setScope] = useState<WeeklyOrSeason>("weekly");
-  const [week, setWeek] = useState<number | null>(null);
+  const [week, setWeek] = useState<number | null>(weekOverride ?? null);
   const [topView, setTopView] = useState<TopView>("overall");
-  const [saturdaysOnly, setSaturdaysOnly] = useState(false);
+  const [saturdaysOnly, setSaturdaysOnly] = useState(forceSaturdaysOnly ?? false);
   const [weights, setWeights] = useState<WatchabilityWeights>(DEFAULT_WEIGHTS);
   const exportRef = useRef<HTMLDivElement>(null);
-  const mobileExportRef = useRef<HTMLDivElement>(null);
+  const internalMobileExportRef = useRef<HTMLDivElement>(null);
+  const mobileExportRef = shareRef ?? internalMobileExportRef;
 
   useEffect(() => {
+    if (weekOverride != null) {
+      setWeek(weekOverride);
+      return;
+    }
     if (week == null && weekNumbers.length > 0) setWeek(weekNumbers[0]);
-  }, [weekNumbers, week]);
+  }, [weekNumbers, week, weekOverride]);
 
   const weeklyInputs = useMemo(() => {
     let list = week != null ? inputs.filter((i) => i.week === week) : [];

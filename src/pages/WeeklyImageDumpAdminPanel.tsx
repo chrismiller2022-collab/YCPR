@@ -4,12 +4,36 @@ import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic
 import MatchupSlateGraphic from "../components/MatchupSlateGraphic";
 import BracketPage from "./BracketPage";
 import FCSBracketPage from "./FCSBracketPage";
+import WatchabilityPage from "./WatchabilityPage";
+import TvGuidePanel from "./TvGuidePanel";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
-import { classOf, computeRow } from "../lib/matchupsCompute";
-import { buildSlateRow, filterSlateRowsByDay } from "../lib/matchupSlate";
+import { classOf, isTracked, computeRow } from "../lib/matchupsCompute";
+import { buildSlateRow, filterSlateRowsByDay, type SlateGameRow } from "../lib/matchupSlate";
+
+// Shared by every Matchups target below — same filter+compute+shape
+// pipeline the live Weekly Matchups page uses (classOf -> computeRow ->
+// buildSlateRow), parameterized only by which division pairing to keep.
+function buildDivisionSlateRows(
+  games: GameWithLines[],
+  ratings: Record<string, any>,
+  projTotalByGame: Map<string, number>,
+  matchupType: "FBSvFBS" | "FCSvFCS" | "Cross"
+): SlateGameRow[] {
+  return games
+    .filter((g) => {
+      const home = classOf(g, "home");
+      const away = classOf(g, "away");
+      if (matchupType === "FBSvFBS") return home === "fbs" && away === "fbs";
+      if (matchupType === "FCSvFCS") return home === "fcs" && away === "fcs";
+      return isTracked(home) && isTracked(away) && home !== away;
+    })
+    .map((g) => computeRow(g, ratings))
+    .filter((c) => c.vegasAwaySpread != null) // hide games with no Vegas line, matching the live page's default
+    .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null));
+}
 import {
   buildDivisionResolvedTeams,
   metricGainersLosers,
@@ -24,14 +48,12 @@ import {
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
 
-// Weekly Post/Image Dump tool. Currently covers Power Ratings and Win
-// Totals (FBS + FCS), Resume Ratings and SOS (both FBS-only, per Chris's
-// category list — Resume Ratings/SOS were never listed under FCS), the
-// FBS/FCS Playoff Brackets, and FBS vs FBS Matchups (Midweek/Saturday).
-// Still to come: FCS vs FCS and FBS vs FCS Matchups, Watchability Chart,
-// and TV Guide — Watchability and TV Guide are, per Chris, also just a
-// case of pulling their existing live pages for the right week (same
-// lesson as the brackets), not new graphics.
+// Weekly Post/Image Dump tool. Covers every category on Chris's list:
+// Power Ratings and Win Totals (FBS + FCS), Resume Ratings and SOS (both
+// FBS-only — never listed under FCS), the FBS/FCS Playoff Brackets,
+// Matchups (FBS vs FBS and FCS vs FCS, each Midweek/Saturday; FBS vs FCS
+// as one "All" image), the Watchability Chart (Saturday only), and the
+// TV Guide.
 //
 // Matchups reuses the live Weekly Matchups page's own pipeline
 // (fetchGamesWithLines -> useWeekAccurateRatings -> computeRow ->
@@ -39,6 +61,15 @@ import { exportNodeAsPngBlob } from "../lib/exportPng";
 // component, scoped to the schedule week matching whichever weekly
 // snapshot is selected above (currentWeek "week3" -> schedule week 3;
 // "preseason" has no schedule week, so Matchups renders empty for it).
+//
+// Watchability and TV Guide are the live pages themselves (WatchabilityPage/
+// TvGuidePanel), not bespoke graphics — same lesson as the brackets: check
+// for an existing page before building a new one. Neither page originally
+// had a way to be pointed at a specific week from outside (they each pick
+// their own default), so both gained a small weekOverride prop (plus
+// forceSaturdaysOnly on WatchabilityPage, and a shareRef prop on both so
+// this tool can grab the exact node their own Export PNG button already
+// targets) — see the file-header comments on those two files.
 //
 // Brackets are NOT rebuilt here — BracketPage (FBS) and FCSBracketPage
 // (FCS) already exist as full, self-contained site pages (their own
@@ -188,18 +219,25 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     return map;
   }, [totalsEngineRows]);
 
-  const fbsFbsSlateRows = useMemo(() => {
-    if (scheduleWeekNum == null) return [];
-    const ratings = ratingsByWeek[scheduleWeekNum] ?? {};
-    return scheduleGames
-      .filter((g) => classOf(g, "home") === "fbs" && classOf(g, "away") === "fbs")
-      .map((g) => computeRow(g, ratings))
-      .filter((c) => c.vegasAwaySpread != null) // hide games with no Vegas line, matching the live page's default
-      .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null));
-  }, [scheduleWeekNum, scheduleGames, ratingsByWeek, projTotalByGame]);
+  const matchupRatings = scheduleWeekNum != null ? ratingsByWeek[scheduleWeekNum] ?? {} : {};
+  const fbsFbsSlateRows = useMemo(
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FBSvFBS")),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+  );
+  const fcsFcsSlateRows = useMemo(
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FCSvFCS")),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+  );
+  // FBS vs FCS — "All" per Chris's category list, no Midweek/Saturday split.
+  const crossSlateRows = useMemo(
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "Cross")),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+  );
 
   const fbsFbsMidweekRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "midweek"), [fbsFbsSlateRows]);
   const fbsFbsSaturdayRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "saturday"), [fbsFbsSlateRows]);
+  const fcsFcsMidweekRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "midweek"), [fcsFcsSlateRows]);
+  const fcsFcsSaturdayRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "saturday"), [fcsFcsSlateRows]);
 
   const fbsRows = useMemo(
     () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam),
@@ -317,6 +355,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // Matchups refs
   const fbsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
   const fbsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
+  const fcsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
+  const fcsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
+  const crossMatchupsAllRef = useRef<HTMLDivElement>(null);
+  // Watchability / TV Guide refs — passed straight into the live pages as
+  // shareRef, so these ARE the exact nodes their own Export PNG buttons
+  // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx).
+  const watchabilityRef = useRef<HTMLDivElement>(null);
+  const tvGuideRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
     { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false },
@@ -347,6 +393,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "26-fcs-playoff-bracket", node: () => fcsBracketRef.current },
     { key: "27-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current },
     { key: "28-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current },
+    { key: "29-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current },
+    { key: "30-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current },
+    { key: "31-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current },
+    { key: "32-watchability-saturday", node: () => watchabilityRef.current },
+    { key: "33-tv-guide", node: () => tvGuideRef.current },
   ];
 
   async function handleGenerateZip() {
@@ -400,9 +451,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         Power Ratings and Win Totals (FBS + FCS), Resume Ratings (FBS) — Full List, Top 30,
         Gainers/Losers (Power Ratings also gets Top 30 Group of 6; Win Totals gets Wins Left/
         Losses Left instead of Gainers/Losers). SOS (FBS) — Full List, plus a Hardest/Easiest split
-        and a Got Harder/Got Easier split. FBS and FCS Playoff Brackets. FBS vs FBS Matchups
-        (Midweek/Saturday). Still to come: FCS vs FCS and FBS vs FCS Matchups, Watchability, and
-        TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
+        and a Got Harder/Got Easier split. FBS and FCS Playoff Brackets. Matchups — FBS vs FBS and
+        FCS vs FCS (each Midweek/Saturday), FBS vs FCS (All). Watchability Chart (Saturday only)
+        and TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -574,6 +625,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fbsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupSlateGraphic rows={fbsFbsSaturdayRows} title={`${wLabel.toUpperCase()} · FBS VS FBS · SATURDAY`} />
             </div>
+            <div ref={fcsMatchupsMidweekRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupSlateGraphic rows={fcsFcsMidweekRows} title={`${wLabel.toUpperCase()} · FCS VS FCS · MIDWEEK`} />
+            </div>
+            <div ref={fcsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupSlateGraphic rows={fcsFcsSaturdayRows} title={`${wLabel.toUpperCase()} · FCS VS FCS · SATURDAY`} />
+            </div>
+            <div ref={crossMatchupsAllRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupSlateGraphic rows={crossSlateRows} title={`${wLabel.toUpperCase()} · FBS VS FCS`} />
+            </div>
+
+            {/* Watchability / TV Guide — the live pages themselves,
+                pinned to this tool's selected week (see the weekOverride/
+                forceSaturdaysOnly/shareRef props added to each). No outer
+                capture wrapper needed: shareRef points straight at the
+                page's own internal export-ready node. */}
+            <WatchabilityPage onHome={() => {}} weekOverride={scheduleWeekNum ?? undefined} forceSaturdaysOnly shareRef={watchabilityRef} />
+            <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} shareRef={tvGuideRef} />
           </OffscreenStage>
         </>
       )}
