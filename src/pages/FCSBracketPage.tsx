@@ -59,7 +59,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
   return (
     <div className="matchups-page">
       <div className="team-hero">
-        <button className="back-link" onClick={onHome}>
+        <button className="back-link" data-export-exclude="true" onClick={onHome}>
           ‹ All rankings
         </button>
         <div className="eyebrow">FCS</div>
@@ -207,7 +207,7 @@ export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, o
         </div>
       </div>
 
-      <div className="footer-note">
+      <div className="footer-note" data-export-exclude="true">
         Seeding is by Power Rating alone for now — conference auto-bids and
         resume-based at-large selection will be added once FCS resume
         ratings and conference futures data are wired up. First round

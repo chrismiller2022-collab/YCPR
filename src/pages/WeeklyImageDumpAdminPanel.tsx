@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
+import BracketPage from "./BracketPage";
+import FCSBracketPage from "./FCSBracketPage";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import {
   buildDivisionResolvedTeams,
@@ -17,22 +19,36 @@ import {
 import { exportNodeAsPngBlob } from "../lib/exportPng";
 
 // Weekly Post/Image Dump tool. Currently covers Power Ratings and Win
-// Totals (FBS + FCS), and Resume Ratings and SOS (both FBS-only, per
-// Chris's category list — Resume Ratings/SOS were never listed under FCS).
-// Still to come: FBS/FCS Playoff Brackets, Matchups, Watchability Chart,
-// and TV Guide — those need genuinely new pieces (bracket rendering, the
-// slate/watchability/TV Guide graphics already built for other parts of
-// the site) rather than being a mechanical copy of this Power-Ratings-
-// shaped pattern, so they're being tackled as their own follow-up passes.
+// Totals (FBS + FCS), Resume Ratings and SOS (both FBS-only, per Chris's
+// category list — Resume Ratings/SOS were never listed under FCS), and the
+// FBS/FCS Playoff Brackets. Still to come: Matchups, Watchability Chart,
+// and TV Guide.
 //
-// Every image is the same compact multi-column grid
-// (CompactPowerRatingsGraphic): Full List at its original ~34-rows-per-
-// column density, Top 30/Gainers/Losers (and Power Ratings' Top 30 G6)
-// forced to 15 rows per column — a 2-columns-of-15 layout for a 30-team
-// list, per Chris's reference image. An earlier version used 25-team
-// lists in a 5x5 grid and, before that, tried to replicate the live
-// site's wide sortable table off-screen (which doesn't capture reliably —
-// see imageDump.ts's file header) before landing on this shape.
+// Brackets are NOT rebuilt here — BracketPage (FBS) and FCSBracketPage
+// (FCS) already exist as full, self-contained site pages (their own
+// seeding, live-rating resolution, and bracket-tree rendering) and are
+// simply rendered off-screen and captured, same as everything else in this
+// file. (Earlier working notes in this file assumed bracket logic didn't
+// exist yet and would need to be built from scratch — that was wrong;
+// always check for an existing page/component before assuming new logic
+// is needed. Apply that same check before building Matchups/Watchability/
+// TV Guide too — MatchupSlateGraphic and a TV Guide export already exist
+// elsewhere in the codebase.)
+//
+// Every Power Ratings/Resume/SOS/Win Totals image is the same compact
+// multi-column grid (CompactPowerRatingsGraphic): Full List at its
+// original ~34-rows-per-column density, Top 30/Gainers/Losers (and Power
+// Ratings' Top 30 G6) forced to 15 rows per column — a 2-columns-of-15
+// layout for a 30-team list, per Chris's reference image. An earlier
+// version used 25-team lists in a 5x5 grid and, before that, tried to
+// replicate the live site's wide sortable table off-screen (which doesn't
+// capture reliably — see imageDump.ts's file header) before landing on
+// this shape. The bracket pages instead reuse the site's own markup/CSS
+// as-is and rely on the same off-screen-capture safety net (explicitSize
+// from scrollWidth/scrollHeight, see handleGenerateZip) rather than a
+// bespoke compact layout — they don't self-brand like
+// CompactPowerRatingsGraphic does, so they keep the generic branding
+// footer exportPng.ts adds by default (see DumpTarget.branding below).
 //
 // Every graphic renders off-screen (not display:none — html-to-image needs
 // real layout to capture), gets zipped client-side with JSZip, and the zip
@@ -45,6 +61,12 @@ const TOP_N_ROWS_PER_COLUMN = 15; // 2 columns of 15 for a 30-team list
 interface DumpTarget {
   key: string;
   node: () => HTMLElement | null;
+  /** false for every CompactPowerRatingsGraphic target — those bake in
+   * their own header/footer branding, so the generic branding bar
+   * exportPng.ts adds by default would double it up. Omitted (defaults to
+   * true) for the bracket pages, which don't self-brand and should get
+   * the same branding bar their on-page Export button already adds. */
+  branding?: boolean;
 }
 
 // Rendered off-screen (never display:none — html-to-image needs real
@@ -219,32 +241,38 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsWinTotalTopRef = useRef<HTMLDivElement>(null);
   const fcsWinsLeftRef = useRef<HTMLDivElement>(null);
   const fcsLossesLeftRef = useRef<HTMLDivElement>(null);
+  // Playoff Bracket refs — capture the existing BracketPage/FCSBracketPage
+  // components wholesale, not a purpose-built graphic.
+  const fbsBracketRef = useRef<HTMLDivElement>(null);
+  const fcsBracketRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
-    { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current },
-    { key: "02-fbs-power-ratings-top30", node: () => fbsTopRef.current },
-    { key: "03-fbs-power-ratings-top30-g6", node: () => fbsG6Ref.current },
-    { key: "04-fbs-power-ratings-gainers", node: () => fbsGainersRef.current },
-    { key: "05-fbs-power-ratings-losers", node: () => fbsLosersRef.current },
-    { key: "06-fcs-power-ratings-full", node: () => fcsFullRef.current },
-    { key: "07-fcs-power-ratings-top30", node: () => fcsTopRef.current },
-    { key: "08-fcs-power-ratings-gainers", node: () => fcsGainersRef.current },
-    { key: "09-fcs-power-ratings-losers", node: () => fcsLosersRef.current },
-    { key: "10-fbs-resume-ratings-full", node: () => resumeFullRef.current },
-    { key: "11-fbs-resume-ratings-top30", node: () => resumeTopRef.current },
-    { key: "12-fbs-resume-ratings-gainers", node: () => resumeGainersRef.current },
-    { key: "13-fbs-resume-ratings-losers", node: () => resumeLosersRef.current },
-    { key: "14-fbs-sos-full", node: () => sosFullRef.current },
-    { key: "15-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current },
-    { key: "16-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current },
-    { key: "17-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current },
-    { key: "18-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current },
-    { key: "19-fbs-win-totals-wins-left", node: () => fbsWinsLeftRef.current },
-    { key: "20-fbs-win-totals-losses-left", node: () => fbsLossesLeftRef.current },
-    { key: "21-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current },
-    { key: "22-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current },
-    { key: "23-fcs-win-totals-wins-left", node: () => fcsWinsLeftRef.current },
-    { key: "24-fcs-win-totals-losses-left", node: () => fcsLossesLeftRef.current },
+    { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false },
+    { key: "02-fbs-power-ratings-top30", node: () => fbsTopRef.current, branding: false },
+    { key: "03-fbs-power-ratings-top30-g6", node: () => fbsG6Ref.current, branding: false },
+    { key: "04-fbs-power-ratings-gainers", node: () => fbsGainersRef.current, branding: false },
+    { key: "05-fbs-power-ratings-losers", node: () => fbsLosersRef.current, branding: false },
+    { key: "06-fcs-power-ratings-full", node: () => fcsFullRef.current, branding: false },
+    { key: "07-fcs-power-ratings-top30", node: () => fcsTopRef.current, branding: false },
+    { key: "08-fcs-power-ratings-gainers", node: () => fcsGainersRef.current, branding: false },
+    { key: "09-fcs-power-ratings-losers", node: () => fcsLosersRef.current, branding: false },
+    { key: "10-fbs-resume-ratings-full", node: () => resumeFullRef.current, branding: false },
+    { key: "11-fbs-resume-ratings-top30", node: () => resumeTopRef.current, branding: false },
+    { key: "12-fbs-resume-ratings-gainers", node: () => resumeGainersRef.current, branding: false },
+    { key: "13-fbs-resume-ratings-losers", node: () => resumeLosersRef.current, branding: false },
+    { key: "14-fbs-sos-full", node: () => sosFullRef.current, branding: false },
+    { key: "15-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current, branding: false },
+    { key: "16-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current, branding: false },
+    { key: "17-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current, branding: false },
+    { key: "18-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current, branding: false },
+    { key: "19-fbs-win-totals-wins-left", node: () => fbsWinsLeftRef.current, branding: false },
+    { key: "20-fbs-win-totals-losses-left", node: () => fbsLossesLeftRef.current, branding: false },
+    { key: "21-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current, branding: false },
+    { key: "22-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current, branding: false },
+    { key: "23-fcs-win-totals-wins-left", node: () => fcsWinsLeftRef.current, branding: false },
+    { key: "24-fcs-win-totals-losses-left", node: () => fcsLossesLeftRef.current, branding: false },
+    { key: "25-fbs-playoff-bracket", node: () => fbsBracketRef.current },
+    { key: "26-fcs-playoff-bracket", node: () => fcsBracketRef.current },
   ];
 
   async function handleGenerateZip() {
@@ -264,10 +292,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         // read the node's actual laid-out box directly, same fix TV Guide
         // uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
-        // includeBranding:false — these graphics bake in their own
-        // header/footer, so the generic branding bar exportPng.ts adds by
-        // default would double it up.
-        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, false);
+        // branding defaults to true (see DumpTarget) — only the
+        // CompactPowerRatingsGraphic targets opt out, since they bake in
+        // their own header/footer.
+        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true);
         zip.file(`${target.key}.png`, blob);
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -298,8 +326,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         Power Ratings and Win Totals (FBS + FCS), Resume Ratings (FBS) — Full List, Top 30,
         Gainers/Losers (Power Ratings also gets Top 30 Group of 6; Win Totals gets Wins Left/
         Losses Left instead of Gainers/Losers). SOS (FBS) — Full List, plus a Hardest/Easiest split
-        and a Got Harder/Got Easier split. Still to come: Playoff Brackets, Matchups, Watchability,
-        and TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
+        and a Got Harder/Got Easier split. FBS and FCS Playoff Brackets. Still to come: Matchups,
+        Watchability, and TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -452,6 +480,16 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             </div>
             <div ref={fcsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fcsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" />
+            </div>
+
+            {/* Playoff Brackets — the existing site pages, captured as-is.
+                No-op nav callbacks: this render is never interacted with,
+                only captured. */}
+            <div ref={fbsBracketRef} style={CAPTURE_WRAP_STYLE}>
+              <BracketPage subLabel={wLabel} onNavigateTeam={() => {}} onHome={() => {}} />
+            </div>
+            <div ref={fcsBracketRef} style={CAPTURE_WRAP_STYLE}>
+              <FCSBracketPage onNavigateTeam={() => {}} onNavigateConference={() => {}} onHome={() => {}} />
             </div>
           </OffscreenStage>
         </>
