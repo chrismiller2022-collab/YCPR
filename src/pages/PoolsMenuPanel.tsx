@@ -92,6 +92,11 @@ export default function PoolsMenuPanel({
           description="Pick against CBS's spread for each game."
           onClick={() => onSelectPool("cbspickem")}
         />
+        <PoolTile
+          label="NFL Win Total Draft"
+          description="Projected NFL win totals by power-rating system, plus a live draft tool for Kal/Presley/Ethan/YC."
+          onClick={() => onSelectPool("nfldraftpool")}
+        />
       </div>
     </div>
   );

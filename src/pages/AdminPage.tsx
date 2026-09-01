@@ -10,6 +10,7 @@ import LineMovementAdminPanel from "./LineMovementAdminPanel";
 import OddsDashboardAdminPanel from "./OddsDashboardAdminPanel";
 import WeeklyImageDumpAdminPanel from "./WeeklyImageDumpAdminPanel";
 import PoolsMenuPanel from "./PoolsMenuPanel";
+import NflDraftPoolAdminPanel from "./NflDraftPoolAdminPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
 import WestgatePoolPanel from "./WestgatePoolPanel";
@@ -229,6 +230,7 @@ type AdminView =
   | "espnconfidence"
   | "cfbdpickem"
   | "cbspickem"
+  | "nfldraftpool"
   | "survivorpooladmin"
   | "bethistory"
   | "placedbets"
@@ -869,6 +871,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
 
           {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
+
+          {view === "nfldraftpool" && <NflDraftPoolAdminPanel onBack={() => setView("pools")} />}
 
           {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 
