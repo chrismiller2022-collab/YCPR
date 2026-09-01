@@ -174,6 +174,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const [zipping, setZipping] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
   const [zipDone, setZipDone] = useState<string | null>(null);
+  // Separate from zipDone on purpose — a publish failure was previously
+  // appended onto the same green success string as "Downloaded N
+  // images. ZIP is fine, but publishing... failed: ...", which reads as
+  // a success message at a glance since it's still solid green. Chris
+  // generated Week 1's report this way and never noticed publishing
+  // had actually failed — the bucket had zero objects in it. This gets
+  // its own red/green line so a failure can't hide inside a success.
+  const [publishResult, setPublishResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetchAvailableWeeks()
@@ -469,6 +477,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     setZipping(true);
     setZipError(null);
     setZipDone(null);
+    setPublishResult(null);
     try {
       const zip = new JSZip();
       // Collected alongside each PNG so the combined PDF below can be
@@ -530,17 +539,30 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       link.remove();
       URL.revokeObjectURL(url);
 
-      let doneMsg = `Downloaded ${targets.length} images.`;
-      if (pdfBlob && currentWeek) {
-        try {
-          const password = sessionStorage.getItem("admin_password") ?? "";
-          await publishWeeklyReportPdf(currentWeek, pdfBlob, password);
-          doneMsg += ` Published as ${weekLabel(currentWeek)}'s public Week Report.`;
-        } catch (publishErr: any) {
-          doneMsg += ` ZIP is fine, but publishing to the public Week Report failed: ${publishErr.message ?? "unknown error"}.`;
+      setZipDone(`Downloaded ${targets.length} images.`);
+      if (currentWeek) {
+        if (pdfBlob) {
+          try {
+            const password = sessionStorage.getItem("admin_password") ?? "";
+            await publishWeeklyReportPdf(currentWeek, pdfBlob, password);
+            setPublishResult({ ok: true, message: `Published as ${weekLabel(currentWeek)}'s public Week Report.` });
+          } catch (publishErr: any) {
+            setPublishResult({
+              ok: false,
+              message: `Publishing to the public Week Report FAILED: ${publishErr.message ?? "unknown error"}. The ZIP download is unaffected, but the public Week Report page will show "unavailable" until this is retried successfully.`,
+            });
+          }
+        } else {
+          // No captured images at all means pdfImages stayed empty and
+          // pdfBlob was never built — publish was never attempted, and
+          // that's just as important to surface as an explicit failure,
+          // since silence here previously looked identical to success.
+          setPublishResult({
+            ok: false,
+            message: "No PDF was generated to publish — 0 images were captured, so nothing was sent to the public Week Report.",
+          });
         }
       }
-      setZipDone(doneMsg);
     } catch (err: any) {
       setZipError(err.message ?? "Failed to build ZIP");
     } finally {
@@ -606,6 +628,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           </button>
           {zipDone && <p style={{ color: "green" }}>{zipDone}</p>}
           {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
+          {publishResult && (
+            <p style={{ color: publishResult.ok ? "green" : "crimson", fontWeight: publishResult.ok ? 400 : 700 }}>
+              {publishResult.message}
+            </p>
+          )}
 
           <OffscreenStage>
             {/* Power Ratings — FBS */}

@@ -83,8 +83,6 @@ export default function WeekReportPage({ onHome }: any) {
           <p style={{ color: "#666" }}>This week's report is currently unavailable.</p>
         )}
       </div>
-
-      <div className="footer-note">Reports are published by the site admin — this page just links to that week's PDF.</div>
     </div>
   );
 }
