@@ -1,5 +1,6 @@
 import "./styles/global.css";
 import { useEffect, useState, lazy, Suspense } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import HomePage from "./pages/HomePage";
 import TeamPage from "./pages/TeamPage";
 import MatchupPage from "./pages/MatchupPage";
@@ -134,6 +135,7 @@ export default function App() {
             onGoToSOS={goToLiveSOS}
           />
         </Suspense>
+        <Analytics />
       </div>
     );
   }
@@ -149,6 +151,7 @@ export default function App() {
           }}
         />
         <SiteFooter />
+        <Analytics />
       </div>
     );
   }
@@ -165,6 +168,7 @@ export default function App() {
           }}
         />
         <SiteFooter />
+        <Analytics />
       </div>
     );
   }
@@ -484,6 +488,7 @@ export default function App() {
       {page.type === "watchability" && <WatchabilityPage onHome={handleHome} />}
 
       <SiteFooter />
+      <Analytics />
     </div>
   );
 }
