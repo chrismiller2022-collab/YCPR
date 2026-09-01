@@ -188,6 +188,57 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Splash Survivor saved paths: separate tool, separate table from survivorpaths above ---
+    if (pool === "splashsurvivorpaths") {
+      if (action === "save") {
+        const { name, picks } = req.body;
+        if (!name || typeof name !== "string" || !picks) {
+          res.status(400).json({ error: "Missing name or picks" });
+          return;
+        }
+        const { error } = await supabaseAdmin.from("splash_survivor_saved_paths").insert({ name, picks });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (action === "delete") {
+        const { id } = req.body;
+        if (!id) {
+          res.status(400).json({ error: "Missing id" });
+          return;
+        }
+        const { error } = await supabaseAdmin.from("splash_survivor_saved_paths").delete().eq("id", id);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for splashsurvivorpaths: ${action}` });
+      return;
+    }
+
+    // --- Splash Survivor excluded teams: separate tool, separate table from survivorexcluded above ---
+    if (pool === "splashsurvivorexcluded") {
+      const { team } = req.body;
+      if (!team || typeof team !== "string") {
+        res.status(400).json({ error: "Missing team" });
+        return;
+      }
+      if (action === "add") {
+        const { error } = await supabaseAdmin.from("splash_survivor_excluded_teams").upsert({ team }, { onConflict: "team" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (action === "remove") {
+        const { error } = await supabaseAdmin.from("splash_survivor_excluded_teams").delete().eq("team", team);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for splashsurvivorexcluded: ${action}` });
+      return;
+    }
+
     // --- Brit / ESPN ML / ESPN Spreads / ESPN Confidence / CBS Pickem ---
     const table = POOL_TABLES[pool];
     const specialField = SPECIAL_FIELD[pool];

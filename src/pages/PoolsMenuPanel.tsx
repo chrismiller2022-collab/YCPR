@@ -39,6 +39,11 @@ const SECTIONS: { title: string; pools: PoolDef[] }[] = [
     pools: [
       { key: "cbssplash", label: "CBS/Kelly", description: "ATS pool vs a custom line, all FBS vs FBS games." },
       { key: "survivor", label: "Survivor", description: "Personal survivor pool planner — spread/moneyline projections, save a path." },
+      {
+        key: "splashsurvivor",
+        label: "Splash Survivor",
+        description: "Separate survivor planner — every FBS team eligible, only Group of 6 vs Group of 6 excluded.",
+      },
       { key: "peay", label: "Peay Pool", description: "ATS pool vs a custom line, all FBS vs FBS games." },
     ],
   },
