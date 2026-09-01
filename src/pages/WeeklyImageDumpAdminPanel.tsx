@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import JSZip from "jszip";
 import jsPDF from "jspdf";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
@@ -124,6 +125,11 @@ interface DumpTarget {
    * overlapping games and dominates the image, so it's left out here,
    * matching the live page's own "Include Streaming? No" export choice. */
   beforeCapture?: (node: HTMLElement) => () => void;
+  /** True only for the 25 auto-generated conference-preview targets —
+   * handled by a dedicated second pass in handleGenerateZip instead of
+   * the main loop, since they share one mounted component (swapped via
+   * flushSync) rather than each having their own always-mounted node. */
+  isConferencePreview?: boolean;
 }
 
 // Rendered off-screen (never display:none — html-to-image needs real
@@ -430,9 +436,19 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx).
   const watchabilityRef = useRef<HTMLDivElement>(null);
   const tvGuideRef = useRef<HTMLDivElement>(null);
-  // Conference Previews — one image per conference, FBS then FCS. A
-  // dynamic-length list, unlike everything above, so refs live in a Map
-  // keyed by conference name instead of individual named useRefs.
+  // Conference Previews — one image per conference, FBS then FCS.
+  // Previously mounted all 25 simultaneously (each running its own SOS +
+  // Monte Carlo fetch and holding a full team-logo table in the DOM at
+  // once) for the whole duration of this tool being open. That's almost
+  // certainly why they were the ones going missing from the ZIP/PDF —
+  // by the time the sequential capture loop reached them (last, after
+  // 33 other heavy captures), the tab was under enough memory/CPU
+  // pressure that these were the likeliest to fail or hang. Since
+  // ConferencePreviewPage's own data fetches depend only on the season,
+  // not which conference is showing (its per-conference team list is a
+  // synchronous filter of already-loaded data), one mounted instance
+  // can be swapped through all 25 conferences via flushSync — no
+  // re-fetch delay, and only one conference's DOM exists at a time.
   const conferences = useMemo(
     () => [
       ...conferencesForDivision("FBS").map((conf) => ({ conf, div: "FBS" as const })),
@@ -440,7 +456,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     ],
     []
   );
-  const conferenceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [activeConferenceIdx, setActiveConferenceIdx] = useState<number | null>(null);
+  const conferencePreviewRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
     { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false },
@@ -491,11 +508,16 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   ];
 
   // Appended rather than baked into the array literal above since its
-  // length depends on how many conferences exist per division.
+  // length depends on how many conferences exist per division. node()
+  // is never actually called for these — handleGenerateZip's dedicated
+  // conference-preview pass below captures them directly — this is
+  // here only so targets.length (button label, progress total) counts
+  // them correctly.
   conferences.forEach((c, i) => {
     targets.push({
       key: `${34 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
-      node: () => conferenceRefs.current.get(c.conf) ?? null,
+      node: () => null,
+      isConferencePreview: true,
     });
   });
 
@@ -509,14 +531,20 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       // Collected alongside each PNG so the combined PDF below can be
       // built in the same pass, in the same order, without re-capturing.
       const pdfImages: { dataUrl: string; width: number; height: number }[] = [];
-      // Targets that timed out or threw — surfaced to Chris afterward
-      // rather than silently missing from the ZIP with no explanation.
+      // Targets that timed out, threw, or never had a node to capture —
+      // surfaced to Chris afterward rather than silently missing from
+      // the ZIP with no explanation (this used to be a real gap: a
+      // missing node just hit `continue` with no record at all).
       const skippedTargets: string[] = [];
-      for (let i = 0; i < targets.length; i++) {
-        const target = targets[i];
+      const mainTargets = targets.filter((t) => !t.isConferencePreview);
+      for (let i = 0; i < mainTargets.length; i++) {
+        const target = mainTargets[i];
         const node = target.node();
-        if (!node) continue;
         setCaptureProgress({ current: i + 1, total: targets.length, label: target.key });
+        if (!node) {
+          skippedTargets.push(`${target.key} (no node to capture)`);
+          continue;
+        }
         const restore = target.beforeCapture?.(node);
         // Forced explicitly rather than trusting the node's own
         // getBoundingClientRect() — every capture here is rendered
@@ -544,6 +572,39 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           skippedTargets.push(`${target.key} (${captureErr.message ?? "unknown error"})`);
         }
       }
+
+      // Conference previews — dedicated pass, one mounted instance
+      // swapped through all 25 conferences via flushSync rather than
+      // all 25 mounted at once (see the comment on activeConferenceIdx
+      // above for why). flushSync forces the state update and re-render
+      // to complete synchronously before it returns, so
+      // conferencePreviewRef.current reflects the new conference
+      // immediately — no extra wait needed since nothing here re-fetches
+      // per conference, only re-filters already-loaded data.
+      const conferenceTargets = targets.filter((t) => t.isConferencePreview);
+      for (let i = 0; i < conferenceTargets.length; i++) {
+        const target = conferenceTargets[i];
+        setCaptureProgress({ current: mainTargets.length + i + 1, total: targets.length, label: target.key });
+        flushSync(() => setActiveConferenceIdx(i));
+        const node = conferencePreviewRef.current;
+        if (!node) {
+          skippedTargets.push(`${target.key} (no node to capture)`);
+          continue;
+        }
+        const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
+        try {
+          const blob = await withTimeout(
+            exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, true),
+            CAPTURE_TIMEOUT_MS,
+            target.key
+          );
+          zip.file(`${target.key}.png`, blob);
+          pdfImages.push(await blobToImageData(blob));
+        } catch (captureErr: any) {
+          skippedTargets.push(`${target.key} (${captureErr.message ?? "unknown error"})`);
+        }
+      }
+      flushSync(() => setActiveConferenceIdx(null));
       setCaptureProgress(null);
 
       // Combined PDF — every PNG above, one page each, in the same order.
@@ -839,21 +900,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <WatchabilityPage onHome={() => {}} weekOverride={scheduleWeekNum ?? undefined} forceSaturdaysOnly shareRef={watchabilityRef} />
             <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} shareRef={tvGuideRef} />
 
-            {/* Conference Previews — the existing page, once per
-                conference. Always "latest" week internally (same as the
-                live page), not scoped to this tool's week picker. */}
-            {conferences.map((c) => (
-              <div
-                key={c.conf}
-                ref={(el) => {
-                  if (el) conferenceRefs.current.set(c.conf, el);
-                  else conferenceRefs.current.delete(c.conf);
-                }}
-                style={CAPTURE_WRAP_STYLE}
-              >
-                <ConferencePreviewPage conference={c.conf} onNavigateTeam={() => {}} onHome={() => {}} />
+            {/* Conference Previews — one instance, swapped through all
+                conferences by handleGenerateZip's dedicated pass (see
+                activeConferenceIdx above). Not mounted at all when idle. */}
+            {activeConferenceIdx != null && (
+              <div ref={conferencePreviewRef} style={CAPTURE_WRAP_STYLE}>
+                <ConferencePreviewPage conference={conferences[activeConferenceIdx].conf} onNavigateTeam={() => {}} onHome={() => {}} />
               </div>
-            ))}
+            )}
           </OffscreenStage>
         </>
       )}
