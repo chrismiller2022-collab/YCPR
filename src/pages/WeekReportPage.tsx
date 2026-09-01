@@ -1,52 +1,38 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { WEEKS } from "../data/games";
-import { useWeeklyChange, useWeeklyStats } from "../lib/api/weeklyStats";
-import {
-  topGainersAndLosers,
-  winsLossesLeft,
-  allConferencePreviews,
-  weekMatchups,
-  powerRatingsList,
-} from "../lib/reportData";
+import { fetchWeeklyReportUrl } from "../lib/api/weeklyReports";
 
+// Used to live-generate a bespoke PDF client-side (see lib/pdfReport.ts +
+// lib/reportData.ts — left in place but unused, since Chris didn't love
+// that format). Now this just looks up whether that week's report has
+// already been published (as a single PDF assembled from the Weekly
+// Image Dump's own PNGs, one page each) and links to it — nothing is
+// generated here anymore. See WeeklyImageDumpAdminPanel.tsx for the
+// publish side.
 export default function WeekReportPage({ onHome }: any) {
-  const [division, setDivision] = useState<"FBS" | "FCS">("FBS");
-  const [week, setWeek] = useState(1);
-  const [generating, setGenerating] = useState(false);
+  const [week, setWeek] = useState(WEEKS[0].key);
+  const [loading, setLoading] = useState(true);
+  const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { byTeam: sosChange, currentWeek, previousWeek } = useWeeklyChange("sor");
-  const { byTeam: resumeChange } = useWeeklyChange("resume_rating");
-  const { byTeam: ratingChange } = useWeeklyChange("rating");
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
-
-  const hasWeeklyChangeData = !!(currentWeek && previousWeek);
-
-  const handleGenerate = () => {
-    setGenerating(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
     setError(null);
-    (async () => {
-      try {
-        const { buildWeekReportPdf } = await import("../lib/pdfReport");
-        await buildWeekReportPdf({
-          division,
-          week,
-          sos: topGainersAndLosers(division, sosChange),
-          resume: topGainersAndLosers(division, resumeChange),
-          rating: topGainersAndLosers(division, ratingChange),
-          winsLossesLeft: winsLossesLeft(division),
-          conferencePreviews: allConferencePreviews(division, liveByTeam),
-          matchups: weekMatchups(division, week, liveByTeam),
-          powerRatings: powerRatingsList(division, liveByTeam),
-          hasWeeklyChangeData,
-        });
-      } catch (err: any) {
-        setError(err?.message ?? "Something went wrong generating the report.");
-      } finally {
-        setGenerating(false);
-      }
-    })();
-  };
+    fetchWeeklyReportUrl(week)
+      .then((url) => {
+        if (!cancelled) setReportUrl(url);
+      })
+      .catch((err: any) => {
+        if (!cancelled) setError(err?.message ?? "Failed to check for this week's report.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [week]);
 
   return (
     <div className="matchups-page">
@@ -57,38 +43,19 @@ export default function WeekReportPage({ onHome }: any) {
         <div className="eyebrow">Tools</div>
         <h1 className="title matchup-title">WEEK REPORT (PDF)</h1>
         <p className="subtitle team-subtitle">
-          Generates a PDF covering Top 25 gainers/losers for SOS, Resume, and
-          Power Rating, wins/losses left, every conference preview, that
-          week's matchups, and the full power ratings list — all for one
-          division at a time.
+          That week's full graphics pack in one PDF — Power Ratings, Resume
+          Ratings, SOS, Win Totals, Playoff Brackets, Matchups, the
+          Watchability Chart, TV Guide, and every Conference Preview.
         </p>
-        {!hasWeeklyChangeData && (
-          <p style={{ fontSize: "0.8rem", color: "#666" }}>
-            Gainers/losers sections will be empty until at least two weeks of
-            data have been saved through the admin page.
-          </p>
-        )}
       </div>
 
-      <div className="picker-grid" style={{ maxWidth: 480, margin: "2rem auto 0" }}>
+      <div className="picker-grid" style={{ maxWidth: 320, margin: "2rem auto 0" }}>
         <div className="picker-card">
-          <div className="picker-label">Division</div>
+          <div className="picker-label">Week</div>
           <div className="picker-row">
-            <select
-              className="filter picker-select"
-              value={division}
-              onChange={(e) => setDivision(e.target.value as "FBS" | "FCS")}
-            >
-              <option value="FBS">FBS</option>
-              <option value="FCS">FCS</option>
-            </select>
-            <select
-              className="filter picker-select"
-              value={week}
-              onChange={(e) => setWeek(parseInt(e.target.value, 10))}
-            >
-              {WEEKS.map((w, i) => (
-                <option key={w.key} value={i + 1}>
+            <select className="filter picker-select" value={week} onChange={(e) => setWeek(e.target.value)}>
+              {WEEKS.map((w) => (
+                <option key={w.key} value={w.key}>
                   {w.label}
                 </option>
               ))}
@@ -98,23 +65,26 @@ export default function WeekReportPage({ onHome }: any) {
       </div>
 
       <div style={{ textAlign: "center", marginTop: "2rem" }}>
-        <button
-          className="mode-btn mode-btn-active"
-          disabled={generating}
-          onClick={handleGenerate}
-          style={{ padding: "0.8rem 1.6rem", fontSize: "0.9rem" }}
-        >
-          {generating ? "Generating…" : `Generate ${division} Week ${week} Report`}
-        </button>
-        {error && (
-          <p style={{ color: "crimson", marginTop: "1rem" }}>{error}</p>
+        {loading ? (
+          <p>Checking for this week's report…</p>
+        ) : error ? (
+          <p style={{ color: "crimson" }}>{error}</p>
+        ) : reportUrl ? (
+          <a
+            className="mode-btn mode-btn-active"
+            href={reportUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ padding: "0.8rem 1.6rem", fontSize: "0.9rem", display: "inline-block", textDecoration: "none" }}
+          >
+            View / Download Report
+          </a>
+        ) : (
+          <p style={{ color: "#666" }}>This week's report is currently unavailable.</p>
         )}
       </div>
 
-      <div className="footer-note">
-        The PDF downloads directly in your browser — nothing is uploaded or
-        stored anywhere.
-      </div>
+      <div className="footer-note">Reports are published by the site admin — this page just links to that week's PDF.</div>
     </div>
   );
 }

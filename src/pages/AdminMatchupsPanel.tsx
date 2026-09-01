@@ -696,12 +696,16 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [weekSel, setWeekSel] = useState<"all" | number>("all");
   const [query, setQuery] = useState("");
-  const [matchupType, setMatchupType] = useState("All");
+  // Defaults: FBS vs FBS, sorted by Bet Size descending (biggest bets
+  // first, the rows most worth acting on) — per Chris's request, this is
+  // what he actually wants to see first when opening this page, not
+  // "every matchup, unsorted."
+  const [matchupType, setMatchupType] = useState("FBSvFBS");
   const [mode, setMode] = useState("spreads");
   const [mlEvThreshold, setMlEvThreshold] = useState(0);
   const [hideNoLine, setHideNoLine] = useState(true);
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<string | null>("betSize");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(false);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
+import jsPDF from "jspdf";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
 import MatchupGridGraphic from "../components/MatchupGridGraphic";
 import BracketPage from "./BracketPage";
@@ -49,6 +50,7 @@ import {
   useWeekPairChange,
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
+import { publishWeeklyReportPdf } from "../lib/api/weeklyReports";
 
 // Weekly Post/Image Dump tool. Covers every category on Chris's list:
 // Power Ratings and Win Totals (FBS + FCS), Resume Ratings and SOS (both
@@ -141,6 +143,26 @@ function OffscreenStage({ children }: { children: React.ReactNode }) {
 }
 
 const CAPTURE_WRAP_STYLE: React.CSSProperties = { display: "inline-block" };
+
+// Reads a captured PNG blob back as a data URL (for jsPDF's addImage,
+// which wants a data URL/base64 string, not a Blob) plus its actual
+// pixel dimensions (via Image.naturalWidth/Height, rather than assuming
+// 2x the DOM node's scrollWidth/scrollHeight — trusts what was actually
+// rasterized instead of re-deriving it).
+function blobToImageData(blob: Blob): Promise<{ dataUrl: string; width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image blob"));
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new Image();
+      img.onload = () => resolve({ dataUrl, width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = () => reject(new Error("Failed to measure image dimensions"));
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(blob);
+  });
+}
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -449,6 +471,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     setZipDone(null);
     try {
       const zip = new JSZip();
+      // Collected alongside each PNG so the combined PDF below can be
+      // built in the same pass, in the same order, without re-capturing.
+      const pdfImages: { dataUrl: string; width: number; height: number }[] = [];
       for (const target of targets) {
         const node = target.node();
         if (!node) continue;
@@ -468,7 +493,33 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true);
         restore?.();
         zip.file(`${target.key}.png`, blob);
+        pdfImages.push(await blobToImageData(blob));
       }
+
+      // Combined PDF — every PNG above, one page each, in the same order.
+      // Each page is sized to match its own image's pixel dimensions
+      // (rather than a fixed letter/landscape frame) so nothing gets
+      // letterboxed or cropped — the actual PNG's own aspect ratio, since
+      // html-to-image renders at pixelRatio:2 (see exportPng.ts). This
+      // becomes that week's public Week Report PDF, published below —
+      // Chris wants the report to just be the dump's own graphics rather
+      // than the old bespoke jsPDF layout in lib/pdfReport.ts.
+      let pdfBlob: Blob | null = null;
+      if (pdfImages.length > 0) {
+        const first = pdfImages[0];
+        const doc = new jsPDF({
+          unit: "px",
+          format: [first.width, first.height],
+          orientation: first.width >= first.height ? "landscape" : "portrait",
+        });
+        pdfImages.forEach((img, i) => {
+          if (i > 0) doc.addPage([img.width, img.height], img.width >= img.height ? "landscape" : "portrait");
+          doc.addImage(img.dataUrl, "PNG", 0, 0, img.width, img.height);
+        });
+        pdfBlob = doc.output("blob");
+        zip.file("00-week-report.pdf", pdfBlob);
+      }
+
       const blob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -478,7 +529,18 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setZipDone(`Downloaded ${targets.length} images.`);
+
+      let doneMsg = `Downloaded ${targets.length} images.`;
+      if (pdfBlob && currentWeek) {
+        try {
+          const password = sessionStorage.getItem("admin_password") ?? "";
+          await publishWeeklyReportPdf(currentWeek, pdfBlob, password);
+          doneMsg += ` Published as ${weekLabel(currentWeek)}'s public Week Report.`;
+        } catch (publishErr: any) {
+          doneMsg += ` ZIP is fine, but publishing to the public Week Report failed: ${publishErr.message ?? "unknown error"}.`;
+        }
+      }
+      setZipDone(doneMsg);
     } catch (err: any) {
       setZipError(err.message ?? "Failed to build ZIP");
     } finally {
