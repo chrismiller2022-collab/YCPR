@@ -47,6 +47,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [showPickedOnly, setShowPickedOnly] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
@@ -58,27 +59,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setError(null);
     fetchPeayWeek(season, week, liveByTeam)
-      .then((data) => {
-        // Default the pick to whichever side covers the Peay line (now
-        // itself defaulted to Vegas above) — only for rows nothing's
-        // been picked for yet, so this never overwrites a pick Chris
-        // already made. Comparing against peay_line rather than raw
-        // Vegas means the pick follows wherever the actual Peay line
-        // ends up, once he's overridden any that diverge from Vegas.
-        const withAutoPicks = data.map((r) => {
-          if (r.picked_side != null) return r;
-          const autoPick: "away" | "home" | null =
-            r.peay_line == null || r.myProjAwaySpread == null
-              ? null
-              : r.myProjAwaySpread < r.peay_line
-              ? "away"
-              : r.myProjAwaySpread > r.peay_line
-              ? "home"
-              : null;
-          return { ...r, picked_side: autoPick };
-        });
-        setRows(withAutoPicks);
-      })
+      .then(setRows)
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }
@@ -157,6 +138,8 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         return peayVsMineLive(r);
       case "peayVsVegas":
         return peayVsVegasLive(r);
+      case "wfb":
+        return r.wfbTeam ? 1 : 0;
       default:
         return null;
     }
@@ -164,6 +147,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
 
   const visibleRows = useMemo(() => {
     let list = showPickedOnly ? rows.filter((r) => r.picked_side != null) : rows;
+    if (hideCompleted) list = list.filter((r) => !r.game.completed);
     if (gameSearch.trim() !== "") {
       const q = gameSearch.trim().toLowerCase();
       list = list.filter((r) => r.game.away_team.toLowerCase().includes(q) || r.game.home_team.toLowerCase().includes(q));
@@ -190,7 +174,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
 
   const keyPickCount = rows.filter((r) => r.is_key_pick).length;
   const pickedCount = rows.filter((r) => r.picked_side != null).length;
@@ -242,6 +226,10 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <input type="checkbox" checked={showPickedOnly} onChange={(e) => setShowPickedOnly(e.target.checked)} />
           Show picked games only
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
+          Hide completed games
         </label>
         <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
           Key Picks: {keyPickCount}/{KEY_PICKS_TARGET}
@@ -340,6 +328,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                     onClick={handleSort}
                     align="right"
                   />
+                  <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                   <th className="th">Pick</th>
                   <th className="th">Key Pick</th>
                   <th className="th">Result</th>
@@ -377,21 +366,32 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(myVsVegas(r), 2)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(peayVsMineLive(r), 2)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(peayVsVegasLive(r), 2)}</td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        {r.wfbTeam === "away" ? (
+                          <TeamLogo team={r.game.away_team} size={16} />
+                        ) : r.wfbTeam === "home" ? (
+                          <TeamLogo team={r.game.home_team} size={16} />
+                        ) : (
+                          <span style={{ color: "var(--chalk-dim)" }}>–</span>
+                        )}
+                      </td>
                       <td style={cellStyle}>
                         <div style={{ display: "flex", gap: "0.2rem" }}>
                           <button
                             className="menu-btn"
-                            style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem" }}
+                            style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
                             onClick={() => updateRow(r.game_id, { picked_side: "away" })}
+                            title={r.game.away_team}
                           >
-                            Away
+                            <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.peay_line)}
                           </button>
                           <button
                             className="menu-btn"
-                            style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem" }}
+                            style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
                             onClick={() => updateRow(r.game_id, { picked_side: "home" })}
+                            title={r.game.home_team}
                           >
-                            Home
+                            <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.peay_line != null ? -r.peay_line : null)}
                           </button>
                         </div>
                       </td>

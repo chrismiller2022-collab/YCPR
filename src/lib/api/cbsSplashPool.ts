@@ -13,6 +13,9 @@ export interface CbsSplashRow {
   vegasAwaySpread: number | null;
   splashVsMine: number | null;
   splashVsVegas: number | null;
+  // Which side (if any) the Weighted Filtered Bet signal favors — same
+  // computeRow() field Admin Matchups' WFB column reads.
+  wfbTeam: "away" | "home" | null;
 }
 
 export type CbsSplashGrade = "win" | "loss" | "push" | "pending";
@@ -64,6 +67,7 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
       vegasAwaySpread: computed.vegasAwaySpread,
       splashVsMine: splashLine != null && computed.projAwaySpread != null ? splashLine - computed.projAwaySpread : null,
       splashVsVegas: splashLine != null && computed.vegasAwaySpread != null ? splashLine - computed.vegasAwaySpread : null,
+      wfbTeam: computed.weightedFilteredBetTeam,
     };
   });
 }

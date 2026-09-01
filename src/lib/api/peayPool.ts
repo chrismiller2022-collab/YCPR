@@ -13,6 +13,9 @@ export interface PeayRow {
   vegasAwaySpread: number | null;
   peayVsMine: number | null;
   peayVsVegas: number | null;
+  // Which side (if any) the Weighted Filtered Bet signal favors — same
+  // computeRow() field Admin Matchups' WFB column reads.
+  wfbTeam: "away" | "home" | null;
 }
 
 export type PeayGrade = "win" | "loss" | "push" | "pending";
@@ -66,6 +69,7 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
       vegasAwaySpread: computed.vegasAwaySpread,
       peayVsMine: peayLine != null && computed.projAwaySpread != null ? peayLine - computed.projAwaySpread : null,
       peayVsVegas: peayLine != null && computed.vegasAwaySpread != null ? peayLine - computed.vegasAwaySpread : null,
+      wfbTeam: computed.weightedFilteredBetTeam,
     };
   });
 }
