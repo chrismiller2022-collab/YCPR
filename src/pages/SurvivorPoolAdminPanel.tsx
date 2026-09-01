@@ -225,7 +225,7 @@ function EntrantsTab({ season }: { season: number }) {
   );
 }
 
-import { fetchPoolSeasonGames, fetchAllSeasonPicks, gradePickResult, type PoolGameRow } from "../lib/api/survivorPoolPublic";
+import { fetchPoolSeasonGames, fetchAllSeasonPicks, gradePickResult, computeCurrentWeek, type PoolGameRow } from "../lib/api/survivorPoolPublic";
 
 // ---------------------------------------------------------------------
 // FPI Ratings tab — lets you confirm the FPI sync actually populated
@@ -587,10 +587,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
 
   const gamesById = new Map(poolGames.map((g) => [g.gameId, g]));
   const weeks = Array.from(new Set(poolGames.map((g) => g.week))).sort((a, b) => a - b);
-  const currentWeek = (() => {
-    const completed = poolGames.filter((g) => g.completed).map((g) => g.week);
-    return completed.length > 0 ? Math.max(...completed) + 1 : weeks[0] ?? 1;
-  })();
+  const currentWeek = computeCurrentWeek(poolGames);
 
   const picksByEntrant = new Map<number, Map<number, any[]>>();
   for (const p of picks) {

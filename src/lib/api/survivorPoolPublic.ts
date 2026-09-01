@@ -179,6 +179,37 @@ export async function fetchEntrantPicks(entrantId: number): Promise<EntrantPickR
   return data ?? [];
 }
 
+/**
+ * The pool's currently-pickable week — the week right after the last one
+ * where EVERY game has finished, not just "any" game in it. A real CFB
+ * week's games finish at staggered times (Tuesday/Wednesday/Thursday
+ * games are done long before Saturday's slate even kicks off), so basing
+ * this on "any completed game in week N" advanced to week N+1 the moment
+ * a single Thursday game finished — marking next week "Pickable" while
+ * most of the actual current week hadn't started yet. A week with zero
+ * games scheduled doesn't count as complete (an empty array's .every()
+ * is vacuously true, which would otherwise treat "no games synced for
+ * this week yet" as "this week is done").
+ *
+ * Used by every page that needs to know which week is open for real
+ * submissions (SurvivorPoolPublicPage, SurvivorPoolAdminPanel,
+ * CfbSurvivorToolPage) — centralized here so they can't drift apart on
+ * what "current" means, the same reasoning as computeWeekDeadline below.
+ */
+export function computeCurrentWeek(games: { week: number; completed: boolean }[]): number {
+  const weeks = Array.from(new Set(games.map((g) => g.week))).sort((a, b) => a - b);
+  const gamesByWeek = new Map<number, boolean[]>();
+  for (const g of games) {
+    const list = gamesByWeek.get(g.week) ?? [];
+    list.push(g.completed);
+    gamesByWeek.set(g.week, list);
+  }
+  const fullyCompletedWeeks = Array.from(gamesByWeek.entries())
+    .filter(([, completedFlags]) => completedFlags.length > 0 && completedFlags.every(Boolean))
+    .map(([week]) => week);
+  return fullyCompletedWeeks.length > 0 ? Math.max(...fullyCompletedWeeks) + 1 : weeks[0] ?? 1;
+}
+
 // ---------------------------------------------------------------------
 // Deadline math — client-side mirror of api/survivor-pool-pick-save.ts's
 // logic, used here only for display (countdown/lock status in the UI).
@@ -211,7 +242,7 @@ function easternWallTimeToUtc(year: number, month: number, day: number, hour: nu
   return new Date(naiveUtcMs - offsetMin * 60000);
 }
 
-/** The week's overall deadline: Saturday 11:00 AM ET of the week containing its earliest game. */
+/** The week's overall deadline: Saturday 11:59 AM ET of the week containing its earliest game. */
 export function computeWeekDeadline(gameStartDates: (string | null)[]): Date | null {
   const valid = gameStartDates.filter((d): d is string => !!d).sort();
   if (valid.length === 0) return null;
@@ -230,7 +261,7 @@ export function computeWeekDeadline(gameStartDates: (string | null)[]): Date | n
   const daysToSaturday = (6 - anchor.getUTCDay() + 7) % 7;
   const saturday = new Date(anchor.getTime() + daysToSaturday * 86400000);
 
-  return easternWallTimeToUtc(saturday.getUTCFullYear(), saturday.getUTCMonth() + 1, saturday.getUTCDate(), 11, 0);
+  return easternWallTimeToUtc(saturday.getUTCFullYear(), saturday.getUTCMonth() + 1, saturday.getUTCDate(), 11, 59);
 }
 
 /** A specific game locks at whichever is earlier: its own kickoff, or the week's overall deadline. */

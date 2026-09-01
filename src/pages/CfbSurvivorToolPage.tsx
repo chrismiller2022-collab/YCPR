@@ -5,6 +5,7 @@ import {
   fetchPoolSeasonGames,
   fetchSpreadsForGames,
   fetchEntrantByCode,
+  computeCurrentWeek,
   type PoolGameRow,
   type GameSpreads,
 } from "../lib/api/survivorPoolPublic";
@@ -69,10 +70,7 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
 
   const weeks = useMemo(() => Array.from(new Set(poolGames.map((g) => g.week))).sort((a, b) => a - b), [poolGames]);
 
-  const currentWeek = useMemo(() => {
-    const completedWeeks = poolGames.filter((g) => g.completed).map((g) => g.week);
-    return completedWeeks.length > 0 ? Math.max(...completedWeeks) + 1 : weeks[0] ?? 1;
-  }, [poolGames, weeks]);
+  const currentWeek = useMemo(() => computeCurrentWeek(poolGames), [poolGames]);
 
   const plannedTeams = useMemo(() => {
     const set = new Set<string>();

@@ -6,6 +6,7 @@ import {
   fetchEntrantPicks,
   computeWeekDeadline,
   computeGameLockTime,
+  computeCurrentWeek,
   submitPick,
   type SurvivorPoolEntrantPublic,
   type PoolGameRow,
@@ -112,10 +113,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
 
   const weeks = useMemo(() => Array.from(new Set(poolGames.map((g) => g.week))).sort((a, b) => a - b), [poolGames]);
 
-  const currentWeek = useMemo(() => {
-    const completedWeeks = poolGames.filter((g) => g.completed).map((g) => g.week);
-    return completedWeeks.length > 0 ? Math.max(...completedWeeks) + 1 : weeks[0] ?? 1;
-  }, [poolGames, weeks]);
+  const currentWeek = useMemo(() => computeCurrentWeek(poolGames), [poolGames]);
 
   const weekDeadline = useMemo(() => {
     const currentWeekGames = poolGames.filter((g) => g.week === currentWeek);

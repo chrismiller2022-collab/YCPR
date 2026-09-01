@@ -28,6 +28,9 @@ function easternWallTimeToUtc(year: number, month: number, day: number, hour: nu
   return new Date(naiveUtcMs - offsetMin * 60000);
 }
 
+// Saturday 11:59 AM ET of the week containing its earliest game — keep in
+// sync with computeWeekDeadline in src/lib/api/survivorPoolPublic.ts,
+// which mirrors this exact function for client-side display.
 function computeWeekDeadline(gameStartDates: (string | null)[]): Date | null {
   const valid = gameStartDates.filter((d): d is string => !!d).sort();
   if (valid.length === 0) return null;
@@ -46,7 +49,7 @@ function computeWeekDeadline(gameStartDates: (string | null)[]): Date | null {
   const daysToSaturday = (6 - anchor.getUTCDay() + 7) % 7;
   const saturday = new Date(anchor.getTime() + daysToSaturday * 86400000);
 
-  return easternWallTimeToUtc(saturday.getUTCFullYear(), saturday.getUTCMonth() + 1, saturday.getUTCDate(), 11, 0);
+  return easternWallTimeToUtc(saturday.getUTCFullYear(), saturday.getUTCMonth() + 1, saturday.getUTCDate(), 11, 59);
 }
 
 function computeGameLockTime(gameStartDate: string | null, weekDeadline: Date | null): Date | null {
