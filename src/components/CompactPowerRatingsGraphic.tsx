@@ -105,6 +105,7 @@ function CompactSection({
   valueLabel,
   higherIsBetter,
   colorScale,
+  signed,
 }: {
   title: string;
   rows: CompactRatingRow[];
@@ -112,6 +113,7 @@ function CompactSection({
   valueLabel: string;
   higherIsBetter: boolean;
   colorScale: "threshold" | "percentile";
+  signed: boolean;
 }) {
   const columns = chunkForCompactGrid(rows, targetRowsPerColumn);
   if (columns.length === 0) return null;
@@ -157,7 +159,13 @@ function CompactSection({
                       {r.team}
                     </td>
                     <td style={{ ...CELL, color: ratingColor(r.rating, higherIsBetter, r.rank, rows.length, valueLabel === "CHANGE", colorScale), fontWeight: 700 }}>
-                      {r.rating > 0 ? "+" : ""}
+                      {/* CHANGE columns are deltas and always want the sign
+                          (+3.2 vs -3.2 reads as "improved"/"worsened"); raw
+                          columns only get a leading "+" when `signed` says
+                          the metric is actually signed (Power Rating, SOS) —
+                          a plain count like Win Totals ("+8 wins") read like
+                          a week-over-week change and was misleading. */}
+                      {(valueLabel === "CHANGE" || signed) && r.rating > 0 ? "+" : ""}
                       {r.rating.toFixed(1)}
                     </td>
                   </tr>
@@ -180,6 +188,7 @@ export default function CompactPowerRatingsGraphic({
   higherIsBetter = false,
   sideBySide = false,
   colorScale = "threshold",
+  signed = true,
 }: {
   /** Small uppercase label above the title, e.g. "WEEK 1 · FBS". */
   eyebrow: string;
@@ -216,6 +225,12 @@ export default function CompactPowerRatingsGraphic({
    * Totals, Wins Left, Losses Left). Doesn't affect "CHANGE" columns,
    * which always use the threshold approach (see ratingColor). */
   colorScale?: "threshold" | "percentile";
+  /** Whether a positive raw value gets a leading "+" — true (default) for
+   * signed metrics like Power Rating/SOS, where the sign is meaningful.
+   * Pass false for plain non-negative counts (Win Totals, Wins Left,
+   * Losses Left), where "+8" reads like a change rather than a total.
+   * Doesn't affect CHANGE columns, which always show the sign. */
+  signed?: boolean;
 }) {
   return (
     <div
@@ -252,7 +267,12 @@ export default function CompactPowerRatingsGraphic({
         </div>
       </div>
 
-      <div style={sideBySide ? { display: "flex", gap: 24, alignItems: "flex-start" } : undefined}>
+      {/* justifyContent:"center" matters whenever the header text is wider
+          than the two side-by-side columns combined — the outer container
+          is width:"fit-content", so it sizes to whichever is wider, and
+          without this the (narrower) column pair would sit flush-left
+          under a (wider) centered header instead of centered under it. */}
+      <div style={sideBySide ? { display: "flex", gap: 24, alignItems: "flex-start", justifyContent: "center" } : undefined}>
         {sections.map((s, i) => (
           <CompactSection
             key={s.title || i}
@@ -262,6 +282,7 @@ export default function CompactPowerRatingsGraphic({
             valueLabel={valueLabel}
             higherIsBetter={higherIsBetter}
             colorScale={colorScale}
+            signed={signed}
           />
         ))}
       </div>

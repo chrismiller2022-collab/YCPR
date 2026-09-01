@@ -18,6 +18,13 @@ import {
 } from "../lib/watchability";
 import TvGuidePanel from "./TvGuidePanel";
 
+// Same branding pair CompactPowerRatingsGraphic uses for the Weekly
+// Image Dump's other self-branded images — duplicated locally (no shared
+// constants module exists yet) rather than importing from a component
+// this page has no other reason to depend on.
+const WATCHABILITY_SITE_URL = "ycpr.vercel.app";
+const WATCHABILITY_TWITTER_HANDLE = "@YCtheflea";
+
 const WINDOW_LABELS: Record<KickoffWindow, string> = {
   early: "Early Slate",
   afternoon: "Afternoon Slate",
@@ -450,11 +457,28 @@ export default function WatchabilityPage({
           spread/total line). */}
       <div style={{ position: "absolute", top: -99999, left: -99999 }}>
         <div ref={mobileExportRef} style={{ background: "#1a1b2e", padding: "1.25rem 1rem", width: 480 }}>
-          <div style={{ color: "#fff", fontSize: "1.1rem", fontWeight: 800, marginBottom: "0.2rem" }}>Watchability Chart</div>
-          <div style={{ color: "#a3a8c3", fontSize: "0.72rem", marginBottom: "1rem" }}>
-            {scope === "season" ? "Full Season" : `Week ${week}`}
-            {scope === "weekly" && topView === "windows" ? " \u00b7 By Time Window" : ""}
-            {scope === "weekly" && saturdaysOnly ? " \u00b7 Saturdays only" : ""}
+          {/* Same eyebrow/title header and brand/site/handle footer
+              convention as CompactPowerRatingsGraphic and the rest of the
+              Weekly Image Dump's images (see that file), so this graphic
+              doesn't look out of place next to them. */}
+          <div style={{ textAlign: "center", marginBottom: 18 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                letterSpacing: "0.12em",
+                color: "var(--gold, #d9a441)",
+                textTransform: "uppercase",
+                marginBottom: 6,
+              }}
+            >
+              {scope === "season" ? "FULL SEASON" : `WEEK ${week}`}
+              {scope === "weekly" && topView === "windows" ? " \u00b7 BY TIME WINDOW" : ""}
+              {scope === "weekly" && saturdaysOnly ? " \u00b7 SATURDAYS ONLY" : ""}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "0.03em", color: "#fff", textTransform: "uppercase" }}>
+              Watchability Chart
+            </div>
           </div>
 
           {scope === "season"
@@ -473,6 +497,25 @@ export default function WatchabilityPage({
                     ))}
                 </div>
               ))}
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 16,
+              paddingTop: 10,
+              marginTop: 10,
+              borderTop: "1px solid rgba(255,255,255,0.15)",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: "0.05em",
+            }}
+          >
+            <span style={{ color: "rgba(255,255,255,0.55)" }}>YC POWER RATINGS</span>
+            <span style={{ color: "rgba(255,255,255,0.4)" }}>{WATCHABILITY_SITE_URL}</span>
+            <span style={{ color: "var(--gold, #d9a441)" }}>{WATCHABILITY_TWITTER_HANDLE}</span>
+          </div>
         </div>
       </div>
       </>

@@ -43,7 +43,10 @@ function normalizeOutlet(outlet: string): string {
   return o;
 }
 const NORMALIZED_CHANNEL_ORDER = CHANNEL_ORDER.map((c) => ({ label: c, key: normalizeOutlet(c) }));
-const STREAMING_CHANNEL_KEY = NORMALIZED_CHANNEL_ORDER.find((c) => c.label === "Streaming/ESPN+")!.key;
+// Exported so the Weekly Image Dump tool can find and hide this specific
+// row (via its data-tvguide-channel attribute) before capture, matching
+// this page's own "Include Streaming? No" export choice.
+export const STREAMING_CHANNEL_KEY = NORMALIZED_CHANNEL_ORDER.find((c) => c.label === "Streaming/ESPN+")!.key;
 
 const SLOT_MINUTES = 15;
 const GAME_LENGTH_MINUTES = 3.5 * 60;

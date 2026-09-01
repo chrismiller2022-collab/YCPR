@@ -5,7 +5,9 @@ import MatchupSlateGraphic from "../components/MatchupSlateGraphic";
 import BracketPage from "./BracketPage";
 import FCSBracketPage from "./FCSBracketPage";
 import WatchabilityPage from "./WatchabilityPage";
-import TvGuidePanel from "./TvGuidePanel";
+import TvGuidePanel, { STREAMING_CHANNEL_KEY } from "./TvGuidePanel";
+import ConferencePreviewPage from "./ConferencePreviewPage";
+import { conferencesForDivision } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -114,6 +116,12 @@ interface DumpTarget {
    * true) for the bracket pages, which don't self-brand and should get
    * the same branding bar their on-page Export button already adds. */
   branding?: boolean;
+  /** Runs immediately before this target is measured/captured; the
+   * returned function runs right after. Used by TV Guide to hide the
+   * Streaming/ESPN+ row — that channel alone can run a dozen-plus
+   * overlapping games and dominates the image, so it's left out here,
+   * matching the live page's own "Include Streaming? No" export choice. */
+  beforeCapture?: (node: HTMLElement) => () => void;
 }
 
 // Rendered off-screen (never display:none — html-to-image needs real
@@ -266,12 +274,15 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
   // --- SOS (FBS only) ---
   // SOS convention: positive = harder schedule, negative = easier (see
-  // imageDump.ts's toSosRows). "Top 30 Hardest"/"Top 25 Easiest" are two
-  // independent ranked lists (rank 1 = hardest on the left, rank 1 =
-  // easiest on the right), not two halves of one list — each gets its own
-  // rank computed fresh here rather than reusing sosRank (which is a
-  // single ascending-only rank across the whole division and would show
-  // confusing high numbers at the top of the Hardest side).
+  // imageDump.ts's toSosRows). "Top 30 Hardest"/"Top 30 Easiest" are two
+  // independent ranked lists of equal length (rank 1 = hardest on the
+  // left, rank 1 = easiest on the right), not two halves of one list —
+  // each gets its own rank computed fresh here rather than reusing
+  // sosRank (which is a single ascending-only rank across the whole
+  // division and would show confusing high numbers at the top of the
+  // Hardest side). Equal length matters for more than symmetry: a
+  // shorter Easiest column read as visually lopsided next to the full
+  // Hardest column.
   const fbsSosFull = toSosRows(fbsRows);
 
   const fbsSosValues = fbsRows
@@ -285,7 +296,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsSosEasiest = fbsSosValues
     .filter((r) => r.sos < 0)
     .sort((a, b) => a.sos - b.sos)
-    .slice(0, 25)
+    .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
 
   const fbsSosChanges = fbsRows
@@ -299,7 +310,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsSosGotEasier = fbsSosChanges
     .filter((r) => r.change < 0)
     .sort((a, b) => a.change - b.change)
-    .slice(0, 25)
+    .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
 
   // --- Win Totals (FBS + FCS) ---
@@ -363,6 +374,17 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx).
   const watchabilityRef = useRef<HTMLDivElement>(null);
   const tvGuideRef = useRef<HTMLDivElement>(null);
+  // Conference Previews — one image per conference, FBS then FCS. A
+  // dynamic-length list, unlike everything above, so refs live in a Map
+  // keyed by conference name instead of individual named useRefs.
+  const conferences = useMemo(
+    () => [
+      ...conferencesForDivision("FBS").map((conf) => ({ conf, div: "FBS" as const })),
+      ...conferencesForDivision("FCS").map((conf) => ({ conf, div: "FCS" as const })),
+    ],
+    []
+  );
+  const conferenceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const targets: DumpTarget[] = [
     { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false },
@@ -396,9 +418,30 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "29-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current },
     { key: "30-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current },
     { key: "31-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current },
-    { key: "32-watchability-saturday", node: () => watchabilityRef.current },
-    { key: "33-tv-guide", node: () => tvGuideRef.current },
+    { key: "32-watchability-saturday", node: () => watchabilityRef.current, branding: false },
+    {
+      key: "33-tv-guide",
+      node: () => tvGuideRef.current,
+      beforeCapture: (node) => {
+        const el = node.querySelector<HTMLElement>(`[data-tvguide-channel="${STREAMING_CHANNEL_KEY}"]`);
+        if (!el) return () => {};
+        const prevDisplay = el.style.display;
+        el.style.display = "none";
+        return () => {
+          el.style.display = prevDisplay;
+        };
+      },
+    },
   ];
+
+  // Appended rather than baked into the array literal above since its
+  // length depends on how many conferences exist per division.
+  conferences.forEach((c, i) => {
+    targets.push({
+      key: `${34 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
+      node: () => conferenceRefs.current.get(c.conf) ?? null,
+    });
+  });
 
   async function handleGenerateZip() {
     setZipping(true);
@@ -409,18 +452,21 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       for (const target of targets) {
         const node = target.node();
         if (!node) continue;
+        const restore = target.beforeCapture?.(node);
         // Forced explicitly rather than trusting the node's own
         // getBoundingClientRect() — every capture here is rendered
         // off-screen (position:fixed, far outside the viewport) for the
         // batch, and that combination was measuring wildly wrong widths
         // even with the inline-block wrapper fix. scrollWidth/scrollHeight
-        // read the node's actual laid-out box directly, same fix TV Guide
-        // uses for its horizontally-scrollable export.
+        // read the node's actual laid-out box directly (measured after
+        // beforeCapture, so a hidden row doesn't leave dead space), same
+        // fix TV Guide uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
         // branding defaults to true (see DumpTarget) — only the
         // CompactPowerRatingsGraphic targets opt out, since they bake in
         // their own header/footer.
         const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true);
+        restore?.();
         zip.file(`${target.key}.png`, blob);
       }
       const blob = await zip.generateAsync({ type: "blob" });
@@ -452,8 +498,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         Gainers/Losers (Power Ratings also gets Top 30 Group of 6; Win Totals gets Wins Left/
         Losses Left instead of Gainers/Losers). SOS (FBS) — Full List, plus a Hardest/Easiest split
         and a Got Harder/Got Easier split. FBS and FCS Playoff Brackets. Matchups — FBS vs FBS and
-        FCS vs FCS (each Midweek/Saturday), FBS vs FCS (All). Watchability Chart (Saturday only)
-        and TV Guide. Nothing here is saved — it only reads weeks you've already uploaded.
+        FCS vs FCS (each Midweek/Saturday), FBS vs FCS (All). Watchability Chart (Saturday only),
+        TV Guide, and a Conference Preview for every conference. Nothing here is saved — it only
+        reads weeks you've already uploaded.
       </p>
 
       {loadingWeeks ? (
@@ -559,7 +606,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 header="Strength of Schedule — Hardest & Easiest"
                 sections={[
                   { title: "Top 30 Hardest", rows: fbsSosHardest },
-                  { title: "Top 25 Easiest", rows: fbsSosEasiest },
+                  { title: "Top 30 Easiest", rows: fbsSosEasiest },
                 ]}
                 targetRowsPerColumn={TOP_N}
                 valueLabel="SOS"
@@ -572,7 +619,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 header="Strength of Schedule — Got Harder & Got Easier"
                 sections={[
                   { title: "Top 30 Got Harder", rows: fbsSosGotHarder },
-                  { title: "Top 25 Got Easier", rows: fbsSosGotEasier },
+                  { title: "Top 30 Got Easier", rows: fbsSosGotEasier },
                 ]}
                 targetRowsPerColumn={TOP_N}
                 valueLabel="CHANGE"
@@ -580,32 +627,34 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               />
             </div>
 
-            {/* Win Totals — FBS */}
+            {/* Win Totals — FBS. signed=false: these are plain counts
+                (8 wins, 3 losses left), not deltas — a leading "+" read
+                like a week-over-week change and was misleading. */}
             <div ref={fbsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fbsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fbsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fbsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fbsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" signed={false} />
             </div>
 
             {/* Win Totals — FCS */}
             <div ref={fcsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fcsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fcsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fcsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fcsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" signed={false} />
             </div>
 
             {/* Playoff Brackets — the existing site pages, captured as-is.
@@ -642,6 +691,22 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 page's own internal export-ready node. */}
             <WatchabilityPage onHome={() => {}} weekOverride={scheduleWeekNum ?? undefined} forceSaturdaysOnly shareRef={watchabilityRef} />
             <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} shareRef={tvGuideRef} />
+
+            {/* Conference Previews — the existing page, once per
+                conference. Always "latest" week internally (same as the
+                live page), not scoped to this tool's week picker. */}
+            {conferences.map((c) => (
+              <div
+                key={c.conf}
+                ref={(el) => {
+                  if (el) conferenceRefs.current.set(c.conf, el);
+                  else conferenceRefs.current.delete(c.conf);
+                }}
+                style={CAPTURE_WRAP_STYLE}
+              >
+                <ConferencePreviewPage conference={c.conf} onNavigateTeam={() => {}} onHome={() => {}} />
+              </div>
+            ))}
           </OffscreenStage>
         </>
       )}
