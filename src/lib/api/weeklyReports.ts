@@ -8,11 +8,17 @@ const BUCKET = "weekly-reports";
 // URL (server deletes any existing object for the week first), then PUT
 // the PDF bytes directly to Supabase Storage — keeps the actual file off
 // the Vercel serverless function, which caps bodies at 4.5MB.
+//
+// Routed through admin-bets-save's action dispatch rather than its own
+// endpoint — Vercel Hobby caps deployments at 12 serverless functions,
+// and this project sits right at that ceiling (see that file's header
+// comment), so every new server-side action goes into an existing
+// function instead of a new file.
 export async function publishWeeklyReportPdf(week: string, pdf: Blob, password: string): Promise<void> {
-  const signRes = await fetch("/api/weekly-report-save", {
+  const signRes = await fetch("/api/admin-bets-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, week }),
+    body: JSON.stringify({ password, action: "weeklyReportSign", week }),
   });
   const signData = await signRes.json();
   if (!signRes.ok) throw new Error(signData.error ?? "Failed to prepare report upload");

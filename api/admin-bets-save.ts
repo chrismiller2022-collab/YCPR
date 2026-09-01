@@ -1,14 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Handles more than just bets now — saveBets (Admin Matchups) and
-// saveResumeWeights (Admin Resume Rating) share this one function
-// deliberately, to avoid adding a new serverless function on Vercel
-// Hobby's 12-function cap. Same action-dispatched, password-gated
-// pattern as brit-save.ts and friends.
+// Handles more than just bets now — saveBets (Admin Matchups),
+// saveResumeWeights (Admin Resume Rating), and weeklyReportSign (Weekly
+// Image Dump's PDF publish step) share this one function deliberately,
+// to avoid adding a new serverless function on Vercel Hobby's
+// 12-function cap. Same action-dispatched, password-gated pattern as
+// brit-save.ts and friends.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const WEEKLY_REPORTS_BUCKET = "weekly-reports";
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
@@ -130,6 +132,28 @@ export default async function handler(req: any, res: any) {
       if (error) throw error;
 
       res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (action === "weeklyReportSign") {
+      const { week } = req.body;
+      if (!week || typeof week !== "string") {
+        res.status(400).json({ error: "Missing or invalid week" });
+        return;
+      }
+
+      const path = `${week}.pdf`;
+      // Remove any existing object first rather than relying on upsert —
+      // Supabase's signed-upload-URL + upsert combination has open
+      // reliability issues around overwriting existing files.
+      await supabaseAdmin.storage.from(WEEKLY_REPORTS_BUCKET).remove([path]);
+
+      const { data: signData, error: signError } = await supabaseAdmin.storage
+        .from(WEEKLY_REPORTS_BUCKET)
+        .createSignedUploadUrl(path);
+      if (signError) throw signError;
+
+      res.status(200).json({ ok: true, path, token: signData.token, signedUrl: signData.signedUrl });
       return;
     }
 
