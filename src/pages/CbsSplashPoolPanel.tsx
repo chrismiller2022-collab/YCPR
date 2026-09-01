@@ -8,6 +8,11 @@ import { fetchCbsSplashWeek, gradeCbsSplashPick, type CbsSplashRow } from "../li
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
 // FBS-vs-FBS game" pool.
 const POOL_URL: string | null = "https://app.splashsports.com/contest/05480bf3-91d8-4e2a-b25d-1502bb7c9061/entries/overall";
+// Second Splash link — a specific contest's picks page (with its own
+// entryId/slateId), separate from POOL_URL above which is the overall
+// entries/leaderboard view.
+const POOL_PICKS_URL: string | null =
+  "https://app.splashsports.com/contest/99efb826-9409-48f5-9c73-1182a213ce7c/picks?entryId=01a05d21-e5e9-4bc8-827a-7045eee2a393&slateId=f28a6120-8691-4e4f-aa9c-0d9dc903e3a3&isEdit=";
 const KEY_PICKS_TARGET = 3;
 
 async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {
@@ -193,12 +198,19 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
-        <h2 style={{ margin: 0 }}>CBS Splash</h2>
-        {POOL_URL && (
-          <a href={POOL_URL} target="_blank" rel="noopener noreferrer" className="menu-btn" style={{ textDecoration: "none" }}>
-            Open CBS Splash ↗
-          </a>
-        )}
+        <h2 style={{ margin: 0 }}>CBS/Kelly</h2>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {POOL_URL && (
+            <a href={POOL_URL} target="_blank" rel="noopener noreferrer" className="menu-btn" style={{ textDecoration: "none" }}>
+              Open Splash (Overall) ↗
+            </a>
+          )}
+          {POOL_PICKS_URL && (
+            <a href={POOL_PICKS_URL} target="_blank" rel="noopener noreferrer" className="menu-btn" style={{ textDecoration: "none" }}>
+              Open Splash (Picks) ↗
+            </a>
+          )}
+        </div>
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Every FBS-vs-FBS game this week, automatically. Enter CBS Splash's line for each game
