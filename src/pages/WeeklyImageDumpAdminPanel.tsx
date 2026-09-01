@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
-import MatchupSlateGraphic from "../components/MatchupSlateGraphic";
+import MatchupGridGraphic from "../components/MatchupGridGraphic";
 import BracketPage from "./BracketPage";
 import FCSBracketPage from "./FCSBracketPage";
 import WatchabilityPage from "./WatchabilityPage";
@@ -413,11 +413,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "24-fcs-win-totals-losses-left", node: () => fcsLossesLeftRef.current, branding: false },
     { key: "25-fbs-playoff-bracket", node: () => fbsBracketRef.current },
     { key: "26-fcs-playoff-bracket", node: () => fcsBracketRef.current },
-    { key: "27-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current },
-    { key: "28-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current },
-    { key: "29-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current },
-    { key: "30-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current },
-    { key: "31-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current },
+    { key: "27-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current, branding: false },
+    { key: "28-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false },
+    { key: "29-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false },
+    { key: "30-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false },
+    { key: "31-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current, branding: false },
     { key: "32-watchability-saturday", node: () => watchabilityRef.current, branding: false },
     {
       key: "33-tv-guide",
@@ -667,21 +667,25 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               <FCSBracketPage onNavigateTeam={() => {}} onNavigateConference={() => {}} onHome={() => {}} />
             </div>
 
-            {/* Matchups — FBS vs FBS, Midweek/Saturday split */}
+            {/* Matchups — FBS vs FBS, Midweek/Saturday split. Uses
+                MatchupGridGraphic (multi-column card grid), not
+                MatchupSlateGraphic (tall single-column list, still used
+                by the live Matchups page's own export) — a full Saturday
+                slate read as too long scrolling down one column. */}
             <div ref={fbsMatchupsMidweekRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupSlateGraphic rows={fbsFbsMidweekRows} title={`${wLabel.toUpperCase()} · FBS VS FBS · MIDWEEK`} />
+              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FBS — Midweek" rows={fbsFbsMidweekRows} />
             </div>
             <div ref={fbsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupSlateGraphic rows={fbsFbsSaturdayRows} title={`${wLabel.toUpperCase()} · FBS VS FBS · SATURDAY`} />
+              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FBS — Saturday" rows={fbsFbsSaturdayRows} />
             </div>
             <div ref={fcsMatchupsMidweekRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupSlateGraphic rows={fcsFcsMidweekRows} title={`${wLabel.toUpperCase()} · FCS VS FCS · MIDWEEK`} />
+              <MatchupGridGraphic eyebrow={fcsEyebrow} header="FCS vs FCS — Midweek" rows={fcsFcsMidweekRows} />
             </div>
             <div ref={fcsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupSlateGraphic rows={fcsFcsSaturdayRows} title={`${wLabel.toUpperCase()} · FCS VS FCS · SATURDAY`} />
+              <MatchupGridGraphic eyebrow={fcsEyebrow} header="FCS vs FCS — Saturday" rows={fcsFcsSaturdayRows} />
             </div>
             <div ref={crossMatchupsAllRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupSlateGraphic rows={crossSlateRows} title={`${wLabel.toUpperCase()} · FBS VS FCS`} />
+              <MatchupGridGraphic eyebrow={wLabel.toUpperCase()} header="FBS vs FCS" rows={crossSlateRows} />
             </div>
 
             {/* Watchability / TV Guide — the live pages themselves,
