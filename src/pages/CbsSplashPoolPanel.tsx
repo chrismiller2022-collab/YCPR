@@ -44,6 +44,14 @@ function fmt(v: number | null, decimals = 1) {
   return `${v > 0 ? "+" : ""}${v.toFixed(decimals)}`;
 }
 
+// No sign prefix — used for values that are already a magnitude
+// (absolute-value diffs, WFB's amount off), where a "+" in front of
+// every number would just be visual noise.
+function fmtAbs(v: number | null, decimals = 2) {
+  if (v == null) return "–";
+  return Math.abs(v).toFixed(decimals);
+}
+
 export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
@@ -136,12 +144,18 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         return r.myProjAwaySpread;
       case "vegasAwaySpread":
         return r.vegasAwaySpread;
+      case "openingAwaySpread":
+        return r.openingAwaySpread;
       case "splash_line":
         return r.splash_line;
-      case "myVsVegas":
-        return myVsVegas(r);
-      case "splashVsMine":
-        return splashVsMineLive(r);
+      case "myVsVegas": {
+        const v = myVsVegas(r);
+        return v != null ? Math.abs(v) : null;
+      }
+      case "splashVsMine": {
+        const v = splashVsMineLive(r);
+        return v != null ? Math.abs(v) : null;
+      }
       case "splashVsVegas":
         return splashVsVegasLive(r);
       case "wfb":
@@ -312,6 +326,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                     align="right"
                   />
                   <SortHeader
+                    label="Opening Line"
+                    sortKey="openingAwaySpread"
+                    active={sortKey === "openingAwaySpread"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
                     label="Splash Line"
                     sortKey="splash_line"
                     active={sortKey === "splash_line"}
@@ -343,6 +365,8 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                     onClick={handleSort}
                     align="right"
                   />
+                  <th className="th">Proj Cover</th>
+                  <th className="th">Actual Cover</th>
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                   <th className="th">Pick</th>
                   <th className="th">Key Pick</th>
@@ -367,6 +391,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                         {fmt(r.myProjAwaySpread)}
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>
                         <input
                           type="number"
@@ -378,17 +403,40 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           style={{ width: 55, textAlign: "right" }}
                         />
                       </td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(myVsVegas(r), 2)}</td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(splashVsMineLive(r), 2)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(splashVsMineLive(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(splashVsVegasLive(r), 2)}</td>
                       <td style={{ ...cellStyle, textAlign: "center" }}>
-                        {r.wfbTeam === "away" ? (
+                        {r.projCoverTeam === "away" ? (
                           <TeamLogo team={r.game.away_team} size={16} />
-                        ) : r.wfbTeam === "home" ? (
+                        ) : r.projCoverTeam === "home" ? (
                           <TeamLogo team={r.game.home_team} size={16} />
                         ) : (
                           <span style={{ color: "var(--chalk-dim)" }}>–</span>
                         )}
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        {r.actualCoverTeam === "away" ? (
+                          <TeamLogo team={r.game.away_team} size={16} />
+                        ) : r.actualCoverTeam === "home" ? (
+                          <TeamLogo team={r.game.home_team} size={16} />
+                        ) : r.actualCoverTeam === "push" ? (
+                          "Push"
+                        ) : (
+                          <span style={{ color: "var(--chalk-dim)" }}>–</span>
+                        )}
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}>
+                          {r.wfbTeam === "away" ? (
+                            <TeamLogo team={r.game.away_team} size={16} />
+                          ) : r.wfbTeam === "home" ? (
+                            <TeamLogo team={r.game.home_team} size={16} />
+                          ) : (
+                            <span style={{ color: "var(--chalk-dim)" }}>–</span>
+                          )}
+                          {r.wfbTeam != null && <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtAbs(r.wfbAmountOff)}</span>}
+                        </div>
                       </td>
                       <td style={cellStyle}>
                         <div style={{ display: "flex", gap: "0.2rem" }}>
@@ -435,9 +483,10 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       )}
 
       <div className="footer-note" style={{ marginTop: "1rem" }}>
-        Splash vs Mine / Splash vs Vegas = Splash's line minus that number — positive means
-        Splash's line is more home-favoring than the comparison. Results grade automatically
-        once CFBD marks a game complete with a final score.
+        My vs Vegas / Splash vs Mine show the size of the disagreement only (no sign) — how
+        far off, not which direction. Splash vs Vegas keeps its sign: positive means Splash's
+        line is more home-favoring than Vegas. Results grade automatically once CFBD marks a
+        game complete with a final score.
       </div>
     </div>
   );
