@@ -10,17 +10,24 @@ export interface CbsPickemPickRow {
   is_key_game: boolean;
   picked_side: "home" | "away" | null;
   predicted_total_points: number | null;
+  // CBS's own displayed spread, as typed in by Chris — separate from
+  // vegasAwaySpread below. Defaults to Vegas at fetch time (see
+  // fetchCbsPickemPicksForWeek) whenever nothing's been saved yet, so
+  // only the games where CBS's actual number diverges from Vegas need
+  // to be typed over before saving.
+  cbs_line: number | null;
 }
 
 export interface CbsPickemPickWithGame extends CbsPickemPickRow {
   game: GameRow | null;
   lines: BettingLineRow[];
   myProjAwaySpread: number | null;
-  // CBS's own displayed spread. We don't have a separate CBS-specific
-  // feed — this uses the same synced betting line as everywhere else on
-  // the site, on the assumption CBS's number tracks the market
-  // consensus closely enough to use as a stand-in. Worth spot-checking
-  // one week against CBS's actual displayed numbers.
+  // Raw synced Vegas line — kept separate from cbsAwaySpread now that
+  // the two can genuinely differ once cbs_line is overridden.
+  vegasAwaySpread: number | null;
+  // Effective CBS line for grading/pick comparison: cbs_line if saved,
+  // else Vegas. Grading (gradeCbsPickemPick) reads this unchanged from
+  // before — only what it resolves to has changed.
   cbsAwaySpread: number | null;
   vegasTotal: number | null;
 }
@@ -66,17 +73,19 @@ export async function fetchCbsPickemPicksForWeek(
   return picks.map((p) => {
     const gwl = byGameId.get(p.game_id) ?? null;
     if (!gwl) {
-      return { ...p, game: null, lines: [], myProjAwaySpread: null, cbsAwaySpread: null, vegasTotal: null };
+      return { ...p, game: null, lines: [], myProjAwaySpread: null, vegasAwaySpread: null, cbsAwaySpread: p.cbs_line ?? null, vegasTotal: null };
     }
 
     const computed = computeRow(gwl, liveByTeam);
+    const vegasAwaySpread = computed.vegasAwaySpread;
 
     return {
       ...p,
       game: gwl,
       lines: gwl.lines,
       myProjAwaySpread: computed.projAwaySpread,
-      cbsAwaySpread: computed.vegasAwaySpread,
+      vegasAwaySpread,
+      cbsAwaySpread: p.cbs_line ?? vegasAwaySpread,
       vegasTotal: computed.line?.over_under ?? null,
     };
   });

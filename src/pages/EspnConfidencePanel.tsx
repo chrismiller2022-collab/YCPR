@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
+import { formatProjectedScore } from "../lib/gameTotals";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import {
@@ -406,6 +407,11 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                         {(() => {
                           const myTotal = g ? totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) : null;
                           return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                        })()}
+                        {(() => {
+                          const myTotal = g ? totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) : null;
+                          const label = formatProjectedScore(myTotal ?? null, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null, g.away_team, g.home_team);
+                          return label ? ` · My Score ${label}` : "";
                         })()}
                       </div>
                     )}

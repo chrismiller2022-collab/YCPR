@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
+import { formatProjectedScore } from "../lib/gameTotals";
 import { billRAwayWinPct } from "../lib/moneylineBetHistory";
 import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import type { BettingLineRow } from "../lib/api/gamesLines";
 import {
   fetchFbsGamesForWeek,
@@ -223,6 +225,16 @@ function PickingStep({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const totalsRowByGame = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsRows]);
 
   function load() {
     setLoading(true);
@@ -320,6 +332,15 @@ function PickingStep({
                     {p.is_special && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Special game{line?.over_under != null ? ` · Vegas Total ${line.over_under}` : ""}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                        })()}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          const label = formatProjectedScore(myTotal, projAwaySpread != null ? -projAwaySpread : null, g.away_team, g.home_team);
+                          return label ? ` · My Score ${label}` : "";
+                        })()}
                       </div>
                     )}
                   </td>

@@ -58,7 +58,27 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setError(null);
     fetchPeayWeek(season, week, liveByTeam)
-      .then(setRows)
+      .then((data) => {
+        // Default the pick to whichever side covers the Peay line (now
+        // itself defaulted to Vegas above) — only for rows nothing's
+        // been picked for yet, so this never overwrites a pick Chris
+        // already made. Comparing against peay_line rather than raw
+        // Vegas means the pick follows wherever the actual Peay line
+        // ends up, once he's overridden any that diverge from Vegas.
+        const withAutoPicks = data.map((r) => {
+          if (r.picked_side != null) return r;
+          const autoPick: "away" | "home" | null =
+            r.peay_line == null || r.myProjAwaySpread == null
+              ? null
+              : r.myProjAwaySpread < r.peay_line
+              ? "away"
+              : r.myProjAwaySpread > r.peay_line
+              ? "home"
+              : null;
+          return { ...r, picked_side: autoPick };
+        });
+        setRows(withAutoPicks);
+      })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }

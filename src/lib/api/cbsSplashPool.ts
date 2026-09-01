@@ -51,7 +51,8 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
   return fbsGames.map((gwl) => {
     const computed = computeRow(gwl, liveByTeam);
     const saved = splashByGame.get(gwl.id);
-    const splashLine = saved?.splash_line ?? null;
+    // Defaults to Vegas — see peayPool.ts's fetchPeayWeek for the reasoning.
+    const splashLine = saved?.splash_line ?? computed.vegasAwaySpread ?? null;
 
     return {
       game_id: gwl.id,

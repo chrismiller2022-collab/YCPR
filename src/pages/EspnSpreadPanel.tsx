@@ -7,6 +7,7 @@ import {
   type EspnSpreadPickWithGame,
 } from "../lib/api/espnSpreadPool";
 import { spreadColor } from "../lib/odds";
+import { formatProjectedScore } from "../lib/gameTotals";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
@@ -236,7 +237,10 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               : p.myProjAwaySpread > p.espnAwaySpread
               ? "home"
               : null);
-          d[p.id] = { picked_side: autoPick };
+          // Defaults the input to Vegas (same reasoning as
+          // peayPool.ts) so only games where ESPN's actual line
+          // diverges from Vegas need to be typed over.
+          d[p.id] = { picked_side: autoPick, espn_line: p.espn_line ?? p.vegasAwaySpread ?? null };
         }
         setDraft(d);
       })
@@ -323,7 +327,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
             <tr>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Projection</th>
-              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>ESPN Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>ESPN Line</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
@@ -347,6 +352,11 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                           const myTotal = g ? totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) : null;
                           return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
                         })()}
+                        {(() => {
+                          const myTotal = g ? totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) : null;
+                          const label = formatProjectedScore(myTotal ?? null, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null, g.away_team, g.home_team);
+                          return label ? ` · My Score ${label}` : "";
+                        })()}
                       </div>
                     )}
                   </td>
@@ -361,7 +371,16 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     {fmt(p.myProjAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmt(p.espnAwaySpread)}
+                    {fmt(p.vegasAwaySpread)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={d.espn_line ?? ""}
+                      onChange={(e) => updateDraft(p.id, { espn_line: e.target.value === "" ? null : Number(e.target.value) })}
+                      style={{ width: 55, textAlign: "right" }}
+                    />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>

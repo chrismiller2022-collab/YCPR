@@ -51,7 +51,10 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
   return fbsGames.map((gwl) => {
     const computed = computeRow(gwl, liveByTeam);
     const saved = peayByGame.get(gwl.id);
-    const peayLine = saved?.peay_line ?? null;
+    // Defaults to Vegas so Chris doesn't have to retype every line that
+    // matches Vegas exactly — only the ones the actual Peay Pool line
+    // diverges from Vegas need to be typed over before saving.
+    const peayLine = saved?.peay_line ?? computed.vegasAwaySpread ?? null;
 
     return {
       game_id: gwl.id,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import {
   fetchFbsGamesForWeek,
@@ -7,7 +7,9 @@ import {
   type CbsPickemPickWithGame,
 } from "../lib/api/cbsPickemPool";
 import { spreadColor } from "../lib/odds";
+import { formatProjectedScore } from "../lib/gameTotals";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
 async function cbsPickemSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -203,6 +205,16 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const totalsRowByGame = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsRows]);
 
   function load() {
     setLoading(true);
@@ -223,7 +235,10 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               : p.myProjAwaySpread > p.cbsAwaySpread
               ? "home"
               : null);
-          d[p.id] = { picked_side: autoPick };
+          // Defaults the input to Vegas (same reasoning as
+          // peayPool.ts) so only games where CBS's actual line
+          // diverges from Vegas need to be typed over.
+          d[p.id] = { picked_side: autoPick, cbs_line: p.cbs_line ?? p.vegasAwaySpread ?? null };
         }
         setDraft(d);
       })
@@ -310,7 +325,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
             <tr>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Projection</th>
-              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS Line</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
@@ -329,6 +345,15 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     {p.is_key_game && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Key game{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                        })()}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          const label = formatProjectedScore(myTotal, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null, g.away_team, g.home_team);
+                          return label ? ` · My Score ${label}` : "";
+                        })()}
                       </div>
                     )}
                   </td>
@@ -343,7 +368,16 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     {fmt(p.myProjAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmt(p.cbsAwaySpread)}
+                    {fmt(p.vegasAwaySpread)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={d.cbs_line ?? ""}
+                      onChange={(e) => updateDraft(p.id, { cbs_line: e.target.value === "" ? null : Number(e.target.value) })}
+                      style={{ width: 55, textAlign: "right" }}
+                    />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>

@@ -303,6 +303,12 @@ export default async function handler(req: any, res: any) {
         if (pool === "espnconfidence") {
           update.confidence_points = p.confidence_points ?? null;
         }
+        if (pool === "espnspread") {
+          update.espn_line = p.espn_line ?? null;
+        }
+        if (pool === "cbspickem") {
+          update.cbs_line = p.cbs_line ?? null;
+        }
         const { error } = await supabaseAdmin.from(table).update(update).eq("id", p.id);
         if (error) throw error;
       }

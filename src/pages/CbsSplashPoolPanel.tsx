@@ -64,7 +64,24 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setError(null);
     fetchCbsSplashWeek(season, week, liveByTeam)
-      .then(setRows)
+      .then((data) => {
+        // See PeayPoolPanel.tsx's load() for the reasoning — default
+        // pick follows the (Vegas-defaulted) Splash line, only for rows
+        // with no pick made yet.
+        const withAutoPicks = data.map((r) => {
+          if (r.picked_side != null) return r;
+          const autoPick: "away" | "home" | null =
+            r.splash_line == null || r.myProjAwaySpread == null
+              ? null
+              : r.myProjAwaySpread < r.splash_line
+              ? "away"
+              : r.myProjAwaySpread > r.splash_line
+              ? "home"
+              : null;
+          return { ...r, picked_side: autoPick };
+        });
+        setRows(withAutoPicks);
+      })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }
