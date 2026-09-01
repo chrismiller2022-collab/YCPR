@@ -164,6 +164,28 @@ function blobToImageData(blob: Blob): Promise<{ dataUrl: string; width: number; 
   });
 }
 
+// Wraps a single target's capture with a hard deadline — without this,
+// one stuck capture (a slow/hanging logo fetch inside html-to-image's
+// embed step, most likely) hangs the entire 58-target loop forever
+// with zero feedback. On timeout the target is skipped, not fatal to
+// the whole run — see handleGenerateZip's catch-per-target below.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms / 1000}s`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+const CAPTURE_TIMEOUT_MS = 20000;
+
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
   const [currentWeek, setCurrentWeek] = useState<string | null>(null);
@@ -174,6 +196,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const [zipping, setZipping] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
   const [zipDone, setZipDone] = useState<string | null>(null);
+  // Shows live progress during the 58-target capture loop, since it was
+  // previously a totally silent "Building ZIP…" the whole time with no
+  // way to tell if it was working or stuck.
+  const [captureProgress, setCaptureProgress] = useState<{ current: number; total: number; label: string } | null>(null);
   // Separate from zipDone on purpose — a publish failure was previously
   // appended onto the same green success string as "Downloaded N
   // images. ZIP is fine, but publishing... failed: ...", which reads as
@@ -483,9 +509,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       // Collected alongside each PNG so the combined PDF below can be
       // built in the same pass, in the same order, without re-capturing.
       const pdfImages: { dataUrl: string; width: number; height: number }[] = [];
-      for (const target of targets) {
+      // Targets that timed out or threw — surfaced to Chris afterward
+      // rather than silently missing from the ZIP with no explanation.
+      const skippedTargets: string[] = [];
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
         const node = target.node();
         if (!node) continue;
+        setCaptureProgress({ current: i + 1, total: targets.length, label: target.key });
         const restore = target.beforeCapture?.(node);
         // Forced explicitly rather than trusting the node's own
         // getBoundingClientRect() — every capture here is rendered
@@ -496,14 +527,24 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         // beforeCapture, so a hidden row doesn't leave dead space), same
         // fix TV Guide uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
-        // branding defaults to true (see DumpTarget) — only the
-        // CompactPowerRatingsGraphic targets opt out, since they bake in
-        // their own header/footer.
-        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true);
-        restore?.();
-        zip.file(`${target.key}.png`, blob);
-        pdfImages.push(await blobToImageData(blob));
+        try {
+          // branding defaults to true (see DumpTarget) — only the
+          // CompactPowerRatingsGraphic targets opt out, since they bake in
+          // their own header/footer.
+          const blob = await withTimeout(
+            exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true),
+            CAPTURE_TIMEOUT_MS,
+            target.key
+          );
+          restore?.();
+          zip.file(`${target.key}.png`, blob);
+          pdfImages.push(await blobToImageData(blob));
+        } catch (captureErr: any) {
+          restore?.();
+          skippedTargets.push(`${target.key} (${captureErr.message ?? "unknown error"})`);
+        }
       }
+      setCaptureProgress(null);
 
       // Combined PDF — every PNG above, one page each, in the same order.
       // Each page is sized to match its own image's pixel dimensions
@@ -539,7 +580,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       link.remove();
       URL.revokeObjectURL(url);
 
-      setZipDone(`Downloaded ${targets.length} images.`);
+      setZipDone(
+        skippedTargets.length > 0
+          ? `Downloaded ${targets.length - skippedTargets.length}/${targets.length} images (${skippedTargets.length} skipped — see below).`
+          : `Downloaded ${targets.length} images.`
+      );
+      if (skippedTargets.length > 0) {
+        setZipError(`Skipped: ${skippedTargets.join(", ")}`);
+      }
       if (currentWeek) {
         if (pdfBlob) {
           try {
@@ -567,6 +615,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       setZipError(err.message ?? "Failed to build ZIP");
     } finally {
       setZipping(false);
+      setCaptureProgress(null);
     }
   }
 
@@ -626,6 +675,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           <button className="menu-btn" onClick={handleGenerateZip} disabled={zipping || loadingCurrent}>
             {zipping ? "Building ZIP…" : `Generate ZIP (${targets.length} images)`}
           </button>
+          {captureProgress && (
+            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+              Capturing {captureProgress.current}/{captureProgress.total}: {captureProgress.label}
+            </p>
+          )}
           {zipDone && <p style={{ color: "green" }}>{zipDone}</p>}
           {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
           {publishResult && (
