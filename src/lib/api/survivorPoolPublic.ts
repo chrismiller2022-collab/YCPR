@@ -242,26 +242,53 @@ function easternWallTimeToUtc(year: number, month: number, day: number, hour: nu
   return new Date(naiveUtcMs - offsetMin * 60000);
 }
 
-/** The week's overall deadline: Saturday 11:59 AM ET of the week containing its earliest game. */
+/**
+ * The week's overall deadline: Saturday 11:59 AM ET of the Saturday most
+ * of that week's games actually fall on.
+ *
+ * CFBD's own `week` numbering isn't a clean Sun-Sat bucket — 2026's
+ * week 1 runs Thu Aug 27 through Mon Sep 7, spanning BOTH the
+ * season-opener Saturday (Aug 29, 48 games) and the real main Week 1
+ * slate (Sep 5, 105 games). Taking "the Saturday of the earliest game"
+ * landed on Aug 29 — a week early — locking the whole week's picks
+ * before most of its actual games had even been played. Instead, every
+ * game's start date is mapped to its own week's Saturday, and whichever
+ * Saturday has the most games wins (ties go to the earlier Saturday).
+ */
 export function computeWeekDeadline(gameStartDates: (string | null)[]): Date | null {
-  const valid = gameStartDates.filter((d): d is string => !!d).sort();
+  const valid = gameStartDates.filter((d): d is string => !!d);
   if (valid.length === 0) return null;
-  const earliest = new Date(valid[0]);
 
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(earliest);
-  const map: any = {};
-  for (const p of parts) map[p.type] = p.value;
+  const countBySaturday = new Map<string, number>();
+  for (const d of valid) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(d));
+    const map: any = {};
+    for (const p of parts) map[p.type] = p.value;
 
-  const anchor = new Date(Date.UTC(+map.year, +map.month - 1, +map.day, 12, 0));
-  const daysToSaturday = (6 - anchor.getUTCDay() + 7) % 7;
-  const saturday = new Date(anchor.getTime() + daysToSaturday * 86400000);
+    const anchor = new Date(Date.UTC(+map.year, +map.month - 1, +map.day, 12, 0));
+    const daysToSaturday = (6 - anchor.getUTCDay() + 7) % 7;
+    const saturday = new Date(anchor.getTime() + daysToSaturday * 86400000);
+    const key = saturday.toISOString().slice(0, 10);
+    countBySaturday.set(key, (countBySaturday.get(key) ?? 0) + 1);
+  }
 
-  return easternWallTimeToUtc(saturday.getUTCFullYear(), saturday.getUTCMonth() + 1, saturday.getUTCDate(), 11, 59);
+  let bestKey: string | null = null;
+  let bestCount = -1;
+  for (const [key, count] of Array.from(countBySaturday.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestKey = key;
+    }
+  }
+  if (!bestKey) return null;
+
+  const [y, m, day] = bestKey.split("-").map(Number);
+  return easternWallTimeToUtc(y, m, day, 11, 59);
 }
 
 /** A specific game locks at whichever is earlier: its own kickoff, or the week's overall deadline. */
