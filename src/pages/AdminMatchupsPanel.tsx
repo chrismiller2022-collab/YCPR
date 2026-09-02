@@ -704,6 +704,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState("spreads");
   const [mlEvThreshold, setMlEvThreshold] = useState(0);
   const [hideNoLine, setHideNoLine] = useState(true);
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState<string | null>("betSize");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -758,14 +759,15 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   );
 
   const visibleRows = useMemo(() => {
-    if (!hideNoLine) return computedRows;
     return computedRows.filter((c) => {
+      if (hideCompleted && c.game.away_points != null && c.game.home_points != null) return false;
+      if (!hideNoLine) return true;
       if (mode === "spreads") return c.vegasAwaySpread != null;
       if (mode === "moneyline") return c.vegasMoneyline != null;
       if (mode === "totals") return c.line?.over_under != null;
       return true;
     });
-  }, [computedRows, hideNoLine, mode]);
+  }, [computedRows, hideNoLine, hideCompleted, mode]);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return visibleRows;
@@ -886,6 +888,10 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
           Hide games with no Vegas {mode === "spreads" ? "line" : mode === "moneyline" ? "moneyline" : "total"}
+        </label>
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
+          Hide completed games
         </label>
         {mode === "moneyline" && (
           <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
