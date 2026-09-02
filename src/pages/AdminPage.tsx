@@ -493,7 +493,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: "This week",
     items: [
       { key: "checklist", label: "Weekly Checklist" },
-      { key: "upload", label: "Data Upload" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
       { key: "bettingreport", label: "Weekly Betting Report" },
@@ -530,6 +529,10 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Public tools",
     items: [{ key: "survivorpooladmin", label: "Survivor Pool (Public)" }],
+  },
+  {
+    label: "Archived",
+    items: [{ key: "upload", label: "Data Upload" }],
   },
 ];
 

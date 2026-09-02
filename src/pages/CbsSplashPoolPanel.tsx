@@ -110,6 +110,10 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   }
 
   function handleSort(key: string) {
+    // See PeayPoolPanel.tsx's handleSort — Best Bets hard-codes the row
+    // order regardless of sortKey/sortDir, so a column-header click had
+    // no visible effect while Best Bets was active.
+    setSortMode("time");
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -443,7 +447,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           <button
                             className="menu-btn"
                             style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                            onClick={() => updateRow(r.game_id, { picked_side: "away" })}
+                            onClick={() => updateRow(r.game_id, { picked_side: r.picked_side === "away" ? null : "away" })}
                             title={r.game.away_team}
                           >
                             <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
@@ -451,7 +455,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           <button
                             className="menu-btn"
                             style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                            onClick={() => updateRow(r.game_id, { picked_side: "home" })}
+                            onClick={() => updateRow(r.game_id, { picked_side: r.picked_side === "home" ? null : "home" })}
                             title={r.game.home_team}
                           >
                             <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
