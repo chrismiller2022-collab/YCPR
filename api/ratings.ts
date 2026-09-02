@@ -395,8 +395,17 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Drop `id` when copying — it's a GENERATED ALWAYS AS IDENTITY column,
+    // so re-sending it (even the row's own existing value) in an upsert's
+    // INSERT ... ON CONFLICT makes Postgres reject the whole batch with
+    // "cannot insert a non-DEFAULT value into column \"id\"", regardless
+    // of whether the row ends up inserted or updated. onConflict:
+    // "team,week" is enough to match existing rows without it.
     const byTeam = new Map<string, any>();
-    for (const row of existingRows ?? []) byTeam.set(row.team, { ...row });
+    for (const row of existingRows ?? []) {
+      const { id: _id, ...rest } = row;
+      byTeam.set(row.team, rest);
+    }
 
     const nowIso = new Date().toISOString();
     const weekNumber = weekToNumber(week);
