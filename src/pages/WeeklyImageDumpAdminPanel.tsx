@@ -320,6 +320,25 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     };
   }, [season, scheduleWeekNum]);
 
+  // Review graphic (see below) needs the previous week's games — Week 1
+  // has no previous week, so it reviews its own completed-so-far games
+  // instead (see reviewGames/reviewLabel).
+  const previousWeekNum = scheduleWeekNum != null && scheduleWeekNum > 1 ? scheduleWeekNum - 1 : null;
+  const [previousWeekGames, setPreviousWeekGames] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    if (previousWeekNum == null) {
+      setPreviousWeekGames([]);
+      return;
+    }
+    let cancelled = false;
+    fetchGamesWithLines(season, previousWeekNum).then((games) => {
+      if (!cancelled) setPreviousWeekGames(games);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [season, previousWeekNum]);
+
   // TV Guide's own week-based filter combines every day in the schedule
   // week onto one grid — fine normally, but CFBD's week numbering can
   // bundle a Week 0 slate (played a full week earlier) into "Week 1",
@@ -337,7 +356,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     return [...new Set(saturdays)].sort().pop();
   }, [scheduleGames]);
 
-  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, scheduleWeekNum != null ? [scheduleWeekNum] : [], season);
+  // Requests the previous week too when there is one — the review
+  // graphic grades last week's games using THAT week's own historical
+  // ratings snapshot, not this week's.
+  const ratingsWeeksNeeded = useMemo(() => {
+    if (scheduleWeekNum == null) return [];
+    return previousWeekNum != null ? [previousWeekNum, scheduleWeekNum] : [scheduleWeekNum];
+  }, [scheduleWeekNum, previousWeekNum]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, ratingsWeeksNeeded, season);
   const { rows: totalsEngineRows } = useGameTotalsEngine(season);
   const projTotalByGame = useMemo(() => {
     const map = new Map<string, number>();
@@ -378,6 +404,47 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsFbsSaturdayRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "saturday"), [fbsFbsSlateRows]);
   const fcsFcsMidweekRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "midweek"), [fcsFcsSlateRows]);
   const fcsFcsSaturdayRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "saturday"), [fcsFcsSlateRows]);
+  // Cross-divisional (FBS vs FCS) previously wasn't split by day at all
+  // (one combined "All" graphic) — now split the same way FBS-vs-FBS
+  // and FCS-vs-FCS already are, so its midweek slice can combine into
+  // the "upcoming midweek" graphic below and its Saturday slice can
+  // stand as its own graphic alongside FBS-vs-FBS Saturday.
+  const crossMidweekRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "midweek"), [crossSlateRows]);
+  const crossSaturdayRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "saturday"), [crossSlateRows]);
+
+  // "Upcoming Midweek" — FBS-vs-FBS midweek and FBS-vs-FCS midweek
+  // combined into one graphic per Chris ("upcoming midweek all in same
+  // graphic"), replacing what used to be FBS-vs-FBS midweek's own solo
+  // target. FCS-vs-FCS midweek is unaffected — stays its own graphic.
+  const upcomingMidweekRows = useMemo(() => [...fbsFbsMidweekRows, ...crossMidweekRows], [fbsFbsMidweekRows, crossMidweekRows]);
+
+  // "Review" — last week's FBS-vs-FBS + FBS-vs-FCS games (all days,
+  // completed only), combined into one graphic. Week 1 has no previous
+  // week to review, so it reviews its own completed-so-far games
+  // instead — same shape, different source week and a distinctly-worded
+  // label (reviewLabel below) so it's never confused with a genuine
+  // previous-week review once Week 2's package also contains "Week 1"
+  // games, just framed as the completed prior week rather than
+  // "this week so far."
+  const reviewWeekNum = previousWeekNum ?? scheduleWeekNum;
+  const reviewGames = previousWeekNum != null ? previousWeekGames : scheduleGames;
+  const reviewRatings = reviewWeekNum != null ? ratingsByWeek[reviewWeekNum] ?? {} : {};
+  const reviewFbsFbsRows = useMemo(
+    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd)),
+    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd]
+  );
+  const reviewCrossRows = useMemo(
+    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "Cross", fbsTotalPoolStd)),
+    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd]
+  );
+  const reviewRows = useMemo(
+    () => [...reviewFbsFbsRows, ...reviewCrossRows].filter((r) => r.completed),
+    [reviewFbsFbsRows, reviewCrossRows]
+  );
+  const reviewLabel =
+    previousWeekNum != null
+      ? `${weekLabel(`week${previousWeekNum}`).toUpperCase()} REVIEW`
+      : `${weekLabel(currentWeek).toUpperCase()} RESULTS SO FAR`;
 
   const fbsRows = useMemo(
     () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam),
@@ -498,11 +565,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // Matchups refs. Cross-divisional (FBS vs FCS) lives in the FBS
   // division bucket below, but stays its own separate image — not
   // merged into FBS-vs-FBS.
-  const fbsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
+  const upcomingMidweekRef = useRef<HTMLDivElement>(null);
   const fbsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
-  const crossMatchupsAllRef = useRef<HTMLDivElement>(null);
+  const crossMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
+  const matchupsReviewRef = useRef<HTMLDivElement>(null);
   // Watchability / TV Guide refs — passed straight into the live pages as
   // shareRef, so these ARE the exact nodes their own Export PNG buttons
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx). Both are
@@ -558,17 +626,26 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "19-fcs-win-totals-wins-losses-left", node: () => fcsWinsLossesLeftRef.current, branding: false, division: "FCS" },
     { key: "20-fbs-playoff-bracket", node: () => fbsBracketRef.current, division: "FBS" },
     { key: "21-fcs-playoff-bracket", node: () => fcsBracketRef.current, division: "FCS" },
-    { key: "22-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current, branding: false, division: "FBS" },
-    { key: "23-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false, division: "FBS" },
-    { key: "24-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false, division: "FCS" },
-    { key: "25-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false, division: "FCS" },
-    // Cross-divisional (FBS vs FCS) — lives in the FBS bucket per Chris,
-    // but stays its own separate image, not merged into FBS-vs-FBS.
-    { key: "26-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current, branding: false, division: "FBS" },
-    { key: "27-watchability-saturday-overall", node: () => watchabilityRef.current, branding: false, division: "FBS" },
-    { key: "28-watchability-saturday-by-slate", node: () => watchabilityByWindowRef.current, branding: false, division: "FBS" },
+    // Review — last week's FBS-vs-FBS + FBS-vs-FCS (all days, completed
+    // only); Week 1 reviews its own completed-so-far games instead of a
+    // previous week (see reviewLabel/reviewRows above).
+    { key: "22-matchups-review", node: () => matchupsReviewRef.current, branding: false, division: "FBS" },
+    // Upcoming Midweek — FBS-vs-FBS midweek + FBS-vs-FCS midweek
+    // combined into one graphic per Chris, replacing what used to be
+    // FBS-vs-FBS midweek's own solo target.
+    { key: "23-matchups-upcoming-midweek", node: () => upcomingMidweekRef.current, branding: false, division: "FBS" },
+    { key: "24-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false, division: "FBS" },
+    // Cross-divisional Saturday — previously cross-div wasn't split by
+    // day at all (one combined "All" graphic); now split the same way
+    // FBS-vs-FBS/FCS-vs-FCS already are, so this stands as its own
+    // graphic alongside FBS-vs-FBS Saturday ("2 graphics like normal").
+    { key: "25-fbs-vs-fcs-matchups-saturday", node: () => crossMatchupsSaturdayRef.current, branding: false, division: "FBS" },
+    { key: "26-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false, division: "FCS" },
+    { key: "27-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false, division: "FCS" },
+    { key: "28-watchability-saturday-overall", node: () => watchabilityRef.current, branding: false, division: "FBS" },
+    { key: "29-watchability-saturday-by-slate", node: () => watchabilityByWindowRef.current, branding: false, division: "FBS" },
     {
-      key: "29-tv-guide",
+      key: "30-tv-guide",
       node: () => tvGuideRef.current,
       division: "FBS",
       beforeCapture: (node) => {
@@ -591,7 +668,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // them correctly.
   conferences.forEach((c, i) => {
     targets.push({
-      key: `${30 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
+      key: `${31 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
       node: () => null,
       division: c.div,
       isConferencePreview: true,
@@ -1051,25 +1128,41 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               <FCSBracketPage onNavigateTeam={() => {}} onNavigateConference={() => {}} onHome={() => {}} />
             </div>
 
-            {/* Matchups — FBS vs FBS, Midweek/Saturday split. Uses
-                MatchupGridGraphic (multi-column card grid), not
-                MatchupSlateGraphic (tall single-column list, still used
-                by the live Matchups page's own export) — a full Saturday
-                slate read as too long scrolling down one column. */}
-            <div ref={fbsMatchupsMidweekRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FBS — Midweek" rows={fbsFbsMidweekRows} />
+            {/* Matchups — MatchupGridGraphic (multi-column card grid),
+                not MatchupSlateGraphic (tall single-column list, still
+                used by the live Matchups page's own export) — a full
+                Saturday slate read as too long scrolling down one
+                column.
+
+                Six graphics per Chris's spec:
+                - Review: last week's FBS-vs-FBS + FBS-vs-FCS, all days,
+                  completed only, combined into one graphic. Week 1 has
+                  no previous week, so it reviews its own completed-so-far
+                  games instead (reviewLabel makes this distinction
+                  explicit rather than both cases just saying "Week 1").
+                - Upcoming Midweek: FBS-vs-FBS midweek + FBS-vs-FCS
+                  midweek combined into one graphic.
+                - FBS vs FBS Saturday and FBS vs FCS Saturday: two
+                  separate graphics, same as the original design.
+                - FCS vs FCS Midweek and Saturday: unaffected by any of
+                  the above — still their own separate graphics. */}
+            <div ref={matchupsReviewRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupGridGraphic eyebrow={reviewLabel} header="FBS + FBS vs FCS — Review" rows={reviewRows} />
+            </div>
+            <div ref={upcomingMidweekRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS + FBS vs FCS — Upcoming Midweek" rows={upcomingMidweekRows} />
             </div>
             <div ref={fbsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FBS — Saturday" rows={fbsFbsSaturdayRows} />
+            </div>
+            <div ref={crossMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FCS — Saturday" rows={crossSaturdayRows} />
             </div>
             <div ref={fcsMatchupsMidweekRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic eyebrow={fcsEyebrow} header="FCS vs FCS — Midweek" rows={fcsFcsMidweekRows} />
             </div>
             <div ref={fcsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic eyebrow={fcsEyebrow} header="FCS vs FCS — Saturday" rows={fcsFcsSaturdayRows} />
-            </div>
-            <div ref={crossMatchupsAllRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupGridGraphic eyebrow={wLabel.toUpperCase()} header="FBS vs FCS" rows={crossSlateRows} />
             </div>
 
             {/* Watchability / TV Guide — the live pages themselves,
