@@ -7,6 +7,7 @@ import { billRAwayWinPct } from "../lib/moneylineBetHistory";
 import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import type { BettingLineRow } from "../lib/api/gamesLines";
+import { fetchGamesWithLines } from "../lib/api/gamesLines";
 import {
   fetchFbsGamesForWeek,
   fetchBritPicksForWeek,
@@ -81,6 +82,16 @@ function GameSelectionStep({
   const [error, setError] = useState<string | null>(null);
   const [gameSearch, setGameSearch] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  // Separate from gameSearch above (which only filters the FBS-vs-FBS
+  // list already loaded) — this searches EVERY game this week,
+  // specifically so an FCS-vs-FCS or FBS-vs-FCS game can be found and
+  // added singly, without switching the default list to include all of
+  // them (Chris: "I dont want to sort through all fcs and cross div
+  // games").
+  const [nonFbsSearch, setNonFbsSearch] = useState("");
+  const [nonFbsResults, setNonFbsResults] = useState<any[]>([]);
+  const [nonFbsSearching, setNonFbsSearching] = useState(false);
+  const [nonFbsError, setNonFbsError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -107,6 +118,41 @@ function GameSelectionStep({
       }
       return next;
     });
+  }
+
+  async function searchNonFbsGames(query: string) {
+    setNonFbsSearch(query);
+    setNonFbsError(null);
+    if (query.trim().length < 2) {
+      setNonFbsResults([]);
+      return;
+    }
+    setNonFbsSearching(true);
+    try {
+      // Reuses the same broad fetch the rest of the site uses for
+      // "every game this week regardless of division" — fetchFbsGamesForWeek
+      // above is FBS-only on purpose, this one isn't.
+      const allGames = await fetchGamesWithLines(season, week);
+      const q = query.trim().toLowerCase();
+      const alreadyAdded = new Set(available.map((g) => g.id));
+      const results = allGames.filter((g) => {
+        const isFbsVFbs = (g.home_classification ?? "").toLowerCase() === "fbs" && (g.away_classification ?? "").toLowerCase() === "fbs";
+        if (isFbsVFbs) return false; // already reachable via the main list/search above
+        if (alreadyAdded.has(g.id)) return false;
+        return g.away_team.toLowerCase().includes(q) || g.home_team.toLowerCase().includes(q);
+      });
+      setNonFbsResults(results);
+    } catch (err: any) {
+      setNonFbsError(err.message ?? "Search failed");
+    } finally {
+      setNonFbsSearching(false);
+    }
+  }
+
+  function addNonFbsGame(g: any) {
+    setAvailable((prev) => [...prev, g]);
+    setSelected((prev) => new Set(prev).add(g.id));
+    setNonFbsResults((prev) => prev.filter((r) => r.id !== g.id));
   }
 
   async function handleSave() {
@@ -195,6 +241,50 @@ function GameSelectionStep({
               )}
             </label>
           ))}
+        </div>
+      )}
+      {!collapsed && (
+        <div style={{ marginBottom: "1rem" }}>
+          <div className="section-label" style={{ fontSize: "0.85rem" }}>
+            Add an FCS/cross-division game
+          </div>
+          <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "0.4rem" }}>
+            The list above is FBS-vs-FBS only. Search a team name to find their game this week if
+            it's FCS-vs-FCS or FBS-vs-FCS, and add it singly instead of switching the whole list to include every non-FBS game.
+          </p>
+          <input
+            type="text"
+            placeholder="Search any team…"
+            value={nonFbsSearch}
+            onChange={(e) => searchNonFbsGames(e.target.value)}
+            style={{ width: 200 }}
+          />
+          {nonFbsSearching && <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Searching…</span>}
+          {nonFbsError && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{nonFbsError}</p>}
+          {nonFbsResults.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginTop: "0.4rem" }}>
+              {nonFbsResults.map((g) => (
+                <div
+                  key={g.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.6rem",
+                    padding: "0.4rem 0.6rem",
+                    border: "1px solid var(--hash)",
+                    borderRadius: 6,
+                  }}
+                >
+                  <span style={{ flex: 1 }}>
+                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                  </span>
+                  <button className="menu-btn" onClick={() => addNonFbsGame(g)}>
+                    Add
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {!collapsed && (
@@ -409,6 +499,9 @@ function PickingStep({
                           }
                           style={{ width: 55 }}
                         />
+                        {d.predicted_away_score != null && d.predicted_home_score != null && (
+                          <span style={{ color: "var(--chalk-dim)" }}>Total: {d.predicted_away_score + d.predicted_home_score}</span>
+                        )}
                       </div>
                     )}
                   </td>
