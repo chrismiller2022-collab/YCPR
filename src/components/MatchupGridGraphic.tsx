@@ -20,13 +20,12 @@ import type { SlateGameRow } from "../lib/matchupSlate";
 // eyebrow/header, footer bar) so it doesn't look out of place next to the
 // rest of this tool's images.
 //
-// NOTE: the "Bet: Over/Under (if meets criteria)" line from Chris's spec
-// is not implemented — there's no existing "does this total qualify as
-// a bet" signal anywhere on the site (unlike spreads, which have
-// spreadBetTeam/WFB), and guessing at a threshold risks being wrong on
-// something Chris has been precise about everywhere else. The spread
-// bet line (spreadBetTeam, already computed) is implemented and follows
-// the same "skip the row entirely if no bet" rule.
+// Total bet criteria (row.totalBetCall): 1+ standard deviations off
+// Vegas's total, using the same pool-wide std dev gameTotalsEngine.ts's
+// own bet-row machinery computes for the Totals admin page
+// (poolStdDevForTotal) — see matchupSlate.ts's buildSlateRow for where
+// this gets threaded in. Chris's own explicit threshold, not whatever
+// filterThresholdMultiplier the Totals admin page happens to be set to.
 
 const SITE_URL = "ycpr.vercel.app";
 const TWITTER_HANDLE = "@YCtheflea";
@@ -83,10 +82,23 @@ const CROSS = "❌";
 function GameCard({ row }: { row: SlateGameRow }) {
   const actualWinner = row.actualWinner;
   const betTeam = row.spreadBetTeam;
-  const showBetRow = betTeam != null;
+  const showSpreadBet = betTeam != null;
+  const showTotalBet = row.totalBetCall != null;
+  const showBetRow = showSpreadBet || showTotalBet;
   const coverHit = row.completed && row.projCoverTeam != null && row.actCoverTeam != null ? row.projCoverTeam === row.actCoverTeam : null;
   const betHit = row.completed && betTeam != null && row.actCoverTeam != null ? betTeam === row.actCoverTeam : null;
   const totalHit = row.completed && row.projTotalResult != null && row.totalResult != null ? row.projTotalResult === row.totalResult : null;
+  const totalBetHit = row.completed && row.totalBetCall != null && row.totalResult != null ? row.totalBetCall === row.totalResult : null;
+  // row.myTotal is the same projectedTotal gameTotalsEngine.ts computes
+  // for the Totals admin page's Team Totals tab (both this component and
+  // that page ultimately read it via useGameTotalsEngine) — same number,
+  // not a separate derivation. The split uses row.myAwaySpread
+  // (matchupsCompute.ts's week-accurate historical rating snapshot),
+  // not gameTotalsEngine.ts's own myHomeSpread (which is always computed
+  // off "latest" ratings) — for a past week's review specifically, the
+  // week-accurate spread is the more correct one to split by, even
+  // though it means this score split can differ slightly from Team
+  // Totals' own split for completed weeks.
   const projScore = formatProjectedScore(row.myTotal, row.myAwaySpread != null ? -row.myAwaySpread : null, row.awayTeam, row.homeTeam);
 
   return (
@@ -160,14 +172,26 @@ function GameCard({ row }: { row: SlateGameRow }) {
         {showBetRow && (
           <>
             <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-              <span style={ROW_LABEL}>Bet </span>
-              <TeamLogo team={betTeam === "away" ? row.awayTeam : row.homeTeam} size={13} />
-              <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700 }}>
-                {fmtSpread(betTeam === "away" ? row.vegasAwaySpread : row.vegasAwaySpread != null ? -row.vegasAwaySpread : null)}
-              </span>
-              {betHit != null && <span style={{ fontSize: 10 }}>{betHit ? CHECK : CROSS}</span>}
+              {showSpreadBet && (
+                <>
+                  <span style={ROW_LABEL}>Bet </span>
+                  <TeamLogo team={betTeam === "away" ? row.awayTeam : row.homeTeam} size={13} />
+                  <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700 }}>
+                    {fmtSpread(betTeam === "away" ? row.vegasAwaySpread : row.vegasAwaySpread != null ? -row.vegasAwaySpread : null)}
+                  </span>
+                  {betHit != null && <span style={{ fontSize: 10 }}>{betHit ? CHECK : CROSS}</span>}
+                </>
+              )}
             </div>
-            <div />
+            <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              {showTotalBet && (
+                <>
+                  <span style={ROW_LABEL}>Bet </span>
+                  <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700 }}>{row.totalBetCall}</span>
+                  {totalBetHit != null && <span style={{ fontSize: 10 }}>{totalBetHit ? CHECK : CROSS}</span>}
+                </>
+              )}
+            </div>
           </>
         )}
       </div>

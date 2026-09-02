@@ -32,6 +32,18 @@ export interface SlateGameRow {
   // deliberately NOT falling through to NWFB the way MatchupComputed's own
   // combined `betTeam` field does.
   spreadBetTeam: "away" | "home" | null;
+  // How many standard deviations my total projection sits from Vegas's,
+  // using the same pool-wide std dev gameTotalsEngine.ts's own bet-row
+  // machinery (poolStdDevForTotal/buildBetRows) computes for the Totals
+  // admin page — null unless the caller supplies a pool std dev (see
+  // buildSlateRow's poolStdForTotal param; MatchupsPage.tsx's own call
+  // doesn't pass one, so this stays null there).
+  totalStdDevOff: number | null;
+  // "Total Bet" per Chris's spec: fires at 1+ standard deviations off,
+  // same threshold he uses for judging spread bets "good" in chat, not
+  // whatever filterThresholdMultiplier the Totals admin page happens to
+  // be set to.
+  totalBetCall: "Over" | "Under" | null;
 
   actualWinner: "away" | "home" | "tie" | null;
   actCoverTeam: "away" | "home" | "push" | null;
@@ -39,7 +51,7 @@ export interface SlateGameRow {
   totalResult: "Over" | "Under" | "Push" | null;
 }
 
-export function buildSlateRow(computed: MatchupComputed, myTotal: number | null): SlateGameRow {
+export function buildSlateRow(computed: MatchupComputed, myTotal: number | null, poolStdForTotal?: number): SlateGameRow {
   const { game, projAwaySpread, vegasAwaySpread, line, vegasMoneyline, projMoneyline, projWinPct, projCoverTeam, filteredBetTeam, weightedFilteredBetTeam } = computed;
   const { homeMoneyline } = homeSideMlValues(computed);
 
@@ -56,6 +68,13 @@ export function buildSlateRow(computed: MatchupComputed, myTotal: number | null)
 
   const projTotalResult: "Over" | "Under" | "Push" | null =
     myTotal != null && line?.over_under != null ? (myTotal > line.over_under ? "Over" : myTotal < line.over_under ? "Under" : "Push") : null;
+
+  const totalStdDevOff =
+    myTotal != null && line?.over_under != null && poolStdForTotal != null && poolStdForTotal !== 0
+      ? (myTotal - line.over_under) / poolStdForTotal
+      : null;
+  const totalBetCall: "Over" | "Under" | null =
+    totalStdDevOff != null && Math.abs(totalStdDevOff) >= 1 ? (totalStdDevOff > 0 ? "Over" : "Under") : null;
 
   return {
     gameId: game.id,
@@ -79,6 +98,8 @@ export function buildSlateRow(computed: MatchupComputed, myTotal: number | null)
     projWinner,
     projCoverTeam,
     spreadBetTeam: filteredBetTeam ?? weightedFilteredBetTeam,
+    totalStdDevOff,
+    totalBetCall,
 
     actualWinner,
     actCoverTeam: computed.actCoverTeam,

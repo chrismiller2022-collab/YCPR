@@ -14,7 +14,8 @@ import { conferencesForDivision } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, poolStdDevForTotal } from "../lib/gameTotalsEngine";
+import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { classOf, isTracked, computeRow } from "../lib/matchupsCompute";
 import { buildSlateRow, filterSlateRowsByDay, type SlateGameRow } from "../lib/matchupSlate";
 
@@ -25,7 +26,8 @@ function buildDivisionSlateRows(
   games: GameWithLines[],
   ratings: Record<string, any>,
   projTotalByGame: Map<string, number>,
-  matchupType: "FBSvFBS" | "FCSvFCS" | "Cross"
+  matchupType: "FBSvFBS" | "FCSvFCS" | "Cross",
+  poolStdForTotal?: number
 ): SlateGameRow[] {
   return games
     .filter((g) => {
@@ -37,7 +39,7 @@ function buildDivisionSlateRows(
     })
     .map((g) => computeRow(g, ratings))
     .filter((c) => c.vegasAwaySpread != null) // hide games with no Vegas line, matching the live page's default
-    .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null));
+    .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null, poolStdForTotal));
 }
 import {
   buildDivisionResolvedTeams,
@@ -348,18 +350,28 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   }, [totalsEngineRows]);
 
   const matchupRatings = scheduleWeekNum != null ? ratingsByWeek[scheduleWeekNum] ?? {} : {};
+  // Same pool-wide std dev the Totals admin page's own bet-row machinery
+  // computes (poolStdDevForTotal) — season-wide within a division, not
+  // scoped to just this week, matching how GameTotalsAdminPanel itself
+  // calls it (filterRowsByDivision(allRows, division), not week-filtered
+  // first). Cross-divisional games use the FBS pool's std dev — they
+  // live in the FBS bucket everywhere else in this tool, and
+  // filterRowsByDivision requires both teams match one division, so
+  // there's no natural separate "cross" pool to compute against.
+  const fbsTotalPoolStd = useMemo(() => poolStdDevForTotal(filterRowsByDivision(totalsEngineRows, "FBS")), [totalsEngineRows]);
+  const fcsTotalPoolStd = useMemo(() => poolStdDevForTotal(filterRowsByDivision(totalsEngineRows, "FCS")), [totalsEngineRows]);
   const fbsFbsSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FBSvFBS")),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd]
   );
   const fcsFcsSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FCSvFCS")),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FCSvFCS", fcsTotalPoolStd)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fcsTotalPoolStd]
   );
   // FBS vs FCS — "All" per Chris's category list, no Midweek/Saturday split.
   const crossSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "Cross")),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "Cross", fbsTotalPoolStd)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd]
   );
 
   const fbsFbsMidweekRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "midweek"), [fbsFbsSlateRows]);
