@@ -51,7 +51,8 @@ export async function fetchWestgateWeek(season: number, week: number, liveByTeam
   return fbsGames.map((gwl) => {
     const computed = computeRow(gwl, liveByTeam);
     const saved = westgateByGame.get(gwl.id);
-    const westgateLine = saved?.westgate_line ?? null;
+    // Defaults to Vegas — see peayPool.ts's fetchPeayWeek for the reasoning.
+    const westgateLine = saved?.westgate_line ?? computed.vegasAwaySpread ?? null;
 
     return {
       game_id: gwl.id,

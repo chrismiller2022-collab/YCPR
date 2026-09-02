@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
 import { WEEKS } from "../data/games";
-import { fetchWeeklyReportUrl } from "../lib/api/weeklyReports";
+import { fetchWeeklyReportUrl, type ReportDivision } from "../lib/api/weeklyReports";
 
 // Used to live-generate a bespoke PDF client-side (see lib/pdfReport.ts +
 // lib/reportData.ts — left in place but unused, since Chris didn't love
-// that format). Now this just looks up whether that week's report has
-// already been published (as a single PDF assembled from the Weekly
-// Image Dump's own PNGs, one page each) and links to it — nothing is
-// generated here anymore. See WeeklyImageDumpAdminPanel.tsx for the
-// publish side.
+// that format). Now this just looks up whether that week+division's
+// report has already been published (as a single PDF assembled from the
+// Weekly Image Dump's own PNGs, one page each) and links to it — nothing
+// is generated here anymore. See WeeklyImageDumpAdminPanel.tsx for the
+// publish side. FBS and FCS are separate published reports (separate
+// storage keys) — a division not yet generated for a given week just
+// shows as unavailable, same as before the split.
+const DIVISION_DESCRIPTIONS: Record<ReportDivision, string> = {
+  FBS: "That week's full FBS graphics pack in one PDF — Power Ratings, Resume Ratings, SOS, Win Totals, the Playoff Bracket, FBS and FBS-vs-FCS Matchups, the Watchability Chart, TV Guide, and every FBS Conference Preview.",
+  FCS: "That week's full FCS graphics pack in one PDF — Power Ratings, Win Totals, the Playoff Bracket, FCS Matchups, and every FCS Conference Preview.",
+};
+
 export default function WeekReportPage({ onHome }: any) {
   const [week, setWeek] = useState(WEEKS[0].key);
+  const [division, setDivision] = useState<ReportDivision>("FBS");
   const [loading, setLoading] = useState(true);
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +27,7 @@ export default function WeekReportPage({ onHome }: any) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchWeeklyReportUrl(week)
+    fetchWeeklyReportUrl(week, division)
       .then((url) => {
         if (!cancelled) setReportUrl(url);
       })
@@ -32,7 +40,7 @@ export default function WeekReportPage({ onHome }: any) {
     return () => {
       cancelled = true;
     };
-  }, [week]);
+  }, [week, division]);
 
   return (
     <div className="matchups-page">
@@ -42,14 +50,19 @@ export default function WeekReportPage({ onHome }: any) {
         </button>
         <div className="eyebrow">Tools</div>
         <h1 className="title matchup-title">WEEK REPORT (PDF)</h1>
-        <p className="subtitle team-subtitle">
-          That week's full graphics pack in one PDF — Power Ratings, Resume
-          Ratings, SOS, Win Totals, Playoff Brackets, Matchups, the
-          Watchability Chart, TV Guide, and every Conference Preview.
-        </p>
+        <p className="subtitle team-subtitle">{DIVISION_DESCRIPTIONS[division]}</p>
       </div>
 
-      <div className="picker-grid" style={{ maxWidth: 320, margin: "2rem auto 0" }}>
+      <div className="picker-grid" style={{ maxWidth: 480, margin: "2rem auto 0", display: "flex", gap: "1rem", justifyContent: "center" }}>
+        <div className="picker-card">
+          <div className="picker-label">Division</div>
+          <div className="picker-row">
+            <select className="filter picker-select" value={division} onChange={(e) => setDivision(e.target.value as ReportDivision)}>
+              <option value="FBS">FBS</option>
+              <option value="FCS">FCS</option>
+            </select>
+          </div>
+        </div>
         <div className="picker-card">
           <div className="picker-label">Week</div>
           <div className="picker-row">
@@ -77,14 +90,12 @@ export default function WeekReportPage({ onHome }: any) {
             rel="noopener noreferrer"
             style={{ padding: "0.8rem 1.6rem", fontSize: "0.9rem", display: "inline-block", textDecoration: "none" }}
           >
-            View / Download Report
+            View / Download {division} Report
           </a>
         ) : (
-          <p style={{ color: "#666" }}>This week's report is currently unavailable.</p>
+          <p style={{ color: "#666" }}>This week's {division} report is currently unavailable.</p>
         )}
       </div>
-
-      <div className="footer-note">Reports are published by the site admin — this page just links to that week's PDF.</div>
     </div>
   );
 }

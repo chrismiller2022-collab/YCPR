@@ -10,17 +10,24 @@ export interface EspnSpreadPickRow {
   is_key_game: boolean;
   picked_side: "home" | "away" | null;
   predicted_total_points: number | null;
+  // ESPN's own displayed spread, as typed in by Chris — separate from
+  // vegasAwaySpread below. Defaults to Vegas at fetch time (see
+  // fetchEspnSpreadPicksForWeek) whenever nothing's been saved yet, so
+  // only the games where ESPN's actual number diverges from Vegas need
+  // to be typed over before saving.
+  espn_line: number | null;
 }
 
 export interface EspnSpreadPickWithGame extends EspnSpreadPickRow {
   game: GameRow | null;
   lines: BettingLineRow[];
   myProjAwaySpread: number | null;
-  // ESPN's own displayed spread. We don't have a separate ESPN-specific
-  // feed — this uses the same synced betting line as everywhere else on
-  // the site, on the assumption ESPN's number tracks the market
-  // consensus closely enough to use as a stand-in. Worth spot-checking
-  // one week against ESPN's actual displayed numbers.
+  // Raw synced Vegas line — kept separate from espnAwaySpread now that
+  // the two can genuinely differ once espn_line is overridden.
+  vegasAwaySpread: number | null;
+  // Effective ESPN line for grading/pick comparison: espn_line if
+  // saved, else Vegas. Grading (gradeEspnSpreadPick) reads this
+  // unchanged from before — only what it resolves to has changed.
   espnAwaySpread: number | null;
   vegasTotal: number | null;
 }
@@ -66,17 +73,19 @@ export async function fetchEspnSpreadPicksForWeek(
   return picks.map((p) => {
     const gwl = byGameId.get(p.game_id) ?? null;
     if (!gwl) {
-      return { ...p, game: null, lines: [], myProjAwaySpread: null, espnAwaySpread: null, vegasTotal: null };
+      return { ...p, game: null, lines: [], myProjAwaySpread: null, vegasAwaySpread: null, espnAwaySpread: p.espn_line ?? null, vegasTotal: null };
     }
 
     const computed = computeRow(gwl, liveByTeam);
+    const vegasAwaySpread = computed.vegasAwaySpread;
 
     return {
       ...p,
       game: gwl,
       lines: gwl.lines,
       myProjAwaySpread: computed.projAwaySpread,
-      espnAwaySpread: computed.vegasAwaySpread,
+      vegasAwaySpread,
+      espnAwaySpread: p.espn_line ?? vegasAwaySpread,
       vegasTotal: computed.line?.over_under ?? null,
     };
   });

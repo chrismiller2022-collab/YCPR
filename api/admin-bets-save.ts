@@ -136,13 +136,19 @@ export default async function handler(req: any, res: any) {
     }
 
     if (action === "weeklyReportSign") {
-      const { week } = req.body;
+      const { week, division } = req.body;
       if (!week || typeof week !== "string") {
         res.status(400).json({ error: "Missing or invalid week" });
         return;
       }
+      if (division !== "FBS" && division !== "FCS") {
+        res.status(400).json({ error: "Missing or invalid division (must be FBS or FCS)" });
+        return;
+      }
 
-      const path = `${week}.pdf`;
+      // FBS and FCS are now separate published reports — divisionqualified
+      // path (was just `${week}.pdf` for one combined report).
+      const path = `${week}-${division.toLowerCase()}.pdf`;
       // Remove any existing object first rather than relying on upsert —
       // Supabase's signed-upload-URL + upsert combination has open
       // reliability issues around overwriting existing files.

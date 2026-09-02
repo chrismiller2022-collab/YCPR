@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { TEAMS_BY_NAME } from "../data/teams";
-import { hfaFor, spreadColor, spreadToMoneyline } from "../lib/odds";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
+import { formatProjectedScore } from "../lib/gameTotals";
+import { billRAwayWinPct } from "../lib/moneylineBetHistory";
+import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
+import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 import type { BettingLineRow } from "../lib/api/gamesLines";
 import {
   fetchFbsGamesForWeek,
@@ -23,6 +26,27 @@ function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
     if (m) return m;
   }
   return lines[0];
+}
+
+// Shared by the auto-pick default (below) and the render — computing this
+// twice with two copies of the formula is exactly the kind of divergence
+// bug Chris has hit before (see conventions), so it's one function used
+// both places.
+function computeProjection(g: { away_team: string; home_team: string }, liveByTeam: Record<string, WeeklyTeamStats>) {
+  const staticAwayTeam = TEAMS_BY_NAME[g.away_team];
+  const staticHomeTeam = TEAMS_BY_NAME[g.home_team];
+  const awayTeam = staticAwayTeam ? { ...staticAwayTeam, rating: liveByTeam[g.away_team]?.rating ?? staticAwayTeam.rating } : null;
+  const homeTeam = staticHomeTeam ? { ...staticHomeTeam, rating: liveByTeam[g.home_team]?.rating ?? staticHomeTeam.rating } : null;
+  const projAwaySpread = awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam) : null;
+  // Bill R Method — the canonical site-wide moneyline model — not the
+  // spread-derived curve, matching every other pool tool.
+  const awayWinPct = awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+  return { awayTeam, homeTeam, projAwaySpread, awayWinPct };
+}
+
+function fmtPct(v: number | null): string {
+  if (v == null) return "–";
+  return `${(v * 100).toFixed(0)}%`;
 }
 
 async function britSave(body: any) {
@@ -200,7 +224,17 @@ function PickingStep({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const totalsRowByGame = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsRows]);
 
   function load() {
     setLoading(true);
@@ -209,8 +243,14 @@ function PickingStep({
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
+          const { awayWinPct } = p.game ? computeProjection(p.game, liveByTeam) : { awayWinPct: null };
+          // Default to whichever side my model favors outright, if
+          // nothing's been picked yet — same idea as ESPN Moneyline's
+          // auto-pick. Chris can still change it before saving.
+          const autoPick: "away" | "home" | null =
+            p.picked_side ?? (awayWinPct == null ? null : awayWinPct > 0.5 ? "away" : awayWinPct < 0.5 ? "home" : null);
           d[p.id] = {
-            picked_side: p.picked_side,
+            picked_side: autoPick,
             predicted_home_score: p.predicted_home_score,
             predicted_away_score: p.predicted_away_score,
           };
@@ -221,7 +261,15 @@ function PickingStep({
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [season, week]);
+  // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —
+  // without it, the auto-pick above would run once at mount against
+  // whatever liveByTeam was at that instant (often {} on a cold load)
+  // and never recompute once real ratings arrived.
+  useEffect(() => {
+    if (ratingsLoading) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, week, ratingsLoading]);
 
   function updateDraft(id: number, patch: any) {
     setDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -242,6 +290,7 @@ function PickingStep({
     }
   }
 
+  if (ratingsLoading) return <p>Loading live ratings…</p>;
   if (loading) return <p>Loading picks…</p>;
   if (picks.length === 0) return null;
 
@@ -255,8 +304,10 @@ function PickingStep({
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Power Ratings</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Win %</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas ML</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Win %</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
@@ -266,19 +317,11 @@ function PickingStep({
               const g = p.game;
               if (!g) return null;
               const line = pickLine(p.lines);
-              const staticAwayTeam = TEAMS_BY_NAME[g.away_team];
-              const staticHomeTeam = TEAMS_BY_NAME[g.home_team];
-              const awayTeam = staticAwayTeam
-                ? { ...staticAwayTeam, rating: liveByTeam[g.away_team]?.rating ?? staticAwayTeam.rating }
-                : null;
-              const homeTeam = staticHomeTeam
-                ? { ...staticHomeTeam, rating: liveByTeam[g.home_team]?.rating ?? staticHomeTeam.rating }
-                : null;
-              const projAwaySpread =
-                awayTeam && homeTeam
-                  ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam)
-                  : null;
+              const { awayTeam, homeTeam, projAwaySpread, awayWinPct } = computeProjection(g, liveByTeam);
+              const homeWinPct = awayWinPct != null ? 1 - awayWinPct : null;
               const vegasAwaySpread = line?.spread != null ? -line.spread : null;
+              const vegasAwayWinPct = moneylineToImpliedWinPct(line?.away_moneyline ?? null);
+              const vegasHomeWinPct = moneylineToImpliedWinPct(line?.home_moneyline ?? null);
               const d = draft[p.id] ?? {};
               const grade = gradeBritPick(p);
 
@@ -289,6 +332,15 @@ function PickingStep({
                     {p.is_special && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Special game{line?.over_under != null ? ` · Vegas Total ${line.over_under}` : ""}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                        })()}
+                        {(() => {
+                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                          const label = formatProjectedScore(myTotal, projAwaySpread != null ? -projAwaySpread : null, g.away_team, g.home_team);
+                          return label ? ` · My Score ${label}` : "";
+                        })()}
                       </div>
                     )}
                   </td>
@@ -306,11 +358,17 @@ function PickingStep({
                     {projAwaySpread != null ? `${projAwaySpread > 0 ? "+" : ""}${projAwaySpread.toFixed(1)}` : "–"}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(awayWinPct)} / {fmtPct(homeWinPct)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {vegasAwaySpread != null ? `${vegasAwaySpread > 0 ? "+" : ""}${vegasAwaySpread.toFixed(1)}` : "–"}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {line?.away_moneyline != null ? Math.round(line.away_moneyline) : "–"} /{" "}
                     {line?.home_moneyline != null ? Math.round(line.home_moneyline) : "–"}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(vegasAwayWinPct)} / {fmtPct(vegasHomeWinPct)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem", marginBottom: p.is_special ? "0.4rem" : 0 }}>

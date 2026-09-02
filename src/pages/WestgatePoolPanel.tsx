@@ -9,7 +9,8 @@ import { fetchWestgateWeek, gradeWestgatePick, type WestgateRow } from "../lib/a
 // given a specific entry URL yet — left null (no link shown) rather
 // than reusing Peay's Splashsports URL, which would point somewhere
 // wrong. Set this once the actual contest URL is available.
-const POOL_URL: string | null = null;
+const POOL_URL: string | null =
+  "https://www.westgateresorts.com/hotels/nevada/las-vegas/westgate-las-vegas-resort-casino/casino/2026-supercontest-college-card/";
 const KEY_PICKS_TARGET = 3;
 
 async function westgateSave(season: number, week: number, rows: WestgateRow[]) {
@@ -61,7 +62,24 @@ export default function WestgatePoolPanel({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setError(null);
     fetchWestgateWeek(season, week, liveByTeam)
-      .then(setRows)
+      .then((data) => {
+        // See PeayPoolPanel.tsx's load() for the reasoning — default
+        // pick follows the (Vegas-defaulted) Westgate line, only for
+        // rows with no pick made yet.
+        const withAutoPicks = data.map((r) => {
+          if (r.picked_side != null) return r;
+          const autoPick: "away" | "home" | null =
+            r.westgate_line == null || r.myProjAwaySpread == null
+              ? null
+              : r.myProjAwaySpread < r.westgate_line
+              ? "away"
+              : r.myProjAwaySpread > r.westgate_line
+              ? "home"
+              : null;
+          return { ...r, picked_side: autoPick };
+        });
+        setRows(withAutoPicks);
+      })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }

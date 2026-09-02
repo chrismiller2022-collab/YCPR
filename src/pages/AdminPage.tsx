@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
+import SplashSurvivorPanel from "./SplashSurvivorPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
@@ -214,6 +215,7 @@ type AdminView =
   | "home"
   | "upload"
   | "survivor"
+  | "splashsurvivor"
   | "montecarlo"
   | "pm"
   | "gametotals"
@@ -838,6 +840,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           )}
 
           {view === "survivor" && <SurvivorPanel onBack={() => setView("pools")} />}
+
+          {view === "splashsurvivor" && <SplashSurvivorPanel onBack={() => setView("pools")} />}
 
           {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
 

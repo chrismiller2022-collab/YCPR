@@ -20,9 +20,18 @@ export const CONFERENCES: string[] = Array.from(
   new Set(TEAMS.map((t) => t.conf))
 ).sort();
 
+// Independents aren't a conference — excluded from every conference
+// picker/list site-wide (nav menus, Conference Overview, the image
+// dump's per-conference previews, etc.) via this one function, rather
+// than patching each consumer individually. Teams still carry "FBS
+// Independents"/"FCS Independents" as their own conf value elsewhere
+// (bucketFor/isP4 depend on it) — this only affects the "browsable
+// conference" lists, not the underlying team data.
+const NON_CONFERENCES = new Set(["FBS Independents", "FCS Independents"]);
+
 export function conferencesForDivision(div: string): string[] {
   return Array.from(
-    new Set(TEAMS.filter((t) => t.div === div).map((t) => t.conf))
+    new Set(TEAMS.filter((t) => t.div === div && !NON_CONFERENCES.has(t.conf)).map((t) => t.conf))
   ).sort();
 }
 

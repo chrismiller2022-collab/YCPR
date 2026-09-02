@@ -194,7 +194,7 @@ export default function CompactPowerRatingsGraphic({
   eyebrow: string;
   /** Bold title describing what this graphic is, e.g. "POWER RATINGS — FULL LIST". */
   header: string;
-  sections: { title: string; rows: CompactRatingRow[] }[];
+  sections: { title: string; rows: CompactRatingRow[]; higherIsBetter?: boolean; valueLabel?: string }[];
   targetRowsPerColumn?: number;
   /** Column header for the value column — "YCPR" for a ratings list,
    * "CHANGE" for a gainers/losers list where the value shown is the
@@ -207,7 +207,10 @@ export default function CompactPowerRatingsGraphic({
    * number is worse but the list is still ranked highest-value-first.
    * False (default) for Power Rating and SOS, where a lower/more negative
    * number is better. Also flips a "CHANGE" column's sign so "improved"
-   * always reads green. */
+   * always reads green. A section can override this (and valueLabel)
+   * to combine two genuinely different metrics — e.g. Wins Left and
+   * Losses Left — into one component call; every other call site's
+   * sections omit the override, so behavior there is unchanged. */
   higherIsBetter?: boolean;
   /** Lays multiple sections out left-to-right instead of stacked — for
    * SOS's Hardest/Easiest and Got Harder/Got Easier splits, which are two
@@ -279,8 +282,8 @@ export default function CompactPowerRatingsGraphic({
             title={s.title}
             rows={s.rows}
             targetRowsPerColumn={targetRowsPerColumn}
-            valueLabel={valueLabel}
-            higherIsBetter={higherIsBetter}
+            valueLabel={s.valueLabel ?? valueLabel}
+            higherIsBetter={s.higherIsBetter ?? higherIsBetter}
             colorScale={colorScale}
             signed={signed}
           />

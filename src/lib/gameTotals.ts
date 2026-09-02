@@ -436,6 +436,20 @@ export function splitTeamTotal(total: number | null, homeSpread: number | null):
   return homeIsFavorite ? { home: favoriteScore, away: underdogScore } : { home: underdogScore, away: favoriteScore };
 }
 
+/**
+ * "Away 27 – Home 24"-style label for a game's projected score, split
+ * from a total via splitTeamTotal. Shared by the pool tools' key/
+ * special-game info line (ESPN ML/Spread/Confidence, Brit, CBS Pickem)
+ * so the score-from-total-and-spread math lives in exactly one place.
+ * homeSpread follows the site-wide convention (negative = home
+ * favored) — pass -awaySpread if that's what's on hand.
+ */
+export function formatProjectedScore(total: number | null, homeSpread: number | null, awayTeam: string, homeTeam: string): string | null {
+  const split = splitTeamTotal(total, homeSpread);
+  if (split.away == null || split.home == null) return null;
+  return `${awayTeam} ${Math.round(split.away)} – ${homeTeam} ${Math.round(split.home)}`;
+}
+
 export function stdDev(values: number[]): number {
   if (values.length === 0) return 0;
   const mean = values.reduce((s, v) => s + v, 0) / values.length;

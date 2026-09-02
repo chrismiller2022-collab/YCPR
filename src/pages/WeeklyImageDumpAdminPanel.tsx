@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import JSZip from "jszip";
 import jsPDF from "jspdf";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
@@ -112,6 +113,10 @@ const TOP_N_ROWS_PER_COLUMN = 15; // 2 columns of 15 for a 30-team list
 interface DumpTarget {
   key: string;
   node: () => HTMLElement | null;
+  /** Which division's Generate ZIP run this belongs to — see
+   * dumpDivision above. Cross-divisional matchups are tagged FBS (per
+   * Chris) despite covering both divisions' teams. */
+  division: "FBS" | "FCS";
   /** false for every CompactPowerRatingsGraphic target — those bake in
    * their own header/footer branding, so the generic branding bar
    * exportPng.ts adds by default would double it up. Omitted (defaults to
@@ -124,6 +129,11 @@ interface DumpTarget {
    * overlapping games and dominates the image, so it's left out here,
    * matching the live page's own "Include Streaming? No" export choice. */
   beforeCapture?: (node: HTMLElement) => () => void;
+  /** True only for the 25 auto-generated conference-preview targets —
+   * handled by a dedicated second pass in handleGenerateZip instead of
+   * the main loop, since they share one mounted component (swapped via
+   * flushSync) rather than each having their own always-mounted node. */
+  isConferencePreview?: boolean;
 }
 
 // Rendered off-screen (never display:none — html-to-image needs real
@@ -164,6 +174,28 @@ function blobToImageData(blob: Blob): Promise<{ dataUrl: string; width: number; 
   });
 }
 
+// Wraps a single target's capture with a hard deadline — without this,
+// one stuck capture (a slow/hanging logo fetch inside html-to-image's
+// embed step, most likely) hangs the entire 58-target loop forever
+// with zero feedback. On timeout the target is skipped, not fatal to
+// the whole run — see handleGenerateZip's catch-per-target below.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${ms / 1000}s`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+const CAPTURE_TIMEOUT_MS = 20000;
+
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
   const [currentWeek, setCurrentWeek] = useState<string | null>(null);
@@ -174,6 +206,24 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const [zipping, setZipping] = useState(false);
   const [zipError, setZipError] = useState<string | null>(null);
   const [zipDone, setZipDone] = useState<string | null>(null);
+  // Shows live progress during the 58-target capture loop, since it was
+  // previously a totally silent "Building ZIP…" the whole time with no
+  // way to tell if it was working or stuck.
+  const [captureProgress, setCaptureProgress] = useState<{ current: number; total: number; label: string } | null>(null);
+  // Separate from zipDone on purpose — a publish failure was previously
+  // appended onto the same green success string as "Downloaded N
+  // images. ZIP is fine, but publishing... failed: ...", which reads as
+  // a success message at a glance since it's still solid green. Chris
+  // generated Week 1's report this way and never noticed publishing
+  // had actually failed — the bucket had zero objects in it. This gets
+  // its own red/green line so a failure can't hide inside a success.
+  const [publishResult, setPublishResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // Which division's ZIP/PDF Generate ZIP produces — FBS and FCS are now
+  // fully separate downloads/publishes (separate storage keys, separate
+  // public Week Report pages) instead of one combined 58-target run.
+  // Splitting also roughly halves the per-run target count, which
+  // directly helps the timeout/reliability problem on its own.
+  const [dumpDivision, setDumpDivision] = useState<"FBS" | "FCS">("FBS");
 
   useEffect(() => {
     fetchAvailableWeeks()
@@ -353,39 +403,41 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsEyebrow = `${wLabel.toUpperCase()} · FBS`;
   const fcsEyebrow = `${wLabel.toUpperCase()} · FCS`;
 
-  // Power Ratings refs
+  // Power Ratings refs. Gainers/Losers merged into one combined
+  // side-by-side graphic (was two separate images/targets each).
   const fbsFullRef = useRef<HTMLDivElement>(null);
   const fbsTopRef = useRef<HTMLDivElement>(null);
   const fbsG6Ref = useRef<HTMLDivElement>(null);
-  const fbsGainersRef = useRef<HTMLDivElement>(null);
-  const fbsLosersRef = useRef<HTMLDivElement>(null);
+  const fbsGainersLosersRef = useRef<HTMLDivElement>(null);
   const fcsFullRef = useRef<HTMLDivElement>(null);
   const fcsTopRef = useRef<HTMLDivElement>(null);
-  const fcsGainersRef = useRef<HTMLDivElement>(null);
-  const fcsLosersRef = useRef<HTMLDivElement>(null);
-  // Resume Ratings refs
+  const fcsGainersLosersRef = useRef<HTMLDivElement>(null);
+  // Resume Ratings refs. Gainers/Losers merged, same as Power Ratings above.
   const resumeFullRef = useRef<HTMLDivElement>(null);
   const resumeTopRef = useRef<HTMLDivElement>(null);
-  const resumeGainersRef = useRef<HTMLDivElement>(null);
-  const resumeLosersRef = useRef<HTMLDivElement>(null);
+  const resumeGainersLosersRef = useRef<HTMLDivElement>(null);
   // SOS refs
   const sosFullRef = useRef<HTMLDivElement>(null);
   const sosHardEasyRef = useRef<HTMLDivElement>(null);
   const sosChangeRef = useRef<HTMLDivElement>(null);
-  // Win Totals refs
+  // Win Totals refs. Wins Left/Losses Left merged into one combined
+  // side-by-side graphic (was two separate images/targets each) — see
+  // the CompactPowerRatingsGraphic call below for why each side needs
+  // its own higherIsBetter/valueLabel override to preserve the original
+  // per-list coloring/labeling now that they share one component call.
   const fbsWinTotalFullRef = useRef<HTMLDivElement>(null);
   const fbsWinTotalTopRef = useRef<HTMLDivElement>(null);
-  const fbsWinsLeftRef = useRef<HTMLDivElement>(null);
-  const fbsLossesLeftRef = useRef<HTMLDivElement>(null);
+  const fbsWinsLossesLeftRef = useRef<HTMLDivElement>(null);
   const fcsWinTotalFullRef = useRef<HTMLDivElement>(null);
   const fcsWinTotalTopRef = useRef<HTMLDivElement>(null);
-  const fcsWinsLeftRef = useRef<HTMLDivElement>(null);
-  const fcsLossesLeftRef = useRef<HTMLDivElement>(null);
+  const fcsWinsLossesLeftRef = useRef<HTMLDivElement>(null);
   // Playoff Bracket refs — capture the existing BracketPage/FCSBracketPage
   // components wholesale, not a purpose-built graphic.
   const fbsBracketRef = useRef<HTMLDivElement>(null);
   const fcsBracketRef = useRef<HTMLDivElement>(null);
-  // Matchups refs
+  // Matchups refs. Cross-divisional (FBS vs FCS) lives in the FBS
+  // division bucket below, but stays its own separate image — not
+  // merged into FBS-vs-FBS.
   const fbsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
   const fbsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
@@ -393,12 +445,26 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const crossMatchupsAllRef = useRef<HTMLDivElement>(null);
   // Watchability / TV Guide refs — passed straight into the live pages as
   // shareRef, so these ARE the exact nodes their own Export PNG buttons
-  // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx).
+  // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx). Both are
+  // FBS-scoped (Watchability is FBS-vs-FBS only; TV Guide in practice
+  // never has an FCS broadcast game), so both live in the FBS bucket.
   const watchabilityRef = useRef<HTMLDivElement>(null);
   const tvGuideRef = useRef<HTMLDivElement>(null);
-  // Conference Previews — one image per conference, FBS then FCS. A
-  // dynamic-length list, unlike everything above, so refs live in a Map
-  // keyed by conference name instead of individual named useRefs.
+  // Conference Previews — one image per conference, FBS then FCS.
+  // Independents excluded (conferencesForDivision() itself filters them
+  // out now — see data/teams.ts — since they're not a conference).
+  // Previously mounted all 25 simultaneously (each running its own SOS +
+  // Monte Carlo fetch and holding a full team-logo table in the DOM at
+  // once) for the whole duration of this tool being open. That's almost
+  // certainly why they were the ones going missing from the ZIP/PDF —
+  // by the time the sequential capture loop reached them (last, after
+  // 33 other heavy captures), the tab was under enough memory/CPU
+  // pressure that these were the likeliest to fail or hang. Since
+  // ConferencePreviewPage's own data fetches depend only on the season,
+  // not which conference is showing (its per-conference team list is a
+  // synchronous filter of already-loaded data), one mounted instance
+  // can be swapped through all conferences via flushSync — no re-fetch
+  // delay, and only one conference's DOM exists at a time.
   const conferences = useMemo(
     () => [
       ...conferencesForDivision("FBS").map((conf) => ({ conf, div: "FBS" as const })),
@@ -406,44 +472,43 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     ],
     []
   );
-  const conferenceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [activeConferenceIdx, setActiveConferenceIdx] = useState<number | null>(null);
+  const conferencePreviewRef = useRef<HTMLDivElement>(null);
 
   const targets: DumpTarget[] = [
-    { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false },
-    { key: "02-fbs-power-ratings-top30", node: () => fbsTopRef.current, branding: false },
-    { key: "03-fbs-power-ratings-top30-g6", node: () => fbsG6Ref.current, branding: false },
-    { key: "04-fbs-power-ratings-gainers", node: () => fbsGainersRef.current, branding: false },
-    { key: "05-fbs-power-ratings-losers", node: () => fbsLosersRef.current, branding: false },
-    { key: "06-fcs-power-ratings-full", node: () => fcsFullRef.current, branding: false },
-    { key: "07-fcs-power-ratings-top30", node: () => fcsTopRef.current, branding: false },
-    { key: "08-fcs-power-ratings-gainers", node: () => fcsGainersRef.current, branding: false },
-    { key: "09-fcs-power-ratings-losers", node: () => fcsLosersRef.current, branding: false },
-    { key: "10-fbs-resume-ratings-full", node: () => resumeFullRef.current, branding: false },
-    { key: "11-fbs-resume-ratings-top30", node: () => resumeTopRef.current, branding: false },
-    { key: "12-fbs-resume-ratings-gainers", node: () => resumeGainersRef.current, branding: false },
-    { key: "13-fbs-resume-ratings-losers", node: () => resumeLosersRef.current, branding: false },
-    { key: "14-fbs-sos-full", node: () => sosFullRef.current, branding: false },
-    { key: "15-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current, branding: false },
-    { key: "16-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current, branding: false },
-    { key: "17-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current, branding: false },
-    { key: "18-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current, branding: false },
-    { key: "19-fbs-win-totals-wins-left", node: () => fbsWinsLeftRef.current, branding: false },
-    { key: "20-fbs-win-totals-losses-left", node: () => fbsLossesLeftRef.current, branding: false },
-    { key: "21-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current, branding: false },
-    { key: "22-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current, branding: false },
-    { key: "23-fcs-win-totals-wins-left", node: () => fcsWinsLeftRef.current, branding: false },
-    { key: "24-fcs-win-totals-losses-left", node: () => fcsLossesLeftRef.current, branding: false },
-    { key: "25-fbs-playoff-bracket", node: () => fbsBracketRef.current },
-    { key: "26-fcs-playoff-bracket", node: () => fcsBracketRef.current },
-    { key: "27-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current, branding: false },
-    { key: "28-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false },
-    { key: "29-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false },
-    { key: "30-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false },
-    { key: "31-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current, branding: false },
-    { key: "32-watchability-saturday", node: () => watchabilityRef.current, branding: false },
+    { key: "01-fbs-power-ratings-full", node: () => fbsFullRef.current, branding: false, division: "FBS" },
+    { key: "02-fbs-power-ratings-top30", node: () => fbsTopRef.current, branding: false, division: "FBS" },
+    { key: "03-fbs-power-ratings-top30-g6", node: () => fbsG6Ref.current, branding: false, division: "FBS" },
+    { key: "04-fbs-power-ratings-gainers-losers", node: () => fbsGainersLosersRef.current, branding: false, division: "FBS" },
+    { key: "05-fcs-power-ratings-full", node: () => fcsFullRef.current, branding: false, division: "FCS" },
+    { key: "06-fcs-power-ratings-top30", node: () => fcsTopRef.current, branding: false, division: "FCS" },
+    { key: "07-fcs-power-ratings-gainers-losers", node: () => fcsGainersLosersRef.current, branding: false, division: "FCS" },
+    { key: "08-fbs-resume-ratings-full", node: () => resumeFullRef.current, branding: false, division: "FBS" },
+    { key: "09-fbs-resume-ratings-top30", node: () => resumeTopRef.current, branding: false, division: "FBS" },
+    { key: "10-fbs-resume-ratings-gainers-losers", node: () => resumeGainersLosersRef.current, branding: false, division: "FBS" },
+    { key: "11-fbs-sos-full", node: () => sosFullRef.current, branding: false, division: "FBS" },
+    { key: "12-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current, branding: false, division: "FBS" },
+    { key: "13-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current, branding: false, division: "FBS" },
+    { key: "14-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current, branding: false, division: "FBS" },
+    { key: "15-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current, branding: false, division: "FBS" },
+    { key: "16-fbs-win-totals-wins-losses-left", node: () => fbsWinsLossesLeftRef.current, branding: false, division: "FBS" },
+    { key: "17-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current, branding: false, division: "FCS" },
+    { key: "18-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current, branding: false, division: "FCS" },
+    { key: "19-fcs-win-totals-wins-losses-left", node: () => fcsWinsLossesLeftRef.current, branding: false, division: "FCS" },
+    { key: "20-fbs-playoff-bracket", node: () => fbsBracketRef.current, division: "FBS" },
+    { key: "21-fcs-playoff-bracket", node: () => fcsBracketRef.current, division: "FCS" },
+    { key: "22-fbs-matchups-midweek", node: () => fbsMatchupsMidweekRef.current, branding: false, division: "FBS" },
+    { key: "23-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false, division: "FBS" },
+    { key: "24-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false, division: "FCS" },
+    { key: "25-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false, division: "FCS" },
+    // Cross-divisional (FBS vs FCS) — lives in the FBS bucket per Chris,
+    // but stays its own separate image, not merged into FBS-vs-FBS.
+    { key: "26-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current, branding: false, division: "FBS" },
+    { key: "27-watchability-saturday", node: () => watchabilityRef.current, branding: false, division: "FBS" },
     {
-      key: "33-tv-guide",
+      key: "28-tv-guide",
       node: () => tvGuideRef.current,
+      division: "FBS",
       beforeCapture: (node) => {
         const el = node.querySelector<HTMLElement>(`[data-tvguide-channel="${STREAMING_CHANNEL_KEY}"]`);
         if (!el) return () => {};
@@ -457,26 +522,47 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   ];
 
   // Appended rather than baked into the array literal above since its
-  // length depends on how many conferences exist per division.
+  // length depends on how many conferences exist per division. node()
+  // is never actually called for these — handleGenerateZip's dedicated
+  // conference-preview pass below captures them directly — this is
+  // here only so targets.length (button label, progress total) counts
+  // them correctly.
   conferences.forEach((c, i) => {
     targets.push({
-      key: `${34 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
-      node: () => conferenceRefs.current.get(c.conf) ?? null,
+      key: `${29 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
+      node: () => null,
+      division: c.div,
+      isConferencePreview: true,
     });
   });
+
+  const divisionTargets = useMemo(() => targets.filter((t) => t.division === dumpDivision), [targets, dumpDivision]);
+  const divisionConferences = useMemo(() => conferences.filter((c) => c.div === dumpDivision), [conferences, dumpDivision]);
 
   async function handleGenerateZip() {
     setZipping(true);
     setZipError(null);
     setZipDone(null);
+    setPublishResult(null);
     try {
       const zip = new JSZip();
       // Collected alongside each PNG so the combined PDF below can be
       // built in the same pass, in the same order, without re-capturing.
       const pdfImages: { dataUrl: string; width: number; height: number }[] = [];
-      for (const target of targets) {
+      // Targets that timed out, threw, or never had a node to capture —
+      // surfaced to Chris afterward rather than silently missing from
+      // the ZIP with no explanation (this used to be a real gap: a
+      // missing node just hit `continue` with no record at all).
+      const skippedTargets: string[] = [];
+      const mainTargets = divisionTargets.filter((t) => !t.isConferencePreview);
+      for (let i = 0; i < mainTargets.length; i++) {
+        const target = mainTargets[i];
         const node = target.node();
-        if (!node) continue;
+        setCaptureProgress({ current: i + 1, total: divisionTargets.length, label: target.key });
+        if (!node) {
+          skippedTargets.push(`${target.key} (no node to capture)`);
+          continue;
+        }
         const restore = target.beforeCapture?.(node);
         // Forced explicitly rather than trusting the node's own
         // getBoundingClientRect() — every capture here is rendered
@@ -487,14 +573,59 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         // beforeCapture, so a hidden row doesn't leave dead space), same
         // fix TV Guide uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
-        // branding defaults to true (see DumpTarget) — only the
-        // CompactPowerRatingsGraphic targets opt out, since they bake in
-        // their own header/footer.
-        const blob = await exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true);
-        restore?.();
-        zip.file(`${target.key}.png`, blob);
-        pdfImages.push(await blobToImageData(blob));
+        try {
+          // branding defaults to true (see DumpTarget) — only the
+          // CompactPowerRatingsGraphic targets opt out, since they bake in
+          // their own header/footer.
+          const blob = await withTimeout(
+            exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, target.branding ?? true),
+            CAPTURE_TIMEOUT_MS,
+            target.key
+          );
+          restore?.();
+          zip.file(`${target.key}.png`, blob);
+          pdfImages.push(await blobToImageData(blob));
+        } catch (captureErr: any) {
+          restore?.();
+          skippedTargets.push(`${target.key} (${captureErr.message ?? "unknown error"})`);
+        }
       }
+
+      // Conference previews — dedicated pass, one mounted instance
+      // swapped through this division's conferences via flushSync
+      // rather than all of them mounted at once (see the comment on
+      // activeConferenceIdx above for why). flushSync forces the state
+      // update and re-render to complete synchronously before it
+      // returns, so conferencePreviewRef.current reflects the new
+      // conference immediately — no extra wait needed since nothing
+      // here re-fetches per conference, only re-filters already-loaded
+      // data. activeConferenceIdx indexes into divisionConferences, not
+      // the full FBS+FCS conferences list — must match the render below.
+      const conferenceTargets = divisionTargets.filter((t) => t.isConferencePreview);
+      for (let i = 0; i < conferenceTargets.length; i++) {
+        const target = conferenceTargets[i];
+        setCaptureProgress({ current: mainTargets.length + i + 1, total: divisionTargets.length, label: target.key });
+        flushSync(() => setActiveConferenceIdx(i));
+        const node = conferencePreviewRef.current;
+        if (!node) {
+          skippedTargets.push(`${target.key} (no node to capture)`);
+          continue;
+        }
+        const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
+        try {
+          const blob = await withTimeout(
+            exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, true),
+            CAPTURE_TIMEOUT_MS,
+            target.key
+          );
+          zip.file(`${target.key}.png`, blob);
+          pdfImages.push(await blobToImageData(blob));
+        } catch (captureErr: any) {
+          skippedTargets.push(`${target.key} (${captureErr.message ?? "unknown error"})`);
+        }
+      }
+      flushSync(() => setActiveConferenceIdx(null));
+      setCaptureProgress(null);
 
       // Combined PDF — every PNG above, one page each, in the same order.
       // Each page is sized to match its own image's pixel dimensions
@@ -524,27 +655,48 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `yc-power-ratings-${currentWeek ?? "week"}.zip`;
+      link.download = `yc-power-ratings-${currentWeek ?? "week"}-${dumpDivision.toLowerCase()}.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
 
-      let doneMsg = `Downloaded ${targets.length} images.`;
-      if (pdfBlob && currentWeek) {
-        try {
-          const password = sessionStorage.getItem("admin_password") ?? "";
-          await publishWeeklyReportPdf(currentWeek, pdfBlob, password);
-          doneMsg += ` Published as ${weekLabel(currentWeek)}'s public Week Report.`;
-        } catch (publishErr: any) {
-          doneMsg += ` ZIP is fine, but publishing to the public Week Report failed: ${publishErr.message ?? "unknown error"}.`;
+      setZipDone(
+        skippedTargets.length > 0
+          ? `Downloaded ${divisionTargets.length - skippedTargets.length}/${divisionTargets.length} ${dumpDivision} images (${skippedTargets.length} skipped — see below).`
+          : `Downloaded ${divisionTargets.length} ${dumpDivision} images.`
+      );
+      if (skippedTargets.length > 0) {
+        setZipError(`Skipped: ${skippedTargets.join(", ")}`);
+      }
+      if (currentWeek) {
+        if (pdfBlob) {
+          try {
+            const password = sessionStorage.getItem("admin_password") ?? "";
+            await publishWeeklyReportPdf(currentWeek, dumpDivision, pdfBlob, password);
+            setPublishResult({ ok: true, message: `Published as ${weekLabel(currentWeek)}'s public ${dumpDivision} Week Report.` });
+          } catch (publishErr: any) {
+            setPublishResult({
+              ok: false,
+              message: `Publishing to the public Week Report FAILED: ${publishErr.message ?? "unknown error"}. The ZIP download is unaffected, but the public ${dumpDivision} Week Report page will show "unavailable" until this is retried successfully.`,
+            });
+          }
+        } else {
+          // No captured images at all means pdfImages stayed empty and
+          // pdfBlob was never built — publish was never attempted, and
+          // that's just as important to surface as an explicit failure,
+          // since silence here previously looked identical to success.
+          setPublishResult({
+            ok: false,
+            message: `No PDF was generated to publish — 0 ${dumpDivision} images were captured, so nothing was sent to the public Week Report.`,
+          });
         }
       }
-      setZipDone(doneMsg);
     } catch (err: any) {
       setZipError(err.message ?? "Failed to build ZIP");
     } finally {
       setZipping(false);
+      setCaptureProgress(null);
     }
   }
 
@@ -601,11 +753,39 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             </label>
           </div>
 
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+            <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Division:</span>
+            <button
+              className={`mode-btn ${dumpDivision === "FBS" ? "mode-btn-active" : ""}`}
+              onClick={() => setDumpDivision("FBS")}
+              disabled={zipping}
+            >
+              FBS
+            </button>
+            <button
+              className={`mode-btn ${dumpDivision === "FCS" ? "mode-btn-active" : ""}`}
+              onClick={() => setDumpDivision("FCS")}
+              disabled={zipping}
+            >
+              FCS
+            </button>
+          </div>
+
           <button className="menu-btn" onClick={handleGenerateZip} disabled={zipping || loadingCurrent}>
-            {zipping ? "Building ZIP…" : `Generate ZIP (${targets.length} images)`}
+            {zipping ? "Building ZIP…" : `Generate ${dumpDivision} ZIP (${divisionTargets.length} images)`}
           </button>
+          {captureProgress && (
+            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+              Capturing {captureProgress.current}/{captureProgress.total}: {captureProgress.label}
+            </p>
+          )}
           {zipDone && <p style={{ color: "green" }}>{zipDone}</p>}
           {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
+          {publishResult && (
+            <p style={{ color: publishResult.ok ? "green" : "crimson", fontWeight: publishResult.ok ? 400 : 700 }}>
+              {publishResult.message}
+            </p>
+          )}
 
           <OffscreenStage>
             {/* Power Ratings — FBS */}
@@ -618,11 +798,18 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fbsG6Ref} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Power Ratings — Top 30 Group of 6" sections={[{ title: "", rows: toRatingRows(fbsTopG6) }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} />
             </div>
-            <div ref={fbsGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Power Ratings — Top 30 Gainers" sections={[{ title: "", rows: fbsGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
-            </div>
-            <div ref={fbsLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Power Ratings — Top 30 Losers" sections={[{ title: "", rows: fbsLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
+            <div ref={fbsGainersLosersRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Top 30 Gainers & Losers"
+                sections={[
+                  { title: "Top 30 Gainers", rows: fbsGainers },
+                  { title: "Top 30 Losers", rows: fbsLosers },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                sideBySide
+              />
             </div>
 
             {/* Power Ratings — FCS */}
@@ -632,11 +819,18 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fcsTopRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Power Ratings — Top 30" sections={[{ title: "", rows: toRatingRows(fcsTop) }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} />
             </div>
-            <div ref={fcsGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Power Ratings — Top 30 Gainers" sections={[{ title: "", rows: fcsGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
-            </div>
-            <div ref={fcsLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Power Ratings — Top 30 Losers" sections={[{ title: "", rows: fcsLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" />
+            <div ref={fcsGainersLosersRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Top 30 Gainers & Losers"
+                sections={[
+                  { title: "Top 30 Gainers", rows: fcsGainers },
+                  { title: "Top 30 Losers", rows: fcsLosers },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                sideBySide
+              />
             </div>
 
             {/* Resume Ratings — FBS only */}
@@ -646,11 +840,19 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={resumeTopRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" higherIsBetter colorScale="percentile" />
             </div>
-            <div ref={resumeGainersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Gainers" sections={[{ title: "", rows: fbsResumeGainers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" higherIsBetter />
-            </div>
-            <div ref={resumeLosersRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30 Losers" sections={[{ title: "", rows: fbsResumeLosers }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="CHANGE" higherIsBetter />
+            <div ref={resumeGainersLosersRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Resume Ratings — Top 30 Gainers & Losers"
+                sections={[
+                  { title: "Top 30 Gainers", rows: fbsResumeGainers },
+                  { title: "Top 30 Losers", rows: fbsResumeLosers },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                higherIsBetter
+                sideBySide
+              />
             </div>
 
             {/* SOS — FBS only */}
@@ -698,11 +900,26 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fbsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
-            <div ref={fbsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fbsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" signed={false} />
-            </div>
-            <div ref={fbsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fbsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" signed={false} />
+            <div ref={fbsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
+              {/* Per-section higherIsBetter/valueLabel overrides (see
+                  CompactPowerRatingsGraphic) preserve each side's
+                  original coloring/label — Wins Left keeps
+                  higherIsBetter (more wins left is favorable, greener),
+                  Losses Left keeps the default (more losses left reads
+                  worse, redder) — now combined into one image instead
+                  of two, without changing either side's meaning. */}
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Win Totals — Wins Left & Losses Left"
+                sections={[
+                  { title: "Top 30 Wins Left", rows: fbsWinsLeft, valueLabel: "WINS LEFT", higherIsBetter: true },
+                  { title: "Top 30 Losses Left", rows: fbsLossesLeft, valueLabel: "LOSSES LEFT", higherIsBetter: false },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                colorScale="percentile"
+                signed={false}
+                sideBySide
+              />
             </div>
 
             {/* Win Totals — FCS */}
@@ -712,11 +929,19 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fcsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
-            <div ref={fcsWinsLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Wins Left" sections={[{ title: "", rows: fcsWinsLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS LEFT" higherIsBetter colorScale="percentile" signed={false} />
-            </div>
-            <div ref={fcsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30 Losses Left" sections={[{ title: "", rows: fcsLossesLeft }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="LOSSES LEFT" colorScale="percentile" signed={false} />
+            <div ref={fcsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Win Totals — Wins Left & Losses Left"
+                sections={[
+                  { title: "Top 30 Wins Left", rows: fcsWinsLeft, valueLabel: "WINS LEFT", higherIsBetter: true },
+                  { title: "Top 30 Losses Left", rows: fcsLossesLeft, valueLabel: "LOSSES LEFT", higherIsBetter: false },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                colorScale="percentile"
+                signed={false}
+                sideBySide
+              />
             </div>
 
             {/* Playoff Brackets — the existing site pages, captured as-is.
@@ -758,21 +983,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <WatchabilityPage onHome={() => {}} weekOverride={scheduleWeekNum ?? undefined} forceSaturdaysOnly shareRef={watchabilityRef} />
             <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} shareRef={tvGuideRef} />
 
-            {/* Conference Previews — the existing page, once per
-                conference. Always "latest" week internally (same as the
-                live page), not scoped to this tool's week picker. */}
-            {conferences.map((c) => (
-              <div
-                key={c.conf}
-                ref={(el) => {
-                  if (el) conferenceRefs.current.set(c.conf, el);
-                  else conferenceRefs.current.delete(c.conf);
-                }}
-                style={CAPTURE_WRAP_STYLE}
-              >
-                <ConferencePreviewPage conference={c.conf} onNavigateTeam={() => {}} onHome={() => {}} />
+            {/* Conference Previews — one instance, swapped through all
+                conferences by handleGenerateZip's dedicated pass (see
+                activeConferenceIdx above). Not mounted at all when idle. */}
+            {activeConferenceIdx != null && (
+              <div ref={conferencePreviewRef} style={CAPTURE_WRAP_STYLE}>
+                <ConferencePreviewPage conference={divisionConferences[activeConferenceIdx].conf} onNavigateTeam={() => {}} onHome={() => {}} />
               </div>
-            ))}
+            )}
           </OffscreenStage>
         </>
       )}
