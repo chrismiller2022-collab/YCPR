@@ -207,13 +207,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     );
   });
 }
-// Was 20s — TV Guide (a large horizontally-scrolling table, un-clipped for
-// capture) and the biggest conference previews (e.g. ACC) were timing out
-// at that limit, especially later in a long run once the tab has
-// accumulated memory pressure from 20+ prior captures. Raised rather than
-// left low, since a slow-but-eventually-successful capture is strictly
-// better than a skipped one.
 const CAPTURE_TIMEOUT_MS = 45000;
+// No legitimate target here should ever need dimensions anywhere close
+// to this — it exists purely as a tripwire. TV Guide's width bug (an
+// ambiguous off-screen CSS auto-sizing chain inflating scrollWidth to
+// the browser's canvas cap of 16384px, with real content squeezed into
+// a sliver of that) produced a broken-but-technically-successful image
+// with no error at all — and was very likely also *why* it and the
+// biggest conference previews were timing out even at 45s, since
+// rasterizing a canvas that size is real work regardless of how little
+// of it has actual content. A sane upper bound turns any future
+// instance of "the measured size is nonsense" into a loud, specific
+// skip instead of a silently-broken multi-megabyte image.
+const MAX_CAPTURE_DIMENSION = 6000;
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -620,6 +626,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         // beforeCapture, so a hidden row doesn't leave dead space), same
         // fix TV Guide uses for its horizontally-scrollable export.
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
+        if (explicitSize.width > MAX_CAPTURE_DIMENSION || explicitSize.height > MAX_CAPTURE_DIMENSION) {
+          restore?.();
+          skippedTargets.push(`${target.key} (measured ${explicitSize.width}x${explicitSize.height}px — refusing, likely a layout bug)`);
+          continue;
+        }
         try {
           // branding defaults to true (see DumpTarget) — only the
           // CompactPowerRatingsGraphic targets opt out, since they bake in
@@ -659,6 +670,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           continue;
         }
         const explicitSize = { width: node.scrollWidth, height: node.scrollHeight };
+        if (explicitSize.width > MAX_CAPTURE_DIMENSION || explicitSize.height > MAX_CAPTURE_DIMENSION) {
+          skippedTargets.push(`${target.key} (measured ${explicitSize.width}x${explicitSize.height}px — refusing, likely a layout bug)`);
+          continue;
+        }
         try {
           const blob = await withTimeout(
             exportNodeAsPngBlob(node, undefined, undefined, undefined, explicitSize, true),
@@ -1065,7 +1080,25 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               topN={999}
               shareRef={watchabilityByWindowRef}
             />
-            <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} dateOverride={tvGuideDateOverride} shareRef={tvGuideRef} />
+            {/* Explicit width, not display:inline-block like every other
+                target here — TvGuidePanel's shareRef attaches to its own
+                internal overflowX:auto div (minWidth:100%, no definite
+                width anywhere in its own markup, since on the live page
+                it's constrained by the normal page layout around it).
+                Off-screen (position:fixed, no page layout to constrain
+                it), that div has nothing definite to size against and
+                the browser's shrink-to-fit resolution inflated it far
+                past any real content width — the captured PNG came back
+                16384px wide (a hard browser canvas cap) with real
+                content squeezed into a sliver of that. A definite-width
+                ancestor here breaks the ambiguous auto-sizing chain and
+                restores normal overflow-clipping, so scrollWidth
+                correctly reports the true content width (a single
+                Saturday's slate is comfortably under 3000px) instead of
+                whatever the shrink-to-fit algorithm was computing. */}
+            <div style={{ width: 3000 }}>
+              <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} dateOverride={tvGuideDateOverride} shareRef={tvGuideRef} />
+            </div>
 
             {/* Conference Previews — one instance, swapped through all
                 conferences by handleGenerateZip's dedicated pass (see
