@@ -10,6 +10,8 @@ export interface CbsPickemPickRow {
   is_key_game: boolean;
   picked_side: "home" | "away" | null;
   predicted_total_points: number | null;
+  predicted_home_score: number | null;
+  predicted_away_score: number | null;
   // CBS's own displayed spread, as typed in by Chris — separate from
   // vegasAwaySpread below. Defaults to Vegas at fetch time (see
   // fetchCbsPickemPicksForWeek) whenever nothing's been saved yet, so

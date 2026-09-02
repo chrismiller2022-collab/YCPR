@@ -252,8 +252,13 @@ export default async function handler(req: any, res: any) {
     }
 
     if (action === "selectGames") {
-      const { season, week, gameIds, keyGameId, specialGameId } = req.body;
-      const specialId = keyGameId ?? specialGameId ?? null;
+      const { season, week, gameIds, keyGameId, specialGameId, keyGameIds } = req.body;
+      // keyGameIds (plural, array) is the general form — CBS Pickem needs
+      // 2 tiebreaker games, so it sends this. Brit/ESPN ML/ESPN Spreads/
+      // ESPN Confidence still send the older singular keyGameId/
+      // specialGameId and are unaffected — wrapped into a one-element
+      // array here rather than touching those clients.
+      const specialIds: string[] = Array.isArray(keyGameIds) ? keyGameIds : [keyGameId ?? specialGameId].filter(Boolean);
       if (!season || !week || !Array.isArray(gameIds)) {
         res.status(400).json({ error: "Missing season, week, or gameIds" });
         return;
@@ -273,11 +278,12 @@ export default async function handler(req: any, res: any) {
         if (deleteError) throw deleteError;
       }
 
+      const specialIdSet = new Set(specialIds);
       const rows = gameIds.map((gameId: string) => ({
         season,
         week,
         game_id: gameId,
-        [specialField]: gameId === specialId,
+        [specialField]: specialIdSet.has(gameId),
         updated_at: new Date().toISOString(),
       }));
 
@@ -298,7 +304,7 @@ export default async function handler(req: any, res: any) {
       }
       for (const p of picks) {
         const update: any = { picked_side: p.picked_side ?? null, updated_at: new Date().toISOString() };
-        if (pool === "brit") {
+        if (pool === "brit" || pool === "cbspickem") {
           update.predicted_home_score = p.predicted_home_score ?? null;
           update.predicted_away_score = p.predicted_away_score ?? null;
         } else {

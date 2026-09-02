@@ -7,7 +7,7 @@ import {
   type CbsPickemPickWithGame,
 } from "../lib/api/cbsPickemPool";
 import { spreadColor } from "../lib/odds";
-import { formatProjectedScore } from "../lib/gameTotals";
+import { formatProjectedScore, splitTeamTotal } from "../lib/gameTotals";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
 
@@ -28,7 +28,8 @@ function fmt(v: number | null) {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
-const MAX_GAMES = 10;
+const MAX_GAMES = 15;
+const MAX_KEY_GAMES = 2;
 
 function GameSelectionStep({
   season,
@@ -43,7 +44,7 @@ function GameSelectionStep({
 }) {
   const [available, setAvailable] = useState<any[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [keyGameId, setKeyGameId] = useState<string | null>(null);
+  const [keyGameIds, setKeyGameIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ function GameSelectionStep({
       .then(([games, picks]) => {
         setAvailable(games);
         setSelected(new Set(picks.map((p) => p.game_id)));
-        setKeyGameId(picks.find((p) => p.is_key_game)?.game_id ?? null);
+        setKeyGameIds(new Set(picks.filter((p) => p.is_key_game).map((p) => p.game_id)));
       })
       .catch((err) => setError(err.message ?? "Failed to load games"))
       .finally(() => setLoading(false));
@@ -70,9 +71,26 @@ function GameSelectionStep({
       const next = new Set(prev);
       if (next.has(gameId)) {
         next.delete(gameId);
-        if (keyGameId === gameId) setKeyGameId(null);
+        setKeyGameIds((k) => {
+          const nk = new Set(k);
+          nk.delete(gameId);
+          return nk;
+        });
       } else {
         if (next.size >= MAX_GAMES) return prev;
+        next.add(gameId);
+      }
+      return next;
+    });
+  }
+
+  function toggleKeyGame(gameId: string) {
+    setKeyGameIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(gameId)) {
+        next.delete(gameId);
+      } else {
+        if (next.size >= MAX_KEY_GAMES) return prev;
         next.add(gameId);
       }
       return next;
@@ -83,7 +101,7 @@ function GameSelectionStep({
     setSaving(true);
     setError(null);
     try {
-      await cbsPickemSave({ action: "selectGames", season, week, gameIds: Array.from(selected), keyGameId });
+      await cbsPickemSave({ action: "selectGames", season, week, gameIds: Array.from(selected), keyGameIds: Array.from(keyGameIds) });
       onSaved();
       setCollapsed(true);
     } catch (err: any) {
@@ -98,9 +116,9 @@ function GameSelectionStep({
     setSaving(true);
     setError(null);
     try {
-      await cbsPickemSave({ action: "selectGames", season, week, gameIds: [], keyGameId: null });
+      await cbsPickemSave({ action: "selectGames", season, week, gameIds: [], keyGameIds: [] });
       setSelected(new Set());
-      setKeyGameId(null);
+      setKeyGameIds(new Set());
       onSaved();
     } catch (err: any) {
       setError(err.message);
@@ -118,6 +136,9 @@ function GameSelectionStep({
           1. Select this week's games (FBS vs FBS){" "}
           <span style={{ color: selected.size >= MAX_GAMES ? "#a15c00" : "var(--chalk-dim)", fontWeight: 400 }}>
             · {selected.size}/{MAX_GAMES}
+          </span>{" "}
+          <span style={{ color: keyGameIds.size === MAX_KEY_GAMES ? "green" : "#a15c00", fontWeight: 400 }}>
+            · Tiebreakers: {keyGameIds.size}/{MAX_KEY_GAMES}
           </span>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -179,8 +200,13 @@ function GameSelectionStep({
                 </span>
                 {selected.has(g.id) && (
                   <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
-                    <input type="radio" name="key-game" checked={keyGameId === g.id} onChange={() => setKeyGameId(g.id)} />
-                    Key game (tiebreaker)
+                    <input
+                      type="checkbox"
+                      checked={keyGameIds.has(g.id)}
+                      disabled={!keyGameIds.has(g.id) && keyGameIds.size >= MAX_KEY_GAMES}
+                      onChange={() => toggleKeyGame(g.id)}
+                    />
+                    Tiebreaker game
                   </span>
                 )}
               </label>
@@ -238,7 +264,24 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
           // Defaults the input to Vegas (same reasoning as
           // peayPool.ts) so only games where CBS's actual line
           // diverges from Vegas need to be typed over.
-          d[p.id] = { picked_side: autoPick, cbs_line: p.cbs_line ?? p.vegasAwaySpread ?? null };
+          // Tiebreaker score predictions default to my own model's
+          // projected score split, rounded — same "default to my
+          // model, editable" convention as everything else on this
+          // site, rather than starting blank.
+          let defaultAway = p.predicted_away_score;
+          let defaultHome = p.predicted_home_score;
+          if (p.is_key_game && defaultAway == null && defaultHome == null) {
+            const myTotal = totalsRowByGame.get(`${week}|${p.game?.home_team}|${p.game?.away_team}`) ?? null;
+            const split = splitTeamTotal(myTotal, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null);
+            defaultAway = split.away != null ? Math.round(split.away) : null;
+            defaultHome = split.home != null ? Math.round(split.home) : null;
+          }
+          d[p.id] = {
+            picked_side: autoPick,
+            cbs_line: p.cbs_line ?? p.vegasAwaySpread ?? null,
+            predicted_away_score: defaultAway,
+            predicted_home_score: defaultHome,
+          };
         }
         setDraft(d);
       })
@@ -343,17 +386,37 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
                     {p.is_key_game && (
-                      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
-                        Key game{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
-                        {(() => {
-                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
-                          return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
-                        })()}
-                        {(() => {
-                          const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
-                          const label = formatProjectedScore(myTotal, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null, g.away_team, g.home_team);
-                          return label ? ` · My Score ${label}` : "";
-                        })()}
+                      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.3rem" }}>
+                        <div>
+                          Tiebreaker{p.vegasTotal != null ? ` · Vegas Total ${p.vegasTotal}` : ""}
+                          {(() => {
+                            const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                            return myTotal != null ? ` · My Total ${myTotal.toFixed(1)}` : "";
+                          })()}
+                          {(() => {
+                            const myTotal = totalsRowByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+                            const label = formatProjectedScore(myTotal, p.myProjAwaySpread != null ? -p.myProjAwaySpread : null, g.away_team, g.home_team);
+                            return label ? ` · My Score ${label}` : "";
+                          })()}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.2rem" }}>
+                          <span>Your prediction:</span>
+                          <TeamLogo team={g.away_team} size={14} />
+                          <input
+                            type="number"
+                            value={d.predicted_away_score ?? ""}
+                            onChange={(e) => updateDraft(p.id, { predicted_away_score: e.target.value === "" ? null : Number(e.target.value) })}
+                            style={{ width: 45 }}
+                          />
+                          <span>–</span>
+                          <input
+                            type="number"
+                            value={d.predicted_home_score ?? ""}
+                            onChange={(e) => updateDraft(p.id, { predicted_home_score: e.target.value === "" ? null : Number(e.target.value) })}
+                            style={{ width: 45 }}
+                          />
+                          <TeamLogo team={g.home_team} size={14} />
+                        </div>
                       </div>
                     )}
                   </td>
@@ -438,8 +501,8 @@ export default function CbsPickemPanel({ onBack }: { onBack: () => void }) {
         </a>
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Pick against CBS's own spread for each game. The key game shows the Vegas Total
-        purely as a reference.
+        Pick against CBS's own spread for each game. The two tiebreaker games ask for a
+        predicted score for both teams, defaulting to my own model's projected split.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem" }}>
