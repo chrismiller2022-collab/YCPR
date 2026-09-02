@@ -3,12 +3,24 @@ import { fetchGamesWithLines } from "./gamesLines";
 import { computeRow } from "../matchupsCompute";
 import type { GameRow } from "./gamesLines";
 
+// CBS and Kelly are two separate real-money contests that happen to
+// share this one page — same synced line per game, and Chris usually
+// (not always) makes the same pick for both, but they're independently
+// scored: CBS picks exactly 6 games (1 flagged as a key pick), Kelly
+// picks exactly 7 (no key game). Rather than two separate pages/tables,
+// both contests' selection+pick state live on the same row per game,
+// since the line itself really is shared. cbs_selected/kelly_selected
+// mark whether a given game is even part of that contest's slate this
+// week — neither contest uses every FBS-vs-FBS game.
 export interface CbsSplashRow {
   game_id: string;
   game: GameRow;
   splash_line: number | null;
-  picked_side: "home" | "away" | null;
-  is_key_pick: boolean;
+  cbsSelected: boolean;
+  cbsPickedSide: "home" | "away" | null;
+  cbsIsKeyPick: boolean;
+  kellySelected: boolean;
+  kellyPickedSide: "home" | "away" | null;
   myProjAwaySpread: number | null;
   vegasAwaySpread: number | null;
   // The opening line CFBD had before any movement, away-perspective —
@@ -23,13 +35,12 @@ export interface CbsSplashRow {
   // peayPool.ts's fetchPeayWeek for the reasoning.
   wfbAmountOff: number | null;
   // Which side my model likes against the Splash line specifically (not
-  // Vegas) — informational only, doesn't drive picked_side/Pick
+  // Vegas) — informational only, doesn't drive either contest's pick
   // buttons, which stay fully manual per Chris's request.
   projCoverTeam: "away" | "home" | null;
   // Which side actually covered the Splash line, once the game's
-  // final — null (not "pending") until then. Shares the exact margin
-  // math with gradeCbsSplashPick via actualCoverSide, so the two can't
-  // diverge.
+  // final — null (not "pending") until then. Shared by both contests
+  // since it's the same line either way.
   actualCoverTeam: "away" | "home" | "push" | null;
 }
 
@@ -43,20 +54,29 @@ export function actualCoverSide(g: GameRow, line: number | null): "away" | "home
   return coverMargin > 0 ? "away" : coverMargin < 0 ? "home" : "push";
 }
 
-export function gradeCbsSplashPick(row: CbsSplashRow): CbsSplashGrade {
-  if (row.picked_side == null) return "pending";
-  const side = actualCoverSide(row.game, row.splash_line);
-  if (side == null) return "pending";
-  if (side === "push") return "push";
-  return row.picked_side === side ? "win" : "loss";
+function gradeSide(pickedSide: "away" | "home" | null, actual: "away" | "home" | "push" | null): CbsSplashGrade {
+  if (pickedSide == null) return "pending";
+  if (actual == null) return "pending";
+  if (actual === "push") return "push";
+  return pickedSide === actual ? "win" : "loss";
+}
+
+export function gradeCbsPick(row: CbsSplashRow): CbsSplashGrade {
+  return gradeSide(row.cbsPickedSide, row.actualCoverTeam);
+}
+
+export function gradeKellyPick(row: CbsSplashRow): CbsSplashGrade {
+  return gradeSide(row.kellyPickedSide, row.actualCoverTeam);
 }
 
 /**
- * Every FBS-vs-FBS game for the week, merged with any saved CBS Splash
- * line/pick. Unlike Brit, there's no separate "selection" step — every
- * FBS-vs-FBS game is in scope automatically. Uses computeRow() (Admin
- * Matchups' own calculation) for myProjAwaySpread/vegasAwaySpread —
- * see espnMlPool.ts for the full reasoning.
+ * Every FBS-vs-FBS game for the week, merged with any saved CBS/Kelly
+ * line/selection/pick. Unlike Brit, there's no separate "selection"
+ * step gating which games even show up — every FBS-vs-FBS game is
+ * listed, with per-contest checkboxes marking which ones count toward
+ * that contest's 6 or 7. Uses computeRow() (Admin Matchups' own
+ * calculation) for myProjAwaySpread/vegasAwaySpread — see
+ * espnMlPool.ts for the full reasoning.
  */
 export async function fetchCbsSplashWeek(season: number, week: number, liveByTeam: Record<string, any> = {}): Promise<CbsSplashRow[]> {
   const [gamesWithLines, { data: splash, error: splashError }] = await Promise.all([
@@ -88,8 +108,11 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
       game_id: gwl.id,
       game: gwl,
       splash_line: splashLine,
-      picked_side: saved?.picked_side ?? null,
-      is_key_pick: saved?.is_key_pick ?? false,
+      cbsSelected: saved?.cbs_selected ?? false,
+      cbsPickedSide: saved?.picked_side ?? null,
+      cbsIsKeyPick: saved?.is_key_pick ?? false,
+      kellySelected: saved?.kelly_selected ?? false,
+      kellyPickedSide: saved?.kelly_picked_side ?? null,
       myProjAwaySpread: computed.projAwaySpread,
       vegasAwaySpread: computed.vegasAwaySpread,
       openingAwaySpread: computed.line?.opening_spread != null ? -computed.line.opening_spread : null,

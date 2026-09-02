@@ -3,7 +3,7 @@ import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { fetchCbsSplashWeek, gradeCbsSplashPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
+import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
 
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
 // FBS-vs-FBS game" pool.
@@ -13,7 +13,9 @@ const POOL_URL: string | null = "https://app.splashsports.com/contest/05480bf3-9
 // entries/leaderboard view.
 const POOL_PICKS_URL: string | null =
   "https://app.splashsports.com/contest/99efb826-9409-48f5-9c73-1182a213ce7c/picks?entryId=01a05d21-e5e9-4bc8-827a-7045eee2a393&slateId=f28a6120-8691-4e4f-aa9c-0d9dc903e3a3&isEdit=";
-const KEY_PICKS_TARGET = 3;
+const CBS_GAMES_TARGET = 6;
+const CBS_KEY_PICKS_TARGET = 1;
+const KELLY_GAMES_TARGET = 7;
 
 async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -29,8 +31,11 @@ async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {
       rows: rows.map((r) => ({
         game_id: r.game_id,
         splash_line: r.splash_line,
-        picked_side: r.picked_side,
-        is_key_pick: r.is_key_pick,
+        cbs_selected: r.cbsSelected,
+        picked_side: r.cbsPickedSide,
+        is_key_pick: r.cbsIsKeyPick,
+        kelly_selected: r.kellySelected,
+        kelly_picked_side: r.kellyPickedSide,
       })),
     }),
   });
@@ -68,12 +73,30 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
+  const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
+
+  function snapshotOf(list: CbsSplashRow[]): string {
+    return JSON.stringify(
+      list.map((r) => ({
+        g: r.game_id,
+        l: r.splash_line,
+        cs: r.cbsSelected,
+        cp: r.cbsPickedSide,
+        ck: r.cbsIsKeyPick,
+        ks: r.kellySelected,
+        kp: r.kellyPickedSide,
+      }))
+    );
+  }
 
   function load() {
     setLoading(true);
     setError(null);
     fetchCbsSplashWeek(season, week, liveByTeam)
-      .then(setRows)
+      .then((data) => {
+        setRows(data);
+        setSavedSnapshot(snapshotOf(data));
+      })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }
@@ -90,8 +113,18 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, week, ratingsLoading]);
 
+  const isDirty = snapshotOf(rows) !== savedSnapshot;
+
   function updateRow(gameId: string, patch: Partial<CbsSplashRow>) {
     setRows((prev) => prev.map((r) => (r.game_id === gameId ? { ...r, ...patch } : r)));
+  }
+
+  // "Most of the time" the same pick works for both — this just copies
+  // CBS's current selections/picks over Kelly's, since Kelly's extra
+  // 7th game still needs to be added by hand afterward. One-way only;
+  // doesn't touch CBS.
+  function copyCbsToKelly() {
+    setRows((prev) => prev.map((r) => (r.cbsSelected ? { ...r, kellySelected: true, kellyPickedSide: r.cbsPickedSide } : r)));
   }
 
   async function handleSave() {
@@ -100,6 +133,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     try {
       await splashSave(season, week, rows);
       setSaveMsg("Saved.");
+      setSavedSnapshot(snapshotOf(rows));
       setSortMode("bestBet");
       load();
     } catch (err: any) {
@@ -170,7 +204,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   };
 
   const visibleRows = useMemo(() => {
-    let list = showPickedOnly ? rows.filter((r) => r.picked_side != null) : rows;
+    let list = showPickedOnly ? rows.filter((r) => r.cbsPickedSide != null || r.kellyPickedSide != null) : rows;
     if (hideCompleted) list = list.filter((r) => !r.game.completed);
     if (gameSearch.trim() !== "") {
       const q = gameSearch.trim().toLowerCase();
@@ -200,11 +234,24 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     return list;
   }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
 
-  const keyPickCount = rows.filter((r) => r.is_key_pick).length;
-  const pickedCount = rows.filter((r) => r.picked_side != null).length;
-  const record = rows.reduce(
+  const cbsSelectedCount = rows.filter((r) => r.cbsSelected).length;
+  const cbsKeyCount = rows.filter((r) => r.cbsIsKeyPick).length;
+  const cbsPickedCount = rows.filter((r) => r.cbsSelected && r.cbsPickedSide != null).length;
+  const kellySelectedCount = rows.filter((r) => r.kellySelected).length;
+  const kellyPickedCount = rows.filter((r) => r.kellySelected && r.kellyPickedSide != null).length;
+  const cbsRecord = rows.reduce(
     (acc, r) => {
-      const g = gradeCbsSplashPick(r);
+      const g = gradeCbsPick(r);
+      if (g === "win") acc.wins++;
+      else if (g === "loss") acc.losses++;
+      else if (g === "push") acc.pushes++;
+      return acc;
+    },
+    { wins: 0, losses: 0, pushes: 0 }
+  );
+  const kellyRecord = rows.reduce(
+    (acc, r) => {
+      const g = gradeKellyPick(r);
       if (g === "win") acc.wins++;
       else if (g === "loss") acc.losses++;
       else if (g === "push") acc.pushes++;
@@ -215,7 +262,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+      <button
+        className="menu-btn"
+        onClick={() => {
+          if (isDirty && !confirm("You have unsaved picks/lines — leave anyway and lose them?")) return;
+          onBack();
+        }}
+        style={{ marginBottom: "1.5rem" }}
+      >
         ‹ Pools
       </button>
 
@@ -235,9 +289,10 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         </div>
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Every FBS-vs-FBS game this week, automatically. Enter CBS Splash's line for each game
-        (same convention as the rest of the site: negative = away favored), pick a side,
-        and flag exactly {KEY_PICKS_TARGET} as Key Picks.
+        Every FBS-vs-FBS game this week, automatically, shared between two separate contests on
+        the same line: check a game into CBS ({CBS_GAMES_TARGET} games, {CBS_KEY_PICKS_TARGET} key
+        pick) and/or Kelly ({KELLY_GAMES_TARGET} games, no key pick) and pick a side for each.
+        Splash line convention matches the rest of the site: negative = away favored.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -252,7 +307,11 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
             min={1}
             max={16}
             value={week}
-            onChange={(e) => setWeek(parseInt(e.target.value, 10) || week)}
+            onChange={(e) => {
+              const next = parseInt(e.target.value, 10) || week;
+              if (isDirty && !confirm("You have unsaved picks/lines for this week — switch weeks anyway and lose them?")) return;
+              setWeek(next);
+            }}
             style={{ width: 70 }}
           />
         </label>
@@ -264,13 +323,18 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
-        <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
-          Key Picks: {keyPickCount}/{KEY_PICKS_TARGET}
+        <span style={{ fontSize: "0.82rem", color: cbsSelectedCount === CBS_GAMES_TARGET && cbsKeyCount === CBS_KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
+          CBS: {cbsSelectedCount}/{CBS_GAMES_TARGET} selected · {cbsPickedCount} picked · Key {cbsKeyCount}/{CBS_KEY_PICKS_TARGET} · {cbsRecord.wins}-
+          {cbsRecord.losses}
+          {cbsRecord.pushes > 0 ? `-${cbsRecord.pushes}` : ""}
         </span>
-        <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-          Picked: {pickedCount}/{rows.length} · Record: {record.wins}-{record.losses}
-          {record.pushes > 0 ? `-${record.pushes}` : ""}
+        <span style={{ fontSize: "0.82rem", color: kellySelectedCount === KELLY_GAMES_TARGET ? "green" : "#a15c00" }}>
+          Kelly: {kellySelectedCount}/{KELLY_GAMES_TARGET} selected · {kellyPickedCount} picked · {kellyRecord.wins}-{kellyRecord.losses}
+          {kellyRecord.pushes > 0 ? `-${kellyRecord.pushes}` : ""}
         </span>
+        <button className="menu-btn" onClick={copyCbsToKelly} title="Copies CBS's current selections/picks onto Kelly — doesn't touch CBS">
+          Copy CBS → Kelly
+        </button>
         <input
           type="text"
           placeholder="Search teams…"
@@ -372,17 +436,22 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   <th className="th">Proj Cover</th>
                   <th className="th">Actual Cover</th>
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
-                  <th className="th">Pick</th>
-                  <th className="th">Key Pick</th>
-                  <th className="th">Result</th>
+                  <th className="th">CBS?</th>
+                  <th className="th">CBS Pick</th>
+                  <th className="th">Key</th>
+                  <th className="th">CBS Result</th>
+                  <th className="th">Kelly?</th>
+                  <th className="th">Kelly Pick</th>
+                  <th className="th">Kelly Result</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.map((r) => {
-                  const grade = gradeCbsSplashPick(r);
+                  const cbsGrade = gradeCbsPick(r);
+                  const kellyGrade = gradeKellyPick(r);
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
-                    <tr key={r.game_id} style={{ background: r.is_key_pick ? "var(--gold-dim)" : undefined }}>
+                    <tr key={r.game_id} style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : undefined }}>
                       <td style={cellStyle}><TeamLogo team={r.game.away_team} /> {r.game.away_team}</td>
                       <td style={cellStyle}><TeamLogo team={r.game.home_team} /> {r.game.home_team}</td>
                       <td
@@ -442,35 +511,100 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           {r.wfbTeam != null && <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtAbs(r.wfbAmountOff)}</span>}
                         </div>
                       </td>
-                      <td style={cellStyle}>
-                        <div style={{ display: "flex", gap: "0.2rem" }}>
-                          <button
-                            className="menu-btn"
-                            style={{ opacity: r.picked_side === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                            onClick={() => updateRow(r.game_id, { picked_side: r.picked_side === "away" ? null : "away" })}
-                            title={r.game.away_team}
-                          >
-                            <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
-                          </button>
-                          <button
-                            className="menu-btn"
-                            style={{ opacity: r.picked_side === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                            onClick={() => updateRow(r.game_id, { picked_side: r.picked_side === "home" ? null : "home" })}
-                            title={r.game.home_team}
-                          >
-                            <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
-                          </button>
-                        </div>
-                      </td>
+
+                      {/* CBS */}
                       <td style={{ ...cellStyle, textAlign: "center" }}>
                         <input
                           type="checkbox"
-                          checked={r.is_key_pick}
-                          onChange={(e) => updateRow(r.game_id, { is_key_pick: e.target.checked })}
+                          checked={r.cbsSelected}
+                          onChange={(e) => {
+                            if (e.target.checked && cbsSelectedCount >= CBS_GAMES_TARGET) {
+                              setSaveMsg(`CBS is already at ${CBS_GAMES_TARGET} games — uncheck one first.`);
+                              return;
+                            }
+                            updateRow(r.game_id, e.target.checked ? { cbsSelected: true } : { cbsSelected: false, cbsPickedSide: null, cbsIsKeyPick: false });
+                          }}
                         />
                       </td>
                       <td style={cellStyle}>
-                        {grade === "pending" ? "–" : grade === "win" ? "✅ Win" : grade === "push" ? "Push" : "❌ Loss"}
+                        {r.cbsSelected && (
+                          <div style={{ display: "flex", gap: "0.2rem" }}>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.cbsPickedSide === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { cbsPickedSide: r.cbsPickedSide === "away" ? null : "away" })}
+                              title={r.game.away_team}
+                            >
+                              <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
+                            </button>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.cbsPickedSide === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { cbsPickedSide: r.cbsPickedSide === "home" ? null : "home" })}
+                              title={r.game.home_team}
+                            >
+                              <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        {r.cbsSelected && (
+                          <input
+                            type="checkbox"
+                            checked={r.cbsIsKeyPick}
+                            onChange={(e) => {
+                              if (e.target.checked && cbsKeyCount >= CBS_KEY_PICKS_TARGET) {
+                                setSaveMsg(`CBS already has ${CBS_KEY_PICKS_TARGET} key pick — uncheck it first.`);
+                                return;
+                              }
+                              updateRow(r.game_id, { cbsIsKeyPick: e.target.checked });
+                            }}
+                          />
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        {r.cbsSelected ? (cbsGrade === "pending" ? "–" : cbsGrade === "win" ? "✅ Win" : cbsGrade === "push" ? "Push" : "❌ Loss") : ""}
+                      </td>
+
+                      {/* Kelly */}
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={r.kellySelected}
+                          onChange={(e) => {
+                            if (e.target.checked && kellySelectedCount >= KELLY_GAMES_TARGET) {
+                              setSaveMsg(`Kelly is already at ${KELLY_GAMES_TARGET} games — uncheck one first.`);
+                              return;
+                            }
+                            updateRow(r.game_id, e.target.checked ? { kellySelected: true } : { kellySelected: false, kellyPickedSide: null });
+                          }}
+                        />
+                      </td>
+                      <td style={cellStyle}>
+                        {r.kellySelected && (
+                          <div style={{ display: "flex", gap: "0.2rem" }}>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.kellyPickedSide === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "away" ? null : "away" })}
+                              title={r.game.away_team}
+                            >
+                              <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
+                            </button>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.kellyPickedSide === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "home" ? null : "home" })}
+                              title={r.game.home_team}
+                            >
+                              <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        {r.kellySelected ? (kellyGrade === "pending" ? "–" : kellyGrade === "win" ? "✅ Win" : kellyGrade === "push" ? "Push" : "❌ Loss") : ""}
                       </td>
                     </tr>
                   );
@@ -479,10 +613,15 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
             </table>
           </div>
 
-          <button onClick={handleSave} disabled={saving} style={{ marginTop: "1rem" }}>
-            {saving ? "Saving…" : "Save Splash Lines"}
+          {isDirty && (
+            <p style={{ color: "#e0a030", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
+              ⚠ You have unsaved picks and/or lines — click Save below before leaving this page, or they'll be lost.
+            </p>
+          )}
+          <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
+            {saving ? "Saving…" : "Save Lines & Picks"}
           </button>
-          {saveMsg && <span style={{ color: "green", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "green" : "#e0a030", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
       )}
 

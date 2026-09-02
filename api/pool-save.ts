@@ -85,7 +85,8 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // --- CBS Splash: same shape as Peay, own table/field names ---
+    // --- CBS Splash: same shape as Peay, own table/field names. Two
+    // contests (CBS, Kelly) share one row per game — see cbsSplashPool.ts. ---
     if (pool === "cbssplash") {
       if (action !== "saveWeek") {
         res.status(400).json({ error: `Unknown action for cbssplash: ${action}` });
@@ -101,8 +102,11 @@ export default async function handler(req: any, res: any) {
         week,
         game_id: r.game_id,
         splash_line: r.splash_line ?? null,
+        cbs_selected: !!r.cbs_selected,
         picked_side: r.picked_side ?? null,
         is_key_pick: !!r.is_key_pick,
+        kelly_selected: !!r.kelly_selected,
+        kelly_picked_side: r.kelly_picked_side ?? null,
         updated_at: new Date().toISOString(),
       }));
       const { error } = await supabaseAdmin.from("cbs_splash_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });

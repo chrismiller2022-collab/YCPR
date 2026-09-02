@@ -50,10 +50,19 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
   const [rows, setRows] = useState<PeayRow[]>([]);
+  // Tracks what's actually persisted (set on every successful load/save)
+  // so an "unsaved changes" banner can be shown reliably — this exists
+  // because of a real incident: Chris clicked Save once before making
+  // any picks (so only peay_line persisted), then made 51 picks
+  // afterward believing they'd need a *separate* save action, since the
+  // button read "Save Peay Lines" — it never occurred to him the same
+  // button also saves picked_side/is_key_pick. Navigating away lost all
+  // of it, with no error and nothing to indicate anything was wrong.
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
   const [showPickedOnly, setShowPickedOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
@@ -63,11 +72,18 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
+  function snapshotOf(list: PeayRow[]): string {
+    return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.peay_line, p: r.picked_side, k: r.is_key_pick })));
+  }
+
   function load() {
     setLoading(true);
     setError(null);
     fetchPeayWeek(season, week, liveByTeam)
-      .then(setRows)
+      .then((data) => {
+        setRows(data);
+        setSavedSnapshot(snapshotOf(data));
+      })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
   }
@@ -84,8 +100,25 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, week, ratingsLoading]);
 
+  const PICK_LIMIT = 10;
+  const pickedCount = rows.filter((r) => r.picked_side != null).length;
+  const isDirty = snapshotOf(rows) !== savedSnapshot;
+
   function updateRow(gameId: string, patch: Partial<PeayRow>) {
-    setRows((prev) => prev.map((r) => (r.game_id === gameId ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.game_id !== gameId) return r;
+        // Only enforce the cap when this patch is adding a NEW pick
+        // (going from no pick to a pick) — never blocks unpicking, and
+        // never blocks a line/key-pick edit that isn't touching
+        // picked_side at all.
+        if (patch.picked_side != null && r.picked_side == null && pickedCount >= PICK_LIMIT) {
+          setSaveMsg(`You've already picked ${PICK_LIMIT} games — the max for this pool. Unpick one first.`);
+          return r;
+        }
+        return { ...r, ...patch };
+      })
+    );
   }
 
   async function handleSave() {
@@ -94,6 +127,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
     try {
       await peaySave(season, week, rows);
       setSaveMsg("Saved.");
+      setSavedSnapshot(snapshotOf(rows));
       setSortMode("bestBet");
       load();
     } catch (err: any) {
@@ -196,7 +230,6 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
 
   const keyPickCount = rows.filter((r) => r.is_key_pick).length;
-  const pickedCount = rows.filter((r) => r.picked_side != null).length;
   const record = rows.reduce(
     (acc, r) => {
       const g = gradePeayPick(r);
@@ -210,7 +243,14 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+      <button
+        className="menu-btn"
+        onClick={() => {
+          if (isDirty && !confirm("You have unsaved picks/lines — leave anyway and lose them?")) return;
+          onBack();
+        }}
+        style={{ marginBottom: "1.5rem" }}
+      >
         ‹ Pools
       </button>
 
@@ -238,7 +278,11 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
             min={1}
             max={16}
             value={week}
-            onChange={(e) => setWeek(parseInt(e.target.value, 10) || week)}
+            onChange={(e) => {
+              const next = parseInt(e.target.value, 10) || week;
+              if (isDirty && !confirm("You have unsaved picks/lines for this week — switch weeks anyway and lose them?")) return;
+              setWeek(next);
+            }}
             style={{ width: 70 }}
           />
         </label>
@@ -253,8 +297,8 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
           Key Picks: {keyPickCount}/{KEY_PICKS_TARGET}
         </span>
-        <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-          Picked: {pickedCount}/{rows.length} · Record: {record.wins}-{record.losses}
+        <span style={{ fontSize: "0.82rem", color: pickedCount === PICK_LIMIT ? "green" : "#a15c00" }}>
+          Picked: {pickedCount}/{PICK_LIMIT} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""}
         </span>
         <input
@@ -465,10 +509,15 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
             </table>
           </div>
 
-          <button onClick={handleSave} disabled={saving} style={{ marginTop: "1rem" }}>
-            {saving ? "Saving…" : "Save Peay Lines"}
+          {isDirty && (
+            <p style={{ color: "#e0a030", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
+              ⚠ You have unsaved picks and/or lines — click Save below before leaving this page, or they'll be lost.
+            </p>
+          )}
+          <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
+            {saving ? "Saving…" : "Save Lines & Picks"}
           </button>
-          {saveMsg && <span style={{ color: "green", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "green" : "#e0a030", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
       )}
 
