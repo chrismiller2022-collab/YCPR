@@ -8,6 +8,7 @@ import BracketPage from "./BracketPage";
 import FCSBracketPage from "./FCSBracketPage";
 import WatchabilityPage from "./WatchabilityPage";
 import TvGuidePanel, { STREAMING_CHANNEL_KEY } from "./TvGuidePanel";
+import { isSaturdayET, etDateString } from "../lib/watchability";
 import ConferencePreviewPage from "./ConferencePreviewPage";
 import { conferencesForDivision } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
@@ -287,6 +288,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     };
   }, [season, scheduleWeekNum]);
 
+  // TV Guide's own week-based filter combines every day in the schedule
+  // week onto one grid — fine normally, but CFBD's week numbering can
+  // bundle a Week 0 slate (played a full week earlier) into "Week 1",
+  // so the axis ends up spanning two different Saturdays' worth of
+  // games instead of one. Picks the LATEST Saturday among this week's
+  // TV games (the actual target week's slate, not the earlier leaked-in
+  // one) and passes it as a specific date override instead of relying
+  // on the week filter — same fix Chris already built into the live
+  // page's own date-override input, just computed automatically here.
+  const tvGuideDateOverride = useMemo(() => {
+    const saturdays = scheduleGames
+      .filter((g) => g.tv_outlet && g.start_date && isSaturdayET(g.start_date))
+      .map((g) => etDateString(g.start_date!));
+    if (saturdays.length === 0) return undefined;
+    return [...new Set(saturdays)].sort().pop();
+  }, [scheduleGames]);
+
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, scheduleWeekNum != null ? [scheduleWeekNum] : [], season);
   const { rows: totalsEngineRows } = useGameTotalsEngine(season);
   const projTotalByGame = useMemo(() => {
@@ -449,6 +467,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // FBS-scoped (Watchability is FBS-vs-FBS only; TV Guide in practice
   // never has an FCS broadcast game), so both live in the FBS bucket.
   const watchabilityRef = useRef<HTMLDivElement>(null);
+  const watchabilityByWindowRef = useRef<HTMLDivElement>(null);
   const tvGuideRef = useRef<HTMLDivElement>(null);
   // Conference Previews — one image per conference, FBS then FCS.
   // Independents excluded (conferencesForDivision() itself filters them
@@ -504,9 +523,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     // Cross-divisional (FBS vs FCS) — lives in the FBS bucket per Chris,
     // but stays its own separate image, not merged into FBS-vs-FBS.
     { key: "26-fbs-vs-fcs-matchups-all", node: () => crossMatchupsAllRef.current, branding: false, division: "FBS" },
-    { key: "27-watchability-saturday", node: () => watchabilityRef.current, branding: false, division: "FBS" },
+    { key: "27-watchability-saturday-overall", node: () => watchabilityRef.current, branding: false, division: "FBS" },
+    { key: "28-watchability-saturday-by-slate", node: () => watchabilityByWindowRef.current, branding: false, division: "FBS" },
     {
-      key: "28-tv-guide",
+      key: "29-tv-guide",
       node: () => tvGuideRef.current,
       division: "FBS",
       beforeCapture: (node) => {
@@ -529,7 +549,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // them correctly.
   conferences.forEach((c, i) => {
     targets.push({
-      key: `${29 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
+      key: `${30 + i}-conf-preview-${c.div.toLowerCase()}-${c.conf.toLowerCase().replace(/\s+/g, "-")}`,
       node: () => null,
       division: c.div,
       isConferencePreview: true,
@@ -980,8 +1000,22 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 forceSaturdaysOnly/shareRef props added to each). No outer
                 capture wrapper needed: shareRef points straight at the
                 page's own internal export-ready node. */}
-            <WatchabilityPage onHome={() => {}} weekOverride={scheduleWeekNum ?? undefined} forceSaturdaysOnly shareRef={watchabilityRef} />
-            <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} shareRef={tvGuideRef} />
+            <WatchabilityPage
+              onHome={() => {}}
+              weekOverride={scheduleWeekNum ?? undefined}
+              dateOverride={tvGuideDateOverride}
+              topN={999}
+              shareRef={watchabilityRef}
+            />
+            <WatchabilityPage
+              onHome={() => {}}
+              weekOverride={scheduleWeekNum ?? undefined}
+              dateOverride={tvGuideDateOverride}
+              topViewOverride="windows"
+              topN={999}
+              shareRef={watchabilityByWindowRef}
+            />
+            <TvGuidePanel weekOverride={scheduleWeekNum ?? undefined} dateOverride={tvGuideDateOverride} shareRef={tvGuideRef} />
 
             {/* Conference Previews — one instance, swapped through all
                 conferences by handleGenerateZip's dedicated pass (see

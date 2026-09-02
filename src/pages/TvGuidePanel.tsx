@@ -5,7 +5,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
-import { scoreWatchability, DEFAULT_WEIGHTS, type WatchabilityInput } from "../lib/watchability";
+import { scoreWatchability, DEFAULT_WEIGHTS, etDateString, type WatchabilityInput } from "../lib/watchability";
 import { exportNodeAsPng } from "../lib/exportPng";
 
 // Order matters — channels render in this order, top to bottom, and a
@@ -102,22 +102,6 @@ function etMinutesSinceMidnight(iso: string): number {
   return hour * 60 + minute;
 }
 
-// "en-CA" formats as yyyy-mm-dd directly, which is exactly the value
-// format <input type="date"> uses — lets the date override compare
-// against it with a plain string equality instead of re-parsing.
-function etDateString(iso: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(iso));
-  const y = parts.find((p) => p.type === "year")?.value ?? "0000";
-  const m = parts.find((p) => p.type === "month")?.value ?? "01";
-  const d = parts.find((p) => p.type === "day")?.value ?? "01";
-  return `${y}-${m}-${d}`;
-}
-
 function fmtTime(minutesSinceMidnight: number): string {
   const h24 = Math.floor(minutesSinceMidnight / 60) % 24;
   const m = minutesSinceMidnight % 60;
@@ -133,6 +117,7 @@ function fmtSpread(v: number | null): string {
 
 export default function TvGuidePanel({
   weekOverride,
+  dateOverride: dateOverrideProp,
   shareRef,
 }: {
   /** Pins `week` to this value instead of auto-picking the first
@@ -140,6 +125,13 @@ export default function TvGuidePanel({
    * Image Dump tool to render this page off-screen at a specific
    * caller-chosen week. */
   weekOverride?: number;
+  /** Pins the date filter to this value instead of the internal date
+   * input — for the Weekly Image Dump tool, which needs to pick one
+   * specific Saturday itself (see WeeklyImageDumpAdminPanel.tsx) rather
+   * than showing every day in the schedule week combined. Falls back
+   * to the internal dateOverride state when omitted, so the live page
+   * (which never passes this prop) is unaffected. */
+  dateOverride?: string;
   /** Lets the Weekly Image Dump tool grab the same grid node the page's
    * own Export PNG button targets, instead of a separate capture. */
   shareRef?: React.RefObject<HTMLDivElement>;
@@ -152,7 +144,8 @@ export default function TvGuidePanel({
   // for weeks like Week 1 where CFBD's own week numbering can bundle
   // in a Week 0 slate that actually played on a different Saturday, so
   // "Week 1" alone doesn't line up with a single calendar day.
-  const [dateOverride, setDateOverride] = useState<string>("");
+  const [dateOverrideState, setDateOverrideState] = useState<string>("");
+  const dateOverride = dateOverrideProp ?? dateOverrideState;
   const [exporting, setExporting] = useState(false);
   const [choosingExport, setChoosingExport] = useState(false);
   const internalExportRef = useRef<HTMLDivElement>(null);
@@ -349,7 +342,7 @@ export default function TvGuidePanel({
           <input
             type="date"
             value={dateOverride}
-            onChange={(e) => setDateOverride(e.target.value)}
+            onChange={(e) => setDateOverrideState(e.target.value)}
             style={{
               background: "var(--turf-panel)",
               border: "1px solid var(--hash)",
@@ -362,7 +355,7 @@ export default function TvGuidePanel({
           />
         </label>
         {dateOverride && (
-          <button type="button" className="export-png-btn" onClick={() => setDateOverride("")}>
+          <button type="button" className="export-png-btn" onClick={() => setDateOverrideState("")}>
             Clear date
           </button>
         )}
