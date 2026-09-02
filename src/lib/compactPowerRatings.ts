@@ -17,14 +17,23 @@ export interface CompactRatingRow {
 // oddly short/tall relative to the other. Targeting a fixed number of rows
 // per column and solving for the column count keeps both grids visually
 // similar in shape no matter how many teams are in play.
+//
+// Deliberately does NOT re-sort rows — it trusts the order it's handed.
+// Every "full list" caller (Full List, Top 25/G6, Resume, SOS, Win Totals,
+// Wins/Losses Left) already hands in rows in rank order, so that's a no-op
+// for them. But Gainers/Losers hands in rows pre-sorted by change
+// magnitude with each row's ORIGINAL overall rank still attached (rank is
+// display data there, not the sort key) — an internal re-sort-by-rank used
+// to silently discard that order and put the list back in rank order,
+// which is exactly the bug Chris reported (gainers/losers PNGs looking
+// identical to a plain top/bottom-30 rank list).
 export function chunkForCompactGrid(rows: CompactRatingRow[], targetRowsPerColumn = 34): CompactRatingRow[][] {
-  const sorted = [...rows].sort((a, b) => a.rank - b.rank);
-  if (sorted.length === 0) return [];
-  const numColumns = Math.max(1, Math.ceil(sorted.length / targetRowsPerColumn));
-  const rowsPerColumn = Math.ceil(sorted.length / numColumns);
+  if (rows.length === 0) return [];
+  const numColumns = Math.max(1, Math.ceil(rows.length / targetRowsPerColumn));
+  const rowsPerColumn = Math.ceil(rows.length / numColumns);
   const columns: CompactRatingRow[][] = [];
   for (let i = 0; i < numColumns; i++) {
-    const slice = sorted.slice(i * rowsPerColumn, (i + 1) * rowsPerColumn);
+    const slice = rows.slice(i * rowsPerColumn, (i + 1) * rowsPerColumn);
     if (slice.length > 0) columns.push(slice);
   }
   return columns;

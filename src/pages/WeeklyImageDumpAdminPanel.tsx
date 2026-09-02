@@ -243,6 +243,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // Splitting also roughly halves the per-run target count, which
   // directly helps the timeout/reliability problem on its own.
   const [dumpDivision, setDumpDivision] = useState<"FBS" | "FCS">("FBS");
+  // Conference previews are the slowest part of a generate pass — one at a
+  // time, ~25 per division, each a full mount+capture+unmount cycle (see
+  // the flushSync pass in handleGenerateZip) — so they're skippable for a
+  // quick iteration when Chris doesn't need them for this run. Defaults on
+  // so a plain "Generate ZIP" still produces the full pack.
+  const [includeConferencePreviews, setIncludeConferencePreviews] = useState(true);
 
   useEffect(() => {
     fetchAvailableWeeks()
@@ -574,7 +580,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     });
   });
 
-  const divisionTargets = useMemo(() => targets.filter((t) => t.division === dumpDivision), [targets, dumpDivision]);
+  const divisionTargets = useMemo(
+    () => targets.filter((t) => t.division === dumpDivision && (includeConferencePreviews || !t.isConferencePreview)),
+    [targets, dumpDivision, includeConferencePreviews]
+  );
   const divisionConferences = useMemo(() => conferences.filter((c) => c.div === dumpDivision), [conferences, dumpDivision]);
 
   async function handleGenerateZip() {
@@ -720,7 +729,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           try {
             const password = sessionStorage.getItem("admin_password") ?? "";
             await publishWeeklyReportPdf(currentWeek, dumpDivision, pdfBlob, password);
-            setPublishResult({ ok: true, message: `Published as ${weekLabel(currentWeek)}'s public ${dumpDivision} Week Report.` });
+            setPublishResult({
+              ok: true,
+              message: includeConferencePreviews
+                ? `Published as ${weekLabel(currentWeek)}'s public ${dumpDivision} Week Report.`
+                : `Published as ${weekLabel(currentWeek)}'s public ${dumpDivision} Week Report — Conference Previews were skipped, so this report is missing those pages. Re-generate with the checkbox on before this is the final version.`,
+            });
           } catch (publishErr: any) {
             setPublishResult({
               ok: false,
@@ -816,6 +830,16 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               FCS
             </button>
           </div>
+
+          <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginBottom: "0.75rem", fontSize: "0.82rem", color: "var(--chalk-dim)", cursor: zipping ? "default" : "pointer" }}>
+            <input
+              type="checkbox"
+              checked={includeConferencePreviews}
+              onChange={(e) => setIncludeConferencePreviews(e.target.checked)}
+              disabled={zipping}
+            />
+            Include Conference Previews ({divisionConferences.length} images — slowest part of the run, skip for a faster iteration)
+          </label>
 
           <button className="menu-btn" onClick={handleGenerateZip} disabled={zipping || loadingCurrent}>
             {zipping ? "Building ZIP…" : `Generate ${dumpDivision} ZIP (${divisionTargets.length} images)`}
