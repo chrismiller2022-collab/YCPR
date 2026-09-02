@@ -141,6 +141,57 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Reddit Confidence: no key/special game concept (pure
+    // confidence pool), so it doesn't fit the shared selectGames/
+    // savePicks pattern below (which always writes a special-game
+    // boolean) — its own small dedicated branch instead. ---
+    if (pool === "redditconfidence") {
+      if (action === "selectGames") {
+        const { season, week, gameIds } = req.body;
+        if (!season || !week || !Array.isArray(gameIds)) {
+          res.status(400).json({ error: "Missing season, week, or gameIds" });
+          return;
+        }
+        const { data: existing, error: existingError } = await supabaseAdmin
+          .from("reddit_confidence_picks")
+          .select("id, game_id")
+          .eq("season", season)
+          .eq("week", week);
+        if (existingError) throw existingError;
+        const keepIds = new Set(gameIds);
+        const toDelete = (existing ?? []).filter((r: any) => !keepIds.has(r.game_id)).map((r: any) => r.id);
+        if (toDelete.length > 0) {
+          const { error: deleteError } = await supabaseAdmin.from("reddit_confidence_picks").delete().in("id", toDelete);
+          if (deleteError) throw deleteError;
+        }
+        const rows = gameIds.map((gameId: string) => ({ season, week, game_id: gameId, updated_at: new Date().toISOString() }));
+        const { error: upsertError } = await supabaseAdmin
+          .from("reddit_confidence_picks")
+          .upsert(rows, { onConflict: "season,week,game_id", ignoreDuplicates: false });
+        if (upsertError) throw upsertError;
+        res.status(200).json({ ok: true, saved: rows.length, removed: toDelete.length });
+        return;
+      }
+      if (action === "savePicks") {
+        const { picks } = req.body;
+        if (!Array.isArray(picks) || picks.length === 0) {
+          res.status(400).json({ error: "No picks to save" });
+          return;
+        }
+        for (const p of picks) {
+          const { error } = await supabaseAdmin
+            .from("reddit_confidence_picks")
+            .update({ picked_side: p.picked_side ?? null, confidence_points: p.confidence_points ?? null, updated_at: new Date().toISOString() })
+            .eq("id", p.id);
+          if (error) throw error;
+        }
+        res.status(200).json({ ok: true, saved: picks.length });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for redditconfidence: ${action}` });
+      return;
+    }
+
     // --- Survivor saved paths: named candidate paths, not tied to a season/week ---
     if (pool === "survivorpaths") {
       if (action === "save") {

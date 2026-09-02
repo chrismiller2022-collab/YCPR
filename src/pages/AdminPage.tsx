@@ -21,6 +21,7 @@ import CbsSplashPoolPanel from "./CbsSplashPoolPanel";
 import EspnMoneylinePanel from "./EspnMoneylinePanel";
 import EspnSpreadPanel from "./EspnSpreadPanel";
 import EspnConfidencePanel from "./EspnConfidencePanel";
+import RedditConfidencePanel from "./RedditConfidencePanel";
 import CfbdPickemPanel from "./CfbdPickemPanel";
 import CbsPickemPanel from "./CbsPickemPanel";
 import SurvivorPoolAdminPanel from "./SurvivorPoolAdminPanel";
@@ -232,6 +233,7 @@ type AdminView =
   | "espnml"
   | "espnspread"
   | "espnconfidence"
+  | "redditconfidence"
   | "cfbdpickem"
   | "cbspickem"
   | "nfldraftpool"
@@ -546,6 +548,7 @@ const POOL_SUBVIEWS: AdminView[] = [
   "espnml",
   "espnspread",
   "espnconfidence",
+  "redditconfidence",
   "cfbdpickem",
   "cbspickem",
 ];
@@ -878,6 +881,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "espnspread" && <EspnSpreadPanel onBack={() => setView("pools")} />}
 
           {view === "espnconfidence" && <EspnConfidencePanel onBack={() => setView("pools")} />}
+          {view === "redditconfidence" && <RedditConfidencePanel onBack={() => setView("pools")} />}
 
           {view === "cfbdpickem" && <CfbdPickemPanel onBack={() => setView("pools")} />}
 

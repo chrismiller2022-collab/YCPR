@@ -59,6 +59,7 @@ const SECTIONS: { title: string; pools: PoolDef[] }[] = [
     title: "Low Priority",
     pools: [
       { key: "espnconfidence", label: "ESPN Confidence", description: "Confidence pick'em pool." },
+      { key: "redditconfidence", label: "Reddit Confidence", description: "Confidence pool — export picks as a comma-separated team list." },
       { key: "espnml", label: "ESPN Moneyline", description: "Straight-up moneyline pool." },
       { key: "espnspread", label: "ESPN Spreads", description: "Against-the-spread pool." },
       { key: "cbspickem", label: "CBS Pickem", description: "Pick against CBS's spread for each game." },
