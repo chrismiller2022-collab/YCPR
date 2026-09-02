@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import JSZip from "jszip";
-import jsPDF from "jspdf";
+import { PDFDocument } from "pdf-lib";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
 import MatchupGridGraphic from "../components/MatchupGridGraphic";
 import BracketPage from "./BracketPage";
@@ -160,18 +160,30 @@ const CAPTURE_WRAP_STYLE: React.CSSProperties = { display: "inline-block" };
 // pixel dimensions (via Image.naturalWidth/Height, rather than assuming
 // 2x the DOM node's scrollWidth/scrollHeight — trusts what was actually
 // rasterized instead of re-deriving it).
-function blobToImageData(blob: Blob): Promise<{ dataUrl: string; width: number; height: number }> {
+// Returns raw PNG bytes (not a base64 data URL) — pdf-lib's embedPng wants
+// an ArrayBuffer/Uint8Array directly, and skipping the base64 round-trip
+// avoids inflating each image ~33% and holding dozens of giant strings in
+// memory at once, which is exactly what previously blew up jsPDF (see the
+// PDF-assembly comment below).
+function blobToImageData(blob: Blob): Promise<{ bytes: ArrayBuffer; width: number; height: number }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image blob"));
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const img = new Image();
-      img.onload = () => resolve({ dataUrl, width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => reject(new Error("Failed to measure image dimensions"));
-      img.src = dataUrl;
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = async () => {
+      const { naturalWidth, naturalHeight } = img;
+      URL.revokeObjectURL(url);
+      try {
+        const bytes = await blob.arrayBuffer();
+        resolve({ bytes, width: naturalWidth, height: naturalHeight });
+      } catch (err) {
+        reject(err);
+      }
     };
-    reader.readAsDataURL(blob);
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to measure image dimensions"));
+    };
+    img.src = url;
   });
 }
 
@@ -195,7 +207,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     );
   });
 }
-const CAPTURE_TIMEOUT_MS = 20000;
+// Was 20s — TV Guide (a large horizontally-scrolling table, un-clipped for
+// capture) and the biggest conference previews (e.g. ACC) were timing out
+// at that limit, especially later in a long run once the tab has
+// accumulated memory pressure from 20+ prior captures. Raised rather than
+// left low, since a slow-but-eventually-successful capture is strictly
+// better than a skipped one.
+const CAPTURE_TIMEOUT_MS = 45000;
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -568,7 +586,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       const zip = new JSZip();
       // Collected alongside each PNG so the combined PDF below can be
       // built in the same pass, in the same order, without re-capturing.
-      const pdfImages: { dataUrl: string; width: number; height: number }[] = [];
+      const pdfImages: { bytes: ArrayBuffer; width: number; height: number }[] = [];
       // Targets that timed out, threw, or never had a node to capture —
       // surfaced to Chris afterward rather than silently missing from
       // the ZIP with no explanation (this used to be a real gap: a
@@ -655,19 +673,27 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       // becomes that week's public Week Report PDF, published below —
       // Chris wants the report to just be the dump's own graphics rather
       // than the old bespoke jsPDF layout in lib/pdfReport.ts.
+      //
+      // pdf-lib, not jsPDF: jsPDF builds the whole document as one big
+      // string (Array.join under the hood), which blew past V8's max
+      // string length once ~27+ full-resolution PNGs were embedded —
+      // surfaced as an "Error in function Array.join: Invalid string
+      // length" alert (jsPDF's own internal try/catch calls alert()
+      // instead of throwing, so doc.output("blob") silently returned
+      // undefined afterward, which is why the ZIP still downloaded fine
+      // but publish reported "0 images captured" even though the images
+      // were all there). pdf-lib works with raw byte buffers throughout
+      // instead of one joined string, so it doesn't hit that ceiling.
       let pdfBlob: Blob | null = null;
       if (pdfImages.length > 0) {
-        const first = pdfImages[0];
-        const doc = new jsPDF({
-          unit: "px",
-          format: [first.width, first.height],
-          orientation: first.width >= first.height ? "landscape" : "portrait",
-        });
-        pdfImages.forEach((img, i) => {
-          if (i > 0) doc.addPage([img.width, img.height], img.width >= img.height ? "landscape" : "portrait");
-          doc.addImage(img.dataUrl, "PNG", 0, 0, img.width, img.height);
-        });
-        pdfBlob = doc.output("blob");
+        const pdfDoc = await PDFDocument.create();
+        for (const img of pdfImages) {
+          const pngImage = await pdfDoc.embedPng(img.bytes);
+          const page = pdfDoc.addPage([img.width, img.height]);
+          page.drawImage(pngImage, { x: 0, y: 0, width: img.width, height: img.height });
+        }
+        const pdfBytes = await pdfDoc.save();
+        pdfBlob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
         zip.file("00-week-report.pdf", pdfBlob);
       }
 
