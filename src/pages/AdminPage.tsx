@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Clock } from "lucide-react";
 import SurvivorPanel from "./SurvivorPanel";
 import SplashSurvivorPanel from "./SplashSurvivorPanel";
+import WeeklyBettingReportPanel from "./WeeklyBettingReportPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
@@ -216,6 +217,7 @@ type AdminView =
   | "upload"
   | "survivor"
   | "splashsurvivor"
+  | "bettingreport"
   | "montecarlo"
   | "pm"
   | "gametotals"
@@ -494,6 +496,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "upload", label: "Data Upload" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
+      { key: "bettingreport", label: "Weekly Betting Report" },
       { key: "pools", label: "Pools" },
     ],
   },
@@ -842,6 +845,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "survivor" && <SurvivorPanel onBack={() => setView("pools")} />}
 
           {view === "splashsurvivor" && <SplashSurvivorPanel onBack={() => setView("pools")} />}
+          {view === "bettingreport" && <WeeklyBettingReportPanel onBack={() => setView("home")} />}
 
           {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
 
