@@ -4,7 +4,7 @@ import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine, poolStdDevForTotal } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, poolStdDevForTotal, buildTeamSplitBetRows, type TeamSplitBetRow } from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { formatProjectedScore } from "../lib/gameTotals";
 import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylineBetHistory";
@@ -25,11 +25,9 @@ import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 // Weekly Image Dump's Matchup cards, not whatever filterThresholdMultiplier
 // the Totals admin page happens to be configured to).
 //
-// Team Totals bets are NOT included — Chris said outright he hasn't
-// settled on a threshold for them yet, and guessing at one here risks
-// being wrong on exactly the kind of number he's been precise about
-// everywhere else. Moneyline bets use computeMlRow's "Every Game" rule
-// (any positive EV side, via Bill R) since that's the only moneyline
+// Team Totals bets use the same 1.0 std dev threshold as game totals,
+// per Chris's explicit instruction once he'd settled on a number.
+// Moneyline bets use computeMlRow's "Every Game" rule (any positive EV side, via Bill R) since that's the only moneyline
 // bet definition that exists anywhere in this codebase — Chris didn't
 // specify a different one, so this is flagged as an assumption in chat
 // rather than silently treated as definitely correct.
@@ -266,6 +264,33 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     [totalGames, fbsTotalPoolStd, fcsTotalPoolStd, computedGames]
   );
 
+  // --- Team Totals (1+ std dev off Vegas, per-team split) ---
+  // Same 1.0 std dev threshold as game totals — Chris's own explicit
+  // instruction ("use 1 std dev for team totals as well") once he'd
+  // settled on a number, unblocking what was previously left out here
+  // entirely. buildTeamSplitBetRows computes its own pool std dev from
+  // whatever rows are passed in, so the full season's division-filtered
+  // rows go in (for a stable pool), then the result is filtered down to
+  // this week for display — same two-step pattern as the game-level
+  // totals above. Cross-divisional games are excluded here, same as the
+  // Totals admin page's own Team Totals tab (filterRowsByDivision
+  // requires both teams match one division) — not a new gap introduced
+  // by this report.
+  const fbsTeamTotalBetRows = useMemo(() => buildTeamSplitBetRows(filterRowsByDivision(totalsEngineRows, "FBS"), TOTAL_BET_THRESHOLD_STDDEV), [totalsEngineRows]);
+  const fcsTeamTotalBetRows = useMemo(() => buildTeamSplitBetRows(filterRowsByDivision(totalsEngineRows, "FCS"), TOTAL_BET_THRESHOLD_STDDEV), [totalsEngineRows]);
+  const teamTotalBets: (TeamSplitBetRow & { myProjScore: string | null })[] = useMemo(() => {
+    return [...fbsTeamTotalBetRows, ...fcsTeamTotalBetRows]
+      .filter((r) => r.row.game.week === week && r.isFiltered)
+      .map((r) => {
+        const spread = computedGames.find((c) => c.game.away_team === r.row.game.awayTeam && c.game.home_team === r.row.game.homeTeam)?.computed
+          .projAwaySpread;
+        return {
+          ...r,
+          myProjScore: formatProjectedScore(r.myTeamTotal, spread != null ? -spread : null, r.row.game.awayTeam, r.row.game.homeTeam),
+        };
+      });
+  }, [fbsTeamTotalBetRows, fcsTeamTotalBetRows, week, computedGames]);
+
   // --- Moneyline (Bill R Method, any positive-EV side — see file header) ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
     const mlRows = buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek);
@@ -287,7 +312,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Run this after syncing this week's games/lines and pushing live ratings. Pulls together every bet already
         flagged elsewhere on the site (Spreads, Totals, Moneyline) plus games close enough to a threshold to watch as
-        lines move. Team Totals aren't included yet — no bet threshold has been settled on for those.
+        lines move.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1.5rem" }}>
@@ -378,6 +403,40 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                     <td style={{ ...cellStyle, textAlign: "right" }}>
                       {r.stdDevOff.toFixed(2)}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <div className="section-label">Team Total Bets ({teamTotalBets.length})</div>
+          {teamTotalBets.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)" }}>No team total bets flagged this week.</p>
+          ) : (
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem", marginBottom: "1.5rem" }}>
+              <thead>
+                <tr>
+                  <th className="th">Team</th>
+                  <th className="th">Opponent</th>
+                  <th className="th th-right">Vegas TT</th>
+                  <th className="th th-right">My TT</th>
+                  <th className="th">My Proj Score</th>
+                  <th className="th">Call</th>
+                  <th className="th th-right">Std Dev Off</th>
+                </tr>
+              </thead>
+              <tbody>
+                {teamTotalBets.map((r) => (
+                  <tr key={`${r.row.game.id}-${r.team}`}>
+                    <td style={cellStyle}>
+                      <TeamLogo team={r.team} size={16} /> {r.team}
+                    </td>
+                    <td style={cellStyle}>{r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTeamTotal)}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTeamTotal)}</td>
+                    <td style={cellStyle}>{r.myProjScore ?? "–"}</td>
+                    <td style={cellStyle}>{r.call}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff?.toFixed(2) ?? "–"}</td>
                   </tr>
                 ))}
               </tbody>

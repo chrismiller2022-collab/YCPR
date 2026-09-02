@@ -262,6 +262,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [week, setWeek] = useState<"all" | number>("all");
   const [stakingMode, setStakingMode] = useState<"toWin1" | "flat1">("toWin1");
   const [evThreshold, setEvThreshold] = useState(0);
+  const [showEvLadder, setShowEvLadder] = useState(false);
   // Bill R Method only applies to live games (no BET_HISTORY entry for the
   // season) — see buildMlRowsFromLiveRatingsBillR's doc comment for why.
   const [conversionMethod, setConversionMethod] = useState<"old" | "billR">("billR");
@@ -479,6 +480,16 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     [weekRows, evThreshold]
   );
   const filteredSeasonAgg = useMemo(() => aggregateMlRowsFiltered(allRows, evThreshold), [allRows, evThreshold]);
+  // 1% to 15% in half-point steps (29 levels) — a quick side-by-side
+  // comparison across thresholds instead of dragging the slider above
+  // one level at a time. Uses allRows (whichever season/model/staking
+  // selections are currently active), same as every other stat on this
+  // page — not a separate, second computation.
+  const evLadder = useMemo(() => {
+    const levels: number[] = [];
+    for (let t = 1; t <= 15; t += 0.5) levels.push(t);
+    return levels.map((threshold) => ({ threshold, agg: aggregateMlRowsFiltered(allRows, threshold).overall }));
+  }, [allRows]);
 
   const everySplits = useMemo(() => aggregateMlSplits(weekRows), [weekRows]);
   const filteredSplits = useMemo(() => aggregateMlSplitsFiltered(weekRows, evThreshold), [weekRows, evThreshold]);
@@ -657,7 +668,54 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         >
           Sort by Best EV
         </button>
+        <button className={`mode-btn ${showEvLadder ? "mode-btn-active" : ""}`} onClick={() => setShowEvLadder((v) => !v)}>
+          {showEvLadder ? "Hide" : "Show"} EV Ladder
+        </button>
       </div>
+
+      {showEvLadder && (
+        <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginBottom: "1.5rem" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>EV Threshold</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
+                <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  Units ({stakingMode === "toWin1" ? "bet-to-win-1" : "flat-1"})
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {evLadder.map(({ threshold, agg }) => {
+                const units = stakingMode === "toWin1" ? agg.toWin1Units : agg.flat1Units;
+                return (
+                  <tr key={threshold} style={{ background: threshold === evThreshold ? "var(--gold-dim)" : undefined }}>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>EV &gt; {threshold.toFixed(1)}%</td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      {agg.w}-{agg.l}
+                    </td>
+                    <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                      {agg.w + agg.l > 0 ? `${mlWinPct(agg).toFixed(1)}%` : "–"}
+                    </td>
+                    <td
+                      style={{
+                        padding: "0.4rem 0.6rem",
+                        borderBottom: "1px solid var(--hash)",
+                        textAlign: "right",
+                        color: units >= 0 ? "var(--gold)" : "#e05a5a",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {agg.w + agg.l > 0 ? fmtUnits(units, displayCurrency, dollarsPerUnit) : "–"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 

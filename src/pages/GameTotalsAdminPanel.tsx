@@ -306,7 +306,7 @@ function ShowMore({ rows }: { rows: EnrichedGameRow[] }) {
 
 type SortKey = "week" | "date" | "awayTeam" | "homeTeam" | "vegasTotal" | "myTotal" | "amountOff" | "stdDevOff";
 
-function sortValue(b: BetRow, key: SortKey): number | string {
+function sortValue(b: BetRow, key: SortKey, absMode: boolean): number | string {
   switch (key) {
     case "week":
       return b.row.game.week;
@@ -321,14 +321,17 @@ function sortValue(b: BetRow, key: SortKey): number | string {
     case "myTotal":
       return b.projectedTotal ?? -Infinity;
     case "amountOff":
-      return b.amountOff ?? -Infinity;
+      return b.amountOff == null ? -Infinity : absMode ? Math.abs(b.amountOff) : b.amountOff;
     case "stdDevOff":
-      return b.stdDevOff ?? -Infinity;
+      return b.stdDevOff == null ? -Infinity : absMode ? Math.abs(b.stdDevOff) : b.stdDevOff;
   }
 }
 
+const GRADE_COLOR: Record<string, string> = { win: "#8fd39a", loss: "#e07a7a", push: "var(--chalk-dim)" };
+
 function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+  const [absMode, setAbsMode] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -344,71 +347,85 @@ function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: Game
 
   const sorted = useMemo(() => {
     return [...betRows].sort((a, b) => {
-      const av = sortValue(a, sortKey);
-      const bv = sortValue(b, sortKey);
+      const av = sortValue(a, sortKey, absMode);
+      const bv = sortValue(b, sortKey, absMode);
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
       return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
-  }, [betRows, sortKey, sortDir]);
+  }, [betRows, sortKey, sortDir, absMode]);
 
   const sh = (label: string, key: SortKey, align?: "right") => (
     <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
   );
 
   return (
-    <div className="table-scroll">
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            {sh("Wk", "week")}
-            {sh("Date", "date")}
-            <th style={CP}>Kickoff</th>
-            {sh("Away", "awayTeam")}
-            {sh("Home", "homeTeam")}
-            {sh("Vegas Total", "vegasTotal", "right")}
-            {sh("My Total", "myTotal", "right")}
-            <th style={{ ...CP, textAlign: "right" }}>EB</th>
-            <th style={{ ...CP, textAlign: "right" }}>FB</th>
-            {sh("Amt Off", "amountOff", "right")}
-            {sh("Std Dev Off", "stdDevOff", "right")}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((b) => (
-            <tr key={b.row.game.id}>
-              <td style={CP}>{b.row.game.week}</td>
-              <td style={CP}>{dateLabel(b.row.game.startDate)}</td>
-              <td style={CP}>{kickoffLabel(b.row.game.startDate)}</td>
-              <td style={CP}><TeamLogo team={b.row.game.awayTeam} /> {b.row.game.awayTeam}</td>
-              <td style={CP}><TeamLogo team={b.row.game.homeTeam} /> {b.row.game.homeTeam}</td>
-              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
-              <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
-              <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined }}>
-                {b.call ?? "–"}
-              </td>
-              <td
-                style={{
-                  ...CP,
-                  textAlign: "right",
-                  color: b.isFiltered ? (b.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
-                  fontWeight: b.isFiltered ? 700 : undefined,
-                }}
-              >
-                {b.isFiltered ? b.call : "–"}
-              </td>
-              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.amountOff)}</td>
-              <td style={{ ...CP, textAlign: "right" }}>{fmt(b.stdDevOff, 2)}</td>
-            </tr>
-          ))}
-          {sorted.length === 0 && (
+    <div>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", marginBottom: "0.6rem" }}>
+        <input type="checkbox" checked={absMode} onChange={(e) => setAbsMode(e.target.checked)} />
+        Show Amt Off / Std Dev Off as absolute value
+      </label>
+      <div className="table-scroll">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
             <tr>
-              <td colSpan={11} className="empty">
-                No games.
-              </td>
+              {sh("Wk", "week")}
+              {sh("Date", "date")}
+              <th style={CP}>Kickoff</th>
+              {sh("Away", "awayTeam")}
+              {sh("Home", "homeTeam")}
+              {sh("Vegas Total", "vegasTotal", "right")}
+              {sh("My Total", "myTotal", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>EB</th>
+              <th style={{ ...CP, textAlign: "right" }}>FB</th>
+              {sh("Amt Off", "amountOff", "right")}
+              {sh("Std Dev Off", "stdDevOff", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>Actual Total</th>
+              <th style={{ ...CP, textAlign: "right" }}>Result</th>
+              <th style={{ ...CP, textAlign: "right" }}>W/L</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {sorted.map((b) => (
+              <tr key={b.row.game.id}>
+                <td style={CP}>{b.row.game.week}</td>
+                <td style={CP}>{dateLabel(b.row.game.startDate)}</td>
+                <td style={CP}>{kickoffLabel(b.row.game.startDate)}</td>
+                <td style={CP}><TeamLogo team={b.row.game.awayTeam} /> {b.row.game.awayTeam}</td>
+                <td style={CP}><TeamLogo team={b.row.game.homeTeam} /> {b.row.game.homeTeam}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
+                <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined }}>
+                  {b.call ?? "–"}
+                </td>
+                <td
+                  style={{
+                    ...CP,
+                    textAlign: "right",
+                    color: b.isFiltered ? (b.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+                    fontWeight: b.isFiltered ? 700 : undefined,
+                  }}
+                >
+                  {b.isFiltered ? b.call : "–"}
+                </td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.amountOff != null ? Math.abs(b.amountOff) : b.amountOff)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.stdDevOff != null ? Math.abs(b.stdDevOff) : b.stdDevOff, 2)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(b.row.actualTotal, 0)}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{b.actualResult ?? "–"}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: b.grade ? GRADE_COLOR[b.grade] : undefined, fontWeight: 700 }}>
+                  {b.grade ?? "–"}
+                </td>
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={14} className="empty">
+                  No games.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -469,7 +486,7 @@ type TeamSortKey =
   | "homeAmountOff"
   | "homeStdDevOff";
 
-function teamSortValue(r: CombinedTeamRow, key: TeamSortKey): number | string {
+function teamSortValue(r: CombinedTeamRow, key: TeamSortKey, absMode: boolean): number | string {
   switch (key) {
     case "week":
       return r.game.game.week;
@@ -482,9 +499,9 @@ function teamSortValue(r: CombinedTeamRow, key: TeamSortKey): number | string {
     case "awayMyTT":
       return r.away.myTeamTotal ?? -Infinity;
     case "awayAmountOff":
-      return r.away.amountOff ?? -Infinity;
+      return r.away.amountOff == null ? -Infinity : absMode ? Math.abs(r.away.amountOff) : r.away.amountOff;
     case "awayStdDevOff":
-      return r.away.stdDevOff ?? -Infinity;
+      return r.away.stdDevOff == null ? -Infinity : absMode ? Math.abs(r.away.stdDevOff) : r.away.stdDevOff;
     case "homeTeam":
       return r.game.game.homeTeam;
     case "homeVegasTT":
@@ -492,15 +509,16 @@ function teamSortValue(r: CombinedTeamRow, key: TeamSortKey): number | string {
     case "homeMyTT":
       return r.home.myTeamTotal ?? -Infinity;
     case "homeAmountOff":
-      return r.home.amountOff ?? -Infinity;
+      return r.home.amountOff == null ? -Infinity : absMode ? Math.abs(r.home.amountOff) : r.home.amountOff;
     case "homeStdDevOff":
-      return r.home.stdDevOff ?? -Infinity;
+      return r.home.stdDevOff == null ? -Infinity : absMode ? Math.abs(r.home.stdDevOff) : r.home.stdDevOff;
   }
 }
 
 function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const combined = useMemo(() => combineByGame(betRows), [betRows]);
+  const [absMode, setAbsMode] = useState(false);
 
   const [sortKey, setSortKey] = useState<TeamSortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -516,12 +534,12 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
 
   const sorted = useMemo(() => {
     return [...combined].sort((a, b) => {
-      const av = teamSortValue(a, sortKey);
-      const bv = teamSortValue(b, sortKey);
+      const av = teamSortValue(a, sortKey, absMode);
+      const bv = teamSortValue(b, sortKey, absMode);
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
       return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
-  }, [combined, sortKey, sortDir]);
+  }, [combined, sortKey, sortDir, absMode]);
 
   const sh = (label: string, key: TeamSortKey, align?: "right") => (
     <SortHeader label={label} sortKey={key} active={sortKey === key} dir={sortDir} onClick={handleSort} align={align} />
@@ -533,6 +551,10 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
         My TT = my total split by my spread. Vegas TT = Vegas's total split by Vegas's spread (derived — no real
         market team-total line synced). EB = every bet's call. FB = call shown only if it also clears the filter.
       </p>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", marginBottom: "0.6rem" }}>
+        <input type="checkbox" checked={absMode} onChange={(e) => setAbsMode(e.target.checked)} />
+        Show Amt Off / Std Dev Off as absolute value
+      </label>
       <div className="table-scroll">
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -547,6 +569,9 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
               <th style={{ ...CP, textAlign: "right" }}>FB</th>
               {sh("Amt Off", "awayAmountOff", "right")}
               {sh("Std Dev Off", "awayStdDevOff", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>Actual</th>
+              <th style={{ ...CP, textAlign: "right" }}>Result</th>
+              <th style={{ ...CP, textAlign: "right" }}>W/L</th>
               {sh("Home", "homeTeam")}
               {sh("Home Vegas TT", "homeVegasTT", "right")}
               {sh("My Home TT", "homeMyTT", "right")}
@@ -554,6 +579,9 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
               <th style={{ ...CP, textAlign: "right" }}>FB</th>
               {sh("Amt Off", "homeAmountOff", "right")}
               {sh("Std Dev Off", "homeStdDevOff", "right")}
+              <th style={{ ...CP, textAlign: "right" }}>Actual</th>
+              <th style={{ ...CP, textAlign: "right" }}>Result</th>
+              <th style={{ ...CP, textAlign: "right" }}>W/L</th>
             </tr>
           </thead>
           <tbody>
@@ -578,8 +606,13 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
                 >
                   {r.away.isFiltered ? r.away.call : "–"}
                 </td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.amountOff, 1)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.stdDevOff, 2)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.away.amountOff != null ? Math.abs(r.away.amountOff) : r.away.amountOff, 1)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.away.stdDevOff != null ? Math.abs(r.away.stdDevOff) : r.away.stdDevOff, 2)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.actualTeamPoints, 0)}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{r.away.actualResult ?? "–"}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: r.away.grade ? GRADE_COLOR[r.away.grade] : undefined, fontWeight: 700 }}>
+                  {r.away.grade ?? "–"}
+                </td>
                 <td style={CP}>{r.game.game.homeTeam}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.vegasTeamTotal, 1)}</td>
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.home.myTeamTotal, 1)}</td>
@@ -596,13 +629,18 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
                 >
                   {r.home.isFiltered ? r.home.call : "–"}
                 </td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.amountOff, 1)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.stdDevOff, 2)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.home.amountOff != null ? Math.abs(r.home.amountOff) : r.home.amountOff, 1)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.home.stdDevOff != null ? Math.abs(r.home.stdDevOff) : r.home.stdDevOff, 2)}</td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.actualTeamPoints, 0)}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{r.home.actualResult ?? "–"}</td>
+                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: r.home.grade ? GRADE_COLOR[r.home.grade] : undefined, fontWeight: 700 }}>
+                  {r.home.grade ?? "–"}
+                </td>
               </tr>
             ))}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={17} className="empty">
+                <td colSpan={20} className="empty">
                   No games.
                 </td>
               </tr>

@@ -216,6 +216,7 @@ export interface TeamSplitBetRow {
   stdDevOff: number | null;
   call: "Over" | "Under" | null;
   isFiltered: boolean;
+  actualTeamPoints: number | null;
   actualResult: ReturnType<typeof gradeActualTotal>;
   grade: ReturnType<typeof gradeBetCall>;
 }
@@ -281,6 +282,7 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
       stdDevOff: stdDevOff(amountOff, poolStd),
       call,
       isFiltered,
+      actualTeamPoints,
       actualResult,
       grade,
     };
