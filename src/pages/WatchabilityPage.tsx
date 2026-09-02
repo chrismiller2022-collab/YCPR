@@ -10,6 +10,7 @@ import {
   scoreWatchability,
   kickoffWindowET,
   isSaturdayET,
+  etDateString,
   DEFAULT_WEIGHTS,
   type WatchabilityInput,
   type WatchabilityScore,
@@ -282,7 +283,10 @@ export default function WatchabilityPage({
   onHome,
   weekOverride,
   forceSaturdaysOnly,
+  dateOverride,
   shareRef,
+  topViewOverride,
+  topN,
 }: {
   onHome?: () => void;
   /** Pins `week` to this value instead of auto-picking the first
@@ -293,17 +297,37 @@ export default function WatchabilityPage({
   /** Seeds `saturdaysOnly` to true (one-time — this only matters for the
    * Weekly Image Dump's off-screen, never-interacted-with render). */
   forceSaturdaysOnly?: boolean;
+  /** Restricts to one specific calendar date (ET) instead of every
+   * Saturday in the schedule week — CFBD's week numbering can bundle a
+   * Week 0 slate (a full week earlier) into "Week 1," so "every
+   * Saturday this week" can mean two different Saturdays' games
+   * combined. The Weekly Image Dump computes the correct single target
+   * Saturday and passes it here (same value used for TvGuidePanel's
+   * analogous fix) instead of relying on forceSaturdaysOnly alone. */
+  dateOverride?: string;
   /** Lets the Weekly Image Dump tool capture the branded mobile-share
    * graphic directly (same node the page's own Export PNG button already
    * targets) instead of the on-page desktop list. */
   shareRef?: React.RefObject<HTMLDivElement>;
+  /** Pins the mobile-export graphic to "overall" (flat ranked list) or
+   * "windows" (Early/Afternoon/Night split) instead of following the
+   * live page's own topView toggle — the Weekly Image Dump mounts one
+   * instance per view rather than relying on interactive state. */
+  topViewOverride?: TopView;
+  /** Row cap for the mobile-export graphic only (desktop's own always-
+   * top-10 lists are untouched) — default 10 matches the live page's
+   * existing behavior; the Weekly Image Dump passes a large number to
+   * get the full Saturday slate instead of just the top 10. */
+  topN?: number;
 }) {
   const season = new Date().getFullYear();
   const [pageTab, setPageTab] = useState<"watchability" | "tvguide">("watchability");
   const { inputs, weekNumbers, loading } = useWatchabilityInputs(season);
   const [scope, setScope] = useState<WeeklyOrSeason>("weekly");
   const [week, setWeek] = useState<number | null>(weekOverride ?? null);
-  const [topView, setTopView] = useState<TopView>("overall");
+  const [topViewState, setTopViewState] = useState<TopView>("overall");
+  const topView = topViewOverride ?? topViewState;
+  const exportTopN = topN ?? 10;
   const [saturdaysOnly, setSaturdaysOnly] = useState(forceSaturdaysOnly ?? false);
   const [weights, setWeights] = useState<WatchabilityWeights>(DEFAULT_WEIGHTS);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -320,9 +344,10 @@ export default function WatchabilityPage({
 
   const weeklyInputs = useMemo(() => {
     let list = week != null ? inputs.filter((i) => i.week === week) : [];
-    if (saturdaysOnly) list = list.filter((i) => isSaturdayET(i.startDate));
+    if (dateOverride) list = list.filter((i) => i.startDate && etDateString(i.startDate) === dateOverride);
+    else if (saturdaysOnly) list = list.filter((i) => isSaturdayET(i.startDate));
     return list;
-  }, [inputs, week, saturdaysOnly]);
+  }, [inputs, week, saturdaysOnly, dateOverride]);
 
   const weeklyScored = useMemo(() => scoreWatchability(weeklyInputs, weights).sort((a, b) => b.score - a.score), [weeklyInputs, weights]);
   const seasonScored = useMemo(() => scoreWatchability(inputs, weights).sort((a, b) => b.score - a.score), [inputs, weights]);
@@ -403,10 +428,10 @@ export default function WatchabilityPage({
                   </option>
                 ))}
               </select>
-              <button className={`mode-btn ${topView === "overall" ? "mode-btn-active" : ""}`} onClick={() => setTopView("overall")}>
+              <button className={`mode-btn ${topView === "overall" ? "mode-btn-active" : ""}`} onClick={() => setTopViewState("overall")}>
                 Overall Top 10
               </button>
-              <button className={`mode-btn ${topView === "windows" ? "mode-btn-active" : ""}`} onClick={() => setTopView("windows")}>
+              <button className={`mode-btn ${topView === "windows" ? "mode-btn-active" : ""}`} onClick={() => setTopViewState("windows")}>
                 By Time Window
               </button>
               <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }}>
@@ -482,16 +507,16 @@ export default function WatchabilityPage({
           </div>
 
           {scope === "season"
-            ? seasonScored.slice(0, 10).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
+            ? seasonScored.slice(0, exportTopN).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
             : topView === "overall"
-            ? weeklyScored.slice(0, 10).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
+            ? weeklyScored.slice(0, exportTopN).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
             : (["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
                 <div key={w} style={{ marginBottom: "0.75rem" }}>
                   <div style={{ color: "#ffc857", fontSize: "0.72rem", fontWeight: 700, marginBottom: "0.3rem" }}>{WINDOW_LABELS[w]}</div>
                   {byWindow[w]
                     .slice()
                     .sort((a, b) => b.score - a.score)
-                    .slice(0, 10)
+                    .slice(0, exportTopN)
                     .map((g, i) => (
                       <MobileGameRow key={g.gameId} g={g} rank={i + 1} />
                     ))}

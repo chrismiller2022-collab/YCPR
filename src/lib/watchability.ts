@@ -163,6 +163,24 @@ export function isSaturdayET(iso: string | null): boolean {
   return weekday === "Sat";
 }
 
+// "en-CA" formats as yyyy-mm-dd directly, which is exactly the value
+// format <input type="date"> uses. Shared between TvGuidePanel (its own
+// date-override input) and WatchabilityPage/WeeklyImageDumpAdminPanel
+// (picking one specific Saturday instead of every Saturday-labeled game
+// across a schedule week that can bundle in an earlier Week 0 slate).
+export function etDateString(iso: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(iso));
+  const y = parts.find((p) => p.type === "year")?.value ?? "0000";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
 // Tue/Wed/Thu/Fri — the "midweek" half of a Matchup Slate split (Saturday
 // is its own bucket via isSaturdayET above; Sun/Mon games, rare in the
 // regular season, fall into neither and only show up in the unsplit "Full
