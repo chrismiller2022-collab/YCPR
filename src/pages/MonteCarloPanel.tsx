@@ -28,6 +28,7 @@ import {
   type TeamRunHistoryEntry,
 } from "../lib/api/monteCarlo";
 import { saveRatingRows } from "../lib/api/ratingSystems";
+import { computeCurrentWeek } from "../lib/api/survivorPoolPublic";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
@@ -562,6 +563,11 @@ function MonteCarloResultsSection() {
   const [resumeComparisonTrials, setResumeComparisonTrials] = useState(0);
   const [unmatched, setUnmatched] = useState<string[]>([]);
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
+  // Editable — defaults to the auto-detected currentWeek after a run, but
+  // Chris can overwrite it to save into any week (e.g. re-saving over
+  // week 1 after a correction), rather than being locked to whatever
+  // week was auto-detected as "current."
+  const [saveWeek, setSaveWeek] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -591,9 +597,17 @@ function MonteCarloResultsSection() {
         setRunning(false);
         return;
       }
-      const completedWeeks = games.filter((g) => g.completed).map((g) => g.week);
-      const week = completedWeeks.length > 0 ? Math.max(...completedWeeks) + 1 : 1;
+      // computeCurrentWeek requires an ENTIRE week's games to be complete
+      // before advancing — the old inline version here advanced on just
+      // ANY completed game in a week, which broke the same way the
+      // Survivor Pool bug did: CFBD's week numbering can span almost two
+      // calendar weeks (e.g. week 1 covering both an Aug 27-29
+      // season-opener slate and the real Sept 5 main slate), so a single
+      // early game being marked complete jumped this straight to "week
+      // 2" while most of week 1 hadn't been played yet.
+      const week = computeCurrentWeek(games);
       setCurrentWeek(week);
+      setSaveWeek(week);
 
       await new Promise((r) => setTimeout(r, 30));
       // Runs in yielding batches (see runMonteCarloAsync) so the tab stays
@@ -614,13 +628,13 @@ function MonteCarloResultsSection() {
   }
 
   async function handleSave() {
-    if (!results || currentWeek == null) return;
+    if (!results || saveWeek == null) return;
     setSaving(true);
     setError(null);
     try {
       await saveMonteCarloRun({
         season,
-        week: currentWeek,
+        week: saveWeek,
         numTrials,
         results,
         unmatchedTeams: unmatched,
@@ -657,9 +671,21 @@ function MonteCarloResultsSection() {
               {running ? "Running…" : "Run simulation"}
             </button>
             {results && (
-              <button onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : `Save this run (week ${currentWeek})`}
-              </button>
+              <>
+                <label>
+                  Save to week{" "}
+                  <input
+                    type="number"
+                    min={1}
+                    value={saveWeek ?? ""}
+                    onChange={(e) => setSaveWeek(parseInt(e.target.value, 10) || null)}
+                    style={{ width: 70 }}
+                  />
+                </label>
+                <button onClick={handleSave} disabled={saving || saveWeek == null}>
+                  {saving ? "Saving…" : "Save this run"}
+                </button>
+              </>
             )}
           </div>
 
