@@ -192,37 +192,6 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // --- Key Total Tiers: a plain editable capture table (see
-    // KeyTotalTiersPanel.tsx) — no bet logic here, just persistence. ---
-    if (pool === "keytotaltiers") {
-      if (action !== "saveWeek") {
-        res.status(400).json({ error: `Unknown action for keytotaltiers: ${action}` });
-        return;
-      }
-      const { season, week, rows } = req.body;
-      if (!season || !week || !Array.isArray(rows)) {
-        res.status(400).json({ error: "Missing season, week, or rows" });
-        return;
-      }
-      const { error: deleteError } = await supabaseAdmin.from("key_total_tiers").delete().eq("season", season).eq("week", week);
-      if (deleteError) throw deleteError;
-      if (rows.length > 0) {
-        const cleanRows = rows.map((r: any) => ({
-          season,
-          week,
-          tier_number: r.tier_number,
-          tier_label: r.tier_label ?? "",
-          rank_range: r.rank_range ?? null,
-          numbers: r.numbers ?? null,
-          pct_range: r.pct_range ?? null,
-          updated_at: new Date().toISOString(),
-        }));
-        const { error: insertError } = await supabaseAdmin.from("key_total_tiers").insert(cleanRows);
-        if (insertError) throw insertError;
-      }
-      res.status(200).json({ ok: true, saved: rows.length });
-      return;
-    }
 
     // --- Survivor saved paths: named candidate paths, not tied to a season/week ---
     if (pool === "survivorpaths") {
