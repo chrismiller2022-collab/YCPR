@@ -327,7 +327,7 @@ function sortValue(b: BetRow, key: SortKey, absMode: boolean): number | string {
 
 const GRADE_COLOR: Record<string, string> = { win: "#8fd39a", loss: "#e07a7a", push: "var(--chalk-dim)" };
 
-function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+export function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const [absMode, setAbsMode] = useState(false);
 
@@ -513,7 +513,7 @@ function teamSortValue(r: CombinedTeamRow, key: TeamSortKey, absMode: boolean): 
   }
 }
 
-function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+export function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const combined = useMemo(() => combineByGame(betRows), [betRows]);
   const [absMode, setAbsMode] = useState(false);
@@ -814,15 +814,7 @@ export function filterRowsByDivision(rows: EnrichedGameRow[], division: string):
 
 export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const [division, setDivision] = useState("FBS");
-  const { rows: allRows, settings, setSettings, loading, error } = useGameTotalsEngine(season);
-  const rows = filterRowsByDivision(allRows, division);
-  const [tab, setTab] = useState<Tab>("totals");
-
-  const [viewMode, setViewMode] = useState<ViewMode>("season");
-  const [viewWeek, setViewWeek] = useState(1);
-  const availableWeeks = useMemo(() => Array.from(new Set(rows.map((r) => r.game.week))).sort((a, b) => a - b), [rows]);
-  const viewRows = useMemo(() => filterByViewMode(rows, viewMode, viewWeek), [rows, viewMode, viewWeek]);
+  const { rows, settings, setSettings, error } = useGameTotalsEngine(season);
 
   return (
     <div>
@@ -830,10 +822,13 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
         ‹ Admin
       </button>
       <h2 style={{ marginTop: 0 }}>Totals</h2>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+        Sync, CSV import, and model settings for the Totals engine. The actual Totals/Team Totals
+        working views live in Matchups now — this page is just the configuration behind them.
+      </p>
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <SeasonPicker season={season} setSeason={setSeason} />
-        <DivisionPicker division={division} setDivision={setDivision} />
       </div>
       <SyncControl season={season} />
       <details style={{ marginBottom: "1rem" }}>
@@ -846,31 +841,9 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
         </div>
       </details>
       <SettingsBar settings={settings} setSettings={setSettings} season={season} />
-
-      <WeekSeasonToggle mode={viewMode} setMode={setViewMode} week={viewWeek} setWeek={setViewWeek} availableWeeks={availableWeeks} />
-
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
-        {TABS.map((t) => (
-          <button key={t} className={`mode-btn ${tab === t ? "mode-btn-active" : ""}`} onClick={() => setTab(t)}>
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </div>
+      <ShowMore rows={rows} />
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {loading ? (
-        <div className="empty">Loading…</div>
-      ) : (
-        <>
-          {tab === "totals" && (
-            <>
-              <TotalsTab rows={viewRows} settings={settings} />
-              <ShowMore rows={viewRows} />
-            </>
-          )}
-          {tab === "teamtotals" && <TeamTotalsTab rows={viewRows} settings={settings} />}
-        </>
-      )}
     </div>
   );
 }

@@ -264,7 +264,12 @@ function PredictionsTable({ rows, columns }: { rows: PredRow[]; columns: Column[
   );
 }
 
-export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }) {
+// Core content, no page chrome (back button/heading) — reused directly
+// as a mode within Matchups (see AdminMatchupsPanel.tsx) rather than
+// duplicated. The standalone page below is now a thin wrapper around
+// this for any future direct-link use; Predictions no longer has its
+// own nav entry (folded into Matchups per Chris's request).
+export function PredictionsContent() {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [division, setDivision] = useState("FBS");
   const { rows: allRows, loading, error } = useGameTotalsEngine(season);
@@ -290,10 +295,6 @@ export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
-      <h2 style={{ marginTop: 0 }}>Predictions</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Every game's projected total and spread, split into team totals — no bet-call or
         amount-off columns here, just the raw numbers side by side. See Totals / Team Totals
@@ -331,6 +332,18 @@ export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }
       ) : (
         <TeamScheduleTab predRows={seasonPredRows} teams={allTeams} />
       )}
+    </div>
+  );
+}
+
+export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }) {
+  return (
+    <div>
+      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
+        ‹ Admin
+      </button>
+      <h2 style={{ marginTop: 0 }}>Predictions</h2>
+      <PredictionsContent />
     </div>
   );
 }

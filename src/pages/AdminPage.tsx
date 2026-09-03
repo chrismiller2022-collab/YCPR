@@ -521,7 +521,6 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Betting",
     items: [
-      { key: "predictions", label: "Predictions" },
       { key: "placedbets", label: "Placed Bets" },
       { key: "pm", label: "Prediction Markets" },
       { key: "matchups", label: "Matchups" },
@@ -933,7 +932,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
           {view === "totalshistory" && <TotalsHistoryPanel onBack={() => setView("home")} />}
-          {view === "predictions" && <PredictionsAdminPanel onBack={() => setView("home")} />}
           {view === "linemovement" && <LineMovementAdminPanel onBack={() => setView("home")} />}
           {view === "odds" && <OddsDashboardAdminPanel onBack={() => setView("home")} />}
           {view === "imagedump" && <WeeklyImageDumpAdminPanel onBack={() => setView("home")} />}

@@ -6,6 +6,9 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
+import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows } from "../lib/gameTotalsEngine";
+import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
+import { PredictionsContent } from "./PredictionsAdminPanel";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -74,6 +77,34 @@ export function pctLabel(w: number, l: number) {
 }
 function recordLabel(w: number, l: number, push?: number) {
   return `${w.toFixed ? w.toFixed(1) : w}-${l.toFixed ? l.toFixed(1) : l}${push ? `-${push}` : ""}`;
+}
+
+// Small always-visible "here's what Filtered Bet has actually hit this
+// season" readout for the Totals/Team Totals modes — so seeing a game
+// clear that threshold comes with an immediate sense of whether it's
+// been a good signal, without leaving this page. Spreads mode already
+// has this via BettingStatsBlock below; Totals/Team Totals didn't have
+// an equivalent at all before.
+function CategorySnapshot({ label, w, l }: { label: string; w: number; l: number }) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        gap: "0.5rem",
+        alignItems: "baseline",
+        padding: "0.4rem 0.75rem",
+        background: "var(--turf-panel)",
+        border: "1px solid var(--hash)",
+        borderRadius: 8,
+        marginBottom: "0.75rem",
+        fontSize: "0.82rem",
+      }}
+    >
+      <span style={{ color: "var(--chalk-dim)" }}>{label}:</span>
+      <span style={{ fontWeight: 700 }}>{recordLabel(w, l)}</span>
+      <span style={{ color: "var(--chalk-dim)" }}>({pctLabel(w, l)})</span>
+    </div>
+  );
 }
 
 function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: string }) {
@@ -558,6 +589,8 @@ const MATCHUPS_MODES = [
   { key: "spreads", label: "Spreads" },
   { key: "moneyline", label: "Moneylines" },
   { key: "totals", label: "Totals" },
+  { key: "teamtotals", label: "Team Totals" },
+  { key: "predictions", label: "Predictions" },
 ];
 
 const WEEK_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1);
@@ -669,14 +702,6 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
           : "Tie";
     }
   }
-  if (mode === "totals") {
-    switch (key) {
-      case "vegasTotal":
-        return c.line?.over_under ?? null;
-      case "totalResult":
-        return c.totalResult;
-    }
-  }
   return null;
 }
 
@@ -722,6 +747,32 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+
+  // Totals / Team Totals / Predictions modes are self-contained
+  // components (TotalsTab/TeamTotalsTab/PredictionsContent, reused
+  // as-is from GameTotalsAdminPanel.tsx/PredictionsAdminPanel.tsx) with
+  // their own internal sorting — they don't go through this page's
+  // computeRow/MatchupComputed pipeline or its shared sortedRows table
+  // below. They DO share this page's season/matchupType/query filters
+  // rather than showing a second, separate filter bar.
+  const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
+  const totalsViewRows = useMemo(() => {
+    return totalsEngineRows.filter((r) => {
+      if (weekSel !== "all" && r.game.week !== weekSel) return false;
+      const homeFbs = r.game.homeClassification === "fbs";
+      const awayFbs = r.game.awayClassification === "fbs";
+      const homeFcs = r.game.homeClassification === "fcs";
+      const awayFcs = r.game.awayClassification === "fcs";
+      if (matchupType === "FBSvFBS" && !(homeFbs && awayFbs)) return false;
+      if (matchupType === "FCSvFCS" && !(homeFcs && awayFcs)) return false;
+      if (matchupType === "Cross" && !((homeFbs && awayFcs) || (homeFcs && awayFbs))) return false;
+      if (query.trim()) {
+        const q = query.trim().toLowerCase();
+        if (!r.game.homeTeam.toLowerCase().includes(q) && !r.game.awayTeam.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [totalsEngineRows, weekSel, matchupType, query]);
 
   useEffect(() => {
     setLoading(true);
@@ -885,14 +936,18 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <option value="FCSvFCS">FCS vs FCS</option>
           <option value="Cross">Cross-Division (FBS vs FCS)</option>
         </select>
-        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
-          Hide games with no Vegas {mode === "spreads" ? "line" : mode === "moneyline" ? "moneyline" : "total"}
-        </label>
-        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
-          Hide completed games
-        </label>
+        {(mode === "spreads" || mode === "moneyline") && (
+          <>
+            <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
+              Hide games with no Vegas {mode === "spreads" ? "line" : "moneyline"}
+            </label>
+            <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
+              Hide completed games
+            </label>
+          </>
+        )}
         {mode === "moneyline" && (
           <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
             Filtered Bet EV threshold:
@@ -932,7 +987,8 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
 
-      <div className="table-wrap" style={{ maxWidth: "none" }}>
+      {(mode === "spreads" || mode === "moneyline") && (
+        <div className="table-wrap" style={{ maxWidth: "none" }}>
           {loading && <div className="empty matchups-empty">Loading…</div>}
 
           {!loading && sortedRows.length === 0 && (
@@ -995,20 +1051,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       <SortHeader label="Act. Winner" sortKey="actWinner" active={sortKey === "actWinner"} dir={sortDir} onClick={handleSort} />
                     </tr>
                   )}
-                  {mode === "totals" && (
-                    <tr>
-                      <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Vegas Total" sortKey="vegasTotal" active={sortKey === "vegasTotal"} dir={sortDir} onClick={handleSort} align="right" />
-                      <th className="th th-right">Projected Total</th>
-                      <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <th className="th">Proj. Result (O/U)</th>
-                      <SortHeader label="Total Result (O/U)" sortKey="totalResult" active={sortKey === "totalResult"} dir={sortDir} onClick={handleSort} />
-                    </tr>
-                  )}
                 </thead>
                 <tbody>
                   {sortedRows.map((c) => (
@@ -1055,11 +1097,42 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             <BettingStatsBlock rows={sortedRows} title={weekSel === "all" ? "Season Betting Stats" : `Week ${weekSel} Betting Stats`} />
           )}
         </div>
+      )}
 
-      <div className="footer-note">
-        Projected Total isn't modeled yet (that's the future Game Totals tile) — only
-        Vegas Total and, for completed games, the actual Over/Under result are shown.
-      </div>
+      {mode === "totals" && (
+        <>
+          {(() => {
+            const betRows = buildBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier);
+            const filtered = betRows.filter((r) => r.isFiltered);
+            const w = filtered.filter((r) => r.grade === "win").length;
+            const l = filtered.filter((r) => r.grade === "loss").length;
+            return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
+          })()}
+          <TotalsTab rows={totalsViewRows} settings={totalsSettings} />
+        </>
+      )}
+
+      {mode === "teamtotals" && (
+        <>
+          {(() => {
+            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier);
+            const filtered = betRows.filter((r) => r.isFiltered);
+            const w = filtered.filter((r) => r.grade === "win").length;
+            const l = filtered.filter((r) => r.grade === "loss").length;
+            return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
+          })()}
+          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} />
+        </>
+      )}
+
+      {mode === "predictions" && <PredictionsContent />}
+
+      {(mode === "spreads" || mode === "moneyline") && (
+        <div className="footer-note">
+          See the Totals and Team Totals modes above for the total-based bet tracking —
+          spreads/moneyline here don't include projected totals.
+        </div>
+      )}
       {betModalContext && (
         <PlaceBetModal
           context={betModalContext}
