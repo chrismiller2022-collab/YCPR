@@ -17,6 +17,7 @@ import {
   computeSplitsCustom,
   computeAmountOffPoints,
   buildAmountOffMatrix,
+  buildNwfbSigmaMatrix,
   tallyAmountOffCustom,
   buildLiveBetHistoryRecords,
   DEFAULT_CUSTOM_PARAMS,
@@ -548,18 +549,35 @@ function matrixCellText(t: RecordTally, mode: MatrixStatMode): string {
   return decided === 0 ? "–" : `${winPct(t).toFixed(0)}%`;
 }
 
-/** Green above 50%, red below, fading to neutral near 50% — same idea as odds.ts's spreadColor but centered on win% instead of a spread. Cells with fewer than 5 decided games stay neutral (too small a sample to color meaningfully). */
-function matrixCellBg(t: RecordTally, mode: MatrixStatMode): string | undefined {
-  if (mode !== "pct") return undefined;
-  const decided = t.w + t.l;
-  if (decided < 5) return undefined;
-  const pct = winPct(t);
-  const clamp = Math.max(-25, Math.min(25, pct - 50));
-  const favorite = [90, 168, 105];
+/**
+ * pct mode: green above 50%, red below, fading to neutral near 50% —
+ * same idea as odds.ts's spreadColor but centered on win% instead of a
+ * spread. Cells with fewer than 5 decided games stay neutral (too small
+ * a sample to color meaningfully).
+ * total/win mode: neutral to green, scaled by this cell's count against
+ * maxValue (the largest count anywhere in the current matrix) — more
+ * games is "better" (bigger, more reliable sample).
+ * loss mode: neutral to red, same scaling — more losses is "worse".
+ */
+function matrixCellBg(t: RecordTally, mode: MatrixStatMode, maxValue: number): string | undefined {
   const neutral = [39, 45, 58];
-  const underdog = [196, 92, 82];
-  const k = Math.abs(clamp) / 25;
-  const target = clamp >= 0 ? favorite : underdog;
+  if (mode === "pct") {
+    const decided = t.w + t.l;
+    if (decided < 5) return undefined;
+    const pct = winPct(t);
+    const clamp = Math.max(-25, Math.min(25, pct - 50));
+    const favorite = [90, 168, 105];
+    const underdog = [196, 92, 82];
+    const k = Math.abs(clamp) / 25;
+    const target = clamp >= 0 ? favorite : underdog;
+    const [r, g, b] = neutral.map((n, i) => Math.round(n + (target[i] - n) * k));
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  if (maxValue <= 0) return undefined;
+  const count = mode === "total" ? t.w + t.l + t.push : mode === "win" ? t.w : mode === "loss" ? t.l : 0;
+  if (count <= 0) return undefined;
+  const k = Math.min(1, count / maxValue);
+  const target = mode === "loss" ? [196, 92, 82] : [90, 168, 105];
   const [r, g, b] = neutral.map((n, i) => Math.round(n + (target[i] - n) * k));
   return `rgb(${r}, ${g}, ${b})`;
 }
@@ -576,6 +594,16 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
   const [customThreshold, setCustomThreshold] = useState(6);
 
   const matrix = useMemo(() => buildAmountOffMatrix(points, absValues), [points, absValues]);
+  const maxCellValue = useMemo(() => {
+    let max = 0;
+    for (const row of matrix.cells) {
+      for (const t of row) {
+        const count = statMode === "total" ? t.w + t.l + t.push : statMode === "win" ? t.w : statMode === "loss" ? t.l : 0;
+        if (count > max) max = count;
+      }
+    }
+    return max;
+  }, [matrix, statMode]);
   const customTally = useMemo(
     () => tallyAmountOffCustom(points, customMin, customMax, customThreshold),
     [points, customMin, customMax, customThreshold]
@@ -585,9 +613,10 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
     <div style={{ marginBottom: "1.75rem" }}>
       <div className="section-label">Amount-Off Matrix</div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
-        Every game (there's always a pick), rows = betting line, columns = the model's
-        prediction was at least this many points off that line. "Abs values only" folds
-        favorite/underdog into one 0-and-up axis instead of a signed -N to +N list.
+        Every game (there's always a pick), rows = betting line (a fixed bucket ladder built
+        around football's actual key numbers, not 1-point steps), columns = the model's
+        prediction was at least this many points off that line, capped at 10+. "Abs values only"
+        folds favorite/underdog into one 0-and-up axis instead of a signed -N to +N list.
       </p>
 
       <div
@@ -692,7 +721,7 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
                           padding: "0.25rem 0.5rem",
                           borderBottom: "1px solid var(--hash)",
                           textAlign: "right",
-                          background: matrixCellBg(t, statMode),
+                          background: matrixCellBg(t, statMode, maxCellValue),
                         }}
                       >
                         {matrixCellText(t, statMode)}
@@ -705,6 +734,136 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// NWFB Sigma Matrix — a parameter-hunting tool for the two NWFB
+// constants themselves (sigmaDivisor, sigmaThreshold), separate from
+// the Amount-Off Matrix above. Rows = candidate sigmaThreshold (0.0 to
+// 1.5 by 0.1), columns = candidate sigmaDivisor (13 to 18 by 0.2) — for
+// every combination, recomputes sigmaOff = absAmountOff / sigmaDivisor
+// per game and tallies how NWFB would have performed at that
+// (divisor, threshold) pair. Two views only (N games, Win %), not all
+// four of the Amount-Off Matrix's — Chris only asked for these two here.
+// ---------------------------------------------------------------------
+type NwfbMatrixView = "count" | "pct";
+
+function nwfbCellText(t: RecordTally, view: NwfbMatrixView): string {
+  if (view === "count") {
+    const n = t.w + t.l + t.push;
+    return n > 0 ? String(n) : "–";
+  }
+  const decided = t.w + t.l;
+  return decided === 0 ? "–" : `${winPct(t).toFixed(0)}%`;
+}
+
+function nwfbCellBg(t: RecordTally, view: NwfbMatrixView, maxCount: number): string | undefined {
+  const neutral = [39, 45, 58];
+  if (view === "pct") {
+    const decided = t.w + t.l;
+    if (decided < 5) return undefined;
+    const pct = winPct(t);
+    const clamp = Math.max(-25, Math.min(25, pct - 50));
+    const favorite = [90, 168, 105];
+    const underdog = [196, 92, 82];
+    const k = Math.abs(clamp) / 25;
+    const target = clamp >= 0 ? favorite : underdog;
+    const [r, g, b] = neutral.map((n, i) => Math.round(n + (target[i] - n) * k));
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  if (maxCount <= 0) return undefined;
+  const n = t.w + t.l + t.push;
+  if (n <= 0) return undefined;
+  const k = Math.min(1, n / maxCount);
+  const target = [90, 168, 105];
+  const [r, g, b] = neutral.map((c, i) => Math.round(c + (target[i] - c) * k));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function NwfbSigmaMatrixSection({ points }: { points: AmountOffPoint[] }) {
+  const [view, setView] = useState<NwfbMatrixView>("pct");
+  const matrix = useMemo(() => buildNwfbSigmaMatrix(points), [points]);
+  const maxCount = useMemo(() => {
+    let max = 0;
+    for (const row of matrix.cells) {
+      for (const t of row) {
+        const n = t.w + t.l + t.push;
+        if (n > max) max = n;
+      }
+    }
+    return max;
+  }, [matrix]);
+
+  return (
+    <div style={{ marginBottom: "1.75rem" }}>
+      <div className="section-label">NWFB Sigma Matrix</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        Rows = candidate sigma threshold, columns = candidate sigma divisor — every game's
+        absAmountOff / divisor is recomputed at each column, and each row tallies how NWFB would
+        have performed if it fired at that row's threshold or higher. A parameter sweep for
+        DEFAULT_CUSTOM_PARAMS.sigmaDivisor/sigmaThreshold, not a live signal.
+      </p>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <button className={`mode-btn ${view === "count" ? "mode-btn-active" : ""}`} onClick={() => setView("count")}>
+          N Games
+        </button>
+        <button className={`mode-btn ${view === "pct" ? "mode-btn-active" : ""}`} onClick={() => setView("pct")}>
+          Win %
+        </button>
+      </div>
+      <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.72rem" }}>
+          <thead>
+            <tr>
+              <th className="th" style={{ position: "sticky", left: 0, zIndex: 21, background: "var(--turf)" }}>
+                Sigma Off &gt;=
+              </th>
+              {matrix.sigmaDivisors.map((d) => (
+                <th key={d} className="th th-right">
+                  {d.toFixed(1)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.sigmaOffs.map((s, rowIdx) => (
+              <tr key={s}>
+                <td
+                  style={{
+                    padding: "0.25rem 0.5rem",
+                    borderBottom: "1px solid var(--hash)",
+                    position: "sticky",
+                    left: 0,
+                    background: "var(--turf-panel)",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.toFixed(1)}
+                </td>
+                {matrix.sigmaDivisors.map((d, colIdx) => {
+                  const t = matrix.cells[rowIdx][colIdx];
+                  return (
+                    <td
+                      key={d}
+                      style={{
+                        padding: "0.25rem 0.5rem",
+                        borderBottom: "1px solid var(--hash)",
+                        textAlign: "right",
+                        background: nwfbCellBg(t, view, maxCount),
+                      }}
+                    >
+                      {nwfbCellText(t, view)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -960,6 +1119,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <SplitsSection splits={plainSplits.overall} hideNwfb />
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
+          <NwfbSigmaMatrixSection points={amountOffPoints} />
           <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
         </>
@@ -1089,6 +1249,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <SplitsSection splits={customSplits.overall} />
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
+          <NwfbSigmaMatrixSection points={amountOffPoints} />
           <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} />
         </>

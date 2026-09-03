@@ -613,29 +613,51 @@ export interface AmountOffLineBucket {
   max: number; // exclusive
 }
 
+// Fixed bucket ladder Chris specified by hand, not 1-point auto-generated
+// — deliberately uneven widths and gaps (e.g. nothing between 2 and 2.5)
+// built around football's actual key numbers (3, 7, 10, 14, 17, 21, 24,
+// 28, 35, 45), not a mechanical even split. The center bucket (0-1,
+// signed as -1 to 1) plus these 15 positive-side buckets; signed mode
+// mirrors the 15 onto the negative side, abs mode uses them as-is.
+const POSITIVE_LINE_BUCKETS: AmountOffLineBucket[] = [
+  { min: 1, max: 2 },
+  { min: 2.5, max: 3.5 },
+  { min: 3.5, max: 6.5 },
+  { min: 6.5, max: 7.5 },
+  { min: 7.5, max: 9.5 },
+  { min: 9.5, max: 10.5 },
+  { min: 10.5, max: 13.5 },
+  { min: 13.5, max: 14.5 },
+  { min: 14.5, max: 17.5 },
+  { min: 17.5, max: 21.5 },
+  { min: 21.5, max: 24.5 },
+  { min: 24.5, max: 28.5 },
+  { min: 28.5, max: 35 },
+  { min: 35, max: 45 },
+  { min: 45, max: Infinity },
+];
+
 /**
- * Row buckets, 1-wide, built from the actual data range so there's no
- * padding of empty rows at either end. Signed mode spans however far
- * negative (favorite) and positive (underdog) the data actually goes,
- * e.g. -14 to +21 wouldn't produce a symmetric -21 to +21 range. Abs mode
- * folds sign first (Math.abs of each line) so a favorite and an underdog
- * bet at the same magnitude land in the same row.
+ * Row buckets from the fixed ladder above instead of 1-point auto-
+ * generated ranges. Signed mode mirrors the positive ladder onto the
+ * negative side (most-extreme-favorite first, ascending, to match the
+ * old ascending order) with one shared -1-to-1 center bucket; abs mode
+ * is just the ladder as-is with a 0-to-1 center bucket.
  */
 export function buildLineBuckets(points: AmountOffPoint[], absValues: boolean): AmountOffLineBucket[] {
   if (points.length === 0) return [];
-  const values = absValues ? points.map((p) => Math.abs(p.lineSigned)) : points.map((p) => p.lineSigned);
-  const lo = Math.floor(Math.min(...values));
-  const hi = Math.ceil(Math.max(...values));
-  const buckets: AmountOffLineBucket[] = [];
-  for (let m = lo; m < hi; m++) buckets.push({ min: m, max: m + 1 });
-  return buckets;
+  if (absValues) {
+    return [{ min: 0, max: 1 }, ...POSITIVE_LINE_BUCKETS];
+  }
+  const negative = [...POSITIVE_LINE_BUCKETS].reverse().map((b) => ({ min: -b.max, max: -b.min }));
+  return [...negative, { min: -1, max: 1 }, ...POSITIVE_LINE_BUCKETS];
 }
 
-/** Threshold columns, 0.5-wide, from 0 up to the actual max absAmountOff observed (rounded up to the nearest 0.5). */
+/** Threshold columns, 0.5-wide, from 0 up to 10 — capped there regardless of the data's actual max; the last column (>=10) is the catch-all "10+". */
 export function buildAmountOffThresholds(points: AmountOffPoint[]): number[] {
   if (points.length === 0) return [];
   const max = Math.max(...points.map((p) => p.absAmountOff));
-  const roundedMax = Math.ceil(max * 2) / 2;
+  const roundedMax = Math.min(10, Math.ceil(max * 2) / 2);
   const thresholds: number[] = [];
   for (let t = 0; t <= roundedMax + 1e-9; t += 0.5) thresholds.push(Math.round(t * 10) / 10);
   return thresholds;
@@ -686,6 +708,52 @@ export function tallyAmountOffCustom(points: AmountOffPoint[], min: number, max:
     tallyAdd(t, p.result);
   }
   return t;
+}
+
+// ---------------------------------------------------------------------
+// NWFB sigma-parameter sweep — sigmaOff = absAmountOff / sigmaDivisor,
+// NWFB fires at sigmaOff >= sigmaThreshold. This recomputes that ratio
+// for every (sigmaThreshold, sigmaDivisor) pair in the sweep range
+// against every game's already-computed absAmountOff, rather than
+// against the live NWFB signal itself — a parameter-hunting tool for
+// calibrating the two NWFB constants (DEFAULT_CUSTOM_PARAMS.sigmaDivisor/
+// sigmaThreshold), same spirit as the Amount-Off Matrix above.
+// ---------------------------------------------------------------------
+export function buildSigmaOffs(): number[] {
+  const out: number[] = [];
+  for (let s = 0; s <= 1.5 + 1e-9; s += 0.1) out.push(Math.round(s * 10) / 10);
+  return out;
+}
+
+export function buildSigmaDivisors(): number[] {
+  const out: number[] = [];
+  for (let d = 13; d <= 18 + 1e-9; d += 0.2) out.push(Math.round(d * 10) / 10);
+  return out;
+}
+
+export interface NwfbSigmaMatrix {
+  sigmaOffs: number[]; // rows
+  sigmaDivisors: number[]; // columns
+  cells: RecordTally[][]; // cells[rowIndex][colIndex]
+}
+
+export function buildNwfbSigmaMatrix(points: AmountOffPoint[]): NwfbSigmaMatrix {
+  const sigmaOffs = buildSigmaOffs();
+  const sigmaDivisors = buildSigmaDivisors();
+  const cells: RecordTally[][] = sigmaOffs.map(() => sigmaDivisors.map(() => emptyTally()));
+
+  for (const p of points) {
+    for (let colIdx = 0; colIdx < sigmaDivisors.length; colIdx++) {
+      const sigmaOff = p.absAmountOff / sigmaDivisors[colIdx];
+      for (let rowIdx = 0; rowIdx < sigmaOffs.length; rowIdx++) {
+        if (sigmaOff >= sigmaOffs[rowIdx]) {
+          tallyAdd(cells[rowIdx][colIdx], p.result);
+        }
+      }
+    }
+  }
+
+  return { sigmaOffs, sigmaDivisors, cells };
 }
 
 // ---------------------------------------------------------------------
