@@ -37,6 +37,7 @@ import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
 import WatchabilityPage from "./pages/WatchabilityPage";
 import BetHistoryPage from "./pages/BetHistoryPage";
 import { WEEKS } from "./data/games";
+import { teamToSlug, slugToTeam, confToSlug, slugToConf } from "./lib/slugs";
 
 // ---------------------------------------------------------------------
 // Every page keeps its exact original prop interface (onNavigateTeam,
@@ -48,11 +49,10 @@ import { WEEKS } from "./data/games";
 // bookmarkable/shareable and makes the browser back button behave
 // normally instead of exiting the whole app.
 //
-// Team/conference names go into the URL via encodeURIComponent rather
-// than a custom slug scheme (e.g. "Texas A&M" -> "Texas%20A%26M") —
-// less pretty than a hyphenated slug, but guaranteed to round-trip
-// back to the exact original name for data lookups with zero
-// collision risk, which matters more here than URL prettiness.
+// Team/conference names go into the URL as readable slugs (texas-am,
+// ohio-state) via lib/slugs.ts, not raw encodeURIComponent — see that
+// file for the full reasoning and the handful of hand-picked overrides
+// (Texas A&M, William & Mary, etc.) that needed one.
 // ---------------------------------------------------------------------
 
 function weekNumFromKey(key: string): string | null {
@@ -97,7 +97,7 @@ export default function App() {
 
   const onHome = () => navigate("/");
   const onNavigateTeam = (team: string) => {
-    navigate(`/team/${encodeURIComponent(team)}`);
+    navigate(`/team/${teamToSlug(team)}`);
     window.scrollTo?.(0, 0);
   };
   // Conference previews are the same component/page regardless of
@@ -107,7 +107,7 @@ export default function App() {
   // call through the same FBS-labeled internal state regardless of
   // the conference's actual division.
   const onNavigateConference = (conf: string) => {
-    navigate(`/conference/${encodeURIComponent(conf)}`);
+    navigate(`/conference/${confToSlug(conf)}`);
     window.scrollTo?.(0, 0);
   };
 
@@ -147,7 +147,7 @@ export default function App() {
         navigate(subKey === "live" ? "/futures/other/live" : `/futures/other/week/${wk}`);
         break;
       case "confpreviews":
-        navigate(subKey === "overview" ? "/conferences" : `/conference/${encodeURIComponent(subKey)}`);
+        navigate(subKey === "overview" ? "/conferences" : `/conference/${confToSlug(subKey)}`);
         break;
       case "bracket":
         navigate(subKey === "live" ? "/bracket/live" : `/bracket/week/${wk}`);
@@ -162,7 +162,7 @@ export default function App() {
         else navigate(`/fcs/power-ratings/week/${wk}`);
         break;
       case "fcsconfpreviews":
-        navigate(`/conference/${encodeURIComponent(subKey)}`);
+        navigate(`/conference/${confToSlug(subKey)}`);
         break;
       case "fcswintotals":
         navigate(subKey === "live" ? "/fcs/win-totals/live" : `/fcs/win-totals/week/${wk}`);
@@ -305,12 +305,12 @@ export default function App() {
 
 function TeamRoute({ onNavigateTeam, onHome }: any) {
   const { team } = useParams();
-  return <TeamPage team={decodeURIComponent(team ?? "")} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  return <TeamPage team={slugToTeam(team ?? "")} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
 }
 
 function ConferenceRoute({ onNavigateTeam, onHome }: any) {
   const { name } = useParams();
-  return <ConferencePreviewPage conference={decodeURIComponent(name ?? "")} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  return <ConferencePreviewPage conference={slugToConf(name ?? "")} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
 }
 
 function MatchupsWeekRoute({ onNavigateTeam, onHome }: any) {
