@@ -7,6 +7,7 @@ import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
 import ResumeRatingAdminPanel from "./ResumeRatingAdminPanel";
 import GameTotalsAdminPanel from "./GameTotalsAdminPanel";
+import TotalsHistoryPanel from "./TotalsHistoryPanel";
 import PredictionsAdminPanel from "./PredictionsAdminPanel";
 import LineMovementAdminPanel from "./LineMovementAdminPanel";
 import OddsDashboardAdminPanel from "./OddsDashboardAdminPanel";
@@ -222,6 +223,7 @@ type AdminView =
   | "montecarlo"
   | "pm"
   | "gametotals"
+  | "totalshistory"
   | "gameslines"
   | "matchups"
   | "pools"
@@ -511,6 +513,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "resumerating", label: "Resume Rating" },
       { key: "sos", label: "Strength of Schedule" },
       { key: "gametotals", label: "Totals" },
+      { key: "totalshistory", label: "Totals History" },
       { key: "bethistory", label: "Bet History" },
       { key: "mlbethistory", label: "Moneyline Bet History" },
     ],
@@ -929,6 +932,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "checklist" && <AdminChecklistPage onBack={() => setView("home")} />}
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
+          {view === "totalshistory" && <TotalsHistoryPanel onBack={() => setView("home")} />}
           {view === "predictions" && <PredictionsAdminPanel onBack={() => setView("home")} />}
           {view === "linemovement" && <LineMovementAdminPanel onBack={() => setView("home")} />}
           {view === "odds" && <OddsDashboardAdminPanel onBack={() => setView("home")} />}

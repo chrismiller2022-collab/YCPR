@@ -19,13 +19,11 @@ import { invalidateCache } from "../lib/api/cache";
 import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, type ViewMode } from "./PerformanceView";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
-const TABS = ["totals", "teamtotals", "performance", "teamperformance"] as const;
+const TABS = ["totals", "teamtotals"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   totals: "Totals",
   teamtotals: "Team Totals",
-  performance: "Performance",
-  teamperformance: "TT Performance",
 };
 
 const LEGACY_TABS = ["raw", "inputs", "composites"] as const;
@@ -430,7 +428,7 @@ function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: Game
   );
 }
 
-function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+export function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeGamePerformanceBreakdown(betRows), [betRows]);
   const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
@@ -652,7 +650,7 @@ function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: 
   );
 }
 
-function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+export function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeTeamPerformanceBreakdown(betRows), [betRows]);
   const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
@@ -871,8 +869,6 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
             </>
           )}
           {tab === "teamtotals" && <TeamTotalsTab rows={viewRows} settings={settings} />}
-          {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} />}
-          {tab === "teamperformance" && <TeamPerformanceTab rows={viewRows} settings={settings} />}
         </>
       )}
     </div>
