@@ -356,6 +356,21 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     return [...new Set(saturdays)].sort().pop();
   }, [scheduleGames]);
 
+  // Same "latest Saturday" concept as tvGuideDateOverride above, but
+  // without requiring tv_outlet — Matchups needs every FBS-vs-FBS game
+  // correctly bucketed, not just the ones with TV info. Used to split
+  // the Saturday graphic into "the real target Saturday" (top) and
+  // "anything dated later" (bottom, e.g. a genuine Sunday/Monday game),
+  // so a leaked-in earlier Saturday from a CFBD week-numbering quirk
+  // (Week 1 specifically, this season — see chat) doesn't get miscounted
+  // as part of the real Saturday slate the way day-of-week-only
+  // bucketing would.
+  const matchupsSaturdayDate = useMemo(() => {
+    const saturdays = scheduleGames.filter((g) => g.start_date && isSaturdayET(g.start_date)).map((g) => etDateString(g.start_date!));
+    if (saturdays.length === 0) return undefined;
+    return [...new Set(saturdays)].sort().pop();
+  }, [scheduleGames]);
+
   // Requests the previous week too when there is one — the review
   // graphic grades last week's games using THAT week's own historical
   // ratings snapshot, not this week's.
@@ -401,7 +416,19 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   );
 
   const fbsFbsMidweekRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "midweek"), [fbsFbsSlateRows]);
-  const fbsFbsSaturdayRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "saturday"), [fbsFbsSlateRows]);
+  // Splits on the actual target Saturday date rather than day-of-week
+  // alone (filterSlateRowsByDay's "saturday" bucket) — see
+  // matchupsSaturdayDate above for why. "Later" catches a genuine
+  // Sunday/Monday game; games dated BEFORE the target Saturday (the
+  // Week 1 leak) are dropped from both, not shown in either section.
+  const fbsFbsSaturdayTargetRows = useMemo(() => {
+    if (!matchupsSaturdayDate) return filterSlateRowsByDay(fbsFbsSlateRows, "saturday");
+    return fbsFbsSlateRows.filter((r) => r.kickoffIso && etDateString(r.kickoffIso) === matchupsSaturdayDate);
+  }, [fbsFbsSlateRows, matchupsSaturdayDate]);
+  const fbsFbsSaturdayLaterRows = useMemo(() => {
+    if (!matchupsSaturdayDate) return [];
+    return fbsFbsSlateRows.filter((r) => r.kickoffIso && etDateString(r.kickoffIso) > matchupsSaturdayDate);
+  }, [fbsFbsSlateRows, matchupsSaturdayDate]);
   const fcsFcsMidweekRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "midweek"), [fcsFcsSlateRows]);
   const fcsFcsSaturdayRows = useMemo(() => filterSlateRowsByDay(fcsFcsSlateRows, "saturday"), [fcsFcsSlateRows]);
   // Cross-divisional (FBS vs FCS) previously wasn't split by day at all
@@ -412,11 +439,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const crossMidweekRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "midweek"), [crossSlateRows]);
   const crossSaturdayRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "saturday"), [crossSlateRows]);
 
-  // "Upcoming Midweek" — FBS-vs-FBS midweek and FBS-vs-FCS midweek
-  // combined into one graphic per Chris ("upcoming midweek all in same
-  // graphic"), replacing what used to be FBS-vs-FBS midweek's own solo
-  // target. FCS-vs-FCS midweek is unaffected — stays its own graphic.
-  const upcomingMidweekRows = useMemo(() => [...fbsFbsMidweekRows, ...crossMidweekRows], [fbsFbsMidweekRows, crossMidweekRows]);
+
+  // "Upcoming Midweek" — FBS-vs-FBS midweek and FBS-vs-FCS midweek,
+  // grouped into two labeled sections (not blended/interleaved) within
+  // one graphic per Chris — see MatchupGridGraphic.tsx's sections prop.
 
   // "Review" — last week's FBS-vs-FBS + FBS-vs-FCS games (all days,
   // completed only), combined into one graphic. Week 1 has no previous
@@ -1150,10 +1176,25 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               <MatchupGridGraphic eyebrow={reviewLabel} header="FBS + FBS vs FCS — Review" rows={reviewRows} />
             </div>
             <div ref={upcomingMidweekRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS + FBS vs FCS — Upcoming Midweek" rows={upcomingMidweekRows} />
+              <MatchupGridGraphic
+                eyebrow={fbsEyebrow}
+                header="Midweek Games"
+                showDayOfWeek
+                sections={[
+                  { label: "FBS vs FBS", rows: fbsFbsMidweekRows },
+                  { label: "FBS vs FCS", rows: crossMidweekRows },
+                ]}
+              />
             </div>
             <div ref={fbsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FBS — Saturday" rows={fbsFbsSaturdayRows} />
+              <MatchupGridGraphic
+                eyebrow={fbsEyebrow}
+                header="FBS vs FBS — Saturday"
+                sections={[
+                  { label: null, rows: fbsFbsSaturdayTargetRows },
+                  { label: null, rows: fbsFbsSaturdayLaterRows },
+                ]}
+              />
             </div>
             <div ref={crossMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic eyebrow={fbsEyebrow} header="FBS vs FCS — Saturday" rows={crossSaturdayRows} />

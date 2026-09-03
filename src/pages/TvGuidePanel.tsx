@@ -386,7 +386,7 @@ export default function TvGuidePanel({
       ) : activeChannels.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No games with a known TV outlet for this selection yet.</p>
       ) : (
-        <div ref={exportRef} style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div ref={exportRef} data-export-scroll style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
           <div style={{ display: "inline-block", minWidth: "100%" }}>
             <div style={{ display: "flex", position: "sticky", top: 0, background: "var(--turf-panel)", zIndex: 2, borderBottom: "1px solid var(--hash)" }}>
               <div style={{ width: CHANNEL_COL_WIDTH, flexShrink: 0, borderRight: "1px solid var(--hash)" }} />

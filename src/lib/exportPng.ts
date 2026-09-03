@@ -89,8 +89,8 @@ function tightenPadding(root: HTMLElement): () => void {
 // the full table renders, then restore the original inline styles right
 // after — the on-page UI never visibly changes.
 function expandScrollAreas(root: HTMLElement): () => void {
-  const targets = Array.from(root.querySelectorAll<HTMLElement>(".table-scroll"));
-  if (root.classList.contains("table-scroll")) targets.push(root);
+  const targets = Array.from(root.querySelectorAll<HTMLElement>(".table-scroll, [data-export-scroll]"));
+  if (root.classList.contains("table-scroll") || root.dataset.exportScroll != null) targets.push(root);
 
   const restores = targets.map((el) => {
     const prevCssText = el.style.cssText;
@@ -190,13 +190,19 @@ const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: should
  * for wide multi-column tables that read sparse once shrunk down for
  * mobile viewing.
  * @param explicitSize - Forces the node's width/height before capture
- * (html-to-image's `width`/`height` options). expandScrollAreas only
- * un-clips vertical overflow (max-height), never horizontal — a node
- * that's horizontally scrollable (overflowX: auto with content wider
- * than the box) would otherwise get captured cropped to whatever's
- * currently visible. Pass the node's own scrollWidth/scrollHeight
- * (measured after any pre-capture DOM tweaks, e.g. hiding a row) to
- * capture the full unscrolled content instead.
+ * (html-to-image's `width`/`height` options) — this alone only tells
+ * html-to-image how big a canvas to render into; it does NOT un-clip
+ * the node's own overflow, so without also fixing that, the node still
+ * renders as visually cropped (scrollbar and all) into the middle of a
+ * bigger, mostly-blank canvas. expandScrollAreas is what actually
+ * un-clips (overflow:visible, maxHeight:none) — for .table-scroll
+ * elements automatically, or any element (including the capture root
+ * itself) tagged data-export-scroll for nodes that can't use
+ * .table-scroll's class (e.g. it also sets a visible border/max-height
+ * that would show up on the live page, not just in the export). Pass
+ * the node's own scrollWidth/scrollHeight (measured after any
+ * pre-capture DOM tweaks, e.g. hiding a row) as explicitSize once
+ * overflow is actually un-clipped, to size the canvas to match.
  */
 export async function exportNodeAsPng(
   node: HTMLElement,

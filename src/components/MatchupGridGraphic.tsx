@@ -45,6 +45,15 @@ function fmtTimeET(iso: string | null): string {
   return minute === "00" ? `${hour}${ampm}` : `${hour}:${minute}${ampm}`;
 }
 
+// Only used on the midweek graphic — a Saturday slate is all one day so
+// the day label would be pure noise there, but midweek games spread
+// across Tue-Fri and the day is exactly the thing worth knowing at a
+// glance.
+function fmtDayOfWeek(iso: string | null): string {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(new Date(iso));
+}
+
 function fmtSpread(v: number | null): string {
   if (v == null) return "–";
   if (v === 0) return "PK";
@@ -79,7 +88,7 @@ const ROW_LABEL: CSSProperties = {
 const CHECK = "✅";
 const CROSS = "❌";
 
-function GameCard({ row }: { row: SlateGameRow }) {
+function GameCard({ row, showDayOfWeek }: { row: SlateGameRow; showDayOfWeek?: boolean }) {
   const actualWinner = row.actualWinner;
   const betTeam = row.spreadBetTeam;
   const showSpreadBet = betTeam != null;
@@ -112,26 +121,61 @@ function GameCard({ row }: { row: SlateGameRow }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", fontWeight: 700 }}>{fmtTimeET(row.kickoffIso)} ET</span>
+        <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.55)", fontWeight: 700 }}>
+          {showDayOfWeek && `${fmtDayOfWeek(row.kickoffIso)} `}
+          {fmtTimeET(row.kickoffIso)} ET
+        </span>
         {row.completed && <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.05em", color: "var(--gold, #d9a441)" }}>FINAL</span>}
       </div>
 
-      {/* Away @ Home, or Away [score] Home once final */}
+      {/* Away @ Home, or Away [score] Home once final. Team names get
+          ellipsis-truncated (not just nowrap) when a long name would
+          otherwise overlap the centered score/@ — flex-shrink alone
+          doesn't help text that refuses to wrap, so both the outer
+          flex item AND the text span itself need minWidth:0, and the
+          text span needs its own overflow/textOverflow to actually
+          truncate rather than spill past its allotted space. The
+          middle score/@ stays flex:none so it never gives up room to
+          the (usually longer) team names. */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 6 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
           <TeamLogo team={row.awayTeam} size={16} />
-          <span style={{ color: "#fff", fontWeight: actualWinner === "away" ? 800 : 400, fontSize: 12, whiteSpace: "nowrap" }}>{row.awayTeam}</span>
+          <span
+            style={{
+              color: "#fff",
+              fontWeight: actualWinner === "away" ? 800 : 400,
+              fontSize: 12,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              minWidth: 0,
+            }}
+          >
+            {row.awayTeam}
+          </span>
         </span>
         {row.completed ? (
-          <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", whiteSpace: "nowrap", flex: "0 0 auto" }}>
             {row.awayScore}-{row.homeScore}
           </span>
         ) : (
-          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 11 }}>@</span>
+          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, flex: "0 0 auto" }}>@</span>
         )}
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, flexDirection: "row-reverse" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, flex: "1 1 auto", overflow: "hidden", flexDirection: "row-reverse" }}>
           <TeamLogo team={row.homeTeam} size={16} />
-          <span style={{ color: "#fff", fontWeight: actualWinner === "home" ? 800 : 400, fontSize: 12, whiteSpace: "nowrap" }}>{row.homeTeam}</span>
+          <span
+            style={{
+              color: "#fff",
+              fontWeight: actualWinner === "home" ? 800 : 400,
+              fontSize: 12,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              minWidth: 0,
+            }}
+          >
+            {row.homeTeam}
+          </span>
         </span>
       </div>
 
@@ -210,12 +254,29 @@ export default function MatchupGridGraphic({
   eyebrow,
   header,
   rows,
+  sections,
+  showDayOfWeek,
 }: {
   eyebrow: string;
   header: string;
-  rows: SlateGameRow[];
+  /** Single flat list, chunked into 3 columns — the original shape,
+   * still used for the plain Saturday-slate graphics. */
+  rows?: SlateGameRow[];
+  /** Alternative to `rows` — each group gets its own label, its own
+   * 3-column chunking, and a horizontal divider before the next group
+   * (not before the first). For the midweek graphic (FBS-vs-FBS then
+   * FBS-vs-FCS, per Chris) and the Week 1 Saturday graphic (the real
+   * target Saturday's games, then any later-dated games separately, to
+   * keep a leaked-in earlier Saturday from a CFBD week-numbering quirk
+   * out of the main section — see WeeklyImageDumpAdminPanel.tsx). */
+  sections?: { label: string | null; rows: SlateGameRow[] }[];
+  /** Day-of-week label next to kickoff time — for the midweek graphic
+   * only, where games spread across several different days; a single-
+   * day Saturday slate doesn't need it. */
+  showDayOfWeek?: boolean;
 }) {
-  const columns = chunkIntoThreeColumns(rows);
+  const resolvedSections: { label: string | null; rows: SlateGameRow[] }[] = sections ?? [{ label: null, rows: rows ?? [] }];
+  const allEmpty = resolvedSections.every((s) => s.rows.length === 0);
 
   return (
     <div style={{ background: "#1f2041", padding: "22px 26px", width: "fit-content", fontFamily: "inherit" }}>
@@ -235,18 +296,48 @@ export default function MatchupGridGraphic({
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "0.03em", color: "#fff", textTransform: "uppercase" }}>{header}</div>
       </div>
 
-      {columns.length === 0 ? (
+      {allEmpty ? (
         <div style={{ padding: 16, fontSize: 12, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>No games in this slate.</div>
       ) : (
-        <div style={{ display: "flex", gap: 14, alignItems: "flex-start", justifyContent: "center" }}>
-          {columns.map((col, ci) => (
-            <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {col.map((row) => (
-                <GameCard key={row.gameId} row={row} />
-              ))}
+        resolvedSections.map((section, si) => {
+          if (section.rows.length === 0) return null;
+          const columns = chunkIntoThreeColumns(section.rows);
+          return (
+            <div key={si}>
+              {si > 0 && (
+                <div
+                  style={{
+                    borderTop: "1px solid rgba(255,255,255,0.15)",
+                    margin: "16px 0",
+                  }}
+                />
+              )}
+              {section.label && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 800,
+                    letterSpacing: "0.05em",
+                    color: "var(--gold, #d9a441)",
+                    textTransform: "uppercase",
+                    marginBottom: 10,
+                  }}
+                >
+                  {section.label}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start", justifyContent: "center" }}>
+                {columns.map((col, ci) => (
+                  <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {col.map((row) => (
+                      <GameCard key={row.gameId} row={row} showDayOfWeek={showDayOfWeek} />
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })
       )}
 
       <div
