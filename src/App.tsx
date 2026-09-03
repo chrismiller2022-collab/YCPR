@@ -37,6 +37,7 @@ import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
 import WatchabilityPage from "./pages/WatchabilityPage";
 import BetHistoryPage from "./pages/BetHistoryPage";
 import { WEEKS } from "./data/games";
+import { TEAMS_BY_NAME } from "./data/teams";
 import { teamToSlug, slugToTeam, confToSlug, slugToConf } from "./lib/slugs";
 
 // ---------------------------------------------------------------------
@@ -96,8 +97,15 @@ export default function App() {
   }, []);
 
   const onHome = () => navigate("/");
-  const onNavigateTeam = (team: string) => {
-    navigate(`/team/${teamToSlug(team)}`);
+  // onNavigateTeam is called throughout the site with either a plain
+  // team-name string OR a full Team object (t, opp, f.team, etc. —
+  // wildly inconsistent across ~35 call sites) — TeamLogo.tsx already
+  // has to handle this same ambiguity for the exact same reason. Every
+  // one of those call sites is unchanged by this routing work, so this
+  // has to accept both, same as TeamLogo does.
+  const onNavigateTeam = (team: any) => {
+    const name = typeof team === "string" ? team : team?.team;
+    navigate(`/team/${teamToSlug(name)}`);
     window.scrollTo?.(0, 0);
   };
   // Conference previews are the same component/page regardless of
@@ -305,7 +313,15 @@ export default function App() {
 
 function TeamRoute({ onNavigateTeam, onHome }: any) {
   const { team } = useParams();
-  return <TeamPage team={slugToTeam(team ?? "")} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  const teamName = slugToTeam(team ?? "");
+  const teamObj = TEAMS_BY_NAME[teamName];
+  // TeamPage indexes straight into team.div/team.conf — it has always
+  // needed the full Team object, never just the name string. This was
+  // the actual bug behind "team pages don't work at all": this line
+  // was passing the bare name string, and TeamPage silently got
+  // undefined back for every team.div/team.conf lookup.
+  if (!teamObj) return <Navigate to="/" replace />;
+  return <TeamPage team={teamObj} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
 }
 
 function ConferenceRoute({ onNavigateTeam, onHome }: any) {
