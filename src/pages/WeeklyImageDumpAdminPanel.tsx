@@ -14,10 +14,11 @@ import { conferencesForDivision } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine, poolStdDevForTotal } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, poolStdDevForTotal, buildBetRows } from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { classOf, isTracked, computeRow } from "../lib/matchupsCompute";
-import { buildSlateRow, filterSlateRowsByDay, type SlateGameRow } from "../lib/matchupSlate";
+import { buildSlateRow, filterSlateRowsByDay, computeSlatePerformance, type SlateGameRow, type SlatePerformanceSummary } from "../lib/matchupSlate";
+import { BET_HISTORY } from "../data/betHistory.data";
 
 // Shared by every Matchups target below — same filter+compute+shape
 // pipeline the live Weekly Matchups page uses (classOf -> computeRow ->
@@ -471,6 +472,72 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     previousWeekNum != null
       ? `${weekLabel(`week${previousWeekNum}`).toUpperCase()} REVIEW`
       : `${weekLabel(currentWeek).toUpperCase()} RESULTS SO FAR`;
+
+  // "This image" performance — the exact rows shown in the Review
+  // graphic (already FBS-vs-FBS + Cross only, FCS-vs-FCS never
+  // included by construction — see reviewFbsFbsRows/reviewCrossRows
+  // above).
+  const reviewImagePerformance = useMemo(() => computeSlatePerformance(reviewRows), [reviewRows]);
+
+  // Season-long performance — deliberately NOT built from SlateGameRow
+  // (that would need week-accurate ratings for every week of the
+  // season just to answer this one question). Spreads pull from
+  // BET_HISTORY (already-graded historical data, one row per game);
+  // totals pull from gameTotalsEngine's own full-season rows via
+  // buildBetRows, the same function/threshold (1.0 std dev) already
+  // used for Total Bets everywhere else in this file. Both exclude
+  // FCS-vs-FCS: BET_HISTORY only ever contained FBS games to begin
+  // with (this site's core betting focus historically), and totals
+  // uses filterRowsByDivision-style logic to keep FBS-vs-FBS + Cross.
+  const seasonSpreadPerformance = useMemo(() => {
+    const rows = BET_HISTORY.filter((r) => r.season === season);
+    const everyGameSpreads = { w: 0, l: 0, push: 0 };
+    const spreadBets = { w: 0, l: 0, push: 0 };
+    const errors: number[] = [];
+    for (const r of rows) {
+      if (r.everyBetResult === "win") everyGameSpreads.w++;
+      else if (r.everyBetResult === "loss") everyGameSpreads.l++;
+      else if (r.everyBetResult === "push") everyGameSpreads.push++;
+      const anySystemFired = r.filteredBetTeam != null || r.weightedFilteredBetTeam != null;
+      if (anySystemFired) {
+        const result = r.filteredBetResult ?? r.weightedFilteredBetResult;
+        if (result === "win") spreadBets.w++;
+        else if (result === "loss") spreadBets.l++;
+        else if (result === "push") spreadBets.push++;
+      }
+      errors.push(r.prediction - r.actualFinalSpread);
+    }
+    const absErrors = errors.map((e) => Math.abs(e)).sort((a, b) => a - b);
+    const meanAbsError = absErrors.length > 0 ? absErrors.reduce((a, b) => a + b, 0) / absErrors.length : null;
+    const medianAbsError =
+      absErrors.length === 0
+        ? null
+        : absErrors.length % 2 === 1
+        ? absErrors[(absErrors.length - 1) / 2]
+        : (absErrors[absErrors.length / 2 - 1] + absErrors[absErrors.length / 2]) / 2;
+    const meanSquaredError = errors.length > 0 ? errors.reduce((sum, e) => sum + e * e, 0) / errors.length : null;
+    return { everyGameSpreads, spreadBets, meanAbsError, medianAbsError, meanSquaredError };
+  }, [season]);
+
+  const seasonTotalsPerformance = useMemo(() => {
+    const notFcsVFcs = totalsEngineRows.filter(
+      (r) => !(r.game.homeClassification === "fcs" && r.game.awayClassification === "fcs")
+    );
+    const betRows = buildBetRows(notFcsVFcs, 1.0);
+    const everyGameTotals = { w: 0, l: 0, push: 0 };
+    const totalBets = { w: 0, l: 0, push: 0 };
+    for (const r of betRows) {
+      if (r.grade === "win") everyGameTotals.w++;
+      else if (r.grade === "loss") everyGameTotals.l++;
+      else if (r.grade === "push") everyGameTotals.push++;
+      if (r.isFiltered) {
+        if (r.grade === "win") totalBets.w++;
+        else if (r.grade === "loss") totalBets.l++;
+        else if (r.grade === "push") totalBets.push++;
+      }
+    }
+    return { everyGameTotals, totalBets };
+  }, [totalsEngineRows]);
 
   const fbsRows = useMemo(
     () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam),
@@ -1173,7 +1240,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 - FCS vs FCS Midweek and Saturday: unaffected by any of
                   the above — still their own separate graphics. */}
             <div ref={matchupsReviewRef} style={CAPTURE_WRAP_STYLE}>
-              <MatchupGridGraphic eyebrow={reviewLabel} header="FBS + FBS vs FCS — Review" rows={reviewRows} />
+              <MatchupGridGraphic
+                eyebrow={reviewLabel}
+                header="FBS + FBS vs FCS — Review"
+                rows={reviewRows}
+                performanceTable={{
+                  thisImage: reviewImagePerformance,
+                  seasonLong: {
+                    everyGameSpreads: seasonSpreadPerformance.everyGameSpreads,
+                    spreadBets: seasonSpreadPerformance.spreadBets,
+                    everyGameTotals: seasonTotalsPerformance.everyGameTotals,
+                    totalBets: seasonTotalsPerformance.totalBets,
+                    meanAbsError: seasonSpreadPerformance.meanAbsError,
+                    medianAbsError: seasonSpreadPerformance.medianAbsError,
+                    meanSquaredError: seasonSpreadPerformance.meanSquaredError,
+                  },
+                }}
+              />
             </div>
             <div ref={upcomingMidweekRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic

@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import TeamLogo from "./TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
-import type { SlateGameRow } from "../lib/matchupSlate";
+import type { SlateGameRow, SlatePerformanceSummary } from "../lib/matchupSlate";
 
 // Card-grid alternative to MatchupSlateGraphic for the Weekly Image Dump.
 // Layout follows Chris's own spec exactly (see chat): a two-column inner
@@ -250,12 +250,108 @@ function GameCard({ row, showDayOfWeek }: { row: SlateGameRow; showDayOfWeek?: b
   );
 }
 
+function recordStr(t: { w: number; l: number; push: number }): string {
+  return `${t.w}-${t.l}${t.push > 0 ? `-${t.push}` : ""}`;
+}
+
+function winPctStr(t: { w: number; l: number }): string {
+  const decided = t.w + t.l;
+  return decided === 0 ? "–" : `${((t.w / decided) * 100).toFixed(1)}%`;
+}
+
+function numStr(v: number | null): string {
+  return v == null ? "–" : v.toFixed(2);
+}
+
+// Embedded directly in the graphic (not a separate image) so the record
+// bakes into the same PNG — two columns (this image, season-long),
+// same five rows each: every-game spreads, spread bets, every-game
+// totals, total bets, then the three spread-accuracy stats. FCS-vs-FCS
+// is excluded from both columns' data before it ever reaches this
+// component — see WeeklyImageDumpAdminPanel.tsx.
+function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerformanceSummary; seasonLong: SlatePerformanceSummary }) {
+  const rowStyle: CSSProperties = { padding: "3px 8px", borderBottom: "1px solid rgba(255,255,255,0.08)" };
+  const labelStyle: CSSProperties = { ...rowStyle, color: "rgba(255,255,255,0.7)", textAlign: "left" };
+  const valStyle: CSSProperties = { ...rowStyle, color: "#fff", fontWeight: 700, textAlign: "right" };
+
+  return (
+    <div style={{ marginTop: 16, marginBottom: 4 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.05em", color: "var(--gold, #d9a441)", textTransform: "uppercase", marginBottom: 8, textAlign: "center" }}>
+        Performance (FBS + FBS vs FCS)
+      </div>
+      <table style={{ borderCollapse: "collapse", fontSize: 10.5, margin: "0 auto" }}>
+        <thead>
+          <tr>
+            <th style={{ ...rowStyle, textAlign: "left" }}></th>
+            <th style={{ ...rowStyle, textAlign: "right", color: "var(--gold, #d9a441)" }}>This Image</th>
+            <th style={{ ...rowStyle, textAlign: "right", color: "var(--gold, #d9a441)" }}>Season Long</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={labelStyle}>Every Game — Spreads</td>
+            <td style={valStyle}>
+              {recordStr(thisImage.everyGameSpreads)} ({winPctStr(thisImage.everyGameSpreads)})
+            </td>
+            <td style={valStyle}>
+              {recordStr(seasonLong.everyGameSpreads)} ({winPctStr(seasonLong.everyGameSpreads)})
+            </td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Spread Bets</td>
+            <td style={valStyle}>
+              {recordStr(thisImage.spreadBets)} ({winPctStr(thisImage.spreadBets)})
+            </td>
+            <td style={valStyle}>
+              {recordStr(seasonLong.spreadBets)} ({winPctStr(seasonLong.spreadBets)})
+            </td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Every Game — Totals</td>
+            <td style={valStyle}>
+              {recordStr(thisImage.everyGameTotals)} ({winPctStr(thisImage.everyGameTotals)})
+            </td>
+            <td style={valStyle}>
+              {recordStr(seasonLong.everyGameTotals)} ({winPctStr(seasonLong.everyGameTotals)})
+            </td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Total Bets</td>
+            <td style={valStyle}>
+              {recordStr(thisImage.totalBets)} ({winPctStr(thisImage.totalBets)})
+            </td>
+            <td style={valStyle}>
+              {recordStr(seasonLong.totalBets)} ({winPctStr(seasonLong.totalBets)})
+            </td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Spread Abs Error</td>
+            <td style={valStyle}>{numStr(thisImage.meanAbsError)}</td>
+            <td style={valStyle}>{numStr(seasonLong.meanAbsError)}</td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Spread Median Abs Error</td>
+            <td style={valStyle}>{numStr(thisImage.medianAbsError)}</td>
+            <td style={valStyle}>{numStr(seasonLong.medianAbsError)}</td>
+          </tr>
+          <tr>
+            <td style={labelStyle}>Spread Mean Squared Error</td>
+            <td style={valStyle}>{numStr(thisImage.meanSquaredError)}</td>
+            <td style={valStyle}>{numStr(seasonLong.meanSquaredError)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function MatchupGridGraphic({
   eyebrow,
   header,
   rows,
   sections,
   showDayOfWeek,
+  performanceTable,
 }: {
   eyebrow: string;
   header: string;
@@ -274,6 +370,11 @@ export default function MatchupGridGraphic({
    * only, where games spread across several different days; a single-
    * day Saturday slate doesn't need it. */
   showDayOfWeek?: boolean;
+  /** Bakes a small performance-record table into the bottom of the
+   * graphic, above the branding footer — for the Review graphic only.
+   * See WeeklyImageDumpAdminPanel.tsx for how thisImage/seasonLong get
+   * computed. */
+  performanceTable?: { thisImage: SlatePerformanceSummary; seasonLong: SlatePerformanceSummary };
 }) {
   const resolvedSections: { label: string | null; rows: SlateGameRow[] }[] = sections ?? [{ label: null, rows: rows ?? [] }];
   const allEmpty = resolvedSections.every((s) => s.rows.length === 0);
@@ -339,6 +440,8 @@ export default function MatchupGridGraphic({
           );
         })
       )}
+
+      {performanceTable && <PerformanceTable thisImage={performanceTable.thisImage} seasonLong={performanceTable.seasonLong} />}
 
       <div
         style={{

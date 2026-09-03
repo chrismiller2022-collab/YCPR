@@ -115,3 +115,79 @@ export function filterSlateRowsByDay(rows: SlateGameRow[], filter: SlateDayFilte
   if (filter === "saturday") return rows.filter((r) => isSaturdayET(r.kickoffIso));
   return rows.filter((r) => isMidweekET(r.kickoffIso));
 }
+
+export interface RecordTally {
+  w: number;
+  l: number;
+  push: number;
+}
+
+export interface SlatePerformanceSummary {
+  // "Every game" = pick a side/call on literally every completed game
+  // regardless of any threshold (projCoverTeam / projTotalResult); "the
+  // bet(s)" = restricted to games where a real signal actually fired
+  // (spreadBetTeam / totalBetCall).
+  everyGameSpreads: RecordTally;
+  spreadBets: RecordTally;
+  everyGameTotals: RecordTally;
+  totalBets: RecordTally;
+  // Spread prediction accuracy (home-perspective: predicted margin vs
+  // actual margin), independent of win/loss against a line.
+  meanAbsError: number | null;
+  medianAbsError: number | null;
+  meanSquaredError: number | null;
+}
+
+function emptyTally(): RecordTally {
+  return { w: 0, l: 0, push: 0 };
+}
+
+function addResult(tally: RecordTally, pick: string | null, actual: string | null) {
+  if (pick == null || actual == null) return;
+  if (actual === "push" || actual === "Push") tally.push++;
+  else if (pick === actual) tally.w++;
+  else tally.l++;
+}
+
+/**
+ * Bet-performance summary for a given set of SlateGameRow — used both
+ * for "this image's games" (pass the exact rows shown) and, via
+ * different callers, reused conceptually for season-long stats (which
+ * pull from BET_HISTORY/gameTotalsEngine instead, since those don't
+ * require re-fetching a full season of week-accurate ratings — see
+ * WeeklyImageDumpAdminPanel.tsx). Only completed games contribute.
+ */
+export function computeSlatePerformance(rows: SlateGameRow[]): SlatePerformanceSummary {
+  const everyGameSpreads = emptyTally();
+  const spreadBets = emptyTally();
+  const everyGameTotals = emptyTally();
+  const totalBets = emptyTally();
+  const errors: number[] = [];
+
+  for (const r of rows) {
+    if (!r.completed) continue;
+    addResult(everyGameSpreads, r.projCoverTeam, r.actCoverTeam);
+    if (r.spreadBetTeam != null) addResult(spreadBets, r.spreadBetTeam, r.actCoverTeam);
+    addResult(everyGameTotals, r.projTotalResult, r.totalResult);
+    if (r.totalBetCall != null) addResult(totalBets, r.totalBetCall, r.totalResult);
+
+    if (r.myAwaySpread != null && r.awayScore != null && r.homeScore != null) {
+      // Home-perspective, matching BET_HISTORY's own prediction/actualFinalSpread convention.
+      const predictedHomeMargin = -r.myAwaySpread;
+      const actualHomeMargin = r.homeScore - r.awayScore;
+      errors.push(predictedHomeMargin - actualHomeMargin);
+    }
+  }
+
+  const absErrors = errors.map((e) => Math.abs(e)).sort((a, b) => a - b);
+  const meanAbsError = absErrors.length > 0 ? absErrors.reduce((a, b) => a + b, 0) / absErrors.length : null;
+  const medianAbsError =
+    absErrors.length === 0
+      ? null
+      : absErrors.length % 2 === 1
+      ? absErrors[(absErrors.length - 1) / 2]
+      : (absErrors[absErrors.length / 2 - 1] + absErrors[absErrors.length / 2]) / 2;
+  const meanSquaredError = errors.length > 0 ? errors.reduce((sum, e) => sum + e * e, 0) / errors.length : null;
+
+  return { everyGameSpreads, spreadBets, everyGameTotals, totalBets, meanAbsError, medianAbsError, meanSquaredError };
+}
