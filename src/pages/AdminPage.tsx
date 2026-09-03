@@ -488,6 +488,9 @@ interface NavItem {
 interface NavGroup {
   label: string;
   items: NavItem[];
+  // Collapsed by default, expand-on-click — for groups Chris wants out
+  // of the way (currently just Archived) rather than always visible.
+  collapsible?: boolean;
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -497,7 +500,6 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "checklist", label: "Weekly Checklist" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
-      { key: "bettingreport", label: "Weekly Betting Report" },
       { key: "pools", label: "Pools" },
     ],
   },
@@ -509,15 +511,15 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "resumerating", label: "Resume Rating" },
       { key: "sos", label: "Strength of Schedule" },
       { key: "gametotals", label: "Totals" },
-      { key: "predictions", label: "Predictions" },
+      { key: "bethistory", label: "Bet History" },
+      { key: "mlbethistory", label: "Moneyline Bet History" },
     ],
   },
   {
-    label: "Betting & tracking",
+    label: "Betting",
     items: [
-      { key: "bethistory", label: "Bet History" },
+      { key: "predictions", label: "Predictions" },
       { key: "placedbets", label: "Placed Bets" },
-      { key: "mlbethistory", label: "Moneyline Bet History" },
       { key: "pm", label: "Prediction Markets" },
       { key: "matchups", label: "Matchups" },
       { key: "linemovement", label: "Line Movement" },
@@ -525,8 +527,11 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Content",
-    items: [{ key: "imagedump", label: "Weekly Image Dump" }],
+    label: "Reports",
+    items: [
+      { key: "imagedump", label: "Public Report" },
+      { key: "bettingreport", label: "Weekly Betting Report" },
+    ],
   },
   {
     label: "Public tools",
@@ -534,6 +539,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Archived",
+    collapsible: true,
     items: [{ key: "upload", label: "Data Upload" }],
   },
 ];
@@ -559,6 +565,16 @@ function activeNavKey(view: AdminView): AdminView {
 
 function AdminSidebar({ view, onNavigate }: { view: AdminView; onNavigate: (v: AdminView) => void }) {
   const active = activeNavKey(view);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+
+  function toggleGroup(label: string) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
 
   function itemStyle(isActive: boolean): CSSProperties {
     return {
@@ -579,29 +595,42 @@ function AdminSidebar({ view, onNavigate }: { view: AdminView; onNavigate: (v: A
       <button onClick={() => onNavigate("home")} style={itemStyle(active === "home")}>
         Overview
       </button>
-      {NAV_GROUPS.map((group) => (
-        <div key={group.label}>
-          <div
-            style={{
-              fontSize: "0.68rem",
-              color: "var(--chalk-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              marginBottom: "0.35rem",
-              padding: "0 0.6rem",
-            }}
-          >
-            {group.label}
+      {NAV_GROUPS.map((group) => {
+        // Auto-expands if the active view lives inside it, so landing on
+        // e.g. Data Upload directly doesn't look like it's nowhere.
+        const isOpen = !group.collapsible || openGroups.has(group.label) || group.items.some((i) => i.key === active);
+        return (
+          <div key={group.label}>
+            <div
+              onClick={group.collapsible ? () => toggleGroup(group.label) : undefined}
+              style={{
+                fontSize: "0.68rem",
+                color: "var(--chalk-dim)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: "0.35rem",
+                padding: "0 0.6rem",
+                cursor: group.collapsible ? "pointer" : "default",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>{group.label}</span>
+              {group.collapsible && <span style={{ fontSize: "0.6rem" }}>{isOpen ? "▾" : "▸"}</span>}
+            </div>
+            {isOpen && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
+                {group.items.map((item) => (
+                  <button key={item.key} onClick={() => onNavigate(item.key)} style={itemStyle(active === item.key)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }}>
-            {group.items.map((item) => (
-              <button key={item.key} onClick={() => onNavigate(item.key)} style={itemStyle(active === item.key)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </nav>
   );
 }
@@ -812,7 +841,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
   return (
     <div
-      className="page"
+      className="page admin-page"
       style={{
         // Full width everywhere — almost every admin view has a wide table
         // somewhere, and a narrow outer cap just forces that table into its

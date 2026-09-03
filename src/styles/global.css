@@ -1474,6 +1474,22 @@
           font-size: 0.88rem;
         }
 
+        /* Admin only — every admin table shrinks to its own content's
+           natural width instead of stretching to fill its container.
+           The public site's tables are untouched (still the 100% rule
+           above); this is scoped to .admin-page specifically. A more
+           specific existing per-page rule (e.g.
+           .preseason-ratings-page .table-scroll table) still wins over
+           this by CSS specificity, so those aren't affected either.
+           Doesn't touch row height, cell padding, or anything vertical —
+           width only. If a table's own content is genuinely wide, it's
+           still exactly that wide; this only removes the artificial
+           100%-of-container stretch that spread out low-column-count
+           tables with big gaps between columns. */
+        .admin-page table {
+          width: auto;
+        }
+
         /* Sticky headers are opt-in via .table-scroll (below), not a
            default for every <thead>. A table only behaves correctly with
            position:sticky when it's wrapped in a container that actually
