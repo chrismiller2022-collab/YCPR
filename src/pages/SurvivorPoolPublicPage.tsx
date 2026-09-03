@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   fetchEntrantBySlug,
   fetchPoolSeasonGames,
@@ -47,6 +48,7 @@ interface GridCell {
 }
 
 export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string; onHome?: () => void }) {
+  const navigate = useNavigate();
   const [entrant, setEntrant] = useState<SurvivorPoolEntrantPublic | null | "loading">("loading");
   const [conferences, setConferences] = useState<string[]>([]);
   const [poolGames, setPoolGames] = useState<PoolGameRow[]>([]);
@@ -331,7 +333,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           </div>
           <button
             onClick={() => {
-              window.location.hash = `survivorpool-standings-${entrant.season}-viewer-${slug}`;
+              navigate(`/survivor-pool/standings/${entrant.season}/${slug}`);
             }}
             style={{
               padding: "0.7rem 1.3rem",
@@ -679,7 +681,7 @@ export default function SurvivorPoolPublicPage({ slug, onHome }: { slug: string;
           </div>
           <button
             onClick={() => {
-              window.location.hash = `survivorpool-standings-${entrant.season}-viewer-${slug}`;
+              navigate(`/survivor-pool/standings/${entrant.season}/${slug}`);
             }}
           >
             View Standings (your picks visible)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   fetchPoolSeasonGames,
   fetchAllSeasonPicks,
@@ -18,6 +19,7 @@ export default function SurvivorPoolStandingsPage({
   viewerSlug?: string | null;
   onHome?: () => void;
 }) {
+  const navigate = useNavigate();
   const [entrants, setEntrants] = useState<SurvivorPoolEntrant[]>([]);
   const [picks, setPicks] = useState<(any & { entrant_id: number })[]>([]);
   const [poolGames, setPoolGames] = useState<PoolGameRow[]>([]);
@@ -151,7 +153,7 @@ export default function SurvivorPoolStandingsPage({
             <button
               className="menu-btn"
               onClick={() => {
-                window.location.hash = `survivorpool-${viewerSlug}`;
+                navigate(`/survivor-pool/${viewerSlug}`);
               }}
               style={{ fontSize: "0.82rem" }}
             >

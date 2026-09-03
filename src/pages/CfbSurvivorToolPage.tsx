@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import ExportPngButton from "../components/ExportPngButton";
 import { availableConferences, DEFAULT_CONFERENCES } from "../lib/survivor";
 import {
@@ -29,6 +30,7 @@ interface GridCell {
 }
 
 export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void }) {
+  const navigate = useNavigate();
   const exportRef = useRef<HTMLDivElement>(null);
   const allConfs = useMemo(() => availableConferences(), []);
   const [season, setSeason] = useState(new Date().getFullYear());
@@ -170,7 +172,7 @@ export default function CfbSurvivorToolPage({ onHome }: { onHome?: () => void })
         setCodeError("No user found.");
         return;
       }
-      window.location.hash = `survivorpool-${entrant.slug}`;
+      navigate(`/survivor-pool/${entrant.slug}`);
     } catch {
       setCodeError("No user found.");
     } finally {
