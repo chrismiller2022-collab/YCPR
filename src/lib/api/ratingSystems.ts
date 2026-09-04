@@ -111,6 +111,16 @@ export async function fetchTeamSos(season: number): Promise<Record<string, TeamS
 }
 
 /** Every saved week's SOS-via-SRS value for every team, indexed by week then team — for Weekly Progression, which needs each week's own snapshot side by side, not just the latest. */
+/** Every team's saved SOS snapshot for one SPECIFIC week — for the SOS Week N public page, as opposed to fetchTeamSos's "latest per team" resolution. */
+export async function fetchTeamSosForWeek(season: number, week: number): Promise<Record<string, TeamSosRow>> {
+  const rows = await fetchAllRows<TeamSosRow>((from, to) =>
+    supabase.from("team_sos").select("*").eq("season", season).eq("week", week).range(from, to)
+  );
+  const out: Record<string, TeamSosRow> = {};
+  for (const r of rows) out[r.team] = r;
+  return out;
+}
+
 export async function fetchTeamSosByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
     supabase.from("team_sos").select("*").eq("season", season).range(from, to)

@@ -67,7 +67,16 @@ export interface WinTotalsEntry {
  * consumer instead of four separate ones computing something
  * different from each other.
  */
-export function useLatestMonteCarloWinTotals(season: number) {
+/**
+ * "Live" (weekNum omitted/null) or a SPECIFIC week's win totals — shared
+ * across every public page that shows one (Win Totals, Home Page, Team
+ * Page, Conference Previews all use "live"; the Win Totals Week N page
+ * uses a specific week). All four "live" consumers used to independently
+ * compute a static formula from each team's hardcoded preseason rating,
+ * which ran already-decided games back through a win-probability calc
+ * instead of counting them as banked wins.
+ */
+export function useLatestMonteCarloWinTotals(season: number, weekNum?: number | null) {
   const [byTeam, setByTeam] = useState<Record<string, WinTotalsEntry>>({});
   const [loading, setLoading] = useState(true);
   const [noRunYet, setNoRunYet] = useState(false);
@@ -78,14 +87,14 @@ export function useLatestMonteCarloWinTotals(season: number) {
     fetchMonteCarloRuns(season)
       .then(async (list) => {
         if (cancelled) return;
-        const latest = list[0];
-        if (!latest) {
+        const target = weekNum == null ? list[0] : list.find((r) => r.week === weekNum);
+        if (!target) {
           setNoRunYet(true);
           setByTeam({});
           setLoading(false);
           return;
         }
-        const run = await fetchMonteCarloRun(latest.id);
+        const run = await fetchMonteCarloRun(target.id);
         if (cancelled) return;
         if (!run) {
           setNoRunYet(true);
@@ -116,7 +125,7 @@ export function useLatestMonteCarloWinTotals(season: number) {
     return () => {
       cancelled = true;
     };
-  }, [season]);
+  }, [season, weekNum]);
 
   return { byTeam, loading, noRunYet };
 }

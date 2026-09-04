@@ -55,7 +55,7 @@ function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
 }
 
 
-export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onNavigateConference, onHome }: any) {
+export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
   const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
@@ -76,7 +76,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
   // is exactly what was missing. Shared with HomePage/TeamPage/
   // ConferencePreviewPage via useLatestMonteCarloWinTotals, not
   // recomputed independently here.
-  const { byTeam: winTotalsByTeam, loading: runsLoading, noRunYet } = useLatestMonteCarloWinTotals(season);
+  const { byTeam: winTotalsByTeam, loading: runsLoading, noRunYet } = useLatestMonteCarloWinTotals(season, weekNum ?? null);
 
   // When viewing a single division, "rank" should mean rank within that
   // division (1-N), not the site-wide national rank FBS+FCS combined —
@@ -159,7 +159,7 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
           ‹ All rankings
         </button>
         <div className="eyebrow">Win Totals</div>
-        <h1 className="title matchup-title">LIVE</h1>
+        <h1 className="title matchup-title">{subLabel ?? "LIVE"}</h1>
         <p className="subtitle team-subtitle">
           Projected season win totals, calculated by summing each team's
           game-by-game win probability across their full schedule.
@@ -199,8 +199,10 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
 
       {noRunYet && !runsLoading && (
         <p style={{ color: "#a15c00", padding: "0 1.5rem" }} data-export-exclude="true">
-          No Monte Carlo run has been saved for {season} yet — win totals below default to 0 for every team.
-          Save a run from Admin → Monte Carlo first.
+          {weekNum == null
+            ? `No Monte Carlo run has been saved for ${season} yet`
+            : `No Monte Carlo run has been saved for ${season} week ${weekNum} — a run saved for a different week won't show here`}{" "}
+          — win totals below default to 0 for every team. Save a run from Admin → Monte Carlo first.
         </p>
       )}
 

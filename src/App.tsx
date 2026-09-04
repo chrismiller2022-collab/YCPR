@@ -12,7 +12,9 @@ import ToughestStretchPage from "./pages/ToughestStretchPage";
 import MatchupsPage from "./pages/MatchupsPage";
 import LiveWinTotalsPage from "./pages/LiveWinTotalsPage";
 import ResumeRatingsPage from "./pages/ResumeRatingsPage";
+import ResumeRatingsWeekPage from "./pages/ResumeRatingsWeekPage";
 import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
+import SosWeekPage from "./pages/SosWeekPage";
 import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
 import ConferenceWinTotalsPage from "./pages/ConferenceWinTotalsPage";
 import PythagWinsPage from "./pages/PythagWinsPage";
@@ -260,7 +262,7 @@ export default function App() {
               <Route path="/power-ratings/progression" element={<WeeklyProgressionPage metric="power" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
               <Route path="/futures/win-totals/live" element={<LiveWinTotalsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/futures/win-totals/week/:n" element={<ComingSoonRoute catLabel="Win Totals" />} />
+              <Route path="/futures/win-totals/week/:n" element={<WinTotalsWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/win-totals/progression" element={<WeeklyProgressionPage metric="wintotals" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/conference-win-odds" element={<ConferenceWinOddsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/conference-win-totals" element={<ConferenceWinTotalsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
@@ -273,12 +275,12 @@ export default function App() {
 
               <Route path="/resume-ratings/live" element={<ResumeRatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/resume-ratings/progression" element={<WeeklyProgressionPage metric="resume" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/resume-ratings/week/:n" element={<ComingSoonRoute catLabel="Resume Ratings" />} />
+              <Route path="/resume-ratings/week/:n" element={<ResumeRatingsWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
               <Route path="/sos/live" element={<StrengthOfSchedulePage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/sos/progression" element={<WeeklyProgressionPage metric="sor" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/sos/toughest-stretch" element={<ToughestStretchPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/sos/week/:n" element={<ComingSoonRoute catLabel="Strength of Schedule" />} />
+              <Route path="/sos/week/:n" element={<SosWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
               <Route path="/bracket/live" element={<BracketPage subLabel="Live" weekNum={null} onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
               <Route path="/bracket/week/:n" element={<BracketWeekRoute onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
@@ -290,11 +292,11 @@ export default function App() {
               <Route path="/fcs/power-ratings/preseason" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
               <Route path="/fcs/power-ratings/week/:n" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
               <Route path="/fcs/win-totals/live" element={<LiveWinTotalsPage defaultDivision="FCS" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/fcs/win-totals/week/:n" element={<ComingSoonRoute catLabel="FCS Win Totals" />} />
+              <Route path="/fcs/win-totals/week/:n" element={<FCSWinTotalsWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/win-totals/progression" element={<WeeklyProgressionPage metric="wintotals" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/sos/live" element={<StrengthOfSchedulePage forceDivision="FCS" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/sos/progression" element={<WeeklyProgressionPage metric="sor" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/fcs/sos/week/:n" element={<ComingSoonRoute catLabel="FCS SOS/SOR" />} />
+              <Route path="/fcs/sos/week/:n" element={<FCSSosWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
               <Route path="/model-results" element={<BetHistoryPage onHome={onHome} />} />
               <Route path="/model-results/:year" element={<ModelResultsYearRoute onHome={onHome} />} />
@@ -359,6 +361,78 @@ function FCSBracketWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: a
   return (
     <FCSBracketPage
       weekNum={Number.isFinite(wk) ? wk : null}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
+function ResumeRatingsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <ResumeRatingsWeekPage
+      weekNum={Number.isFinite(wk) ? wk : 1}
+      subLabel={weekLabelFor(n)}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
+function SosWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <SosWeekPage
+      weekNum={Number.isFinite(wk) ? wk : 1}
+      subLabel={weekLabelFor(n)}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
+function FCSSosWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <SosWeekPage
+      defaultDivision="FCS"
+      weekNum={Number.isFinite(wk) ? wk : 1}
+      subLabel={weekLabelFor(n)}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
+function WinTotalsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <LiveWinTotalsPage
+      weekNum={Number.isFinite(wk) ? wk : null}
+      subLabel={weekLabelFor(n)}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
+function FCSWinTotalsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <LiveWinTotalsPage
+      defaultDivision="FCS"
+      weekNum={Number.isFinite(wk) ? wk : null}
+      subLabel={weekLabelFor(n)}
       onNavigateTeam={onNavigateTeam}
       onNavigateConference={onNavigateConference}
       onHome={onHome}

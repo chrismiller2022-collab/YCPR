@@ -35,6 +35,17 @@ export async function fetchResumeRatingsAvailableWeeks(season: number): Promise<
 }
 
 /** Every saved week's Resume Rating score for every team, indexed by week then team — for Weekly Progression. */
+/** Every team's saved Resume Rating snapshot for one SPECIFIC week — for the Resume Ratings Week N public page. */
+export async function fetchResumeRatingsForWeek(season: number, week: number): Promise<Record<string, { score: number | null; act_wins: number | null; losses: number | null }>> {
+  const { data, error } = await supabase.from("team_resume_ratings").select("team, score, act_wins, losses").eq("season", season).eq("week", week);
+  if (error) throw error;
+  const out: Record<string, { score: number | null; act_wins: number | null; losses: number | null }> = {};
+  for (const r of (data ?? []) as { team: string; score: number | null; act_wins: number | null; losses: number | null }[]) {
+    out[r.team] = { score: r.score, act_wins: r.act_wins, losses: r.losses };
+  }
+  return out;
+}
+
 export async function fetchResumeRatingsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
   const { data, error } = await supabase.from("team_resume_ratings").select("week, team, score").eq("season", season);
   if (error) throw error;
