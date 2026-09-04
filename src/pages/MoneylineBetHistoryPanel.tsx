@@ -22,7 +22,49 @@ import {
   type SpreadSignal,
 } from "../lib/moneylineBetHistory";
 
-const SEASONS = [2024, 2025, 2026];
+const SEASONS = [2024, 2025, 2026] as const;
+
+// Encapsulates "fetch this one season's games/ratings and build its ML
+// rows" — called once per fixed SEASONS entry below (never in a loop,
+// so it stays a fixed number of hook calls regardless of how many
+// seasons are actually selected). Lets multi-season selection combine
+// results from any subset of the 3 without conditionally calling hooks.
+function useSeasonMlRows(season: number, conversionMethod: "old" | "billR", billRDivisor: number, hfaMode: "team" | "flat", currentSeason: number) {
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const hasRatingsForSeason = useMemo(() => Object.values(ratingsByWeek).some((m) => Object.keys(m).length > 0), [ratingsByWeek]);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchGamesWithLines(season)
+      .then(setGames)
+      .catch((err) => setError(err.message ?? "Failed to load games/lines"))
+      .finally(() => setLoading(false));
+  }, [season]);
+
+  const hasBetHistoryForSeason = useMemo(() => BET_HISTORY.some((r) => r.season === season), [season]);
+
+  const { allRows, unmatchedCount } = useMemo(() => {
+    if (conversionMethod === "billR" && hasRatingsForSeason) {
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
+    }
+    if (hasBetHistoryForSeason) {
+      const { rows, unmatchedBetHistory } = buildMlRowsFromBetHistory(season, games);
+      return { allRows: rows, unmatchedCount: unmatchedBetHistory.length };
+    }
+    if (conversionMethod === "billR") {
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
+    }
+    return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode), unmatchedCount: 0 };
+  }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode]);
+
+  return { games, loading, error, allRows, unmatchedCount, hasBetHistoryForSeason, hasRatingsForSeason };
+}
 
 function fmtSpread(v: number | null) {
   if (v == null) return "–";
@@ -258,7 +300,22 @@ function AlsoBetSpreadBlock({
 }
 
 export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => void }) {
-  const [season, setSeason] = useState(2025);
+  // Multi-selectable — Chris asked for this specifically so historical
+  // seasons can be combined (e.g. 2024+2025), with the per-game table
+  // and the spread-crossover block (both single-season-only concepts)
+  // hidden once more than one is selected, per his own suggestion.
+  const [selectedSeasons, setSelectedSeasons] = useState<Set<number>>(new Set([2025]));
+  function toggleSeason(s: number) {
+    setSelectedSeasons((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) {
+        if (next.size > 1) next.delete(s); // never allow zero seasons selected
+      } else {
+        next.add(s);
+      }
+      return next;
+    });
+  }
   const [week, setWeek] = useState<"all" | number>("all");
   const [stakingMode, setStakingMode] = useState<"toWin1" | "flat1">("toWin1");
   const [evThreshold, setEvThreshold] = useState(0);
@@ -271,9 +328,41 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   // only applies to the "Current conversion" live path; Bill R Method uses
   // its own fixed 2.5 HFA regardless (see buildMlRowsFromLiveRatingsBillR).
   const [hfaMode, setHfaMode] = useState<"team" | "flat">("team");
-  const [games, setGames] = useState<GameWithLines[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  const currentSeason = new Date().getFullYear();
+
+  // Fixed, unconditional calls — one per SEASONS entry, regardless of
+  // selection (see useSeasonMlRows's doc comment for why this has to
+  // be a fixed count rather than looping over selectedSeasons).
+  const season2024 = useSeasonMlRows(2024, conversionMethod, billRDivisor, hfaMode, currentSeason);
+  const season2025 = useSeasonMlRows(2025, conversionMethod, billRDivisor, hfaMode, currentSeason);
+  const season2026 = useSeasonMlRows(2026, conversionMethod, billRDivisor, hfaMode, currentSeason);
+  const bySeasonData: Record<number, ReturnType<typeof useSeasonMlRows>> = {
+    2024: season2024,
+    2025: season2025,
+    2026: season2026,
+  };
+
+  const selectedList = useMemo(() => Array.from(selectedSeasons).sort((a, b) => a - b), [selectedSeasons]);
+  const isMultiSeason = selectedSeasons.size > 1;
+  const primarySeason = selectedList[0] ?? 2025;
+  const seasonLabel = selectedList.join(" + ");
+
+  const loading = selectedList.some((s) => bySeasonData[s].loading);
+  const error = selectedList.map((s) => bySeasonData[s].error).find((e) => e != null) ?? null;
+  // The per-game table and division/conference filters only make sense
+  // against one season's actual games — hidden entirely when multiple
+  // seasons are selected, rather than trying to show a combined table
+  // that mixes different seasons' schedules.
+  const games = isMultiSeason ? [] : bySeasonData[primarySeason].games;
+  const allRows = useMemo(
+    () => selectedList.flatMap((s) => bySeasonData[s].allRows),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedList, season2024.allRows, season2025.allRows, season2026.allRows]
+  );
+  const unmatchedCount = isMultiSeason ? 0 : bySeasonData[primarySeason].unmatchedCount;
+  const hasBetHistoryForSeason = bySeasonData[primarySeason].hasBetHistoryForSeason;
+  const hasRatingsForSeason = bySeasonData[primarySeason].hasRatingsForSeason;
 
   // Division matchup filter — multi-selectable (any combination of the
   // 3, including all 3 = unfiltered). Games with an unknown/untracked
@@ -333,49 +422,6 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     }
     return `${units > 0 ? "+" : ""}${units.toFixed(2)}u`;
   }
-
-  const currentSeason = new Date().getFullYear();
-  const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
-  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
-
-  // Whether there's any actual per-team rating source for this season at
-  // all — the live current season (weekly_team_stats) or an archived past
-  // one (season_weekly_ratings, e.g. 2025's CSV backfill). A season with
-  // neither (e.g. 2024) can't support Bill R or the from-ratings "current
-  // conversion" path, only the pre-graded BET_HISTORY predictions.
-  const hasRatingsForSeason = useMemo(
-    () => Object.values(ratingsByWeek).some((m) => Object.keys(m).length > 0),
-    [ratingsByWeek]
-  );
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    fetchGamesWithLines(season)
-      .then(setGames)
-      .catch((err) => setError(err.message ?? "Failed to load games/lines"))
-      .finally(() => setLoading(false));
-  }, [season]);
-
-  const hasBetHistoryForSeason = useMemo(() => BET_HISTORY.some((r) => r.season === season), [season]);
-
-  const { allRows, unmatchedCount } = useMemo(() => {
-    // Bill R explicitly selected and we actually have real per-team
-    // ratings for this season — use it even for a season that also has
-    // BET_HISTORY rows (2025), since Bill R needs the real ratings, not
-    // the pre-graded spread-only predictions.
-    if (conversionMethod === "billR" && hasRatingsForSeason) {
-      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
-    }
-    if (hasBetHistoryForSeason) {
-      const { rows, unmatchedBetHistory } = buildMlRowsFromBetHistory(season, games);
-      return { allRows: rows, unmatchedCount: unmatchedBetHistory.length };
-    }
-    if (conversionMethod === "billR") {
-      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
-    }
-    return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode), unmatchedCount: 0 };
-  }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode]);
 
   const weekRows = useMemo(() => {
     const base = week === "all" ? allRows : allRows.filter((r) => r.game.week === week);
@@ -513,7 +559,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
 
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
         {SEASONS.map((s) => (
-          <button key={s} className={`mode-btn ${season === s ? "mode-btn-active" : ""}`} onClick={() => setSeason(s)}>
+          <button key={s} className={`mode-btn ${selectedSeasons.has(s) ? "mode-btn-active" : ""}`} onClick={() => toggleSeason(s)}>
             {s}
           </button>
         ))}
@@ -616,7 +662,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
           className={`mode-btn ${conversionMethod === "billR" ? "mode-btn-active" : ""}`}
           onClick={() => setConversionMethod("billR")}
           disabled={!hasRatingsForSeason}
-          title={!hasRatingsForSeason ? "No per-team rating snapshots to rebuild " + season + " with." : undefined}
+          title={!hasRatingsForSeason ? "No per-team rating snapshots to rebuild " + primarySeason + " with." : undefined}
         >
           Bill R Method
         </button>
@@ -634,7 +680,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         )}
         {!hasRatingsForSeason && (
           <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>
-            No rating snapshots for {season} — Bill R needs a live season or an archived one (season_weekly_ratings).
+            No rating snapshots for {primarySeason} — Bill R needs a live season or an archived one (season_weekly_ratings).
           </span>
         )}
       </div>
@@ -734,22 +780,22 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
-      {!loading && games.length === 0 && (
+      {!loading && !isMultiSeason && games.length === 0 && (
         <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
-          No games/lines synced for {season} yet — sync it from Admin → Games & Lines first (check "Whole season").
+          No games/lines synced for {primarySeason} yet — sync it from Admin → Games & Lines first (check "Whole season").
           Moneylines only started being captured once that sync was fixed to store them, so a season synced before
           that fix needs a re-sync to backfill them.
         </p>
       )}
-      {!loading && games.length > 0 && allRows.length === 0 && (
+      {!loading && !isMultiSeason && games.length > 0 && allRows.length === 0 && (
         <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
-          {games.length} games synced for {season}, but none had a line carrying both moneylines yet — try re-syncing
+          {games.length} games synced for {primarySeason}, but none had a line carrying both moneylines yet — try re-syncing
           Games & Lines for this season.
         </p>
       )}
-      {unmatchedCount > 0 && (
+      {!isMultiSeason && unmatchedCount > 0 && (
         <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
-          {unmatchedCount} Bet History game(s) for {season} had no matching synced game/line (team-name mismatch, or
+          {unmatchedCount} Bet History game(s) for {primarySeason} had no matching synced game/line (team-name mismatch, or
           that week hasn't been synced) and were skipped.
         </p>
       )}
@@ -777,7 +823,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                 marginBottom: "0.6rem",
               }}
             >
-              {week === "all" ? `${season} — Every Bet` : `${season} Week ${week} — Every Bet`}
+              {week === "all" ? `${seasonLabel} — Every Bet` : `${seasonLabel} Week ${week} — Every Bet`}
             </div>
             <StakingModeSummary tally={overall} mode={stakingMode} currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
 
@@ -788,14 +834,14 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
               <StakingModeSummary tally={filteredOverall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
             </div>
 
-            {week !== "all" && (
+            {week !== "all" && !isMultiSeason && (
               <div style={{ marginTop: "0.9rem", paddingTop: "0.9rem", borderTop: "1px solid var(--hash)" }}>
                 <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
-                  Full {season} season — Every Bet
+                  Full {seasonLabel} season — Every Bet
                 </div>
                 <StakingModeSummary tally={seasonAgg.overall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
                 <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.6rem 0 0.4rem" }}>
-                  Full {season} season — Filtered Bet (EV &gt; {evThreshold.toFixed(1)}%)
+                  Full {seasonLabel} season — Filtered Bet (EV &gt; {evThreshold.toFixed(1)}%)
                 </div>
                 <StakingModeSummary tally={filteredSeasonAgg.overall} mode={stakingMode} compact currency={displayCurrency} dollarsPerUnit={dollarsPerUnit} />
               </div>
@@ -886,10 +932,17 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
             dollarsPerUnit={dollarsPerUnit}
           />
 
-          <AlsoBetSpreadBlock weekRows={weekRows} season={season} stakingMode={stakingMode} hasBetHistoryForSeason={hasBetHistoryForSeason} />
+          {isMultiSeason ? (
+            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+              Per-game table and spread-crossover hidden while combining multiple seasons — pick a single
+              season above to see individual games.
+            </p>
+          ) : (
+            <>
+              <AlsoBetSpreadBlock weekRows={weekRows} season={primarySeason} stakingMode={stakingMode} hasBetHistoryForSeason={hasBetHistoryForSeason} />
 
-          <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+              <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
               <thead>
                 <tr>
                   <SortHeader label="Date" sortKey="date" active={tableSortKey === "date"} dir={tableSortDir} onClick={handleTableSort} />
@@ -1040,7 +1093,9 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                 )}
               </tbody>
             </table>
-          </div>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
