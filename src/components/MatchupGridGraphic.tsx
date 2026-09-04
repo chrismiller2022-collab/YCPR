@@ -283,7 +283,7 @@ function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerforman
         <thead>
           <tr>
             <th style={{ ...rowStyle, textAlign: "left" }}></th>
-            <th style={{ ...rowStyle, textAlign: "right", color: "var(--gold, #d9a441)" }}>This Image</th>
+            <th style={{ ...rowStyle, textAlign: "right", color: "var(--gold, #d9a441)" }}>This Week</th>
             <th style={{ ...rowStyle, textAlign: "right", color: "var(--gold, #d9a441)" }}>Season Long</th>
           </tr>
         </thead>
