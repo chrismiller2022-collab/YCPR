@@ -476,15 +476,22 @@ export default async function handler(req: any, res: any) {
   // -----------------------------------------------------------------
   // action: "saveSos" — snapshots the SOS admin page's computed rows
   // (Avg Opp PR, SOS from SRS, Best/Worst Win/Loss PR — total and
-  // in-conference) into team_sos, one row per (season, team). This is
-  // what lets public pages like Conference Previews show an in-conference
-  // SOS number without re-running the SRS Monte Carlo simulation client
-  // side on every page load.
+  // in-conference) into team_sos, one row per (season, week, team).
+  // Week-scoped (added Sept 2026) — this used to overwrite one row per
+  // (season, team) with no week dimension at all, so saving a later
+  // week destroyed the earlier week's numbers permanently. This is
+  // what lets public pages like Conference Previews show an
+  // in-conference SOS number without re-running the SRS Monte Carlo
+  // simulation client side on every page load.
   // -----------------------------------------------------------------
   if (action === "saveSos") {
-    const { season, rows } = req.body ?? {};
+    const { season, week, rows } = req.body ?? {};
     if (!season || typeof season !== "number") {
       res.status(400).json({ error: "Missing or invalid 'season'" });
+      return;
+    }
+    if (!week || typeof week !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'week'" });
       return;
     }
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -495,6 +502,7 @@ export default async function handler(req: any, res: any) {
     const nowIso = new Date().toISOString();
     const saveRows = rows.map((r: any) => ({
       season,
+      week,
       team: r.team,
       updated_at: nowIso,
       avg_opp_pr_total: r.avgOppYcTotal ?? null,
@@ -518,7 +526,7 @@ export default async function handler(req: any, res: any) {
 
     const { error, count } = await supabaseAdmin
       .from("team_sos")
-      .upsert(saveRows, { onConflict: "season,team", count: "exact" });
+      .upsert(saveRows, { onConflict: "season,week,team", count: "exact" });
     if (error) {
       res.status(500).json({ error: error.message });
       return;

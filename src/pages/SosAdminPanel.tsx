@@ -85,6 +85,10 @@ function sortValue(r: SosRow, key: string): string | number | null {
 
 export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
   const season = new Date().getFullYear();
+  // Which week this save represents — team_sos is week-scoped now (was
+  // a single overwritten row per team before), so this needs to be
+  // explicit rather than assumed.
+  const [saveWeek, setSaveWeek] = useState(1);
   const { byTeam: liveByTeam, loading: liveLoading } = useWeeklyStats("latest");
 
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -159,8 +163,8 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
     setSaving(true);
     setSaveMsg(null);
     try {
-      await saveSosToSite(season, rows);
-      setSaveMsg(`Saved ${rows.length} teams to the site.`);
+      await saveSosToSite(season, saveWeek, rows);
+      setSaveMsg(`Saved ${rows.length} teams to the site for week ${saveWeek}.`);
     } catch (err: any) {
       setSaveMsg(err.message ?? "Save failed");
     } finally {
@@ -265,11 +269,15 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+            <label style={{ fontSize: "0.85rem" }}>
+              Save as week{" "}
+              <input type="number" value={saveWeek} onChange={(e) => setSaveWeek(parseInt(e.target.value, 10) || 1)} style={{ width: 60 }} min={0} />
+            </label>
             <button className="menu-btn" onClick={handleSaveToSite} disabled={saving || rows.length === 0}>
               {saving ? "Saving…" : "Save to Site"}
             </button>
             <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-              {saveMsg ?? "Saves every row above (regardless of the filters below) so public pages — like the In-Conference SOS column on Conference Previews — can read it without recomputing."}
+              {saveMsg ?? "Saves every row above (regardless of the filters below) as this week's snapshot — public pages like Conference Previews read the latest saved week without recomputing, and this week's own numbers stay put once saved, no matter what gets saved for a later week."}
             </span>
           </div>
 

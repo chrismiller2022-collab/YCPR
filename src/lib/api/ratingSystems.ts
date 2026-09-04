@@ -55,13 +55,14 @@ export function pushYcToLiveRatings(week: string, teamRatings: { team: string; r
   return authedPost("pushYc", { week, teamRatings });
 }
 
-/** Snapshots the SOS admin page's computed rows into team_sos, keyed by (season, team) — see src/pages/SosAdminPanel.tsx for the row shape. */
-export function saveSosToSite(season: number, rows: any[]) {
-  return authedPost("saveSos", { season, rows });
+/** Snapshots the SOS admin page's computed rows into team_sos, keyed by (season, week, team) — see src/pages/SosAdminPanel.tsx for the row shape. Week-scoped: saving a later week never touches an earlier week's saved snapshot. */
+export function saveSosToSite(season: number, week: number, rows: any[]) {
+  return authedPost("saveSos", { season, week, rows });
 }
 
 export interface TeamSosRow {
   season: number;
+  week: number;
   team: string;
   updated_at: string;
   avg_opp_pr_total: number | null;
@@ -84,12 +85,16 @@ export interface TeamSosRow {
 }
 
 /** Public read of the SOS admin page's last saved snapshot for a season — team -> row. */
+/** Latest saved week's row per team for this season — team_sos can now have multiple rows per team (one per saved week; see the "week" column), so this picks the highest week number available for each team rather than assuming exactly one row. */
 export async function fetchTeamSos(season: number): Promise<Record<string, TeamSosRow>> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
     supabase.from("team_sos").select("*").eq("season", season).range(from, to)
   );
   const out: Record<string, TeamSosRow> = {};
-  for (const r of rows) out[r.team] = r;
+  for (const r of rows) {
+    const existing = out[r.team];
+    if (!existing || r.week > existing.week) out[r.team] = r;
+  }
   return out;
 }
 
