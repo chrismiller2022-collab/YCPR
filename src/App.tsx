@@ -275,11 +275,11 @@ export default function App() {
               <Route path="/sos/toughest-stretch" element={<ToughestStretchPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/sos/week/:n" element={<ComingSoonRoute catLabel="Strength of Schedule" />} />
 
-              <Route path="/bracket/live" element={<BracketPage subLabel="Live" onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
+              <Route path="/bracket/live" element={<BracketPage subLabel="Live" weekNum={null} onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
               <Route path="/bracket/week/:n" element={<BracketWeekRoute onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
 
-              <Route path="/fcs/bracket/live" element={<FCSBracketPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/fcs/bracket/week/:n" element={<FCSBracketPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
+              <Route path="/fcs/bracket/live" element={<FCSBracketPage weekNum={null} onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
+              <Route path="/fcs/bracket/week/:n" element={<FCSBracketWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/power-ratings/live" element={<FCSRatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/power-ratings/progression" element={<WeeklyProgressionPage metric="power" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/power-ratings/preseason" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
@@ -347,9 +347,23 @@ function OtherFuturesWeekRoute({ onNavigateTeam, onNavigateConference, onHome }:
   );
 }
 
+function FCSBracketWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <FCSBracketPage
+      weekNum={Number.isFinite(wk) ? wk : null}
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
+  );
+}
+
 function BracketWeekRoute({ onNavigateTeam, onHome }: any) {
   const { n } = useParams();
-  return <BracketPage subLabel={weekLabelFor(n)} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  const wk = parseInt(n ?? "", 10);
+  return <BracketPage subLabel={weekLabelFor(n)} weekNum={Number.isFinite(wk) ? wk : null} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
 }
 
 function ComingSoonRoute({ catLabel }: { catLabel: string }) {

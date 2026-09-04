@@ -4,20 +4,36 @@ import TeamLogo from "../components/TeamLogo";
 import { BracketGame } from "./BracketPage";
 import { buildFCS24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair } from "../lib/bracket24";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 
-export default function FCSBracketPage({ onNavigateTeam, onNavigateConference, onHome }: any) {
-  const staticField = useMemo(() => buildFCS24Field(), []);
+export default function FCSBracketPage({ weekNum, onNavigateTeam, onNavigateConference, onHome }: any) {
+  // weekNum (null = "live") resolves to that SPECIFIC week's ratings —
+  // previously both /fcs/bracket/live and /fcs/bracket/week/:n called
+  // this identically, with no way to tell them apart, and the field
+  // SELECTION itself (not just the displayed rating) was permanently
+  // stuck at preseason ratings regardless of week — buildFCS24Field
+  // re-sorted the full FCS pool by static preseason rating every time,
+  // so the 24-team field and seed order never actually updated all
+  // season even though the displayed number did.
+  const currentSeason = new Date().getFullYear();
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const { byWeek: weekAccurateByWeek } = useWeekAccurateRatings(currentSeason, weekNum != null ? [weekNum] : [], currentSeason);
+  const ratingsByTeam = weekNum != null ? weekAccurateByWeek[weekNum] ?? {} : liveByTeam;
 
-  // Resolve every field entry's rating to its live weekly value once, so
-  // seeding math, BracketGame spreads, and the field table below all agree.
+  const staticField = useMemo(() => buildFCS24Field(ratingsByTeam), [ratingsByTeam]);
+
+  // Resolve every field entry's rating to the SAME source used for
+  // seeding above (ratingsByTeam) — using liveByTeam here instead would
+  // show today's rating next to a seed position computed from a
+  // different week's ratings, which could visibly disagree with each
+  // other for a past week.
   const field = useMemo(
     () =>
       staticField.map((f) => ({
         ...f,
-        team: { ...f.team, rating: liveByTeam[f.team.team]?.rating ?? f.team.rating },
+        team: { ...f.team, rating: ratingsByTeam[f.team.team]?.rating ?? f.team.rating },
       })),
-    [staticField, liveByTeam]
+    [staticField, ratingsByTeam]
   );
 
   if (field.length < 24) {

@@ -111,9 +111,10 @@ export function reseedAndPair(entries) {
 // FCS teams by Power Rating, seeded 1-24 in order. Once FCS resume ratings
 // and conference futures exist, this can grow auto-bid/at-large logic to
 // match buildPlayoff24Field above.
-export function buildFCS24Field() {
+export function buildFCS24Field(ratingsByTeam?: Record<string, { rating: number | null }>) {
   const fcsTeams = [...TEAMS]
     .filter((t) => t.div === "FCS")
+    .map((t) => ({ ...t, rating: ratingsByTeam?.[t.team]?.rating ?? t.rating }))
     .sort((a, b) => a.rating - b.rating);
 
   return fcsTeams.slice(0, 24).map((team, i) => ({

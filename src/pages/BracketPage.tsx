@@ -86,7 +86,7 @@ function NattyRow({ team, nattyPct, onNavigateTeam }: any) {
 }
 
 
-export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
+export default function BracketPage({ subLabel, weekNum, onNavigateTeam, onHome }: any) {
   const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const season = new Date().getFullYear();
@@ -101,6 +101,11 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
   // The bracket WALK itself (who beats whom each round) is unchanged —
   // still "higher-rated team wins," now just applied to a field that
   // actually reflects the model instead of manual entry.
+  //
+  // weekNum (null = "live") resolves to a SPECIFIC saved run when
+  // given one, matching Other Futures' exact pattern — this was
+  // missing entirely at first: every week's URL rendered the same
+  // "most recent run" regardless of which week was actually requested.
   const [mcResults, setMcResults] = useState<TeamSimResult[] | null>(null);
   const [mcLoading, setMcLoading] = useState(true);
 
@@ -110,13 +115,13 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
     fetchMonteCarloRuns(season)
       .then(async (list) => {
         if (cancelled) return;
-        const latest = list[0];
-        if (!latest) {
+        const target = weekNum == null ? list[0] : list.find((r) => r.week === weekNum);
+        if (!target) {
           setMcResults(null);
           setMcLoading(false);
           return;
         }
-        const run = await fetchMonteCarloRun(latest.id);
+        const run = await fetchMonteCarloRun(target.id);
         if (cancelled) return;
         setMcResults(run?.results ?? null);
         setMcLoading(false);
@@ -130,7 +135,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
     return () => {
       cancelled = true;
     };
-  }, [season]);
+  }, [season, weekNum]);
 
   const nattyPctByTeam = useMemo(() => {
     const map: Record<string, number> = {};
@@ -181,7 +186,10 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
           <h1 className="title matchup-title">12-TEAM BRACKET</h1>
         </div>
         <div className="empty matchups-empty">
-          No Monte Carlo run has been saved for {season} yet — save one from Admin → Monte Carlo first.
+          {weekNum == null
+            ? `No Monte Carlo run has been saved for ${season} yet`
+            : `No Monte Carlo run has been saved for ${season} week ${weekNum} — a run saved for a different week won't show here`}{" "}
+          — save one from Admin → Monte Carlo first.
         </div>
       </div>
     );
