@@ -1,12 +1,13 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import ExportPngButton from "../components/ExportPngButton";
 import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
-import { BRACKET_SEED_NAMES, NATTY_BY_TEAM } from "../data/nattyOdds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { fmtOdds } from "../lib/format";
 import { hfaFor, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
+import type { TeamSimResult } from "../lib/montecarlo/engine";
 
 export function BracketGame({ seedA, teamA, seedB, teamB, neutral, liveByTeam, onNavigateTeam }: any) {
   const spreadA = neutral
@@ -60,8 +61,8 @@ export function BracketGame({ seedA, teamA, seedB, teamB, neutral, liveByTeam, o
 }
 
 
-function NattyRow({ team, onNavigateTeam }: any) {
-  const pct = NATTY_BY_TEAM[team.team] ?? 0;
+function NattyRow({ team, nattyPct, onNavigateTeam }: any) {
+  const pct = nattyPct ?? 0;
   const f = CONF_FUTURES_BY_TEAM[team.team];
   return (
     <tr>
@@ -87,11 +88,63 @@ function NattyRow({ team, onNavigateTeam }: any) {
 
 export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
   const exportRef = useRef<HTMLDivElement>(null);
-  const staticSeeds = useMemo(
-    () => BRACKET_SEED_NAMES.map((name) => TEAMS_BY_NAME[name]).filter(Boolean),
-    []
-  );
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const season = new Date().getFullYear();
+
+  // The 12-team field and seed order used to be a hand-typed array
+  // (BRACKET_SEED_NAMES) that Chris updated manually — completely
+  // disconnected from his own simulation model. Monte Carlo's engine
+  // already computes playoffPct/avgSeed/seedPct for every team
+  // internally; this derives the field the same way the committee
+  // conceptually would from those odds: the 12 teams most likely to
+  // make it, ordered by their average simulated seed (lower = better).
+  // The bracket WALK itself (who beats whom each round) is unchanged —
+  // still "higher-rated team wins," now just applied to a field that
+  // actually reflects the model instead of manual entry.
+  const [mcResults, setMcResults] = useState<TeamSimResult[] | null>(null);
+  const [mcLoading, setMcLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMcLoading(true);
+    fetchMonteCarloRuns(season)
+      .then(async (list) => {
+        if (cancelled) return;
+        const latest = list[0];
+        if (!latest) {
+          setMcResults(null);
+          setMcLoading(false);
+          return;
+        }
+        const run = await fetchMonteCarloRun(latest.id);
+        if (cancelled) return;
+        setMcResults(run?.results ?? null);
+        setMcLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMcResults(null);
+          setMcLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const nattyPctByTeam = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of mcResults ?? []) map[r.team] = r.nattyPct;
+    return map;
+  }, [mcResults]);
+
+  const staticSeeds = useMemo(() => {
+    if (!mcResults) return [];
+    const withPlayoffOdds = mcResults.filter((r) => r.playoffPct > 0 && r.avgSeed != null);
+    const top12 = [...withPlayoffOdds].sort((a, b) => b.playoffPct - a.playoffPct).slice(0, 12);
+    const seeded = [...top12].sort((a, b) => (a.avgSeed ?? 99) - (b.avgSeed ?? 99));
+    return seeded.map((r) => TEAMS_BY_NAME[r.team]).filter(Boolean);
+  }, [mcResults]);
 
   // Resolve every seed's rating to its live weekly value (falling back to
   // the static preseason rating) exactly once, here — everything below
@@ -101,6 +154,38 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
     () => staticSeeds.map((t) => ({ ...t, rating: liveByTeam[t.team]?.rating ?? t.rating })),
     [staticSeeds, liveByTeam]
   );
+
+  if (mcLoading) {
+    return (
+      <div className="matchups-page">
+        <div className="team-hero">
+          <button className="back-link" onClick={onHome}>
+            ‹ All rankings
+          </button>
+          <div className="eyebrow">FBS Playoff Bracket</div>
+          <h1 className="title matchup-title">12-TEAM BRACKET</h1>
+        </div>
+        <div className="empty matchups-empty">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!mcResults) {
+    return (
+      <div className="matchups-page">
+        <div className="team-hero">
+          <button className="back-link" onClick={onHome}>
+            ‹ All rankings
+          </button>
+          <div className="eyebrow">FBS Playoff Bracket</div>
+          <h1 className="title matchup-title">12-TEAM BRACKET</h1>
+        </div>
+        <div className="empty matchups-empty">
+          No Monte Carlo run has been saved for {season} yet — save one from Admin → Monte Carlo first.
+        </div>
+      </div>
+    );
+  }
 
   if (seeds.length < 12) {
     return (
@@ -181,7 +266,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
       : sf2B;
 
   const nattyRows = [...seeds].sort(
-    (a, b) => (NATTY_BY_TEAM[b.team] ?? 0) - (NATTY_BY_TEAM[a.team] ?? 0)
+    (a, b) => (nattyPctByTeam[b.team] ?? 0) - (nattyPctByTeam[a.team] ?? 0)
   );
 
   return (
@@ -296,7 +381,7 @@ export default function BracketPage({ subLabel, onNavigateTeam, onHome }: any) {
             </thead>
             <tbody>
               {nattyRows.map((t) => (
-                <NattyRow key={t.team} team={t} onNavigateTeam={onNavigateTeam} />
+                <NattyRow key={t.team} team={t} nattyPct={nattyPctByTeam[t.team]} onNavigateTeam={onNavigateTeam} />
               ))}
             </tbody>
           </table>
