@@ -468,10 +468,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     () => [...reviewFbsFbsRows, ...reviewCrossRows].filter((r) => r.completed),
     [reviewFbsFbsRows, reviewCrossRows]
   );
-  const reviewLabel =
-    previousWeekNum != null
-      ? `${weekLabel(`week${previousWeekNum}`).toUpperCase()} REVIEW`
-      : `${weekLabel(currentWeek).toUpperCase()} RESULTS SO FAR`;
+  // Used as the graphic's HEADER now (not eyebrow) — natural casing,
+  // since the header's own styling already applies text-transform:
+  // uppercase visually.
+  const reviewLabel = previousWeekNum != null ? `${weekLabel(`week${previousWeekNum}`)} Review` : `${weekLabel(currentWeek)} Results So Far`;
 
   // "This image" performance — the exact rows shown in the Review
   // graphic (already FBS-vs-FBS + Cross only, FCS-vs-FCS never
@@ -1241,8 +1241,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                   the above — still their own separate graphics. */}
             <div ref={matchupsReviewRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic
-                eyebrow={reviewLabel}
-                header="FBS + FBS vs FCS — Review"
+                eyebrow="Review"
+                header={reviewLabel}
                 rows={reviewRows}
                 performanceTable={{
                   thisImage: reviewImagePerformance,
