@@ -262,7 +262,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   const [week, setWeek] = useState<"all" | number>("all");
   const [stakingMode, setStakingMode] = useState<"toWin1" | "flat1">("toWin1");
   const [evThreshold, setEvThreshold] = useState(0);
-  const [showEvLadder, setShowEvLadder] = useState(false);
+  const [showEvLadder, setShowEvLadder] = useState(true);
   // Bill R Method only applies to live games (no BET_HISTORY entry for the
   // season) — see buildMlRowsFromLiveRatingsBillR's doc comment for why.
   const [conversionMethod, setConversionMethod] = useState<"old" | "billR">("billR");
@@ -480,14 +480,14 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
     [weekRows, evThreshold]
   );
   const filteredSeasonAgg = useMemo(() => aggregateMlRowsFiltered(allRows, evThreshold), [allRows, evThreshold]);
-  // 1% to 15% in half-point steps (29 levels) — a quick side-by-side
+  // 1% to 10% in half-point steps (19 levels) — a quick side-by-side
   // comparison across thresholds instead of dragging the slider above
   // one level at a time. Uses allRows (whichever season/model/staking
   // selections are currently active), same as every other stat on this
   // page — not a separate, second computation.
   const evLadder = useMemo(() => {
     const levels: number[] = [];
-    for (let t = 1; t <= 15; t += 0.5) levels.push(t);
+    for (let t = 1; t <= 10; t += 0.5) levels.push(t);
     return levels.map((threshold) => ({ threshold, agg: aggregateMlRowsFiltered(allRows, threshold).overall }));
   }, [allRows]);
 
@@ -649,7 +649,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem", flexWrap: "wrap" }}>
         <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Filtered Bet — only bet if EV above:</span>
         <input
           type="range"
@@ -660,7 +660,22 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
           onChange={(e) => setEvThreshold(parseFloat(e.target.value))}
           style={{ width: 220 }}
         />
-        <span style={{ fontSize: "0.85rem", fontWeight: 700, minWidth: 42 }}>{evThreshold.toFixed(1)}%</span>
+        {/* Dragging a 0-30 range slider to an exact value (e.g. 9.0%
+            precisely) is inherently imprecise — this number input lets
+            typing the exact threshold directly instead. */}
+        <input
+          type="number"
+          min={0}
+          max={30}
+          step={0.5}
+          value={evThreshold}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (!Number.isNaN(v)) setEvThreshold(Math.min(30, Math.max(0, v)));
+          }}
+          style={{ width: 60 }}
+        />
+        <span style={{ fontSize: "0.85rem", fontWeight: 700, minWidth: 20 }}>%</span>
         <button
           className="mode-btn"
           onClick={() => handleTableSort("bestEv")}
@@ -796,9 +811,11 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
                     <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Units</th>
-                    <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                      Filtered (rec / units)
+                    <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", borderLeft: "1px solid var(--hash)" }}>
+                      Filtered Record
                     </th>
+                    <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Filtered Win %</th>
+                    <th style={{ textAlign: "right", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Filtered Units</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -807,6 +824,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                     const units = stakingMode === "toWin1" ? t.toWin1Units : t.flat1Units;
                     const ft = filteredByWeek.get(w);
                     const filteredUnits = ft ? (stakingMode === "toWin1" ? ft.toWin1Units : ft.flat1Units) : 0;
+                    const hasFiltered = !!ft && ft.w + ft.l > 0;
                     return (
                       <tr key={w}>
                         <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>Week {w}</td>
@@ -831,11 +849,25 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                           style={{
                             padding: "0.35rem 0.6rem",
                             borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            borderLeft: "1px solid var(--hash)",
                             textAlign: "right",
-                            color: filteredUnits >= 0 ? "var(--gold)" : "#e05a5a",
                           }}
                         >
-                          {ft && ft.w + ft.l > 0 ? `${fmtUnits(filteredUnits)} (${ft.w}-${ft.l})` : "–"}
+                          {hasFiltered ? `${ft!.w}-${ft!.l}` : "–"}
+                        </td>
+                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                          {hasFiltered ? `${mlWinPct(ft!).toFixed(1)}%` : "–"}
+                        </td>
+                        <td
+                          style={{
+                            padding: "0.35rem 0.6rem",
+                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            textAlign: "right",
+                            color: hasFiltered ? (filteredUnits >= 0 ? "var(--gold)" : "#e05a5a") : undefined,
+                            fontWeight: hasFiltered ? 700 : undefined,
+                          }}
+                        >
+                          {hasFiltered ? fmtUnits(filteredUnits) : "–"}
                         </td>
                       </tr>
                     );
