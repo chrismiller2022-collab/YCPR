@@ -136,6 +136,43 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Snapshots the Resume Rating admin page's computed scores into
+    // team_resume_ratings, one row per (season, week, team) — this is
+    // the save side of the same gap SOS just got fixed for: the admin
+    // page previously only saved the WEIGHTS (the formula config),
+    // never the actual computed output for a given week. Week-scoped
+    // from the start.
+    if (action === "saveResumeRatings") {
+      const { season, week, rows } = req.body ?? {};
+      if (typeof season !== "number" || typeof week !== "number") {
+        res.status(400).json({ error: "season and week are required" });
+        return;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "Missing or empty 'rows'" });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const saveRows = rows.map((r: any) => ({
+        season,
+        week,
+        team: r.team,
+        updated_at: nowIso,
+        score: r.score ?? null,
+        act_wins: r.actWins ?? null,
+        losses: r.losses ?? null,
+      }));
+
+      const { error, count } = await supabaseAdmin
+        .from("team_resume_ratings")
+        .upsert(saveRows, { onConflict: "season,week,team", count: "exact" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true, saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "saveGameTotalsSettings") {
       const { season, settings } = req.body;
       if (typeof season !== "number" || typeof settings !== "object" || settings == null) {

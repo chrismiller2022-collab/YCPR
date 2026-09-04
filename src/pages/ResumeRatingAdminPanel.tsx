@@ -5,7 +5,7 @@ import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
 import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchResumeWeights } from "../lib/api/resumeWeights";
+import { fetchResumeWeights, saveResumeRatingsToSite } from "../lib/api/resumeWeights";
 import { fetchRatingPulls } from "../lib/api/ratingSystems";
 import {
   computeRawResumeMetrics,
@@ -155,6 +155,32 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
     }
   }
 
+  // Which week this save represents — team_resume_ratings is week-
+  // scoped from the start (mirrors the SOS fix), so this needs to be
+  // explicit.
+  const [saveWeek, setSaveWeek] = useState(1);
+  const [savingToSite, setSavingToSite] = useState(false);
+  const [saveToSiteMsg, setSaveToSiteMsg] = useState<string | null>(null);
+
+  async function handleSaveToSite() {
+    setSavingToSite(true);
+    setSaveToSiteMsg(null);
+    try {
+      const saveRows = rows.map((r) => ({
+        team: r.team.team,
+        score: r.score,
+        actWins: r.raw.actWins,
+        losses: r.raw.losses,
+      }));
+      await saveResumeRatingsToSite(season, saveWeek, saveRows);
+      setSaveToSiteMsg(`Saved ${saveRows.length} teams for week ${saveWeek}.`);
+    } catch (err: any) {
+      setSaveToSiteMsg(`Error: ${err.message ?? "Save failed"}`);
+    } finally {
+      setSavingToSite(false);
+    }
+  }
+
   function fmtRaw(v: number | null) {
     return v == null ? "–" : v.toFixed(2);
   }
@@ -244,6 +270,19 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
           Reset to 1x Each
         </button>
         {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{saveMessage}</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap" }}>
+        <label style={{ fontSize: "0.85rem" }}>
+          Save as week{" "}
+          <input type="number" value={saveWeek} onChange={(e) => setSaveWeek(parseInt(e.target.value, 10) || 1)} style={{ width: 60 }} min={0} />
+        </label>
+        <button className="menu-btn" onClick={handleSaveToSite} disabled={savingToSite || rows.length === 0}>
+          {savingToSite ? "Saving…" : "Save to Site"}
+        </button>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+          {saveToSiteMsg ?? "Saves the computed scores above (with the weights currently set) as this week's snapshot — this week's numbers stay put once saved, regardless of what gets saved for a later week."}
+        </span>
       </div>
 
       {loading ? (
