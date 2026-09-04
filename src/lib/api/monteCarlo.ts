@@ -1,6 +1,7 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
-import type { SimGame, TeamSimResult, ResumeComparisonEntry } from "../montecarlo/engine";
+import { useEffect, useState } from "react";
+import { meanFromDistribution, type SimGame, type TeamSimResult, type ResumeComparisonEntry } from "../montecarlo/engine";
 
 export interface SeasonGame extends SimGame {
   week: number;
@@ -46,6 +47,78 @@ export async function fetchMonteCarloRun(runId: number): Promise<MonteCarloRun |
   const { data, error } = await supabase.from("monte_carlo_runs").select("*").eq("id", runId).maybeSingle();
   if (error) throw error;
   return data ?? null;
+}
+
+export interface WinTotalsEntry {
+  meanWins: number;
+  meanConfWins: number;
+  currentWins: number;
+  currentLosses: number;
+}
+
+/**
+ * "Live" win totals, shared across every public page that shows one
+ * (Win Totals, Home Page, Team Page, Conference Previews) — all four
+ * used to independently compute a static formula from each team's
+ * hardcoded preseason rating, which ran already-decided games back
+ * through a win-probability calc instead of counting them as banked
+ * wins. This is "the most recently saved Monte Carlo run" (same
+ * definition Other Futures already uses), one fetch shared by every
+ * consumer instead of four separate ones computing something
+ * different from each other.
+ */
+export function useLatestMonteCarloWinTotals(season: number) {
+  const [byTeam, setByTeam] = useState<Record<string, WinTotalsEntry>>({});
+  const [loading, setLoading] = useState(true);
+  const [noRunYet, setNoRunYet] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchMonteCarloRuns(season)
+      .then(async (list) => {
+        if (cancelled) return;
+        const latest = list[0];
+        if (!latest) {
+          setNoRunYet(true);
+          setByTeam({});
+          setLoading(false);
+          return;
+        }
+        const run = await fetchMonteCarloRun(latest.id);
+        if (cancelled) return;
+        if (!run) {
+          setNoRunYet(true);
+          setByTeam({});
+          setLoading(false);
+          return;
+        }
+        const map: Record<string, WinTotalsEntry> = {};
+        for (const r of run.results) {
+          map[r.team] = {
+            meanWins: r.meanWins,
+            meanConfWins: meanFromDistribution(r.confWinDistribution, run.num_trials),
+            currentWins: r.currentWins,
+            currentLosses: r.currentLosses,
+          };
+        }
+        setByTeam(map);
+        setNoRunYet(false);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNoRunYet(true);
+          setByTeam({});
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  return { byTeam, loading, noRunYet };
 }
 
 /**

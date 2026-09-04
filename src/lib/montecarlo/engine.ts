@@ -101,6 +101,14 @@ export function distributionAtLeastPct(distribution: number[] | undefined, numTr
   return (count / numTrials) * 100;
 }
 
+/** Mean win count from a bucketed distribution (index = win count, value = trial count) — used for conference-only mean wins, which (unlike overall meanWins) isn't stored as its own field on TeamSimResult. */
+export function meanFromDistribution(distribution: number[] | undefined, numTrials: number): number {
+  if (!distribution || numTrials <= 0) return 0;
+  let sum = 0;
+  for (let w = 0; w < distribution.length; w++) sum += w * (distribution[w] ?? 0);
+  return sum / numTrials;
+}
+
 /** % of trials with zero regular-season losses (won every game on the schedule). */
 export function undefeatedPct(result: TeamSimResult, numTrials: number): number {
   if (numTrials <= 0) return 0;

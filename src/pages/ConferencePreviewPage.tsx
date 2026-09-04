@@ -4,11 +4,10 @@ import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { TEAMS } from "../data/teams";
 import { fmtNum, fmtOdds, fmtPct } from "../lib/format";
-import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchTeamSos, type TeamSosRow } from "../lib/api/ratingSystems";
 import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
-import type { TeamSimResult } from "../lib/montecarlo/engine";
+import { meanFromDistribution, type TeamSimResult } from "../lib/montecarlo/engine";
 import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
 
 function DiffCell({ value }: any) {
@@ -24,11 +23,11 @@ function DiffCell({ value }: any) {
   );
 }
 
-function ConferencePreviewRow({ team, live, sos, maxPct, showVegasWinLines, onNavigateTeam }: any) {
+function ConferencePreviewRow({ team, live, sim, sos, maxPct, showVegasWinLines, onNavigateTeam }: any) {
   const f = CONF_FUTURES_BY_TEAM[team.team];
   const rating = live?.rating ?? team.rating;
-  const winTotal = live?.total_wins ?? TEAM_WIN_TOTALS[team.team]?.total ?? 0;
-  const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[team.team]?.confTotal ?? 0;
+  const winTotal = sim?.meanWins ?? live?.total_wins ?? 0;
+  const confWinTotal = sim?.meanConfWins ?? live?.conf_proj_wins ?? 0;
   const seasonWinLine = live?.season_win_line ?? null;
   const confLine = live?.conf_line ?? f?.confLine ?? null;
   const fairPrice = live?.fair_price ?? f?.fairPrice ?? null;
@@ -106,6 +105,20 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
       })
       .catch(() => setMcResults(null));
   }, [season]);
+
+  // Same run this page already fetches for playoff/conf-title odds below —
+  // reused here for winTotal/confWinTotal too, instead of adding a second,
+  // redundant fetch. meanWins comes straight off the result; conference
+  // wins only exist as a distribution, so it needs the same averaging
+  // meanWins itself is built from.
+  const mcByTeam = useMemo(() => {
+    if (!mcResults) return {};
+    const map: Record<string, { meanWins: number; meanConfWins: number }> = {};
+    for (const r of mcResults) {
+      map[r.team] = { meanWins: r.meanWins, meanConfWins: meanFromDistribution(r.confWinDistribution, mcNumTrials) };
+    }
+    return map;
+  }, [mcResults, mcNumTrials]);
 
   const rows = useMemo(() => {
     const list = TEAMS.filter((t) => t.conf === conference);
@@ -186,6 +199,7 @@ export default function ConferencePreviewPage({ conference, onNavigateTeam, onHo
                     key={t.team}
                     team={t}
                     live={liveByTeam[t.team]}
+                    sim={mcByTeam[t.team]}
                     sos={sosByTeam[t.team]?.sos_srs_conference ?? null}
                     maxPct={maxPct}
                     showVegasWinLines={showVegasWinLines}

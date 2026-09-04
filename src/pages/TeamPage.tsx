@@ -7,9 +7,9 @@ import { TEAMS_BY_NAME, teamsForConference } from "../data/teams";
 import { fmtPct } from "../lib/format";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { computeRadarMetrics } from "../lib/percentiles";
-import { TEAM_WIN_TOTALS } from "../lib/ranks";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useLatestMonteCarloWinTotals } from "../lib/api/monteCarlo";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
@@ -459,8 +459,12 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
-  const radarMetrics = computeRadarMetrics(team, liveByTeam);
   const season = new Date().getFullYear();
+  // Same "most recently saved Monte Carlo run" data Win Totals itself
+  // uses now — was a static formula off each team's hardcoded preseason
+  // rating, treating already-decided games as uncertain coin flips.
+  const { byTeam: winTotalsByTeam } = useLatestMonteCarloWinTotals(season);
+  const radarMetrics = computeRadarMetrics(team, liveByTeam);
   const { rows: totalsRows } = useGameTotalsEngine(season);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -594,7 +598,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
               const live = liveByTeam[p.team];
               const f = CONF_FUTURES_BY_TEAM[p.team];
               const confWinPct = live?.conf_win_pct ?? f?.confWinPct ?? 0;
-              const confWinTotal = live?.conf_proj_wins ?? TEAM_WIN_TOTALS[p.team]?.confTotal ?? 0;
+              const confWinTotal = winTotalsByTeam[p.team]?.meanConfWins ?? live?.conf_proj_wins ?? 0;
               const liveWins = live?.live_wins ?? 0;
               const liveLosses = live?.live_losses ?? 0;
               const barWidth = maxConfPct > 0 ? Math.max((confWinPct / maxConfPct) * 100, confWinPct > 0 ? 2 : 0) : 0;

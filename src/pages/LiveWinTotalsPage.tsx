@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import ExportPngButton from "../components/ExportPngButton";
 import SortHeader from "../components/SortHeader";
@@ -6,7 +6,7 @@ import TeamLogo from "../components/TeamLogo";
 import { CONFERENCES, TEAMS } from "../data/teams";
 import { buildRankMap } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { fetchMonteCarloRuns, fetchMonteCarloRun, type MonteCarloRunSummary } from "../lib/api/monteCarlo";
+import { useLatestMonteCarloWinTotals } from "../lib/api/monteCarlo";
 
 function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
   const wt = { total: team.winTotal, vegasTotal: team.vegasTotal };
@@ -73,48 +73,10 @@ export default function LiveWinTotalsPage({ defaultDivision, onNavigateTeam, onN
   // win-probability formula — a team already 3-0 was still treated as
   // 3 uncertain coin flips instead of 3 banked wins). Monte Carlo's own
   // engine already tracks decided vs. simulated games correctly, which
-  // is exactly what was missing.
-  const [runsLoading, setRunsLoading] = useState(true);
-  const [noRunYet, setNoRunYet] = useState(false);
-  const [winTotalsByTeam, setWinTotalsByTeam] = useState<Record<string, { meanWins: number; currentWins: number; currentLosses: number }>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    setRunsLoading(true);
-    fetchMonteCarloRuns(season)
-      .then(async (list: MonteCarloRunSummary[]) => {
-        if (cancelled) return;
-        const latest = list[0];
-        if (!latest) {
-          setNoRunYet(true);
-          setRunsLoading(false);
-          return;
-        }
-        const run = await fetchMonteCarloRun(latest.id);
-        if (cancelled) return;
-        if (!run) {
-          setNoRunYet(true);
-          setRunsLoading(false);
-          return;
-        }
-        const map: Record<string, { meanWins: number; currentWins: number; currentLosses: number }> = {};
-        for (const r of run.results) {
-          map[r.team] = { meanWins: r.meanWins, currentWins: r.currentWins, currentLosses: r.currentLosses };
-        }
-        setWinTotalsByTeam(map);
-        setNoRunYet(false);
-        setRunsLoading(false);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setNoRunYet(true);
-          setRunsLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [season]);
+  // is exactly what was missing. Shared with HomePage/TeamPage/
+  // ConferencePreviewPage via useLatestMonteCarloWinTotals, not
+  // recomputed independently here.
+  const { byTeam: winTotalsByTeam, loading: runsLoading, noRunYet } = useLatestMonteCarloWinTotals(season);
 
   // When viewing a single division, "rank" should mean rank within that
   // division (1-N), not the site-wide national rank FBS+FCS combined —

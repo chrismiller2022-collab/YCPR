@@ -8,8 +8,9 @@ import { RESUME_BY_TEAM } from "../data/resume";
 import { SOS_BY_TEAM } from "../data/sor";
 import { CONFERENCES, TEAMS } from "../data/teams";
 import { spreadColor } from "../lib/odds";
-import { TEAM_WIN_TOTALS, buildRankMap } from "../lib/ranks";
+import { buildRankMap } from "../lib/ranks";
 import { useWeeklyChange, useWeeklyStats, weekLabel } from "../lib/api/weeklyStats";
+import { useLatestMonteCarloWinTotals } from "../lib/api/monteCarlo";
 
 export default function HomePage({ onNavigateTeam, onNavigateConference }: any) {
   const [heroQuery, setHeroQuery] = useState("");
@@ -22,6 +23,11 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: changeByTeam } = useWeeklyChange("rating");
   const { byTeam: liveByTeam, resolvedWeek } = useWeeklyStats("latest");
+  // Same "most recently saved Monte Carlo run" data Win Totals itself
+  // uses now — was a static formula off each team's hardcoded preseason
+  // rating, so an already-decided game kept getting treated as an
+  // uncertain coin flip instead of a banked win.
+  const { byTeam: winTotalsByTeam } = useLatestMonteCarloWinTotals(new Date().getFullYear());
 
   // Resolve every team's live-preferred values ONCE, from the full
   // unfiltered roster. Everything downstream (rank maps, the filtered/
@@ -32,11 +38,12 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
   const resolvedAll = useMemo(() => {
     const withRating = TEAMS.map((t) => {
       const live = liveByTeam[t.team];
+      const sim = winTotalsByTeam[t.team];
       return {
         ...t,
         rating: live?.rating ?? t.rating,
-        winTotal: live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
-        confWinTotal: live?.conf_proj_wins ?? TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
+        winTotal: sim?.meanWins ?? live?.total_wins ?? 0,
+        confWinTotal: sim?.meanConfWins ?? live?.conf_proj_wins ?? 0,
         sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
         resumeRating: live?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
         resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
@@ -52,7 +59,7 @@ export default function HomePage({ onNavigateTeam, onNavigateConference }: any) 
     // trust a separately-pasted value that can drift or come in wrong.
     const ratingRankByTeam = buildRankMap(withRating.map((t) => [t.team, t.rating]), false);
     return withRating.map((t) => ({ ...t, rank: ratingRankByTeam[t.team] }));
-  }, [liveByTeam]);
+  }, [liveByTeam, winTotalsByTeam]);
 
   // Rank badges for Win Total / Conf Win Total / SOR, computed from the
   // FULL resolved roster (every division, every conference) — not from
