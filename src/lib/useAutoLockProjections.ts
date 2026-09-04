@@ -35,6 +35,16 @@ export function useAutoLockProjections(
       if (attempted.current.has(game.id)) continue;
       const kickoff = game.start_date ? new Date(game.start_date).getTime() : null;
       if (kickoff == null || kickoff > now) continue; // hasn't kicked off yet — nothing to lock
+      // Never write a lock with null values — that's strictly worse than
+      // no lock at all: it provides zero protection (computeRow falls
+      // through to live computation when a lock field is null) AND
+      // blocks any future re-lock attempt (the write is intentionally
+      // ON CONFLICT DO NOTHING, so a broken row sits there permanently
+      // until someone notices and manually deletes it). If ratings
+      // genuinely aren't available yet for this game, skip it this
+      // pass — a later pass (this effect re-runs on every render) will
+      // catch it once they are.
+      if (computed.projAwaySpread == null || computed.projWinPct == null) continue;
       attempted.current.add(game.id);
       candidates.push({
         game_id: game.id,

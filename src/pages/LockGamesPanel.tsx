@@ -78,20 +78,26 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
     setLocking(true);
     setError(null);
     try {
-      const candidates: LockCandidate[] = candidateGames.map((g) => {
-        const computed = computeRow(g, liveByTeam);
-        const myTotal = projTotalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) ?? null;
-        return {
-          game_id: g.id,
-          season: g.season,
-          week: g.week,
-          home_team: g.home_team,
-          away_team: g.away_team,
-          my_away_spread: computed.projAwaySpread,
-          my_total: myTotal,
-          my_away_win_pct: computed.projWinPct,
-        };
-      });
+      const candidates: LockCandidate[] = candidateGames
+        .map((g) => {
+          const computed = computeRow(g, liveByTeam);
+          const myTotal = projTotalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) ?? null;
+          return {
+            game_id: g.id,
+            season: g.season,
+            week: g.week,
+            home_team: g.home_team,
+            away_team: g.away_team,
+            my_away_spread: computed.projAwaySpread,
+            my_total: myTotal,
+            my_away_win_pct: computed.projWinPct,
+          };
+        })
+        // Never write a lock with null spread/win% — see
+        // useAutoLockProjections.ts for why that's worse than no lock
+        // at all. Total can be null on its own (that pipeline isn't
+        // fully wired to this yet), but spread/win% must be real.
+        .filter((c) => c.my_away_spread != null && c.my_away_win_pct != null);
       await lockGameProjections(candidates);
       setResult({ locked: candidates });
       await handleLoad(); // refresh so the list reflects what's now locked
