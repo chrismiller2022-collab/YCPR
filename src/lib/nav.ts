@@ -59,7 +59,7 @@ export const NAV: any[] = [
         key: "wintotals",
         label: "Win Totals",
         expandable: true,
-        subs: [...WEEKS, { key: "live", label: "Live" }],
+        subs: [...WEEKS, { key: "live", label: "Live" }, { key: "weeklyprogression", label: "Weekly Progression" }],
       },
       {
         key: "confwinodds",
@@ -138,7 +138,7 @@ export const NAV: any[] = [
         key: "fcswintotals",
         label: "FCS Win Totals",
         expandable: true,
-        subs: [...WEEKS, { key: "live", label: "Live" }],
+        subs: [...WEEKS, { key: "live", label: "Live" }, { key: "weeklyprogression", label: "Weekly Progression" }],
       },
       {
         key: "fcssos",

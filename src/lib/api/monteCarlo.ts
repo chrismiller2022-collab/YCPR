@@ -182,3 +182,19 @@ export async function saveMonteCarloRun(body: {
   if (!res.ok) throw new Error(data.error ?? "Save failed");
   return data;
 }
+
+/** Every saved week's mean simulated win total for every team, indexed by week then team — for Win Totals Weekly Progression, which doesn't exist as its own concept anywhere else on the site yet (Win Totals itself only ever showed "live," the most recent run). One run per week is fetched in full, since meanWins only exists inside a run's own results, not as a lighter summary field. */
+export async function fetchWinTotalsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
+  const runs = await fetchMonteCarloRuns(season);
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  const weeks: number[] = [];
+  for (const summary of runs) {
+    if (byWeek[summary.week]) continue; // fetchMonteCarloRuns is newest-first; keep only the first (most recent) run per week
+    const run = await fetchMonteCarloRun(summary.id);
+    if (!run) continue;
+    weeks.push(summary.week);
+    byWeek[summary.week] = {};
+    for (const r of run.results) byWeek[summary.week][r.team] = r.meanWins;
+  }
+  return { weeks: weeks.sort((a, b) => a - b), byWeek };
+}

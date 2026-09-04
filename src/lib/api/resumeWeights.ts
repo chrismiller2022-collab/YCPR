@@ -33,3 +33,17 @@ export async function fetchResumeRatingsAvailableWeeks(season: number): Promise<
   }
   return Array.from(set).sort((a, b) => a - b);
 }
+
+/** Every saved week's Resume Rating score for every team, indexed by week then team — for Weekly Progression. */
+export async function fetchResumeRatingsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
+  const { data, error } = await supabase.from("team_resume_ratings").select("week, team, score").eq("season", season);
+  if (error) throw error;
+  const weekSet = new Set<number>();
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  for (const r of (data ?? []) as { week: number; team: string; score: number | null }[]) {
+    weekSet.add(r.week);
+    if (!byWeek[r.week]) byWeek[r.week] = {};
+    byWeek[r.week][r.team] = r.score;
+  }
+  return { weeks: Array.from(weekSet).sort((a, b) => a - b), byWeek };
+}

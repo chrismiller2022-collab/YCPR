@@ -27,6 +27,20 @@ export async function fetchSeasonAvailableWeeks(season: number): Promise<number[
   return Array.from(set).sort((a, b) => a - b);
 }
 
+/** Every saved week's rating for every team, indexed by week then team — for Weekly Progression, reading the immutable archive directly rather than fetchSeasonWeeklyRatingsForWeeks' "closest saved week <= target" resolution (every week here already IS an exact saved week, so that resolution logic would just be redundant work). */
+export async function fetchSeasonRatingsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
+  const { data, error } = await supabase.from("season_weekly_ratings").select("week_number, team, rating").eq("season", season);
+  if (error) throw error;
+  const weekSet = new Set<number>();
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  for (const r of (data ?? []) as { week_number: number; team: string; rating: number | null }[]) {
+    weekSet.add(r.week_number);
+    if (!byWeek[r.week_number]) byWeek[r.week_number] = {};
+    byWeek[r.week_number][r.team] = r.rating;
+  }
+  return { weeks: Array.from(weekSet).sort((a, b) => a - b), byWeek };
+}
+
 /**
  * Resolves each requested game-week number to the correct archived
  * snapshot for that season: the latest archived week <= the target,

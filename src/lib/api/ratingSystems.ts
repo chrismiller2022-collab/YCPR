@@ -97,6 +97,7 @@ export interface TeamSosRow {
 
 /** Public read of the SOS admin page's last saved snapshot for a season — team -> row. */
 /** Latest saved week's row per team for this season — team_sos can now have multiple rows per team (one per saved week; see the "week" column), so this picks the highest week number available for each team rather than assuming exactly one row. */
+/** Latest saved week's row per team for this season — team_sos can now have multiple rows per team (one per saved week; see the "week" column), so this picks the highest week number available for each team rather than assuming exactly one row. */
 export async function fetchTeamSos(season: number): Promise<Record<string, TeamSosRow>> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
     supabase.from("team_sos").select("*").eq("season", season).range(from, to)
@@ -107,6 +108,21 @@ export async function fetchTeamSos(season: number): Promise<Record<string, TeamS
     if (!existing || r.week > existing.week) out[r.team] = r;
   }
   return out;
+}
+
+/** Every saved week's SOS-via-SRS value for every team, indexed by week then team — for Weekly Progression, which needs each week's own snapshot side by side, not just the latest. */
+export async function fetchTeamSosByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
+  const rows = await fetchAllRows<TeamSosRow>((from, to) =>
+    supabase.from("team_sos").select("*").eq("season", season).range(from, to)
+  );
+  const weekSet = new Set<number>();
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  for (const r of rows) {
+    weekSet.add(r.week);
+    if (!byWeek[r.week]) byWeek[r.week] = {};
+    byWeek[r.week][r.team] = r.sos_srs_total ?? null;
+  }
+  return { weeks: Array.from(weekSet).sort((a, b) => a - b), byWeek };
 }
 
 export async function fetchPublishedSheetCsv(): Promise<string> {

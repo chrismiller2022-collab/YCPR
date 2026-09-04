@@ -4,8 +4,20 @@ import SortHeader from "../components/SortHeader";
 import { RESUME_BY_TEAM } from "../data/resume";
 import { SOS_BY_TEAM } from "../data/sor";
 import { CONFERENCES, TEAMS } from "../data/teams";
-import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
+import { fetchSeasonRatingsByWeeks } from "../lib/api/seasonWeeklyRatings";
+import { fetchTeamSosByWeeks } from "../lib/api/ratingSystems";
+import { fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
+import { fetchWinTotalsByWeeks } from "../lib/api/monteCarlo";
 
+// Was reading weekly_team_stats (the same MUTABLE, label-based table
+// behind the original ratings-drift bug — see chat, Sept 2026) for
+// every metric, completely disconnected from the actual per-week
+// archives (season_weekly_ratings, team_sos, team_resume_ratings) that
+// "Save As Week"/"Save to Site" write to. That meant publishing a week
+// from any of those admin pages didn't do anything to this page at
+// all, and re-pushing an old week's live label could silently corrupt
+// an already-shown progression column. Each metric now reads its own
+// real archive directly.
 const WEEKLY_PROGRESSION_META = {
   power: {
     eyebrow: "Weekly Power Ratings",
@@ -13,7 +25,8 @@ const WEEKLY_PROGRESSION_META = {
     metricLabel: "Power Rating",
     filterTeams: (t) => true,
     baseline: (t) => t.rating,
-    field: "rating" as const,
+    fetchByWeeks: fetchSeasonRatingsByWeeks,
+    higherIsBetter: false, // lower/more negative rating = stronger team, site-wide convention
   },
   resume: {
     eyebrow: "Resume Ratings",
@@ -21,7 +34,8 @@ const WEEKLY_PROGRESSION_META = {
     metricLabel: "Resume Rating",
     filterTeams: (t) => !!RESUME_BY_TEAM[t.team],
     baseline: (t) => RESUME_BY_TEAM[t.team]?.rating ?? null,
-    field: "resume_rating" as const,
+    fetchByWeeks: fetchResumeRatingsByWeeks,
+    higherIsBetter: true,
   },
   sor: {
     eyebrow: "Strength of Schedule",
@@ -29,20 +43,28 @@ const WEEKLY_PROGRESSION_META = {
     metricLabel: "SOR",
     filterTeams: (t) => SOS_BY_TEAM[t.team] != null,
     baseline: (t) => SOS_BY_TEAM[t.team] ?? null,
-    field: "sor" as const,
+    fetchByWeeks: fetchTeamSosByWeeks,
+    higherIsBetter: true,
+  },
+  wintotals: {
+    eyebrow: "Win Totals",
+    title: "WEEKLY PROGRESSION",
+    metricLabel: "Win Total",
+    filterTeams: (t) => true,
+    baseline: (t) => null, // no static preseason win-total baseline to fall back to
+    fetchByWeeks: fetchWinTotalsByWeeks,
+    higherIsBetter: true,
   },
 };
 
 /**
- * Loads every available week's data ONCE — one request per week that
- * actually has data saved (via fetchAvailableWeeks), not one request per
- * team — and indexes it by week, then by team, so any row/column lookup
- * below is just a plain object read. A season with 3 weeks saved makes 3
- * requests total, not 130+.
+ * Loads every saved week's data for this metric ONCE, indexed by week
+ * then team — a plain object read for any row/column lookup below,
+ * not a request per team.
  */
-function useAllWeeksData() {
-  const [weeks, setWeeks] = useState<string[]>([]);
-  const [byWeek, setByWeek] = useState<Record<string, Record<string, WeeklyTeamStats>>>({});
+function useAllWeeksData(metric: string, season: number) {
+  const [weeks, setWeeks] = useState<number[]>([]);
+  const [byWeek, setByWeek] = useState<Record<number, Record<string, number | null>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,27 +72,24 @@ function useAllWeeksData() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    (async () => {
-      try {
-        const availableWeeks = await fetchAvailableWeeks();
-        const rowsPerWeek = await Promise.all(availableWeeks.map((w) => fetchWeeklyStats(w)));
+    const meta = WEEKLY_PROGRESSION_META[metric];
+    meta
+      .fetchByWeeks(season)
+      .then(({ weeks: w, byWeek: bw }: { weeks: number[]; byWeek: Record<number, Record<string, number | null>> }) => {
         if (cancelled) return;
-        const indexed: Record<string, Record<string, WeeklyTeamStats>> = {};
-        availableWeeks.forEach((w, i) => {
-          indexed[w] = Object.fromEntries(rowsPerWeek[i].map((r) => [r.team, r]));
-        });
-        setWeeks(availableWeeks);
-        setByWeek(indexed);
-      } catch (err: any) {
+        setWeeks(w);
+        setByWeek(bw);
+      })
+      .catch((err: any) => {
         if (!cancelled) setError(err.message ?? "Failed to load weekly progression data");
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [metric, season]);
 
   return { weeks, byWeek, loading, error };
 }
@@ -78,19 +97,31 @@ function useAllWeeksData() {
 function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateTeam, onNavigateConference }: any) {
   const preseason = team.preseason;
 
-  // "Change from Preseason" compares against the team's own most recent
-  // saved value — the latest week THIS team actually has a row for, not
-  // just the latest week overall — since a team can be missing from one
-  // week's paste while present in the others.
+  // Change is week-over-week now (most recent saved week vs. the one
+  // before it) rather than vs. Preseason — a fixed baseline column
+  // wasn't what "how did this week move" actually needs to answer.
+  // Still walks from newest backward per-team (not just the newest
+  // week overall) since a team can be missing from one week's save
+  // while present in others.
   let latestValue: number | null = null;
+  let latestIdx = -1;
   for (let i = weeksAsc.length - 1; i >= 0; i--) {
-    const v = byWeek[weeksAsc[i]]?.[team.team]?.[meta.field];
+    const v = byWeek[weeksAsc[i]]?.[team.team];
     if (v != null) {
       latestValue = v;
+      latestIdx = i;
       break;
     }
   }
-  const change = latestValue != null && preseason != null ? latestValue - preseason : null;
+  let previousValue: number | null = null;
+  for (let i = latestIdx - 1; i >= 0; i--) {
+    const v = byWeek[weeksAsc[i]]?.[team.team];
+    if (v != null) {
+      previousValue = v;
+      break;
+    }
+  }
+  const change = latestValue != null && previousValue != null ? latestValue - previousValue : null;
 
   return (
     <tr>
@@ -113,7 +144,7 @@ function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateTeam, on
         {preseason != null ? preseason.toFixed(2) : "–"}
       </td>
       {weeksAsc.map((w) => {
-        const v = byWeek[w]?.[team.team]?.[meta.field];
+        const v = byWeek[w]?.[team.team];
         return (
           <td key={w} className="wintotals-total-cell">
             {v != null ? v.toFixed(2) : "–"}
@@ -128,21 +159,16 @@ function WeeklyProgressionRow({ team, meta, weeksAsc, byWeek, onNavigateTeam, on
 }
 
 
-export default function WeeklyProgressionPage({ metric, subLabel, defaultDivision, onNavigateConference, onHome }: any) {
+export default function WeeklyProgressionPage({ metric, subLabel, defaultDivision, onNavigateTeam, onNavigateConference, onHome }: any) {
   const meta = WEEKLY_PROGRESSION_META[metric];
   const [query, setQuery] = useState("");
   const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("team");
   const [sortDir, setSortDir] = useState("asc");
+  const season = new Date().getFullYear();
 
-  const { weeks, byWeek, loading, error } = useAllWeeksData();
-
-  // fetchAvailableWeeks returns most-recent-first; the table displays
-  // columns oldest-to-newest left to right, and "Change from Preseason"
-  // needs to walk backward from newest to find each team's latest row, so
-  // keep an ascending, preseason-excluded copy around for both.
-  const weeksAsc = useMemo(() => weeks.filter((w) => w !== "preseason").slice().reverse(), [weeks]);
+  const { weeks: weeksAsc, byWeek, loading, error } = useAllWeeksData(metric, season);
 
   const rows = useMemo(() => {
     const list = TEAMS.filter(meta.filterTeams)
@@ -153,13 +179,7 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
           return false;
         return true;
       })
-      .map((t) => {
-        // The Preseason column itself is live-preferred too: if a
-        // "preseason" week has been uploaded, use its saved value;
-        // otherwise fall back to the static preseason snapshot.
-        const preseasonLive = byWeek["preseason"]?.[t.team]?.[meta.field] ?? null;
-        return { ...t, preseason: preseasonLive ?? meta.baseline(t) };
-      });
+      .map((t) => ({ ...t, preseason: meta.baseline(t) }));
 
     return [...list].sort((a, b) => {
       let av = a[sortKey];
@@ -194,13 +214,13 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
         <div className="eyebrow">{meta.eyebrow} · {subLabel}</div>
         <h1 className="title matchup-title">{meta.title}</h1>
         <p className="subtitle team-subtitle">
-          {meta.metricLabel} for every team, week by week across the season,
-          plus the change from the Preseason projection. Weekly columns
-          populate as each week is completed.
+          {meta.metricLabel} for every team, week by week across the season — each column is that
+          week's own saved snapshot, permanently. "Change" compares the most recent saved week
+          against the one before it.
         </p>
         {error && (
           <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>
-            Live weekly data unavailable ({error}) — showing the preseason snapshot only.
+            Weekly data unavailable ({error}) — showing the preseason snapshot only.
           </p>
         )}
       </div>
@@ -250,10 +270,10 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
                   <SortHeader label="Preseason" sortKey="preseason" active={sortKey === "preseason"} dir={sortDir} onClick={handleSort} align="right" />
                   {weeksAsc.map((w) => (
                     <th key={w} className="th th-right">
-                      {weekLabel(w).replace("Week ", "Wk ")}
+                      {w === 0 ? "Pre" : `Wk ${w}`}
                     </th>
                   ))}
-                  <th className="th th-right">Change from Preseason</th>
+                  <th className="th th-right">Change (Week over Week)</th>
                 </tr>
               </thead>
               <tbody>
@@ -264,6 +284,7 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
                     meta={meta}
                     weeksAsc={weeksAsc}
                     byWeek={byWeek}
+                    onNavigateTeam={onNavigateTeam}
                     onNavigateConference={onNavigateConference}
                   />
                 ))}
@@ -275,8 +296,8 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
 
       <div className="footer-note">
         {weeksAsc.length === 0
-          ? `Weekly ${meta.metricLabel} snapshots aren't in yet — this page is fully wired up and will populate automatically as each week's data comes in.`
-          : `${meta.metricLabel} shown for every week uploaded so far. "–" means that team wasn't included in that particular week's upload.`}
+          ? `Weekly ${meta.metricLabel} snapshots aren't in yet — this page is fully wired up and will populate automatically as each week gets published from admin.`
+          : `${meta.metricLabel} shown for every week published so far. "–" means that team wasn't included in that week's publish.`}
       </div>
     </div>
   );

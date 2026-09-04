@@ -128,7 +128,9 @@ export default function App() {
         navigate(subKey === "all" ? "/matchups/all" : `/matchups/week/${wk}`);
         break;
       case "wintotals":
-        navigate(subKey === "live" ? "/futures/win-totals/live" : `/futures/win-totals/week/${wk}`);
+        if (subKey === "live") navigate("/futures/win-totals/live");
+        else if (subKey === "weeklyprogression") navigate("/futures/win-totals/progression");
+        else navigate(`/futures/win-totals/week/${wk}`);
         break;
       case "resume":
         if (subKey === "live") navigate("/resume-ratings/live");
@@ -173,7 +175,9 @@ export default function App() {
         navigate(`/conference/${confToSlug(subKey)}`);
         break;
       case "fcswintotals":
-        navigate(subKey === "live" ? "/fcs/win-totals/live" : `/fcs/win-totals/week/${wk}`);
+        if (subKey === "live") navigate("/fcs/win-totals/live");
+        else if (subKey === "weeklyprogression") navigate("/fcs/win-totals/progression");
+        else navigate(`/fcs/win-totals/week/${wk}`);
         break;
       case "fcssos":
         if (subKey === "live") navigate("/fcs/sos/live");
@@ -257,6 +261,7 @@ export default function App() {
 
               <Route path="/futures/win-totals/live" element={<LiveWinTotalsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/win-totals/week/:n" element={<ComingSoonRoute catLabel="Win Totals" />} />
+              <Route path="/futures/win-totals/progression" element={<WeeklyProgressionPage metric="wintotals" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/conference-win-odds" element={<ConferenceWinOddsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/conference-win-totals" element={<ConferenceWinTotalsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/futures/other/live" element={<OtherFuturesPage subKey="live" subLabel="Live" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
@@ -286,6 +291,7 @@ export default function App() {
               <Route path="/fcs/power-ratings/week/:n" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
               <Route path="/fcs/win-totals/live" element={<LiveWinTotalsPage defaultDivision="FCS" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/win-totals/week/:n" element={<ComingSoonRoute catLabel="FCS Win Totals" />} />
+              <Route path="/fcs/win-totals/progression" element={<WeeklyProgressionPage metric="wintotals" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/sos/live" element={<StrengthOfSchedulePage forceDivision="FCS" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/sos/progression" element={<WeeklyProgressionPage metric="sor" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/sos/week/:n" element={<ComingSoonRoute catLabel="FCS SOS/SOR" />} />
