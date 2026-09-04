@@ -66,6 +66,34 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Deliberate, explicit overwrite of an EXISTING lock — unlike
+    // lockProjections (which can only ever create a lock, never touch
+    // one that already exists), this is for correcting a lock that
+    // captured the wrong number, e.g. because it was written after
+    // ratings had already drifted from what was actually posted
+    // publicly before kickoff. Requires the password (not exempted
+    // like lockProjections) since this can genuinely overwrite data,
+    // and updates locked_at to reflect when the correction was made.
+    if (action === "overrideProjectionLock") {
+      const { game_id, my_away_spread, my_total, my_away_win_pct } = req.body;
+      if (!game_id) {
+        res.status(400).json({ error: "game_id is required" });
+        return;
+      }
+      const { error } = await supabaseAdmin
+        .from("game_projection_locks")
+        .update({
+          my_away_spread: my_away_spread ?? null,
+          my_total: my_total ?? null,
+          my_away_win_pct: my_away_win_pct ?? null,
+          locked_at: new Date().toISOString(),
+        })
+        .eq("game_id", game_id);
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     if (action === "saveBets") {
       const { bets } = req.body;
       if (!Array.isArray(bets) || bets.length === 0) {

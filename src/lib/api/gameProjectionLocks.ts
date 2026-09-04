@@ -71,6 +71,20 @@ export interface LockCandidate {
  * since I last visited this page") without any risk of overwriting an
  * existing lock. Needs the admin password since it writes.
  */
+export async function overrideGameProjectionLock(
+  gameId: string,
+  values: { my_away_spread: number | null; my_total: number | null; my_away_win_pct: number | null }
+): Promise<void> {
+  const password = sessionStorage.getItem("admin_password") ?? "";
+  const res = await fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password, action: "overrideProjectionLock", game_id: gameId, ...values }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to correct lock");
+}
+
 export async function lockGameProjections(candidates: LockCandidate[]): Promise<{ locked: number }> {
   if (candidates.length === 0) return { locked: 0 };
   // No admin password needed — lockProjections is deliberately exempt

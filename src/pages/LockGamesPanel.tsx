@@ -4,7 +4,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
-import { fetchGameProjectionLocks, lockGameProjections, type LockCandidate } from "../lib/api/gameProjectionLocks";
+import { fetchGameProjectionLocks, lockGameProjections, overrideGameProjectionLock, type LockCandidate } from "../lib/api/gameProjectionLocks";
 
 // Deliberate, explicit, on-demand alternative to relying on a page
 // visit to trigger useAutoLockProjections — Chris asked for this
@@ -30,6 +30,10 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
   const [locking, setLocking] = useState(false);
   const [result, setResult] = useState<{ locked: LockCandidate[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingGameId, setEditingGameId] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState<{ spread: string; total: string; winPct: string }>({ spread: "", total: "", winPct: "" });
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const [correctionMsg, setCorrectionMsg] = useState<string | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const { rows: totalsEngineRows, loading: totalsLoading } = useGameTotalsEngine(season);
@@ -99,6 +103,40 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
   }
 
   const dataReady = games != null && !ratingsLoading && !totalsLoading;
+
+  const lockedGames = useMemo(() => {
+    if (!games) return [];
+    return games.filter((g) => existingLocks[g.id]);
+  }, [games, existingLocks]);
+
+  function startEditing(gameId: string) {
+    const lock = existingLocks[gameId];
+    setEditingGameId(gameId);
+    setCorrectionMsg(null);
+    setEditValues({
+      spread: lock?.my_away_spread != null ? String(lock.my_away_spread) : "",
+      total: lock?.my_total != null ? String(lock.my_total) : "",
+      winPct: lock?.my_away_win_pct != null ? String((lock.my_away_win_pct * 100).toFixed(1)) : "",
+    });
+  }
+
+  async function saveCorrection(gameId: string) {
+    setSavingCorrection(true);
+    setError(null);
+    try {
+      const spread = editValues.spread.trim() === "" ? null : parseFloat(editValues.spread);
+      const total = editValues.total.trim() === "" ? null : parseFloat(editValues.total);
+      const winPct = editValues.winPct.trim() === "" ? null : parseFloat(editValues.winPct) / 100;
+      await overrideGameProjectionLock(gameId, { my_away_spread: spread, my_total: total, my_away_win_pct: winPct });
+      setExistingLocks((prev) => ({ ...prev, [gameId]: { my_away_spread: spread, my_total: total, my_away_win_pct: winPct } }));
+      setEditingGameId(null);
+      setCorrectionMsg("Correction saved.");
+    } catch (err: any) {
+      setError(err.message ?? "Failed to save correction");
+    } finally {
+      setSavingCorrection(false);
+    }
+  }
 
   return (
     <div>
@@ -182,6 +220,103 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     {locking ? "Locking…" : `Lock ${candidateGames.length} Game${candidateGames.length === 1 ? "" : "s"} Now`}
                   </button>
                 </>
+              )}
+
+              {lockedGames.length > 0 && (
+                <div style={{ marginTop: "2rem" }}>
+                  <div className="section-label">
+                    Already Locked ({lockedGames.length}) — correct any that captured the wrong number
+                  </div>
+                  <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0, maxWidth: 640 }}>
+                    If a lock was written after ratings had already drifted from what you actually
+                    posted before kickoff, fix it here — this overwrites the lock permanently with
+                    whatever you enter, it isn't re-derived from ratings.
+                  </p>
+                  {correctionMsg && <p style={{ color: "#8fd39a" }}>{correctionMsg}</p>}
+                  <table style={{ borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                    <thead>
+                      <tr>
+                        <th className="th">Kickoff</th>
+                        <th className="th">Game</th>
+                        <th className="th th-right">Locked Line</th>
+                        <th className="th th-right">Locked Total</th>
+                        <th className="th th-right">Locked Win%</th>
+                        <th className="th"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lockedGames.map((g) => {
+                        const lock = existingLocks[g.id];
+                        const isEditing = editingGameId === g.id;
+                        return (
+                          <tr key={g.id}>
+                            <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
+                              {g.start_date ? new Date(g.start_date).toLocaleString() : "–"}
+                            </td>
+                            <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
+                              <TeamLogo team={g.away_team} size={16} /> {g.away_team} @ <TeamLogo team={g.home_team} size={16} /> {g.home_team}
+                            </td>
+                            {isEditing ? (
+                              <>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={editValues.spread}
+                                    onChange={(e) => setEditValues((v) => ({ ...v, spread: e.target.value }))}
+                                    style={{ width: 70 }}
+                                  />
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={editValues.total}
+                                    onChange={(e) => setEditValues((v) => ({ ...v, total: e.target.value }))}
+                                    style={{ width: 70 }}
+                                  />
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={editValues.winPct}
+                                    onChange={(e) => setEditValues((v) => ({ ...v, winPct: e.target.value }))}
+                                    style={{ width: 60 }}
+                                  />
+                                  %
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
+                                  <button onClick={() => saveCorrection(g.id)} disabled={savingCorrection} style={{ marginRight: "0.4rem" }}>
+                                    {savingCorrection ? "Saving…" : "Save"}
+                                  </button>
+                                  <button onClick={() => setEditingGameId(null)} disabled={savingCorrection}>
+                                    Cancel
+                                  </button>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  {lock?.my_away_spread != null ? lock.my_away_spread.toFixed(1) : "–"}
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  {lock?.my_total != null ? lock.my_total.toFixed(1) : "–"}
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                                  {lock?.my_away_win_pct != null ? `${(lock.my_away_win_pct * 100).toFixed(1)}%` : "–"}
+                                </td>
+                                <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
+                                  <button onClick={() => startEditing(g.id)}>Edit</button>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
           )}
