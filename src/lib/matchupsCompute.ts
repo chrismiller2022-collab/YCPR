@@ -296,11 +296,17 @@ export function computeWatchSignal(
 // approaches on live/current games. Only meaningful going forward — the
 // historical 2024/25 admin bet history dataset has no per-team HFA
 // history to recompute against, so this only applies here (live matchups).
+export interface GameProjectionLock {
+  myAwaySpread: number | null;
+  myAwayWinPct: number | null;
+}
+
 export function computeRow(
   game: GameWithLines,
   liveByTeam: Record<string, any>,
   hfaMode: "team" | "flat" = "team",
-  customParams: CustomParams = DEFAULT_CUSTOM_PARAMS
+  customParams: CustomParams = DEFAULT_CUSTOM_PARAMS,
+  lock?: GameProjectionLock | null
 ): MatchupComputed {
   const line = pickLine(game.lines);
   const staticAwayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
@@ -317,7 +323,15 @@ export function computeRow(
     : null;
 
   const hfa = hfaMode === "flat" ? HFA : hfaFor(game.home_team, liveByTeam);
-  const projAwaySpread = awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfa : null;
+  // Once a game has kicked off, its own locked snapshot (captured the
+  // moment it kicked off — see game_projection_locks / useGameProjectionLocks)
+  // wins over live ratings unconditionally. Ratings get re-pushed
+  // multiple times within a single week as actual results come in, and
+  // without this, an already-played game's "my projection" would keep
+  // silently changing every time that happens — exactly the integrity
+  // problem this table exists to prevent. Falls through to the live
+  // computation below for any game with no lock yet (hasn't kicked off).
+  const projAwaySpread = lock?.myAwaySpread != null ? lock.myAwaySpread : awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfa : null;
 
   const vegasAwaySpread = line?.spread != null ? -line.spread : null;
 
@@ -329,7 +343,7 @@ export function computeRow(
   // pool that shows a moneyline, all read from this one calculation now,
   // so there's exactly one "My ML" for a given game, not several
   // disagreeing ones depending on which page computed it.
-  const projWinPct = awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+  const projWinPct = lock?.myAwayWinPct != null ? lock.myAwayWinPct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
   const projMoneyline = projWinPct != null ? fairMoneylineFromWinPct(projWinPct) : null;
   const vegasMoneyline = line?.away_moneyline ?? null;
 

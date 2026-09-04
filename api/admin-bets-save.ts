@@ -27,7 +27,14 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, action } = req.body ?? {};
-  if (password !== ADMIN_PASSWORD) {
+  // lockProjections is deliberately exempt from the password gate below
+  // — it's append-only (INSERT ... ON CONFLICT DO NOTHING, can never
+  // overwrite an existing lock), the values it writes are just "what
+  // the live computation already says," and it needs to fire from the
+  // PUBLIC matchups page too, not only when Chris happens to be logged
+  // into admin — the whole point is catching a game the moment it
+  // kicks off regardless of who's viewing the site right then.
+  if (password !== ADMIN_PASSWORD && action !== "lockProjections") {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -35,6 +42,30 @@ export default async function handler(req: any, res: any) {
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
+    if (action === "lockProjections") {
+      const { candidates } = req.body;
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        res.status(200).json({ locked: 0 });
+        return;
+      }
+      const rows = candidates.map((c: any) => ({
+        game_id: c.game_id,
+        season: c.season,
+        week: c.week,
+        home_team: c.home_team,
+        away_team: c.away_team,
+        my_away_spread: c.my_away_spread ?? null,
+        my_total: c.my_total ?? null,
+        my_away_win_pct: c.my_away_win_pct ?? null,
+      }));
+      const { error, count } = await supabaseAdmin
+        .from("game_projection_locks")
+        .upsert(rows, { onConflict: "game_id", ignoreDuplicates: true, count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ locked: count ?? rows.length });
+      return;
+    }
+
     if (action === "saveBets") {
       const { bets } = req.body;
       if (!Array.isArray(bets) || bets.length === 0) {

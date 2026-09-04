@@ -4,11 +4,14 @@ import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, computeWatchSignal, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
+import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
 import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows } from "../lib/gameTotalsEngine";
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -747,6 +750,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const { locks } = useGameProjectionLocks(season, weekNumbersInView);
 
   // Totals / Team Totals / Predictions modes are self-contained
   // components (TotalsTab/TeamTotalsTab/PredictionsContent, reused
@@ -805,8 +809,34 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   }, [games, matchupType, query]);
 
   const computedRows = useMemo(
-    () => filteredGames.map((g) => computeRow(g, ratingsByWeek[g.week] ?? {})),
-    [filteredGames, ratingsByWeek]
+    () =>
+      filteredGames.map((g) => {
+        const lock = locks[g.id];
+        return computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
+      }),
+    [filteredGames, ratingsByWeek, locks]
+  );
+
+  const projTotalByGameForLock = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of totalsViewRows) {
+      if (r.projection?.projectedTotal != null) {
+        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
+      }
+    }
+    return map;
+  }, [totalsViewRows]);
+
+  useAutoLockProjections(
+    useMemo(() => computedRows.map((c) => ({ game: c.game, computed: c })), [computedRows]),
+    locks,
+    projTotalByGameForLock
   );
 
   const visibleRows = useMemo(() => {

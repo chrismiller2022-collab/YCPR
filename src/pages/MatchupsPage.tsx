@@ -6,9 +6,12 @@ import { spreadColor } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats, type MatchupComputed } from "../lib/matchupsCompute";
+import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { buildSlateRow, filterSlateRowsByDay, type SlateDayFilter } from "../lib/matchupSlate";
 import { isMidweekET, isSaturdayET } from "../lib/watchability";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
 function dateLabel(g: GameWithLines) {
   return g.start_date
@@ -419,6 +422,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const { locks } = useGameProjectionLocks(season, weekNumbersInView);
   const { rows: totalsEngineRows } = useGameTotalsEngine(season);
 
   // Same week+teams keying as the team page's Proj. Score column — the
@@ -460,8 +464,27 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const filteredGames = useMemo(() => games.filter(matchesFilters), [games, matchupType, query]);
 
   const computedRows = useMemo(
-    () => filteredGames.map((g) => computeRow(g, ratingsByWeek[g.week] ?? {})),
-    [filteredGames, ratingsByWeek]
+    () =>
+      filteredGames.map((g) => {
+        const lock = locks[g.id];
+        return computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
+      }),
+    [filteredGames, ratingsByWeek, locks]
+  );
+
+  // Opportunistically locks any game that's kicked off since the last
+  // time this page (or any other page doing the same) was loaded — see
+  // useAutoLockProjections.ts for the full reasoning.
+  useAutoLockProjections(
+    useMemo(() => computedRows.map((c) => ({ game: c.game, computed: c })), [computedRows]),
+    locks,
+    projTotalByGame
   );
 
   const visibleRows = useMemo(() => {
