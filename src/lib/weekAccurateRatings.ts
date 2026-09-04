@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAvailableWeeks, fetchWeeklyStats, type WeeklyTeamStats } from "./api/weeklyStats";
-import { fetchSeasonWeeklyRatingsForWeeks } from "./api/seasonWeeklyRatings";
+import { fetchSeasonAvailableWeeks, fetchSeasonWeeklyRatingsForWeeks } from "./api/seasonWeeklyRatings";
 
 // This is the fix for the "Iowa State's rating is static all season" bug:
 // every per-game projection on the site used to ask for "latest" ratings
@@ -15,6 +15,21 @@ import { fetchSeasonWeeklyRatingsForWeeks } from "./api/seasonWeeklyRatings";
 // week label) and any archived past season (season_weekly_ratings, keyed
 // by season + week_number) — same resolution rule either way, just a
 // different backing table.
+//
+// SECOND fix, layered on top of the first (see chat, Sept 2026): for the
+// CURRENT season specifically, a week that's been explicitly "Saved As
+// Week N" (season_weekly_ratings has a real row for season+that exact
+// week_number) is now checked FIRST and used unconditionally — before
+// this fix, the current season NEVER consulted the archive at all,
+// always reading the live, mutable weekly_team_stats table regardless of
+// whether that week had already been "saved." That meant re-pushing an
+// updated snapshot under the same week label (exactly what incorporating
+// actual results mid-week requires) silently changed every already-
+// finalized week's numbers too — the archive existed and the save button
+// worked, but nothing downstream ever actually looked at what it saved
+// for the season that mattered most. Any week NOT yet explicitly saved
+// (the current, actively-being-tuned week) still falls through to the
+// existing live-label resolution below, unchanged.
 
 export interface WeekAccurateRatingRow {
   rating: number | null;
@@ -62,26 +77,48 @@ export function useWeekAccurateRatings(season: number, weekNumbers: number[], cu
       }
 
       if (season === currentSeason) {
-        const available = await fetchAvailableWeeks();
-        const labelForWeek: Record<number, string | null> = {};
-        const labelsNeeded = new Set<string>();
-        for (const wn of uniqueWeeks) {
-          const label = resolveLabelForWeek(available, wn);
-          labelForWeek[wn] = label;
-          if (label) labelsNeeded.add(label);
+        // Explicitly-saved weeks (via "Save As Week" on Rating Systems)
+        // win unconditionally, regardless of anything pushed to the live
+        // table afterward.
+        const archivedWeekNumbers = new Set(await fetchSeasonAvailableWeeks(season));
+        const explicitlyArchivedTargets = uniqueWeeks.filter((wn) => archivedWeekNumbers.has(wn));
+        const needsLiveResolution = uniqueWeeks.filter((wn) => !archivedWeekNumbers.has(wn));
+
+        let archivedResult: Record<number, Record<string, { rating: number | null }>> = {};
+        if (explicitlyArchivedTargets.length > 0) {
+          // Every target here is itself in archivedWeekNumbers, so this
+          // function's own "closest saved week <= target" resolution
+          // always resolves to exactly that week, never an earlier one.
+          archivedResult = await fetchSeasonWeeklyRatingsForWeeks(season, explicitlyArchivedTargets);
         }
-        const statsByLabel: Record<string, WeeklyTeamStats[]> = {};
-        await Promise.all(
-          Array.from(labelsNeeded).map(async (label) => {
-            statsByLabel[label] = await fetchWeeklyStats(label);
-          })
-        );
+
+        let liveResult: Record<number, Record<string, WeekAccurateRatingRow>> = {};
+        if (needsLiveResolution.length > 0) {
+          const available = await fetchAvailableWeeks();
+          const labelForWeek: Record<number, string | null> = {};
+          const labelsNeeded = new Set<string>();
+          for (const wn of needsLiveResolution) {
+            const label = resolveLabelForWeek(available, wn);
+            labelForWeek[wn] = label;
+            if (label) labelsNeeded.add(label);
+          }
+          const statsByLabel: Record<string, WeeklyTeamStats[]> = {};
+          await Promise.all(
+            Array.from(labelsNeeded).map(async (label) => {
+              statsByLabel[label] = await fetchWeeklyStats(label);
+            })
+          );
+          for (const wn of needsLiveResolution) {
+            const label = labelForWeek[wn];
+            const rows = label ? statsByLabel[label] ?? [] : [];
+            const map: Record<string, WeekAccurateRatingRow> = {};
+            for (const r of rows) map[r.team] = { rating: r.rating };
+            liveResult[wn] = map;
+          }
+        }
+
         for (const wn of uniqueWeeks) {
-          const label = labelForWeek[wn];
-          const rows = label ? statsByLabel[label] ?? [] : [];
-          const map: Record<string, WeekAccurateRatingRow> = {};
-          for (const r of rows) map[r.team] = { rating: r.rating };
-          result[wn] = map;
+          result[wn] = archivedWeekNumbers.has(wn) ? archivedResult[wn] ?? {} : liveResult[wn] ?? {};
         }
       } else {
         const bySeasonWeek = await fetchSeasonWeeklyRatingsForWeeks(season, uniqueWeeks);
