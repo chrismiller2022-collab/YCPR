@@ -100,3 +100,32 @@ export async function lockGameProjections(candidates: LockCandidate[]): Promise<
   if (!res.ok) throw new Error(data.error ?? "Failed to lock projections");
   return data;
 }
+
+/**
+ * Per-week (kicked-off games / locked games) counts — for the Publish
+ * grid's Matchups column. Power ratings being saved for a week protects
+ * the BASELINE (see weekAccurateRatings.ts), but midweek games that
+ * already kicked off need their own lock too (see Lock Games) — this
+ * surfaces whether that's actually happened, not just whether it's
+ * theoretically possible.
+ */
+export async function fetchGameLockCoverageByWeek(season: number): Promise<Record<number, { kickedOff: number; locked: number }>> {
+  const now = new Date().toISOString();
+  const [{ data: games, error: gamesErr }, { data: locks, error: locksErr }] = await Promise.all([
+    supabase.from("games").select("week, start_date").eq("season", season).lte("start_date", now),
+    supabase.from("game_projection_locks").select("week").eq("season", season),
+  ]);
+  if (gamesErr) throw gamesErr;
+  if (locksErr) throw locksErr;
+
+  const result: Record<number, { kickedOff: number; locked: number }> = {};
+  for (const g of (games ?? []) as { week: number }[]) {
+    result[g.week] = result[g.week] ?? { kickedOff: 0, locked: 0 };
+    result[g.week].kickedOff++;
+  }
+  for (const l of (locks ?? []) as { week: number }[]) {
+    result[l.week] = result[l.week] ?? { kickedOff: 0, locked: 0 };
+    result[l.week].locked++;
+  }
+  return result;
+}

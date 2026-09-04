@@ -22,3 +22,14 @@ export async function saveResumeRatingsToSite(season: number, week: number, rows
   if (!res.ok) throw new Error(data.error ?? "Save failed");
   return data;
 }
+
+/** Distinct week numbers with a saved Resume Ratings snapshot for this season — used by the Publish status grid. */
+export async function fetchResumeRatingsAvailableWeeks(season: number): Promise<number[]> {
+  const { data, error } = await supabase.from("team_resume_ratings").select("week").eq("season", season);
+  if (error) throw error;
+  const set = new Set<number>();
+  for (const row of (data ?? []) as { week: number | null }[]) {
+    if (row.week != null) set.add(row.week);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}

@@ -60,6 +60,17 @@ export function saveSosToSite(season: number, week: number, rows: any[]) {
   return authedPost("saveSos", { season, week, rows });
 }
 
+/** Distinct week numbers with a saved SOS snapshot for this season — used by the Publish status grid. */
+export async function fetchTeamSosAvailableWeeks(season: number): Promise<number[]> {
+  const { data, error } = await supabase.from("team_sos").select("week").eq("season", season);
+  if (error) throw error;
+  const set = new Set<number>();
+  for (const row of (data ?? []) as { week: number | null }[]) {
+    if (row.week != null) set.add(row.week);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
 export interface TeamSosRow {
   season: number;
   week: number;
