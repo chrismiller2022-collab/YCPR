@@ -72,44 +72,41 @@ interface OddsApiSport {
 // whether a team_totals market came back. Delete this function and its
 // dispatch branch once that question is answered — not meant to ship.
 async function handleTestTeamTotals(res: any) {
-  const testDates = ["2024-11-02T18:00:00Z", "2025-11-01T18:00:00Z"];
-  const results: any[] = [];
-
-  for (const date of testDates) {
-    const eventsUrl = `${ODDS_API_BASE}/historical/sports/americanfootball_ncaaf/events?apiKey=${ODDS_API_KEY}&date=${date}`;
-    const eventsRes = await fetch(eventsUrl);
-    if (!eventsRes.ok) {
-      results.push({ date, error: `events request failed: ${eventsRes.status} ${await eventsRes.text().catch(() => "")}` });
-      continue;
-    }
-    const eventsBody = await eventsRes.json();
-    const events = eventsBody.data ?? [];
-    if (events.length === 0) {
-      results.push({ date, error: "no events returned for this snapshot", snapshotTimestamp: eventsBody.timestamp });
-      continue;
-    }
-    const event = events[0];
-
-    const oddsUrl = `${ODDS_API_BASE}/historical/sports/americanfootball_ncaaf/events/${event.id}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=team_totals&oddsFormat=american&date=${date}`;
-    const oddsRes = await fetch(oddsUrl);
-    if (!oddsRes.ok) {
-      results.push({ date, event: `${event.away_team} @ ${event.home_team}`, error: `odds request failed: ${oddsRes.status} ${await oddsRes.text().catch(() => "")}` });
-      continue;
-    }
-    const oddsBody = await oddsRes.json();
-    const bookmakers = oddsBody.data?.bookmakers ?? [];
-    const teamTotalsBooks = bookmakers.filter((b: any) => b.markets?.some((m: any) => m.key === "team_totals"));
-
-    results.push({
-      date,
-      snapshotTimestamp: oddsBody.timestamp,
-      event: `${event.away_team} @ ${event.home_team}`,
-      commenceTime: event.commence_time,
-      bookmakersReturned: bookmakers.map((b: any) => b.key),
-      teamTotalsFound: teamTotalsBooks.length > 0,
-      teamTotalsSample: teamTotalsBooks[0]?.markets?.find((m: any) => m.key === "team_totals") ?? null,
-    });
+  // Historical confirmed unavailable on the current (free) plan — see
+  // chat, 2026-09-05. This now only checks whether team_totals exists
+  // live for NCAAF at all, which doesn't need the historical tier.
+  const eventsUrl = `${ODDS_API_BASE}/sports/americanfootball_ncaaf/events?apiKey=${ODDS_API_KEY}`;
+  const eventsRes = await fetch(eventsUrl);
+  if (!eventsRes.ok) {
+    res.status(200).json({ error: `events request failed: ${eventsRes.status} ${await eventsRes.text().catch(() => "")}` });
+    return;
   }
+  const events = await eventsRes.json();
+  if (!Array.isArray(events) || events.length === 0) {
+    res.status(200).json({ error: "no upcoming NCAAF events returned" });
+    return;
+  }
+
+  const sampleEvents = events.slice(0, 3);
+  const results = await Promise.all(
+    sampleEvents.map(async (event: any) => {
+      const oddsUrl = `${ODDS_API_BASE}/sports/americanfootball_ncaaf/events/${event.id}/odds?apiKey=${ODDS_API_KEY}&regions=us,us_ex&markets=team_totals&oddsFormat=american`;
+      const oddsRes = await fetch(oddsUrl);
+      if (!oddsRes.ok) {
+        return { event: `${event.away_team} @ ${event.home_team}`, error: `odds request failed: ${oddsRes.status} ${await oddsRes.text().catch(() => "")}` };
+      }
+      const oddsBody = await oddsRes.json();
+      const bookmakers = oddsBody.bookmakers ?? [];
+      const teamTotalsBooks = bookmakers.filter((b: any) => b.markets?.some((m: any) => m.key === "team_totals"));
+      return {
+        event: `${event.away_team} @ ${event.home_team}`,
+        commenceTime: event.commence_time,
+        bookmakersReturned: bookmakers.map((b: any) => b.key),
+        teamTotalsFound: teamTotalsBooks.length > 0,
+        teamTotalsSample: teamTotalsBooks[0]?.markets?.find((m: any) => m.key === "team_totals") ?? null,
+      };
+    })
+  );
 
   res.status(200).json({ results });
 }
