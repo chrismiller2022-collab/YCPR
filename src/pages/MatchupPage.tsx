@@ -240,8 +240,11 @@ export default function MatchupPage({ onHome }: any) {
                   {(spreadToWinPct(spreadA) * 100).toFixed(1)}% to win
                 </div>
                 {scoreA != null && (
-                  <div className="spread-winpct" style={{ marginTop: "0.3rem" }}>
-                    Proj. score: <strong>{scoreA.toFixed(0)}</strong>
+                  <div style={{ marginTop: "0.6rem", paddingTop: "0.6rem", borderTop: "1px solid var(--hash)" }}>
+                    <div className="spread-tag" style={{ marginBottom: "0.1rem" }}>
+                      Proj. Score
+                    </div>
+                    <div className="spread-value">{scoreA.toFixed(0)}</div>
                   </div>
                 )}
               </div>
@@ -272,8 +275,11 @@ export default function MatchupPage({ onHome }: any) {
                   {(spreadToWinPct(spreadB) * 100).toFixed(1)}% to win
                 </div>
                 {scoreB != null && (
-                  <div className="spread-winpct" style={{ marginTop: "0.3rem" }}>
-                    Proj. score: <strong>{scoreB.toFixed(0)}</strong>
+                  <div style={{ marginTop: "0.6rem", paddingTop: "0.6rem", borderTop: "1px solid var(--hash)" }}>
+                    <div className="spread-tag" style={{ marginBottom: "0.1rem" }}>
+                      Proj. Score
+                    </div>
+                    <div className="spread-value">{scoreB.toFixed(0)}</div>
                   </div>
                 )}
               </div>
