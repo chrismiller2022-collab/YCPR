@@ -1,10 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import TeamPicker from "../components/TeamPicker";
+import TeamLogo from "../components/TeamLogo";
 import ExportPngButton from "../components/ExportPngButton";
 import { TEAMS } from "../data/teams";
 import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { buildRankMap } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { fetchTeamSeasonInputs } from "../lib/api/gameTotalsData";
+import { computeGameProjection, computeLeagueAverages, resolveGameOdds, splitTeamTotal, type TeamSeasonInputs } from "../lib/gameTotals";
 
 export default function MatchupPage({ onHome }: any) {
   const exportRef = useRef<HTMLDivElement>(null);
@@ -22,6 +25,36 @@ export default function MatchupPage({ onHome }: any) {
   const staticTeamB = TEAMS.find((t) => t.team === teamBName) || null;
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+
+  // Same Ridge total model / team-total split used by Matchups and the
+  // Totals admin pages — fetched once here (not per-team), since
+  // computeLeagueAverages needs the whole season's inputs to establish a
+  // baseline, not just the two teams picked. No market total exists for
+  // a hypothetical game, so odds is always the empty resolveGameOdds(null,
+  // null) — predictGameTotalRidge falls back to its training-set mean for
+  // that one input, same as it does for any real game with no line posted
+  // yet.
+  const currentSeason = new Date().getFullYear();
+  const [teamInputsMap, setTeamInputsMap] = useState<Record<string, TeamSeasonInputs>>({});
+  useEffect(() => {
+    let cancelled = false;
+    fetchTeamSeasonInputs(currentSeason)
+      .then((map) => {
+        if (!cancelled) setTeamInputsMap(map);
+      })
+      .catch(() => {
+        // Best-effort — if this fails, the page still works as a
+        // spread-only tool (its original scope), just without the Proj.
+        // Total/Score row.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSeason]);
+  const league = useMemo(() => {
+    const values = Object.values(teamInputsMap);
+    return values.length > 0 ? computeLeagueAverages(values) : null;
+  }, [teamInputsMap]);
 
   // National rank is always derived from resolved rating, never trusted
   // from a stored/pasted "rank" column — that column turned out to be
@@ -64,6 +97,27 @@ export default function MatchupPage({ onHome }: any) {
       : home === "B" && teamB
       ? `at ${teamB.team}`
       : "neutral site";
+
+  // Projected total (Ridge model) + each team's share of it, split by
+  // the same spread already shown above — not a second, disagreeing
+  // spread estimate. "Home" here just picks which side of splitTeamTotal's
+  // home/away convention to use; for a neutral site it doesn't matter
+  // which team fills that slot since computeGameProjection's homeFlag
+  // (0.5) already accounts for there being no real home-field edge.
+  const homeIsA = home !== "B";
+  const homeInputs = bothSelected ? teamInputsMap[homeIsA ? teamA.team : teamB.team] : null;
+  const awayInputs = bothSelected ? teamInputsMap[homeIsA ? teamB.team : teamA.team] : null;
+  const projectedTotal =
+    !sameTeam && league && homeInputs && awayInputs
+      ? computeGameProjection(homeInputs, awayInputs, league, resolveGameOdds(null, null), {
+          homeFlag: home === "neutral" ? 0.5 : 1.0,
+          homeRestDays: 7,
+          awayRestDays: 7,
+        }).projectedTotal
+      : null;
+  const totalSplit = projectedTotal != null ? splitTeamTotal(projectedTotal, homeIsA ? spreadA : spreadB) : null;
+  const scoreA = totalSplit ? (homeIsA ? totalSplit.home : totalSplit.away) : null;
+  const scoreB = totalSplit ? (homeIsA ? totalSplit.away : totalSplit.home) : null;
 
   return (
     <div className="matchup-page" ref={exportRef}>
@@ -165,7 +219,10 @@ export default function MatchupPage({ onHome }: any) {
                   favored && favored.team === teamA.team ? "spread-favored" : ""
                 }`}
               >
-                <div className="spread-team">{teamA.team}</div>
+                <div className="spread-team" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem" }}>
+                  <TeamLogo team={teamA.team} size={28} />
+                  {teamA.team}
+                </div>
                 <div className="spread-context">
                   <span className="spread-context-rating">
                     {teamA.rating > 0 ? "+" : ""}
@@ -182,6 +239,11 @@ export default function MatchupPage({ onHome }: any) {
                 <div className="spread-winpct" style={{ color: spreadColor(spreadA) }}>
                   {(spreadToWinPct(spreadA) * 100).toFixed(1)}% to win
                 </div>
+                {scoreA != null && (
+                  <div className="spread-winpct" style={{ marginTop: "0.3rem" }}>
+                    Proj. score: <strong>{scoreA.toFixed(0)}</strong>
+                  </div>
+                )}
               </div>
 
               <div
@@ -189,7 +251,10 @@ export default function MatchupPage({ onHome }: any) {
                   favored && favored.team === teamB.team ? "spread-favored" : ""
                 }`}
               >
-                <div className="spread-team">{teamB.team}</div>
+                <div className="spread-team" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem" }}>
+                  <TeamLogo team={teamB.team} size={28} />
+                  {teamB.team}
+                </div>
                 <div className="spread-context">
                   <span className="spread-context-rating">
                     {teamB.rating > 0 ? "+" : ""}
@@ -206,6 +271,11 @@ export default function MatchupPage({ onHome }: any) {
                 <div className="spread-winpct" style={{ color: spreadColor(spreadB) }}>
                   {(spreadToWinPct(spreadB) * 100).toFixed(1)}% to win
                 </div>
+                {scoreB != null && (
+                  <div className="spread-winpct" style={{ marginTop: "0.3rem" }}>
+                    Proj. score: <strong>{scoreB.toFixed(0)}</strong>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -214,6 +284,12 @@ export default function MatchupPage({ onHome }: any) {
                 ? `${favored.team} is favored by ${margin.toFixed(1)} points (${siteLabel}).`
                 : `Dead even matchup — a true pick'em (${siteLabel}).`}
             </p>
+            {projectedTotal != null && scoreA != null && scoreB != null && (
+              <p className="spread-sentence">
+                Projected total: <strong>{projectedTotal.toFixed(1)}</strong> ({teamA.team} {scoreA.toFixed(0)} –{" "}
+                {teamB.team} {scoreB.toFixed(0)}).
+              </p>
+            )}
           </div>
         )}
       </div>

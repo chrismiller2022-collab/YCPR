@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { TEAMS } from "../data/teams";
 import { conferenceOptionsFor, teamsFilteredFor } from "../lib/ranks";
+import TeamLogo from "./TeamLogo";
 
 export default function TeamPicker({ side, label, division, conference, teamName, onDivision, onConference, onTeam }: any) {
   const confOptions = conferenceOptionsFor(division);
   const teamOptions = teamsFilteredFor(division, conference);
+  const selectedTeam = teamName ? TEAMS.find((t) => t.team === teamName) : null;
 
   const [query, setQuery] = useState(teamName || "");
   const [focused, setFocused] = useState(false);
@@ -38,6 +40,47 @@ export default function TeamPicker({ side, label, division, conference, teamName
   return (
     <div className="picker-card">
       <div className="picker-label">{label}</div>
+
+      {selectedTeam && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.6rem",
+            padding: "0.55rem 0.7rem",
+            marginBottom: "0.6rem",
+            borderRadius: "8px",
+            background: "rgba(255, 193, 7, 0.12)",
+            border: "1px solid rgba(255, 193, 7, 0.5)",
+          }}
+        >
+          <TeamLogo team={selectedTeam.team} size={30} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: "1rem", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {selectedTeam.team}
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+              {selectedTeam.div} · {selectedTeam.conf}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={clearSelection}
+            style={{
+              background: "none",
+              border: "1px solid var(--hash)",
+              borderRadius: "6px",
+              color: "var(--chalk-dim)",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.55rem",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Change
+          </button>
+        </div>
+      )}
 
       <div className="picker-search-wrap">
         <input
