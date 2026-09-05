@@ -88,16 +88,23 @@ export function useAutoSyncTeamTotals(games: GameWithLines[], season: number) {
         // Match by team-name SET rather than home/away position — a
         // neutral-site game can have either side's naming flipped
         // between this app's source (CFBD) and Odds API's own listing.
+        // Indexed as one O(events + games) pass, not a nested
+        // games-times-events scan: matchSchoolMascotName's fuzzy
+        // fallback does a Levenshtein scan over all ~266 teams, so
+        // calling it per (game, event) pair instead of once per event
+        // was measured to freeze the tab for real on the "all weeks"
+        // view (thousands of games) — see chat, 2026-09-05.
+        const eventByTeamPairKey = new Map<string, OddsEventLite>();
+        for (const e of oddsEvents) {
+          const evHome = matchSchoolMascotName(e.homeTeam);
+          const evAway = matchSchoolMascotName(e.awayTeam);
+          if (!evHome || !evAway) continue;
+          eventByTeamPairKey.set([evHome, evAway].sort().join("|"), e);
+        }
         const eventByGameId = new Map<string, OddsEventLite>();
         for (const g of games) {
           if (!dueWeeks.includes(g.week)) continue;
-          const match = oddsEvents.find((e) => {
-            const evHome = matchSchoolMascotName(e.homeTeam);
-            const evAway = matchSchoolMascotName(e.awayTeam);
-            if (!evHome || !evAway) return false;
-            const evSet = new Set([evHome, evAway]);
-            return evSet.has(g.home_team) && evSet.has(g.away_team);
-          });
+          const match = eventByTeamPairKey.get([g.home_team, g.away_team].sort().join("|"));
           if (match) eventByGameId.set(g.id, match);
         }
         if (eventByGameId.size === 0) {
