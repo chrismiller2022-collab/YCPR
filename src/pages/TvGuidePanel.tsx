@@ -390,7 +390,14 @@ export default function TvGuidePanel({
           <div style={{ display: "inline-block", minWidth: "100%" }}>
             <div style={{ display: "flex", position: "sticky", top: 0, background: "var(--turf-panel)", zIndex: 2, borderBottom: "1px solid var(--hash)" }}>
               <div style={{ width: CHANNEL_COL_WIDTH, flexShrink: 0, borderRight: "1px solid var(--hash)" }} />
-              {slots.map((m, i) => (
+              {/* slotCount columns, not slots.length (slotCount + 1) — slots
+                  includes the trailing axis boundary for width math below,
+                  but rendering a full COL_WIDTH column for it too made the
+                  header (and therefore the whole export, since this row
+                  determines the container's width) one column wider than
+                  the game grid actually needs, showing as blank space past
+                  the last real game. */}
+              {slots.slice(0, slotCount).map((m, i) => (
                 <div
                   key={i}
                   style={{
@@ -436,7 +443,13 @@ export default function TvGuidePanel({
                     {channel.label}
                   </div>
                   <div style={{ position: "relative", width: slotCount * COL_WIDTH, height: rowHeight, flexShrink: 0 }}>
-                    {slots.map((m, i) => (
+                    {/* Same slotCount-not-slots.length trim as the header —
+                        these are absolutely positioned, so an extra one at
+                        i=slotCount doesn't visibly break the row, but it
+                        does poke 34px past the row's own width with nothing
+                        clipping it, which still counts toward the export's
+                        measured scrollWidth. */}
+                    {slots.slice(0, slotCount).map((m, i) => (
                       <div
                         key={i}
                         style={{
