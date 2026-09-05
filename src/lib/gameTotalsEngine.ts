@@ -160,6 +160,25 @@ function projectedTotal(row: EnrichedGameRow): number | null {
   return row.projection?.projectedTotal ?? null;
 }
 
+// Overrides each row's projected total with its locked snapshot value
+// (game_projection_locks.my_total), once one exists. Without this the
+// model keeps recomputing "My Total" live even for games that have
+// already kicked off, unlike spread/win% which computeRow already
+// freezes via the same lock table — same integrity guarantee, applied
+// to the one number that was missing it. Keyed by week+team names since
+// this engine's own game ids are CFBD ids, a different id space than
+// game_projection_locks' Vegas-lines game id (see MatchupsPage.tsx for
+// the same id-bridging note).
+export function applyLockedTotals(rows: EnrichedGameRow[], lockedTotalByKey: Map<string, number>): EnrichedGameRow[] {
+  if (lockedTotalByKey.size === 0) return rows;
+  return rows.map((row) => {
+    if (!row.projection) return row;
+    const locked = lockedTotalByKey.get(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`);
+    if (locked == null) return row;
+    return { ...row, projection: { ...row.projection, projectedTotal: locked } };
+  });
+}
+
 export function poolStdDevForTotal(rows: EnrichedGameRow[]): number {
   const diffs: number[] = [];
   for (const r of rows) {

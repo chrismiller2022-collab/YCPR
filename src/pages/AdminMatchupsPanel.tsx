@@ -7,7 +7,7 @@ import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats,
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
-import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
@@ -760,8 +760,24 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   // below. They DO share this page's season/matchupType/query filters
   // rather than showing a second, separate filter bar.
   const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
+
+  // Once a game has kicked off, its locked total (game_projection_locks.
+  // my_total, captured the moment it kicked off) should win over the
+  // live model output here too — same guarantee the public Matchups
+  // page's projTotalByGame already applies. Keyed by week+team names
+  // since totalsEngineRows uses CFBD game ids, not this page's
+  // Vegas-lines game.id that locks are actually keyed by.
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const lockedTotal = locks[g.id]?.my_total;
+      if (lockedTotal != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, lockedTotal);
+    }
+    return map;
+  }, [games, locks]);
+
   const totalsViewRows = useMemo(() => {
-    return totalsEngineRows.filter((r) => {
+    const filtered = totalsEngineRows.filter((r) => {
       if (weekSel !== "all" && r.game.week !== weekSel) return false;
       const homeFbs = r.game.homeClassification === "fbs";
       const awayFbs = r.game.awayClassification === "fbs";
@@ -776,7 +792,8 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       }
       return true;
     });
-  }, [totalsEngineRows, weekSel, matchupType, query]);
+    return applyLockedTotals(filtered, lockedTotalByKey);
+  }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey]);
 
   useEffect(() => {
     setLoading(true);

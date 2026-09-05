@@ -9,7 +9,7 @@ import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats,
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { buildSlateRow, filterSlateRowsByDay, type SlateDayFilter } from "../lib/matchupSlate";
 import { isMidweekET, isSaturdayET } from "../lib/watchability";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
@@ -133,11 +133,22 @@ function MoneylineRow({ computed, onNavigateTeam }: { computed: MatchupComputed;
   );
 }
 
-function TotalsRow({ computed, projTotalByGame, onNavigateTeam }: { computed: MatchupComputed; projTotalByGame: Map<string, number>; onNavigateTeam: any }) {
+function TotalsRow({
+  computed,
+  projTotalByGame,
+  filteredBetByGame,
+  onNavigateTeam,
+}: {
+  computed: MatchupComputed;
+  projTotalByGame: Map<string, number>;
+  filteredBetByGame: Map<string, { call: "Over" | "Under" | null; isFiltered: boolean }>;
+  onNavigateTeam: any;
+}) {
   const { game, awayTeam, homeTeam, line, totalResult } = computed;
   if (!awayTeam || !homeTeam) return null;
 
-  const projTotal = projTotalByGame.get(`${game.week}|${game.home_team}|${game.away_team}`) ?? null;
+  const key = `${game.week}|${game.home_team}|${game.away_team}`;
+  const projTotal = projTotalByGame.get(key) ?? null;
   const projResult =
     projTotal != null && line?.over_under != null
       ? projTotal > line.over_under
@@ -146,6 +157,7 @@ function TotalsRow({ computed, projTotalByGame, onNavigateTeam }: { computed: Ma
         ? "Under"
         : "Push"
       : null;
+  const filteredBet = filteredBetByGame.get(key);
 
   return (
     <tr data-completed={String(computed.game.completed)}>
@@ -157,6 +169,15 @@ function TotalsRow({ computed, projTotalByGame, onNavigateTeam }: { computed: Ma
       <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
       <td className="matchups-empty-cell">{game.home_points ?? "–"}</td>
       <td className="matchups-winner-cell">{projResult ?? "–"}</td>
+      <td
+        className="matchups-winner-cell"
+        style={{
+          color: filteredBet?.isFiltered ? (filteredBet.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+          fontWeight: filteredBet?.isFiltered ? 700 : undefined,
+        }}
+      >
+        {filteredBet?.isFiltered ? filteredBet.call : "–"}
+      </td>
       <td className="matchups-winner-cell">{totalResult ?? "–"}</td>
     </tr>
   );
@@ -168,7 +189,19 @@ const MATCHUPS_MODES = [
   { key: "totals", label: "Totals" },
 ];
 
-function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: MatchupComputed[]; onNavigateTeam: any; mode: string; projTotalByGame: Map<string, number> }) {
+function MatchupsTable({
+  rows,
+  onNavigateTeam,
+  mode,
+  projTotalByGame,
+  filteredBetByGame,
+}: {
+  rows: MatchupComputed[];
+  onNavigateTeam: any;
+  mode: string;
+  projTotalByGame: Map<string, number>;
+  filteredBetByGame: Map<string, { call: "Over" | "Under" | null; isFiltered: boolean }>;
+}) {
   return (
     <div className="table-scroll">
       <table className="matchups-table" style={{ width: "100%" }}>
@@ -216,6 +249,7 @@ function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: 
               <th className="th th-right">Away Score</th>
               <th className="th th-right">Home Score</th>
               <th className="th">Proj. Result (O/U)</th>
+              <th className="th">Filtered Bet</th>
               <th className="th">Total Result (O/U)</th>
             </tr>
           )}
@@ -223,7 +257,16 @@ function MatchupsTable({ rows, onNavigateTeam, mode, projTotalByGame }: { rows: 
         <tbody>
           {mode === "spreads" && rows.map((c) => <SpreadsRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
           {mode === "moneyline" && rows.map((c) => <MoneylineRow key={c.game.id} computed={c} onNavigateTeam={onNavigateTeam} />)}
-          {mode === "totals" && rows.map((c) => <TotalsRow key={c.game.id} computed={c} projTotalByGame={projTotalByGame} onNavigateTeam={onNavigateTeam} />)}
+          {mode === "totals" &&
+            rows.map((c) => (
+              <TotalsRow
+                key={c.game.id}
+                computed={c}
+                projTotalByGame={projTotalByGame}
+                filteredBetByGame={filteredBetByGame}
+                onNavigateTeam={onNavigateTeam}
+              />
+            ))}
         </tbody>
       </table>
     </div>
@@ -423,20 +466,49 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
   const { locks } = useGameProjectionLocks(season, weekNumbersInView);
-  const { rows: totalsEngineRows } = useGameTotalsEngine(season);
+  const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
 
   // Same week+teams keying as the team page's Proj. Score column — the
   // Game/Team Totals engine's own game ids are CFBD ids, a different
   // space than this page's Vegas-lines game ids.
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const lockedTotal = locks[g.id]?.my_total;
+      if (lockedTotal != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, lockedTotal);
+    }
+    return map;
+  }, [games, locks]);
+
+  // Once a game has kicked off, its locked total (captured the moment it
+  // kicked off) wins over the live model output — same integrity
+  // guarantee spread/win% already get via computeRow's lock handling.
+  const lockAwareTotalsRows = useMemo(
+    () => applyLockedTotals(totalsEngineRows, lockedTotalByKey),
+    [totalsEngineRows, lockedTotalByKey]
+  );
+
   const projTotalByGame = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of totalsEngineRows) {
+    for (const r of lockAwareTotalsRows) {
       if (r.projection?.projectedTotal != null) {
         map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
       }
     }
     return map;
-  }, [totalsEngineRows]);
+  }, [lockAwareTotalsRows]);
+
+  // Same "only flag a call the model is actually confident in" filter
+  // admin's Totals view uses (buildBetRows' isFiltered) — without this,
+  // the public page can only show every raw Over/Under lean with no way
+  // to tell a real signal from noise.
+  const filteredBetByGame = useMemo(() => {
+    const map = new Map<string, { call: "Over" | "Under" | null; isFiltered: boolean }>();
+    for (const b of buildBetRows(lockAwareTotalsRows, totalsSettings.filterThresholdMultiplier)) {
+      map.set(`${b.row.game.week}|${b.row.game.homeTeam}|${b.row.game.awayTeam}`, { call: b.call, isFiltered: b.isFiltered });
+    }
+    return map;
+  }, [lockAwareTotalsRows, totalsSettings.filterThresholdMultiplier]);
 
   useEffect(() => {
     setLoading(true);
@@ -634,7 +706,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
           {!loading && !isAll && displayRows.length > 0 && (
             <>
-              <MatchupsTable rows={displayRows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
+              <MatchupsTable rows={displayRows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} filteredBetByGame={filteredBetByGame} />
               <BettingStatsBlock rows={displayRows} title={`${subLabel}${slateFilter === "all" ? "" : ` · ${slateFilter === "saturday" ? "Saturday" : "Midweek"}`} Betting Stats`} />
             </>
           )}
@@ -649,7 +721,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
             groupedByWeek.map(({ week, rows }) => (
               <div key={week} className="week-group">
                 <div className="section-label week-group-label">Week {week}</div>
-                <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} />
+                <MatchupsTable rows={rows} onNavigateTeam={onNavigateTeam} mode={mode} projTotalByGame={projTotalByGame} filteredBetByGame={filteredBetByGame} />
               </div>
             ))}
 
