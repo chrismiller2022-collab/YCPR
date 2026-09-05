@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { PerformanceSegment, AmountOffBucket } from "../lib/gameTotalsEngine";
+import type { PerformanceSegment, AmountOffBucket, AmountOffMetric } from "../lib/gameTotalsEngine";
 
 const CP: React.CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 
@@ -142,7 +142,20 @@ export function PerformanceTable({ segments }: { segments: PerformanceSegment[] 
 // overread. Buckets go 0 -> the actual max |amount off| in the data,
 // regardless of what that max happens to be.
 // ---------------------------------------------------------------------
-export function AmountOffChart({ buckets }: { buckets: AmountOffBucket[] }) {
+export function AmountOffMetricToggle({ metric, setMetric }: { metric: AmountOffMetric; setMetric: (m: AmountOffMetric) => void }) {
+  return (
+    <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+      <button className={`mode-btn ${metric === "stdDevOff" ? "mode-btn-active" : ""}`} onClick={() => setMetric("stdDevOff")}>
+        Std Dev Off
+      </button>
+      <button className={`mode-btn ${metric === "amountOff" ? "mode-btn-active" : ""}`} onClick={() => setMetric("amountOff")}>
+        Amount Off
+      </button>
+    </div>
+  );
+}
+
+export function AmountOffChart({ buckets, metric = "stdDevOff" }: { buckets: AmountOffBucket[]; metric?: AmountOffMetric }) {
   if (buckets.length === 0) {
     return <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>Not enough graded bets yet to chart.</p>;
   }
@@ -188,7 +201,10 @@ export function AmountOffChart({ buckets }: { buckets: AmountOffBucket[] }) {
         })}
       </svg>
       <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
-        Win% by |amount off| bucket (points from Vegas), pushes excluded. Dashed line = 50%.
+        {metric === "stdDevOff"
+          ? "Win% by |std dev off| bucket (this pool's own amount-off distribution), pushes excluded."
+          : "Win% by |amount off| bucket (points from Vegas), pushes excluded."}{" "}
+        Dashed line = 50%.
       </p>
     </div>
   );

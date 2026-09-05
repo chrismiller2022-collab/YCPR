@@ -8,6 +8,7 @@ import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
 import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
+import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
@@ -761,6 +762,27 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   // rather than showing a second, separate filter bar.
   const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
 
+  useAutoSyncTeamTotals(games, season);
+  const [actualVegasTTByKey, setActualVegasTTByKey] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    fetchTeamTotalLines(season, weekNumbersInView)
+      .then((rowsByKey) => {
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const [key, row] of Object.entries(rowsByKey)) {
+          if (row.point != null) map.set(key, row.point);
+        }
+        setActualVegasTTByKey(map);
+      })
+      .catch(() => {
+        if (!cancelled) setActualVegasTTByKey(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season, weekNumbersInView]);
+
   // Once a game has kicked off, its locked total (game_projection_locks.
   // my_total, captured the moment it kicked off) should win over the
   // live model output here too — same guarantee the public Matchups
@@ -1162,13 +1184,13 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       {mode === "teamtotals" && (
         <>
           {(() => {
-            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier);
+            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, actualVegasTTByKey);
             const filtered = betRows.filter((r) => r.isFiltered);
             const w = filtered.filter((r) => r.grade === "win").length;
             const l = filtered.filter((r) => r.grade === "loss").length;
             return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
           })()}
-          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} />
+          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} />
         </>
       )}
 

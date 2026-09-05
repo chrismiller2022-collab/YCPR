@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
@@ -12,11 +12,12 @@ import {
   type EnrichedGameRow,
   type BetRow,
   type TeamSplitBetRow,
+  type AmountOffMetric,
 } from "../lib/gameTotalsEngine";
 import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
 import { invalidateCache } from "../lib/api/cache";
-import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, type ViewMode } from "./PerformanceView";
+import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, AmountOffMetricToggle, type ViewMode } from "./PerformanceView";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 const TABS = ["totals", "teamtotals"] as const;
@@ -431,13 +432,15 @@ export function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; setting
 export function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeGamePerformanceBreakdown(betRows), [betRows]);
-  const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
+  const [chartMetric, setChartMetric] = useState<AmountOffMetric>("stdDevOff");
+  const buckets = useMemo(() => computeAmountOffDistribution(betRows, chartMetric), [betRows, chartMetric]);
 
   return (
     <div>
       <PerformanceTable segments={segments} />
       <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>Win% by Amount Off (every bet)</h3>
-      <AmountOffChart buckets={buckets} />
+      <AmountOffMetricToggle metric={chartMetric} setMetric={setChartMetric} />
+      <AmountOffChart buckets={buckets} metric={chartMetric} />
     </div>
   );
 }
@@ -513,11 +516,106 @@ function teamSortValue(r: CombinedTeamRow, key: TeamSortKey, absMode: boolean): 
   }
 }
 
-export function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
-  const combined = useMemo(() => combineByGame(betRows), [betRows]);
-  const [absMode, setAbsMode] = useState(false);
+const TT_STAT_CELL: CSSProperties = { ...CP, textAlign: "right" };
 
+function TeamTotalsStatCells({ t, absMode }: { t: TeamSplitBetRow; absMode: boolean }) {
+  return (
+    <>
+      <td style={TT_STAT_CELL}>{fmt(t.vegasTeamTotal, 1)}</td>
+      <td style={TT_STAT_CELL}>{t.actualVegasTeamTotal != null ? fmt(t.actualVegasTeamTotal, 1) : "–"}</td>
+      <td style={{ ...TT_STAT_CELL, fontWeight: 700 }}>{fmt(t.myTeamTotal, 1)}</td>
+      <td style={{ ...TT_STAT_CELL, color: t.call === "Over" ? "#8fd39a" : t.call === "Under" ? "#e07a7a" : undefined }}>{t.call ?? "–"}</td>
+      <td
+        style={{
+          ...TT_STAT_CELL,
+          color: t.isFiltered ? (t.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+          fontWeight: t.isFiltered ? 700 : undefined,
+        }}
+      >
+        {t.isFiltered ? t.call : "–"}
+      </td>
+      <td style={TT_STAT_CELL}>{fmt(absMode && t.amountOff != null ? Math.abs(t.amountOff) : t.amountOff, 1)}</td>
+      <td style={TT_STAT_CELL}>{fmt(absMode && t.stdDevOff != null ? Math.abs(t.stdDevOff) : t.stdDevOff, 2)}</td>
+      <td style={TT_STAT_CELL}>{fmt(t.actualTeamPoints, 0)}</td>
+      <td style={{ ...TT_STAT_CELL, textTransform: "capitalize" }}>{t.actualResult ?? "–"}</td>
+      <td style={{ ...TT_STAT_CELL, textTransform: "capitalize", color: t.grade ? GRADE_COLOR[t.grade] : undefined, fontWeight: 700 }}>
+        {t.grade ?? "–"}
+      </td>
+    </>
+  );
+}
+
+// Default view: one block per game (wk/date/kickoff/matchup as a header
+// row, away team's line stacked above home's) rather than the old
+// side-by-side away-columns/home-columns table — per Chris, that's
+// easier to scan game-by-game than as one very wide row. The old table
+// is still there (toggle below) since it's still the better shape for
+// sorting/scanning one metric across every game at once.
+function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRow[]; absMode: boolean }) {
+  const sorted = useMemo(
+    () => [...combined].sort((a, b) => a.game.game.week - b.game.game.week || (a.game.game.startDate ?? "").localeCompare(b.game.game.startDate ?? "")),
+    [combined]
+  );
+
+  return (
+    <div className="table-scroll">
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={CP} colSpan={2}>
+              Game
+            </th>
+            <th style={{ ...CP, textAlign: "right" }}>Proj. Vegas TT</th>
+            <th style={{ ...CP, textAlign: "right" }}>Actual Vegas TT</th>
+            <th style={{ ...CP, textAlign: "right" }}>My TT</th>
+            <th style={{ ...CP, textAlign: "right" }}>EB</th>
+            <th style={{ ...CP, textAlign: "right" }}>FB</th>
+            <th style={{ ...CP, textAlign: "right" }}>Amt Off</th>
+            <th style={{ ...CP, textAlign: "right" }}>Std Dev Off</th>
+            <th style={{ ...CP, textAlign: "right" }}>Actual TT</th>
+            <th style={{ ...CP, textAlign: "right" }}>Result</th>
+            <th style={{ ...CP, textAlign: "right" }}>W/L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
+            <Fragment key={r.game.game.id}>
+              <tr style={{ borderTop: "2px solid var(--hash)" }}>
+                <td colSpan={12} style={{ ...CP, padding: "0.6rem 0.5rem 0.3rem", fontWeight: 700 }}>
+                  Wk {r.game.game.week} · {dateLabel(r.game.game.startDate)} · {kickoffLabel(r.game.game.startDate)} — {r.game.game.awayTeam} @{" "}
+                  {r.game.game.homeTeam}
+                </td>
+              </tr>
+              <tr>
+                <td style={CP} colSpan={2}>
+                  <TeamLogo team={r.game.game.awayTeam} /> {r.game.game.awayTeam}
+                  <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (away)</span>
+                </td>
+                <TeamTotalsStatCells t={r.away} absMode={absMode} />
+              </tr>
+              <tr style={{ borderBottom: "1px solid var(--hash)" }}>
+                <td style={CP} colSpan={2}>
+                  <TeamLogo team={r.game.game.homeTeam} /> {r.game.game.homeTeam}
+                  <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (home)</span>
+                </td>
+                <TeamTotalsStatCells t={r.home} absMode={absMode} />
+              </tr>
+            </Fragment>
+          ))}
+          {sorted.length === 0 && (
+            <tr>
+              <td colSpan={12} className="empty">
+                No games.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TeamTotalsDetailedTable({ combined, absMode }: { combined: CombinedTeamRow[]; absMode: boolean }) {
   const [sortKey, setSortKey] = useState<TeamSortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -544,108 +642,97 @@ export function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; set
   );
 
   return (
+    <div className="table-scroll">
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            {sh("Wk", "week")}
+            {sh("Date", "date")}
+            <th style={CP}>Kickoff</th>
+            {sh("Away", "awayTeam")}
+            {sh("Away Vegas TT", "awayVegasTT", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>Actual Vegas TT</th>
+            {sh("My Away TT", "awayMyTT", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>EB</th>
+            <th style={{ ...CP, textAlign: "right" }}>FB</th>
+            {sh("Amt Off", "awayAmountOff", "right")}
+            {sh("Std Dev Off", "awayStdDevOff", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>Actual</th>
+            <th style={{ ...CP, textAlign: "right" }}>Result</th>
+            <th style={{ ...CP, textAlign: "right" }}>W/L</th>
+            {sh("Home", "homeTeam")}
+            {sh("Home Vegas TT", "homeVegasTT", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>Actual Vegas TT</th>
+            {sh("My Home TT", "homeMyTT", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>EB</th>
+            <th style={{ ...CP, textAlign: "right" }}>FB</th>
+            {sh("Amt Off", "homeAmountOff", "right")}
+            {sh("Std Dev Off", "homeStdDevOff", "right")}
+            <th style={{ ...CP, textAlign: "right" }}>Actual</th>
+            <th style={{ ...CP, textAlign: "right" }}>Result</th>
+            <th style={{ ...CP, textAlign: "right" }}>W/L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
+            <tr key={r.game.game.id}>
+              <td style={CP}>{r.game.game.week}</td>
+              <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
+              <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
+              <td style={CP}>{r.game.game.awayTeam}</td>
+              <TeamTotalsStatCells t={r.away} absMode={absMode} />
+              <td style={CP}>{r.game.game.homeTeam}</td>
+              <TeamTotalsStatCells t={r.home} absMode={absMode} />
+            </tr>
+          ))}
+          {sorted.length === 0 && (
+            <tr>
+              <td colSpan={25} className="empty">
+                No games.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function TeamTotalsTab({
+  rows,
+  settings,
+  actualVegasTTByKey,
+}: {
+  rows: EnrichedGameRow[];
+  settings: GameTotalsSettings;
+  actualVegasTTByKey?: Map<string, number>;
+}) {
+  const betRows = useMemo(
+    () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier, actualVegasTTByKey),
+    [rows, settings.filterThresholdMultiplier, actualVegasTTByKey]
+  );
+  const combined = useMemo(() => combineByGame(betRows), [betRows]);
+  const [absMode, setAbsMode] = useState(false);
+  const [detailed, setDetailed] = useState(false);
+
+  return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-        My TT = my total split by my spread. Vegas TT = Vegas's total split by Vegas's spread (derived — no real
-        market team-total line synced). EB = every bet's call. FB = call shown only if it also clears the filter.
+        My TT = my total split by my spread. Proj. Vegas TT = Vegas's total split by Vegas's spread (derived — no
+        real market line). Actual Vegas TT = a real synced team_totals market line, when one exists for this
+        game/team. Grading (EB/FB/Amt Off/Std Dev Off/Result/W-L) uses Actual Vegas TT when available, falling back
+        to Proj. Vegas TT otherwise. EB = every bet's call. FB = call shown only if it also clears the filter.
       </p>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", marginBottom: "0.6rem" }}>
-        <input type="checkbox" checked={absMode} onChange={(e) => setAbsMode(e.target.checked)} />
-        Show Amt Off / Std Dev Off as absolute value
-      </label>
-      <div className="table-scroll">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              {sh("Wk", "week")}
-              {sh("Date", "date")}
-              <th style={CP}>Kickoff</th>
-              {sh("Away", "awayTeam")}
-              {sh("Away Vegas TT", "awayVegasTT", "right")}
-              {sh("My Away TT", "awayMyTT", "right")}
-              <th style={{ ...CP, textAlign: "right" }}>EB</th>
-              <th style={{ ...CP, textAlign: "right" }}>FB</th>
-              {sh("Amt Off", "awayAmountOff", "right")}
-              {sh("Std Dev Off", "awayStdDevOff", "right")}
-              <th style={{ ...CP, textAlign: "right" }}>Actual</th>
-              <th style={{ ...CP, textAlign: "right" }}>Result</th>
-              <th style={{ ...CP, textAlign: "right" }}>W/L</th>
-              {sh("Home", "homeTeam")}
-              {sh("Home Vegas TT", "homeVegasTT", "right")}
-              {sh("My Home TT", "homeMyTT", "right")}
-              <th style={{ ...CP, textAlign: "right" }}>EB</th>
-              <th style={{ ...CP, textAlign: "right" }}>FB</th>
-              {sh("Amt Off", "homeAmountOff", "right")}
-              {sh("Std Dev Off", "homeStdDevOff", "right")}
-              <th style={{ ...CP, textAlign: "right" }}>Actual</th>
-              <th style={{ ...CP, textAlign: "right" }}>Result</th>
-              <th style={{ ...CP, textAlign: "right" }}>W/L</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r) => (
-              <tr key={r.game.game.id}>
-                <td style={CP}>{r.game.game.week}</td>
-                <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
-                <td style={CP}>{r.game.game.awayTeam}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.vegasTeamTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.away.myTeamTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.away.call === "Over" ? "#8fd39a" : r.away.call === "Under" ? "#e07a7a" : undefined }}>
-                  {r.away.call ?? "–"}
-                </td>
-                <td
-                  style={{
-                    ...CP,
-                    textAlign: "right",
-                    color: r.away.isFiltered ? (r.away.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
-                    fontWeight: r.away.isFiltered ? 700 : undefined,
-                  }}
-                >
-                  {r.away.isFiltered ? r.away.call : "–"}
-                </td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.away.amountOff != null ? Math.abs(r.away.amountOff) : r.away.amountOff, 1)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.away.stdDevOff != null ? Math.abs(r.away.stdDevOff) : r.away.stdDevOff, 2)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away.actualTeamPoints, 0)}</td>
-                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{r.away.actualResult ?? "–"}</td>
-                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: r.away.grade ? GRADE_COLOR[r.away.grade] : undefined, fontWeight: 700 }}>
-                  {r.away.grade ?? "–"}
-                </td>
-                <td style={CP}>{r.game.game.homeTeam}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.vegasTeamTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.home.myTeamTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.home.call === "Over" ? "#8fd39a" : r.home.call === "Under" ? "#e07a7a" : undefined }}>
-                  {r.home.call ?? "–"}
-                </td>
-                <td
-                  style={{
-                    ...CP,
-                    textAlign: "right",
-                    color: r.home.isFiltered ? (r.home.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
-                    fontWeight: r.home.isFiltered ? 700 : undefined,
-                  }}
-                >
-                  {r.home.isFiltered ? r.home.call : "–"}
-                </td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.home.amountOff != null ? Math.abs(r.home.amountOff) : r.home.amountOff, 1)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && r.home.stdDevOff != null ? Math.abs(r.home.stdDevOff) : r.home.stdDevOff, 2)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.home.actualTeamPoints, 0)}</td>
-                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{r.home.actualResult ?? "–"}</td>
-                <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: r.home.grade ? GRADE_COLOR[r.home.grade] : undefined, fontWeight: 700 }}>
-                  {r.home.grade ?? "–"}
-                </td>
-              </tr>
-            ))}
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={20} className="empty">
-                  No games.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.6rem", flexWrap: "wrap" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem" }}>
+          <input type="checkbox" checked={absMode} onChange={(e) => setAbsMode(e.target.checked)} />
+          Show Amt Off / Std Dev Off as absolute value
+        </label>
+        <button className="mode-btn" onClick={() => setDetailed((d) => !d)}>
+          {detailed ? "Back to game view" : "Detailed sortable table"}
+        </button>
       </div>
+      {detailed ? <TeamTotalsDetailedTable combined={combined} absMode={absMode} /> : <TeamTotalsStackedView combined={combined} absMode={absMode} />}
     </div>
   );
 }
@@ -653,13 +740,15 @@ export function TeamTotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; set
 export function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeTeamPerformanceBreakdown(betRows), [betRows]);
-  const buckets = useMemo(() => computeAmountOffDistribution(betRows), [betRows]);
+  const [chartMetric, setChartMetric] = useState<AmountOffMetric>("stdDevOff");
+  const buckets = useMemo(() => computeAmountOffDistribution(betRows, chartMetric), [betRows, chartMetric]);
 
   return (
     <div>
       <PerformanceTable segments={segments} />
       <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>Win% by Amount Off (every bet)</h3>
-      <AmountOffChart buckets={buckets} />
+      <AmountOffMetricToggle metric={chartMetric} setMetric={setChartMetric} />
+      <AmountOffChart buckets={buckets} metric={chartMetric} />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { buildSlateRow, filterSlateRowsByDay, type SlateDayFilter } from "../lib/matchupSlate";
 import { isMidweekET, isSaturdayET } from "../lib/watchability";
 import { useGameTotalsEngine, buildBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
+import { useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
@@ -467,6 +468,7 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
   const { locks } = useGameProjectionLocks(season, weekNumbersInView);
   const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
+  useAutoSyncTeamTotals(games, season);
 
   // Same week+teams keying as the team page's Proj. Score column — the
   // Game/Team Totals engine's own game ids are CFBD ids, a different

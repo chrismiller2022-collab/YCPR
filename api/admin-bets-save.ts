@@ -27,14 +27,14 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, action } = req.body ?? {};
-  // lockProjections is deliberately exempt from the password gate below
-  // — it's append-only (INSERT ... ON CONFLICT DO NOTHING, can never
-  // overwrite an existing lock), the values it writes are just "what
-  // the live computation already says," and it needs to fire from the
-  // PUBLIC matchups page too, not only when Chris happens to be logged
-  // into admin — the whole point is catching a game the moment it
-  // kicks off regardless of who's viewing the site right then.
-  if (password !== ADMIN_PASSWORD && action !== "lockProjections") {
+  // lockProjections and syncTeamTotals are both deliberately exempt from
+  // the password gate below: lockProjections is append-only (can never
+  // overwrite an existing lock) and syncTeamTotals just mirrors whatever
+  // The Odds API is currently quoting (upsert, always overwritable by a
+  // fresher pull) — neither can corrupt anything the site actually
+  // computes, and both need to fire from the PUBLIC matchups page, not
+  // only when Chris is logged into admin.
+  if (password !== ADMIN_PASSWORD && action !== "lockProjections" && action !== "syncTeamTotals") {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -63,6 +63,31 @@ export default async function handler(req: any, res: any) {
         .upsert(rows, { onConflict: "game_id", ignoreDuplicates: true, count: "exact" });
       if (error) throw error;
       res.status(200).json({ locked: count ?? rows.length });
+      return;
+    }
+
+    if (action === "syncTeamTotals") {
+      const { rows } = req.body;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(200).json({ synced: 0 });
+        return;
+      }
+      const saveRows = rows.map((r: any) => ({
+        game_id: r.game_id,
+        season: r.season,
+        week: r.week,
+        team: r.team,
+        provider: r.provider ?? null,
+        point: r.point ?? null,
+        over_price: r.over_price ?? null,
+        under_price: r.under_price ?? null,
+        pulled_at: new Date().toISOString(),
+      }));
+      const { error, count } = await supabaseAdmin
+        .from("team_total_lines")
+        .upsert(saveRows, { onConflict: "game_id,team", count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ synced: count ?? saveRows.length });
       return;
     }
 

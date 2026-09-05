@@ -82,6 +82,53 @@ function computeRestDaysByGame(games: GameForTotals[]): Map<string, number> {
   return result;
 }
 
+// Pulled out of useGameTotalsEngine so useMultiSeasonGameTotalsEngine
+// (Totals History's multi-season selector) can build the same enriched
+// rows per season and concatenate, without duplicating this logic.
+function computeEnrichedRows(
+  games: GameForTotals[],
+  teamInputs: Record<string, TeamSeasonInputs>,
+  league: LeagueAverages,
+  liveByTeam: Record<string, any>,
+  restDaysByGame: Map<string, number>
+): EnrichedGameRow[] {
+  return games.map((game) => {
+    const home = teamInputs[game.homeTeam] ?? null;
+    const away = teamInputs[game.awayTeam] ?? null;
+    const odds = resolveGameOdds(game.overUnder, game.openingOverUnder);
+    const actualTotal =
+      game.completed && game.homePoints != null && game.awayPoints != null ? game.homePoints + game.awayPoints : null;
+
+    const homeRating = liveByTeam[game.homeTeam]?.rating;
+    const awayRating = liveByTeam[game.awayTeam]?.rating;
+    const myHomeSpread =
+      homeRating != null && awayRating != null ? homeRating - awayRating - hfaFor(game.homeTeam, liveByTeam) : null;
+
+    if (!home || !away) {
+      return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
+    }
+
+    const context = {
+      homeFlag: game.neutralSite ? 0.5 : 1.0,
+      homeRestDays: restDaysByGame.get(`${game.homeTeam}|${game.id}`) ?? 7,
+      awayRestDays: restDaysByGame.get(`${game.awayTeam}|${game.id}`) ?? 7,
+    };
+    const projection = computeGameProjection(home, away, league, odds, context);
+
+    return {
+      game,
+      home,
+      away,
+      homeEfficiencyInputs: computeEfficiencyInputs(home, away, league),
+      awayEfficiencyInputs: computeEfficiencyInputs(away, home, league),
+      projection,
+      odds,
+      actualTotal,
+      myHomeSpread,
+    };
+  });
+}
+
 export function useGameTotalsEngine(season: number) {
   const [rawRows, setRawRows] = useState<{ teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[] } | null>(null);
   const [settings, setSettingsState] = useState<GameTotalsSettings>(DEFAULT_GAME_TOTALS_SETTINGS);
@@ -112,44 +159,87 @@ export function useGameTotalsEngine(season: number) {
 
   const rows: EnrichedGameRow[] = useMemo(() => {
     if (!rawRows || !league) return [];
-    return rawRows.games.map((game) => {
-      const home = rawRows.teamInputs[game.homeTeam] ?? null;
-      const away = rawRows.teamInputs[game.awayTeam] ?? null;
-      const odds = resolveGameOdds(game.overUnder, game.openingOverUnder);
-      const actualTotal =
-        game.completed && game.homePoints != null && game.awayPoints != null ? game.homePoints + game.awayPoints : null;
-
-      const homeRating = liveByTeam[game.homeTeam]?.rating;
-      const awayRating = liveByTeam[game.awayTeam]?.rating;
-      const myHomeSpread =
-        homeRating != null && awayRating != null ? homeRating - awayRating - hfaFor(game.homeTeam, liveByTeam) : null;
-
-      if (!home || !away) {
-        return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
-      }
-
-      const context = {
-        homeFlag: game.neutralSite ? 0.5 : 1.0,
-        homeRestDays: restDaysByGame.get(`${game.homeTeam}|${game.id}`) ?? 7,
-        awayRestDays: restDaysByGame.get(`${game.awayTeam}|${game.id}`) ?? 7,
-      };
-      const projection = computeGameProjection(home, away, league, odds, context);
-
-      return {
-        game,
-        home,
-        away,
-        homeEfficiencyInputs: computeEfficiencyInputs(home, away, league),
-        awayEfficiencyInputs: computeEfficiencyInputs(away, home, league),
-        projection,
-        odds,
-        actualTotal,
-        myHomeSpread,
-      };
-    });
+    return computeEnrichedRows(rawRows.games, rawRows.teamInputs, league, liveByTeam, restDaysByGame);
   }, [rawRows, league, liveByTeam, settings, restDaysByGame]);
 
   return { rows, settings, setSettings: setSettingsState, loading, error };
+}
+
+// Totals History's multi-season selector — same shape as
+// useGameTotalsEngine ({rows, settings, loading, error}) so consumers
+// don't need two code paths, but fetches/computes each season
+// independently (league averages and rest-days are season-relative, so
+// they can't be computed over a pooled multi-season team-input set) and
+// concatenates. Settings come from the first selected season only —
+// Totals History doesn't let you edit settings, it just needs SOME
+// filterThresholdMultiplier for the isFiltered/performance math, and
+// picking one consistent season for that beats an undefined blend.
+export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
+  // Raw per-season fetch results only — liveByTeam is deliberately NOT a
+  // dependency of the fetch effect below. useWeeklyStats's byTeam is a
+  // plain object rebuilt every render (not memoized), so making it an
+  // effect dependency here would refetch every season's data on every
+  // unrelated re-render of whatever renders this hook. It only needs to
+  // affect the (cheap, client-side) enrichment step, same as
+  // useGameTotalsEngine's own rows useMemo does.
+  const [perSeasonRaw, setPerSeasonRaw] = useState<
+    { season: number; teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[] }[]
+  >([]);
+  const [settings, setSettings] = useState<GameTotalsSettings>(DEFAULT_GAME_TOTALS_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const seasonsKey = Array.from(new Set(seasons)).sort((a, b) => a - b).join(",");
+
+  useEffect(() => {
+    if (!seasonsKey) {
+      setPerSeasonRaw([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const seasonList = seasonsKey.split(",").map(Number);
+    Promise.all(
+      seasonList.map((season) =>
+        Promise.all([fetchTeamSeasonInputs(season), fetchGamesForTotals(season), fetchGameTotalsSettings(season)]).then(
+          ([teamInputs, games, savedSettings]) => ({ season, teamInputs, games, savedSettings })
+        )
+      )
+    )
+      .then((perSeason) => {
+        if (cancelled) return;
+        setPerSeasonRaw(perSeason.map(({ season, teamInputs, games }) => ({ season, teamInputs, games })));
+        const savedSettings = perSeason[0]?.savedSettings;
+        setSettings(
+          savedSettings
+            ? { ...DEFAULT_GAME_TOTALS_SETTINGS, ...savedSettings, weights: normalizeWeights(savedSettings.weights) }
+            : DEFAULT_GAME_TOTALS_SETTINGS
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message ?? "Failed to load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [seasonsKey]);
+
+  const rows: EnrichedGameRow[] = useMemo(() => {
+    const allRows: EnrichedGameRow[] = [];
+    for (const { teamInputs, games } of perSeasonRaw) {
+      const league = computeLeagueAverages(Object.values(teamInputs));
+      const restDaysByGame = computeRestDaysByGame(games);
+      allRows.push(...computeEnrichedRows(games, teamInputs, league, liveByTeam, restDaysByGame));
+    }
+    return allRows;
+  }, [perSeasonRaw, liveByTeam]);
+
+  return { rows, settings, loading, error };
 }
 
 // projectedTotal() used to take a CompositeKey and pick from 6 stored
@@ -230,8 +320,9 @@ export interface TeamSplitBetRow {
   isHome: boolean;
   isFavorite: boolean | null; // by MY spread (myHomeSpread) — null if no rating available for either side
   myTeamTotal: number | null; // my model's game total, split via MY projected spread (myHomeSpread)
-  vegasTeamTotal: number | null; // Vegas's game total, split via Vegas's own spread — a DERIVED number, since there's no real market team-total line synced
-  amountOff: number | null;
+  vegasTeamTotal: number | null; // "Projected" Vegas team total — Vegas's game total split by Vegas's own spread. Always computed, since it never depends on a real line existing.
+  actualVegasTeamTotal: number | null; // Real market team-total line (team_total_lines / The Odds API's team_totals market), when one was synced for this game+team — not every game/season has one.
+  amountOff: number | null; // myTeamTotal vs. the grading line (actualVegasTeamTotal when present, else vegasTeamTotal — see gradingLineFor below)
   stdDevOff: number | null;
   call: "Over" | "Under" | null;
   isFiltered: boolean;
@@ -240,14 +331,28 @@ export interface TeamSplitBetRow {
   grade: ReturnType<typeof gradeBetCall>;
 }
 
+// Which line "the" grading (amountOff/call/isFiltered/grade) is actually
+// measured against — real market line first, falling back to the
+// synthetic split when none was synced. This is the "still see the old
+// grading" behavior per Chris: nothing changes for a game/season with no
+// real team_totals line (2024/2025, or any game the book doesn't carry
+// it for), it only upgrades to the real line where one exists.
+function gradingLineFor(vegasTeamTotal: number | null, actualVegasTeamTotal: number | null): number | null {
+  return actualVegasTeamTotal ?? vegasTeamTotal;
+}
+
 // Per Chris's spec: my team total = my game total split by MY spread
 // (myHomeSpread); "Vegas" team total = Vegas's game total split by
 // Vegas's own spread (a derived proxy — Vegas doesn't publish real
 // per-team totals on this site, so this is what we compare my number
-// against). Both spreads are fixed to their own source now — no more
-// configurable spreadSource, since there's exactly one correct spread
-// for each of the two numbers.
-export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number): TeamSplitBetRow[] {
+// against, unless a real line was synced — see gradingLineFor). Both
+// spreads are fixed to their own source now — no more configurable
+// spreadSource, since there's exactly one correct spread for each number.
+export function buildTeamSplitBetRows(
+  rows: EnrichedGameRow[],
+  filterThresholdMultiplier: number,
+  actualVegasTTByKey?: Map<string, number>
+): TeamSplitBetRow[] {
   const perTeamRows: {
     row: EnrichedGameRow;
     team: string;
@@ -255,6 +360,7 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
     isFavorite: boolean | null;
     myTeamTotal: number | null;
     vegasTeamTotal: number | null;
+    actualVegasTeamTotal: number | null;
   }[] = [];
   for (const row of rows) {
     const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
@@ -267,6 +373,7 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
       isFavorite: homeIsFavorite,
       myTeamTotal: mySplit.home,
       vegasTeamTotal: vegasSplit.home,
+      actualVegasTeamTotal: actualVegasTTByKey?.get(`${row.game.week}|${row.game.homeTeam}`) ?? null,
     });
     perTeamRows.push({
       row,
@@ -275,20 +382,23 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
       isFavorite: homeIsFavorite == null ? null : !homeIsFavorite,
       myTeamTotal: mySplit.away,
       vegasTeamTotal: vegasSplit.away,
+      actualVegasTeamTotal: actualVegasTTByKey?.get(`${row.game.week}|${row.game.awayTeam}`) ?? null,
     });
   }
 
   const diffs: number[] = [];
   for (const r of perTeamRows) {
-    if (r.myTeamTotal != null && r.vegasTeamTotal != null) diffs.push(r.myTeamTotal - r.vegasTeamTotal);
+    const gradingLine = gradingLineFor(r.vegasTeamTotal, r.actualVegasTeamTotal);
+    if (r.myTeamTotal != null && gradingLine != null) diffs.push(r.myTeamTotal - gradingLine);
   }
   const poolStd = stdDev(diffs);
 
   return perTeamRows.map((r) => {
-    const { amountOff, call } = determineBetCall(r.myTeamTotal, r.vegasTeamTotal);
+    const gradingLine = gradingLineFor(r.vegasTeamTotal, r.actualVegasTeamTotal);
+    const { amountOff, call } = determineBetCall(r.myTeamTotal, gradingLine);
     const isFiltered = isFilteredBet(amountOff, poolStd, filterThresholdMultiplier);
     const actualTeamPoints = r.isHome ? r.row.game.homePoints : r.row.game.awayPoints;
-    const actualResult = gradeActualTotal(actualTeamPoints, r.vegasTeamTotal);
+    const actualResult = gradeActualTotal(actualTeamPoints, gradingLine);
     const grade = gradeBetCall(call, actualResult);
     return {
       row: r.row,
@@ -297,6 +407,7 @@ export function buildTeamSplitBetRows(rows: EnrichedGameRow[], filterThresholdMu
       isFavorite: r.isFavorite,
       myTeamTotal: r.myTeamTotal,
       vegasTeamTotal: r.vegasTeamTotal,
+      actualVegasTeamTotal: r.actualVegasTeamTotal,
       amountOff,
       stdDevOff: stdDevOff(amountOff, poolStd),
       call,
@@ -433,26 +544,38 @@ export interface AmountOffBucket {
   winPct: number | null;
 }
 
+export type AmountOffMetric = "stdDevOff" | "amountOff";
+
+// stdDevOff is the default per Chris — it normalizes for how spread out
+// a given pool's misses typically are, so "0.5 off" means something
+// comparable across pools/seasons; raw amountOff (points) stays
+// available as the second view since it's still the more literal number
+// (and the only one that means anything before there's a pool to derive
+// a std dev from).
 export function computeAmountOffDistribution(
-  rows: { amountOff: number | null; grade: ReturnType<typeof gradeBetCall> }[],
-  bucketSize = 0.5
+  rows: { amountOff: number | null; stdDevOff: number | null; grade: ReturnType<typeof gradeBetCall> }[],
+  metric: AmountOffMetric = "stdDevOff",
+  bucketSize?: number
 ): AmountOffBucket[] {
-  const graded = rows.filter((r) => r.amountOff != null && r.grade != null && r.grade !== "push");
+  const size = bucketSize ?? (metric === "stdDevOff" ? 0.25 : 0.5);
+  const valueOf = (r: (typeof rows)[number]) => (metric === "stdDevOff" ? r.stdDevOff : r.amountOff);
+  const graded = rows.filter((r) => valueOf(r) != null && r.grade != null && r.grade !== "push");
   if (graded.length === 0) return [];
-  const maxAbs = Math.max(...graded.map((r) => Math.abs(r.amountOff!)));
-  const bucketCount = Math.max(1, Math.ceil(maxAbs / bucketSize));
+  const maxAbs = Math.max(...graded.map((r) => Math.abs(valueOf(r)!)));
+  const bucketCount = Math.max(1, Math.ceil(maxAbs / size));
+  const digits = metric === "stdDevOff" ? 2 : 1;
   const buckets: AmountOffBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
-    lo: i * bucketSize,
-    hi: (i + 1) * bucketSize,
-    label: `${(i * bucketSize).toFixed(1)}-${((i + 1) * bucketSize).toFixed(1)}`,
+    lo: i * size,
+    hi: (i + 1) * size,
+    label: `${(i * size).toFixed(digits)}-${((i + 1) * size).toFixed(digits)}`,
     wins: 0,
     losses: 0,
     n: 0,
     winPct: null,
   }));
   for (const r of graded) {
-    const abs = Math.abs(r.amountOff!);
-    const idx = Math.min(bucketCount - 1, Math.floor(abs / bucketSize));
+    const abs = Math.abs(valueOf(r)!);
+    const idx = Math.min(bucketCount - 1, Math.floor(abs / size));
     const b = buckets[idx];
     b.n++;
     if (r.grade === "win") b.wins++;

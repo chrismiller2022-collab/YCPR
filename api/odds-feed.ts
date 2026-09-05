@@ -20,6 +20,21 @@
 //     futures) — no API key needed, it's the same public data ESPN's own
 //     site reads. Lets us compare NCAAF Championship pricing across
 //     Odds API's books AND ESPN's, not just one source.
+//   - mode=team-totals-events: the free, non-metered upcoming-events list
+//     (id/team names/kickoff only, no odds) — used to match Odds API's
+//     "School Mascot" naming against this site's own game list BEFORE
+//     spending any credits, so mode=team-totals below only ever gets
+//     asked for events we actually need.
+//   - mode=team-totals&eventIds=a,b,c: the team_totals ("Additional
+//     Markets") data for specific events, fetched one at a time per The
+//     Odds API's own requirement — costs 1 credit per event per region,
+//     so the caller (useAutoSyncTeamTotals) is expected to have already
+//     narrowed eventIds down via team-totals-events first, not fetch
+//     every upcoming game. Team-name matching to this site's canonical
+//     roster happens client-side (teamNameMatch.ts) rather than here —
+//     api/ functions aren't part of the src/ TypeScript program and no
+//     other function here imports across that boundary, so this keeps
+//     that precedent rather than being the first to break it.
 // All proxied server-side, so ODDS_API_KEY never ships to the browser
 // and this function controls exactly when a credit-metered request
 // fires (on page open / manual refresh only — no polling, per Chris
@@ -183,6 +198,89 @@ async function handleEspnFutures(res: any) {
   res.status(200).json({ markets: teamMarkets });
 }
 
+interface OddsApiEvent {
+  id: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+}
+
+// Free, non-metered — the "index" of upcoming events with no odds
+// attached, purely so the client can figure out which event ids it
+// actually needs before spending any team_totals credits on them.
+async function handleTeamTotalsEvents(res: any) {
+  const url = `${ODDS_API_BASE}/sports/americanfootball_ncaaf/events?apiKey=${ODDS_API_KEY}`;
+  const upstream = await fetch(url);
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`The Odds API events request failed (${upstream.status}): ${text || upstream.statusText}`);
+  }
+  const events = (await upstream.json()) as OddsApiEvent[];
+  res.status(200).json({
+    events: events.map((e) => ({ id: e.id, homeTeam: e.home_team, awayTeam: e.away_team, commenceTime: e.commence_time })),
+  });
+}
+
+// Metered — 1 credit per event per region (team_totals is an "additional
+// market," fetched one event at a time per The Odds API's own design,
+// not batchable like spreads/h2h/totals above). Caller is expected to
+// have already trimmed eventIds down via mode=team-totals-events.
+const MAX_TEAM_TOTALS_EVENTS = 90; // a full FBS+FCS week is ~100-110 games; this is a hard stop against a caller bug turning into a runaway bill, not a real week-size cap
+async function handleTeamTotals(req: any, res: any) {
+  const raw = typeof req.query?.eventIds === "string" ? req.query.eventIds : "";
+  const eventIds = raw
+    .split(",")
+    .map((s: string) => s.trim())
+    .filter(Boolean)
+    .slice(0, MAX_TEAM_TOTALS_EVENTS);
+  if (eventIds.length === 0) {
+    res.status(400).json({ error: "eventIds is required (comma-separated The Odds API event ids)" });
+    return;
+  }
+
+  const results = await Promise.all(
+    eventIds.map(async (eventId: string) => {
+      const url = `${ODDS_API_BASE}/sports/americanfootball_ncaaf/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=team_totals&oddsFormat=american`;
+      const r = await fetch(url);
+      if (!r.ok) return { eventId, error: `${r.status} ${await r.text().catch(() => "")}` };
+      const body = await r.json();
+      const bookmakers = (body.bookmakers ?? []) as OddsApiBookmaker[];
+      // Prefer whichever wanted book has it, else take whatever's there —
+      // team_totals isn't consistently on Bovada/BetOnline/Novig (this
+      // site's usual three) for NCAAF, confirmed live 2026-09-04: only
+      // FanDuel carried it in a spot check, so this can't insist on the
+      // same WANTED_BOOKMAKERS set the featured-markets fetch above uses.
+      const book =
+        bookmakers.find((b) => WANTED_BOOKMAKERS.has(b.key) && b.markets.some((m) => m.key === "team_totals")) ??
+        bookmakers.find((b) => b.markets.some((m) => m.key === "team_totals"));
+      const market = book?.markets.find((m) => m.key === "team_totals");
+      if (!market) return { eventId, homeTeam: body.home_team, awayTeam: body.away_team, teams: [] };
+
+      // Outcomes come as {name: "Over"|"Under", description: "<team name>",
+      // point, price} — one Over and one Under per team, same point.
+      const byTeam = new Map<string, { point: number; overPrice: number | null; underPrice: number | null }>();
+      for (const o of market.outcomes as any[]) {
+        const team = o.description as string;
+        const entry = byTeam.get(team) ?? { point: o.point, overPrice: null, underPrice: null };
+        entry.point = o.point;
+        if (o.name === "Over") entry.overPrice = o.price;
+        if (o.name === "Under") entry.underPrice = o.price;
+        byTeam.set(team, entry);
+      }
+
+      return {
+        eventId,
+        homeTeam: body.home_team,
+        awayTeam: body.away_team,
+        provider: book?.key ?? null,
+        teams: Array.from(byTeam.entries()).map(([team, v]) => ({ team, ...v })),
+      };
+    })
+  );
+
+  res.status(200).json({ results });
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -202,6 +300,16 @@ export default async function handler(req: any, res: any) {
 
     if (req.query?.mode === "futures") {
       await handleFutures(res);
+      return;
+    }
+
+    if (req.query?.mode === "team-totals-events") {
+      await handleTeamTotalsEvents(res);
+      return;
+    }
+
+    if (req.query?.mode === "team-totals") {
+      await handleTeamTotals(req, res);
       return;
     }
 
