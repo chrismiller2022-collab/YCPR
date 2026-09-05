@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/reports/:file", "destination": "https://uyxnmtsntiaxqqmwsteq.supabase.co/storage/v1/object/public/weekly-reports/:file" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

@@ -40,13 +40,20 @@ export async function publishWeeklyReportPdf(week: string, division: ReportDivis
 }
 
 // Looks up whether a given week+division's report has been published.
-// Returns the public URL if so, or null if that one hasn't been made yet.
+// Returns a shareable URL if so, or null if that one hasn't been made yet.
+//
+// This is a same-origin path (/reports/<file>), not Supabase's own
+// getPublicUrl() — vercel.json proxies that path to the actual Storage
+// object, so the address bar (and anything pasted from it, e.g. onto
+// Twitter) shows ycpr.vercel.app instead of the raw
+// <project-ref>.supabase.co/storage/v1/object/public/... URL. See
+// vercel.json's "rewrites" for the actual proxy rule — update both if
+// this bucket or path convention ever changes.
 export async function fetchWeeklyReportUrl(week: string, division: ReportDivision): Promise<string | null> {
   const path = reportPath(week, division);
   const { data, error } = await supabase.storage.from(BUCKET).list("", { search: path });
   if (error || !data) return null;
   const found = data.find((f) => f.name === path);
   if (!found) return null;
-  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return pub.publicUrl;
+  return `/reports/${path}`;
 }
