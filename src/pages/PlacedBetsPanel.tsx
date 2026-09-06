@@ -13,6 +13,7 @@ import { parsePlacedBetsCsv, PLACED_BETS_CSV_TEMPLATE, type PlacedBetImportError
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { pickLine } from "../lib/matchupsCompute";
 import { moneylineToImpliedWinPct } from "../lib/odds";
+import { fetchPoolBalanceSummary, type PoolBalanceSummary } from "../lib/api/poolBalanceSummary";
 
 function fmtPrice(v: number | null): string {
   if (v == null) return "–";
@@ -134,6 +135,23 @@ function addBetToRecord(rec: Record_, bet: PlacedBetRow) {
 }
 function roi(rec: Record_): number | null {
   return rec.staked > 0 ? (rec.profit / rec.staked) * 100 : null;
+}
+
+function fmtMoneyPlain(v: number): string {
+  return v.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+}
+
+function PoolSummaryChip({ label, cost, winnings }: { label: string; cost: number; winnings: number }) {
+  const net = winnings - cost;
+  return (
+    <div style={{ padding: "0.6rem 0.8rem", border: "1px solid var(--hash)", borderRadius: 8, minWidth: 150 }}>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+      <div style={{ fontSize: "0.8rem" }}>
+        {fmtMoneyPlain(cost)} in · {fmtMoneyPlain(winnings)} back
+      </div>
+      <div style={{ fontSize: "0.9rem", fontWeight: 700, color: net > 0 ? "#8fd39a" : net < 0 ? "#e07a7a" : undefined }}>{fmtMoney(net)}</div>
+    </div>
+  );
 }
 
 function RecordSummary({ label, rec }: { label: string; rec: Record_ }) {
@@ -284,6 +302,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   const [week, setWeek] = useState<number | "all">("all");
   const [bets, setBets] = useState<PlacedBetRow[]>([]);
   const [games, setGames] = useState<GameWithLines[]>([]);
+  const [poolSummary, setPoolSummary] = useState<PoolBalanceSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
@@ -291,10 +310,11 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchPlacedBets(season), fetchGamesWithLines(season)])
-      .then(([betRows, gameRows]) => {
+    Promise.all([fetchPlacedBets(season), fetchGamesWithLines(season), fetchPoolBalanceSummary(season)])
+      .then(([betRows, gameRows, summary]) => {
         setBets(betRows);
         setGames(gameRows);
+        setPoolSummary(summary);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -327,6 +347,15 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
     });
     return map;
   }, [visibleBets]);
+
+  // Money still on the table — staked on bets that haven't graded yet,
+  // not part of the Combined section's in/back totals below (which only
+  // covers what's actually settled).
+  const pendingStaked = useMemo(
+    () => visibleBets.filter((b) => b.result === "pending" && b.stake != null).reduce((sum, b) => sum + (b.stake ?? 0), 0),
+    [visibleBets]
+  );
+  const betsReturned = overall.staked + overall.profit;
 
   return (
     <div>
@@ -366,6 +395,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
       {!loading && visibleBets.length > 0 && (
         <>
+          <h3 style={{ marginBottom: "0.5rem" }}>Bets</h3>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.5rem" }}>
             <RecordSummary label="Overall" rec={overall} />
             {Array.from(byBook.entries()).map(([book, rec]) => (
@@ -445,6 +475,42 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
               </tbody>
             </table>
           </div>
+
+          {poolSummary && (
+            <>
+              <h3 style={{ marginTop: "2rem", marginBottom: "0.5rem" }}>Pools</h3>
+              <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: 0 }}>
+                The Brit plus every flat pool cost tracked on the Balance Sheet — season-long, not affected by
+                the week filter above.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.5rem" }}>
+                {poolSummary.items.map((item) => (
+                  <PoolSummaryChip key={item.key} label={item.label} cost={item.cost} winnings={item.winnings} />
+                ))}
+                <PoolSummaryChip label="Total" cost={poolSummary.totalCost} winnings={poolSummary.totalWinnings} />
+              </div>
+
+              <h3 style={{ marginTop: "1rem", marginBottom: "0.5rem" }}>Combined</h3>
+              <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: 0 }}>
+                Everything you've put in this season vs. everything settled bets and pools have paid back so
+                far.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
+                <PoolSummaryChip label="Bets" cost={overall.staked} winnings={betsReturned} />
+                <PoolSummaryChip label="Pools" cost={poolSummary.totalCost} winnings={poolSummary.totalWinnings} />
+                <PoolSummaryChip
+                  label="Season total"
+                  cost={overall.staked + poolSummary.totalCost}
+                  winnings={betsReturned + poolSummary.totalWinnings}
+                />
+              </div>
+              {pendingStaked > 0 && (
+                <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: "0.5rem" }}>
+                  Plus {fmtMoneyPlain(pendingStaked)} staked on bets still pending — not counted above until they grade.
+                </p>
+              )}
+            </>
+          )}
         </>
       )}
     </div>
