@@ -117,27 +117,93 @@ export default async function handler(req: any, res: any) {
 
     // --- Westgate Supercontest: same shape as Peay/CBS Splash, own table/field names ---
     if (pool === "westgate") {
-      if (action !== "saveWeek") {
-        res.status(400).json({ error: `Unknown action for westgate: ${action}` });
+      if (action === "saveWeek") {
+        const { season, week, rows } = req.body;
+        if (!season || !week || !Array.isArray(rows)) {
+          res.status(400).json({ error: "Missing season, week, or rows" });
+          return;
+        }
+        const cleanRows = rows.map((r: any) => ({
+          season,
+          week,
+          game_id: r.game_id,
+          westgate_line: r.westgate_line ?? null,
+          picked_side: r.picked_side ?? null,
+          updated_at: new Date().toISOString(),
+        }));
+        const { error } = await supabaseAdmin.from("westgate_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
+        if (error) throw error;
+        res.status(200).json({ ok: true, saved: cleanRows.length });
         return;
       }
-      const { season, week, rows } = req.body;
-      if (!season || !week || !Array.isArray(rows)) {
-        res.status(400).json({ error: "Missing season, week, or rows" });
+
+      // Bulk line update from the CSV importer (converted from the
+      // contest's own PDF card) — only touches westgate_line, so it
+      // never clobbers a pick/key-pick already saved for that game via
+      // the shared onConflict update-column-list behavior (Supabase's
+      // upsert only SETs the columns you pass on conflict).
+      if (action === "importLines") {
+        const { season, week, rows } = req.body;
+        if (!season || !week || !Array.isArray(rows) || rows.length === 0) {
+          res.status(400).json({ error: "Missing season, week, or rows" });
+          return;
+        }
+        const cleanRows = rows.map((r: any) => ({
+          season,
+          week,
+          game_id: r.game_id,
+          westgate_line: r.westgate_line,
+          updated_at: new Date().toISOString(),
+        }));
+        const { error, count } = await supabaseAdmin
+          .from("westgate_picks")
+          .upsert(cleanRows, { onConflict: "season,week,game_id", count: "exact" });
+        if (error) throw error;
+        res.status(200).json({ ok: true, saved: count ?? cleanRows.length });
         return;
       }
-      const cleanRows = rows.map((r: any) => ({
-        season,
-        week,
-        game_id: r.game_id,
-        westgate_line: r.westgate_line ?? null,
-        picked_side: r.picked_side ?? null,
-        is_key_pick: !!r.is_key_pick,
-        updated_at: new Date().toISOString(),
-      }));
-      const { error } = await supabaseAdmin.from("westgate_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
-      if (error) throw error;
-      res.status(200).json({ ok: true, saved: cleanRows.length });
+
+      // Full replace of a season's uploaded standings snapshot — the
+      // contest publishes a whole new leaderboard each time, so there's
+      // no meaningful per-row diff to preserve.
+      if (action === "importStandings") {
+        const { season, rows } = req.body;
+        if (!season || !Array.isArray(rows) || rows.length === 0) {
+          res.status(400).json({ error: "Missing season or rows" });
+          return;
+        }
+        const { error: deleteError } = await supabaseAdmin.from("westgate_standings").delete().eq("season", season);
+        if (deleteError) throw deleteError;
+        const cleanRows = rows.map((r: any) => ({
+          season,
+          place_rank: r.place_rank,
+          place_label: r.place_label,
+          alias: r.alias,
+          record: r.record ?? null,
+          points: r.points ?? null,
+          cash_prize: r.cash_prize ?? null,
+        }));
+        const { error, count } = await supabaseAdmin.from("westgate_standings").insert(cleanRows, { count: "exact" });
+        if (error) throw error;
+        res.status(200).json({ ok: true, saved: count ?? cleanRows.length });
+        return;
+      }
+
+      if (action === "saveSettings") {
+        const { season, entries, entry_fee } = req.body;
+        if (!season || !entries || !entry_fee) {
+          res.status(400).json({ error: "Missing season, entries, or entry_fee" });
+          return;
+        }
+        const { error } = await supabaseAdmin
+          .from("westgate_pool_settings")
+          .upsert({ season, entries, entry_fee }, { onConflict: "season" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      res.status(400).json({ error: `Unknown action for westgate: ${action}` });
       return;
     }
 
