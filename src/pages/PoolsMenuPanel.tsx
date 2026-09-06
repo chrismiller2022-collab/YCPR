@@ -74,6 +74,7 @@ const SECTIONS: { title: string; pools: PoolDef[] }[] = [
         description: "Projected NFL win totals by power-rating system, plus a live draft tool for Kal/Presley/Ethan/YC.",
       },
       { key: "poolhistory", label: "Pool History", description: "Spread-vs-Vegas record by season, plus a top-N-picks-per-week contest backtest." },
+      { key: "poolbalance", label: "Balance Sheet", description: "Running cost vs. winnings across every pool this season, plus a hypothetical Westgate tab." },
     ],
   },
 ];

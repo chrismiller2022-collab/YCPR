@@ -207,6 +207,33 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Pool Balance Sheet: flat cost/winnings line items for pools
+    // that don't otherwise track their own finances (Brit already does). ---
+    if (pool === "ledger") {
+      if (action !== "upsertEntry") {
+        res.status(400).json({ error: `Unknown action for ledger: ${action}` });
+        return;
+      }
+      const { entry } = req.body;
+      if (!entry || !entry.season || !entry.pool_key || !entry.label) {
+        res.status(400).json({ error: "Missing season, pool_key, or label" });
+        return;
+      }
+      const row = {
+        season: entry.season,
+        pool_key: entry.pool_key,
+        label: entry.label,
+        cost: entry.cost ?? 0,
+        winnings: entry.winnings ?? 0,
+        is_hypothetical: !!entry.is_hypothetical,
+        note: entry.note ?? null,
+      };
+      const { error } = await supabaseAdmin.from("pool_ledger_entries").upsert(row, { onConflict: "season,pool_key,is_hypothetical" });
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     // --- Reddit Confidence: no key/special game concept (pure
     // confidence pool), so it doesn't fit the shared selectGames/
     // savePicks pattern below (which always writes a special-game
