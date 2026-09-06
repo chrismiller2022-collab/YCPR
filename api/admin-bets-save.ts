@@ -249,10 +249,43 @@ export default async function handler(req: any, res: any) {
         side: bet.side,
         line_value: bet.lineValue ?? null,
         price: bet.price,
+        stake: bet.stake ?? null,
+        to_win: bet.toWin ?? null,
+        result: bet.result ?? "pending",
       });
       if (error) throw error;
 
       res.status(200).json({ ok: true });
+      return;
+    }
+
+    // Bulk version of savePlacedBet for the CSV importer — team-name
+    // matching and game resolution already happened client-side
+    // (parsePlacedBetsCsv), this just inserts whatever it resolved.
+    if (action === "importPlacedBets") {
+      const { bets } = req.body;
+      if (!Array.isArray(bets) || bets.length === 0) {
+        res.status(400).json({ error: "No bets to import" });
+        return;
+      }
+      const rows = bets.map((bet: any) => ({
+        game_id: bet.gameId,
+        season: bet.season,
+        week: bet.week,
+        away_team: bet.awayTeam,
+        home_team: bet.homeTeam,
+        book: bet.book,
+        bet_type: bet.betType,
+        side: bet.side,
+        line_value: bet.lineValue ?? null,
+        price: bet.price,
+        stake: bet.stake ?? null,
+        to_win: bet.toWin ?? null,
+        result: bet.result ?? "pending",
+      }));
+      const { error, count } = await supabaseAdmin.from("placed_bets").insert(rows, { count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ imported: count ?? rows.length });
       return;
     }
 
