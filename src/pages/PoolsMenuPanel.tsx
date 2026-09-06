@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { fetchPoolLiveScores, type LiveRecord, type PoolLiveScores } from "../lib/api/poolLiveScores";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 // Single-user personal tracking, same pattern as everywhere else on the
 // site that doesn't need a Supabase round trip for one person's own
@@ -79,6 +81,27 @@ const SECTIONS: { title: string; pools: PoolDef[] }[] = [
   },
 ];
 
+// "3-1 · 2 left" — the compact live-record line shown on a tile. Shows
+// nothing (not a "0-0" line) when no picks exist yet for the current
+// week, since that's a much more common state than an 0-0 start and
+// "0-0 · 0 left" would just be noise.
+function fmtRecordLine(rec: LiveRecord | undefined): string | null {
+  if (!rec || rec.total === 0) return null;
+  const record = `${rec.wins}-${rec.losses}${rec.pushes > 0 ? `-${rec.pushes}` : ""}`;
+  return rec.pending > 0 ? `${record} · ${rec.pending} left` : record;
+}
+
+function RecordBadge({ rec, subLabel }: { rec: LiveRecord | undefined; subLabel?: string }) {
+  const line = fmtRecordLine(rec);
+  if (!line) return null;
+  return (
+    <div style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+      {subLabel && <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}>{subLabel} </span>}
+      {line}
+    </div>
+  );
+}
+
 function PoolTile({
   poolKey,
   label,
@@ -87,6 +110,7 @@ function PoolTile({
   checked,
   onToggleChecked,
   onClick,
+  liveScores,
 }: {
   poolKey: string;
   label: string;
@@ -95,7 +119,10 @@ function PoolTile({
   checked: boolean;
   onToggleChecked: (poolKey: string) => void;
   onClick: () => void;
+  liveScores: PoolLiveScores | null;
 }) {
+  const isCbsSplash = poolKey === "cbssplash";
+  const record = liveScores && !isCbsSplash ? (liveScores as unknown as Record<string, LiveRecord>)[poolKey] : undefined;
   return (
     // A plain div (not a button) — a real checkbox needs to sit inside
     // this tile, and interactive controls can't legally nest inside a
@@ -143,6 +170,13 @@ function PoolTile({
         </div>
       </div>
       <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>{description}</span>
+      {isCbsSplash && liveScores && (
+        <div style={{ display: "flex", gap: "1.2rem", marginTop: "0.15rem" }}>
+          <RecordBadge rec={liveScores.cbs} subLabel="CBS:" />
+          <RecordBadge rec={liveScores.kelly} subLabel="Kelly:" />
+        </div>
+      )}
+      {!isCbsSplash && <RecordBadge rec={record} />}
     </div>
   );
 }
@@ -155,10 +189,20 @@ export default function PoolsMenuPanel({
   onSelectPool: (pool: string) => void;
 }) {
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
+  const [liveScores, setLiveScores] = useState<PoolLiveScores | null>(null);
+  const [liveScoresError, setLiveScoresError] = useState<string | null>(null);
+  const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   useEffect(() => {
     setChecklist(loadChecklist());
   }, []);
+
+  useEffect(() => {
+    if (ratingsLoading) return;
+    fetchPoolLiveScores(new Date().getFullYear(), liveByTeam)
+      .then(setLiveScores)
+      .catch((err) => setLiveScoresError(err.message ?? "Failed to load live scores"));
+  }, [ratingsLoading]);
 
   function toggleChecked(poolKey: string) {
     setChecklist((prev) => {
@@ -188,7 +232,9 @@ export default function PoolsMenuPanel({
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Each pool you're entered in, as its own tool.
+        {liveScores && ` Live records below are for Week ${liveScores.week}, updating as games sync.`}
       </p>
+      {liveScoresError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>Live scores: {liveScoresError}</p>}
 
       {SECTIONS.map((section) => (
         <div key={section.title} style={{ marginTop: "1.5rem" }}>
@@ -204,6 +250,7 @@ export default function PoolsMenuPanel({
                 checked={!!checklist[pool.key]}
                 onToggleChecked={toggleChecked}
                 onClick={() => onSelectPool(pool.key)}
+                liveScores={liveScores}
               />
             ))}
           </div>
