@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchPoolLiveScores, type LiveRecord, type PoolLiveScores } from "../lib/api/poolLiveScores";
 import { fetchSurvivorLiveWeek, type SurvivorLiveWeek } from "../lib/api/survivorLiveScores";
+import { fetchCfbdPickemStats, type CfbdPickemStats } from "../lib/api/cfbdPickemStats";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 
 // Single-user personal tracking, same pattern as everywhere else on the
@@ -113,6 +114,7 @@ function PoolTile({
   onClick,
   liveScores,
   survivorLive,
+  cfbdStats,
 }: {
   poolKey: string;
   label: string;
@@ -123,10 +125,13 @@ function PoolTile({
   onClick: () => void;
   liveScores: PoolLiveScores | null;
   survivorLive?: SurvivorLiveWeek | null;
+  cfbdStats?: CfbdPickemStats | null;
 }) {
   const isCbsSplash = poolKey === "cbssplash";
   const isSurvivorTile = poolKey === "survivor" || poolKey === "splashsurvivor";
-  const record = liveScores && !isCbsSplash && !isSurvivorTile ? (liveScores as unknown as Record<string, LiveRecord>)[poolKey] : undefined;
+  const isCfbdPickem = poolKey === "cfbdpickem";
+  const record =
+    liveScores && !isCbsSplash && !isSurvivorTile && !isCfbdPickem ? (liveScores as unknown as Record<string, LiveRecord>)[poolKey] : undefined;
   return (
     // A plain div (not a button) — a real checkbox needs to sit inside
     // this tile, and interactive controls can't legally nest inside a
@@ -195,7 +200,14 @@ function PoolTile({
       {isSurvivorTile && survivorLive && survivorLive.picks.length === 0 && (
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>No pick locked for {survivorLive.weekLabel} yet</span>
       )}
-      {!isCbsSplash && !isSurvivorTile && <RecordBadge rec={record} />}
+      {isCfbdPickem && cfbdStats && cfbdStats.totalGames > 0 && (
+        <div style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+          {cfbdStats.suWins}-{cfbdStats.suLosses} SU · {cfbdStats.atsWins}-{cfbdStats.atsLosses}
+          {cfbdStats.atsPushes > 0 ? `-${cfbdStats.atsPushes}` : ""} ATS
+          {cfbdStats.pendingGames > 0 && <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}> · {cfbdStats.pendingGames} left</span>}
+        </div>
+      )}
+      {!isCbsSplash && !isSurvivorTile && !isCfbdPickem && <RecordBadge rec={record} />}
     </div>
   );
 }
@@ -212,6 +224,7 @@ export default function PoolsMenuPanel({
   const [liveScoresError, setLiveScoresError] = useState<string | null>(null);
   const [survivorLive, setSurvivorLive] = useState<SurvivorLiveWeek | null>(null);
   const [splashSurvivorLive, setSplashSurvivorLive] = useState<SurvivorLiveWeek | null>(null);
+  const [cfbdStats, setCfbdStats] = useState<CfbdPickemStats | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   useEffect(() => {
@@ -229,6 +242,7 @@ export default function PoolsMenuPanel({
     if (!liveScores) return;
     fetchSurvivorLiveWeek("survivor_picks_v1", liveScores.week).then(setSurvivorLive).catch(() => setSurvivorLive(null));
     fetchSurvivorLiveWeek("splash_survivor_picks_v1", liveScores.week).then(setSplashSurvivorLive).catch(() => setSplashSurvivorLive(null));
+    fetchCfbdPickemStats(liveScores.season, liveScores.week).then(setCfbdStats).catch(() => setCfbdStats(null));
   }, [liveScores]);
 
   function toggleChecked(poolKey: string) {
@@ -279,6 +293,7 @@ export default function PoolsMenuPanel({
                 onClick={() => onSelectPool(pool.key)}
                 liveScores={liveScores}
                 survivorLive={pool.key === "survivor" ? survivorLive : pool.key === "splashsurvivor" ? splashSurvivorLive : undefined}
+                cfbdStats={pool.key === "cfbdpickem" ? cfbdStats : undefined}
               />
             ))}
           </div>

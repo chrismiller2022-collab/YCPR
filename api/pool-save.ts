@@ -207,6 +207,30 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- CFBD Pick'em: previously a pure paste-in/paste-out tool with no
+    // persistence at all — this lets its predicted margins be saved so
+    // they can be graded (SU/ATS/MAE/MSE) once games finish. One row per
+    // game, upserted so re-saving a week (e.g. after fixing a name
+    // mismatch) just overwrites that game's prediction. ---
+    if (pool === "cfbdpickem") {
+      if (action !== "savePredictions") {
+        res.status(400).json({ error: `Unknown action for cfbdpickem: ${action}` });
+        return;
+      }
+      const { season, rows } = req.body;
+      if (!season || !Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "Missing season or rows" });
+        return;
+      }
+      const cleanRows = rows.map((r: any) => ({ game_id: r.game_id, season, predicted_margin: r.predicted_margin }));
+      const { error, count } = await supabaseAdmin
+        .from("cfbd_pickem_predictions")
+        .upsert(cleanRows, { onConflict: "game_id", count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ ok: true, saved: count ?? cleanRows.length });
+      return;
+    }
+
     // --- Pool Balance Sheet: flat cost/winnings line items for pools
     // that don't otherwise track their own finances (Brit already does). ---
     if (pool === "ledger") {
