@@ -85,8 +85,7 @@ export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivisi
         <div className="eyebrow">Resume Ratings</div>
         <h1 className="title matchup-title">{subLabel ?? `Week ${weekNum}`}</h1>
         <p className="subtitle team-subtitle">
-          Resume Rating exactly as saved for this week — permanent, unaffected by anything saved for a
-          later week.
+          Resume ratings for Week {weekNum} of the {season} season.
         </p>
         {error && <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>{error}</p>}
       </div>
@@ -113,8 +112,7 @@ export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivisi
           <div className="empty matchups-empty">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="empty matchups-empty">
-            No Resume Ratings snapshot saved for {season} week {weekNum} yet — save one from Admin →
-            Resume Rating.
+            Week {weekNum} resume ratings aren't posted yet — check back soon.
           </div>
         ) : (
           <div className="table-scroll">

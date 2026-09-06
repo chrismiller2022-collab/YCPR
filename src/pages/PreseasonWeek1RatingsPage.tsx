@@ -79,9 +79,7 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
         <div className="eyebrow">Weekly Power Ratings</div>
         <h1 className="title matchup-title">Preseason / Week 1</h1>
         <p className="subtitle team-subtitle">
-          The YC power rating as saved for Week 1 in Admin &gt; Rating Systems — the site's one
-          published power rating, snapshotted before Week 1 games kicked off. For the current live
-          ratings, see the "Live" tab under Weekly Power Ratings.
+          Power ratings going into Week 1 of the {season} season.
         </p>
       </div>
 
@@ -102,8 +100,7 @@ export default function PreseasonWeek1RatingsPage({ onNavigateTeam, onNavigateCo
         <p style={{ color: "crimson" }}>{error}</p>
       ) : !rows || rows.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>
-          No Week 1 power ratings have been saved yet this season — save a Week 1 snapshot from Admin
-          &gt; Rating Systems &gt; Save As Week to populate this page.
+          Week 1 power ratings aren't posted yet — check back soon.
         </p>
       ) : (
         <div className="table-wrap">

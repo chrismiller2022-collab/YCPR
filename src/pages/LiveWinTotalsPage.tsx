@@ -200,9 +200,8 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
       {noRunYet && !runsLoading && (
         <p style={{ color: "#a15c00", padding: "0 1.5rem" }} data-export-exclude="true">
           {weekNum == null
-            ? `No Monte Carlo run has been saved for ${season} yet`
-            : `No Monte Carlo run has been saved for ${season} week ${weekNum} — a run saved for a different week won't show here`}{" "}
-          — win totals below default to 0 for every team. Save a run from Admin → Monte Carlo first.
+            ? `Win totals for ${season} aren't posted yet — check back soon.`
+            : `Week ${weekNum} win totals aren't posted yet — check back soon.`}
         </p>
       )}
 

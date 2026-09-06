@@ -96,7 +96,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
         <div className="eyebrow">Strength of Schedule</div>
         <h1 className="title matchup-title">{subLabel ?? `Week ${weekNum}`}</h1>
         <p className="subtitle team-subtitle">
-          SOS exactly as saved for this week — permanent, unaffected by anything saved for a later week.
+          Strength of schedule for Week {weekNum} of the {season} season.
         </p>
         {error && <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>{error}</p>}
       </div>
@@ -123,7 +123,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
           <div className="empty matchups-empty">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="empty matchups-empty">
-            No SOS snapshot saved for {season} week {weekNum} yet — save one from Admin → Strength of Schedule.
+            Week {weekNum} strength of schedule isn't posted yet — check back soon.
           </div>
         ) : (
           <div className="table-scroll">

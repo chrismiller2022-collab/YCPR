@@ -343,11 +343,11 @@ export default function StrengthOfSchedulePage({ forceDivision, onNavigateTeam, 
           <>
             {liveError && (
               <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>
-                Live data unavailable ({liveError}) — showing last static snapshot.
+                Live data unavailable ({liveError}) — showing preseason data.
               </p>
             )}
             {!liveError && !liveLoading && Object.keys(liveByTeam).length === 0 && (
-              <p style={{ fontSize: "0.8rem", color: "#666" }}>No weekly data saved yet — showing the preseason snapshot.</p>
+              <p style={{ fontSize: "0.8rem", color: "#666" }}>Showing preseason data — weekly data isn't in yet.</p>
             )}
           </>
         )}

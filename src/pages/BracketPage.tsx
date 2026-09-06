@@ -187,9 +187,8 @@ export default function BracketPage({ subLabel, weekNum, onNavigateTeam, onHome 
         </div>
         <div className="empty matchups-empty">
           {weekNum == null
-            ? `No Monte Carlo run has been saved for ${season} yet`
-            : `No Monte Carlo run has been saved for ${season} week ${weekNum} — a run saved for a different week won't show here`}{" "}
-          — save one from Admin → Monte Carlo first.
+            ? `Bracket odds for ${season} aren't posted yet — check back soon.`
+            : `Week ${weekNum} bracket odds aren't posted yet — check back soon.`}
         </div>
       </div>
     );

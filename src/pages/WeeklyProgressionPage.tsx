@@ -214,13 +214,12 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
         <div className="eyebrow">{meta.eyebrow} · {subLabel}</div>
         <h1 className="title matchup-title">{meta.title}</h1>
         <p className="subtitle team-subtitle">
-          {meta.metricLabel} for every team, week by week across the season — each column is that
-          week's own saved snapshot, permanently. "Change" compares the most recent saved week
-          against the one before it.
+          {meta.metricLabel} for every team, week by week across the season. "Change" compares the
+          two most recent weeks.
         </p>
         {error && (
           <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>
-            Weekly data unavailable ({error}) — showing the preseason snapshot only.
+            Weekly data unavailable ({error}) — showing preseason only.
           </p>
         )}
       </div>
@@ -296,8 +295,8 @@ export default function WeeklyProgressionPage({ metric, subLabel, defaultDivisio
 
       <div className="footer-note">
         {weeksAsc.length === 0
-          ? `Weekly ${meta.metricLabel} snapshots aren't in yet — this page is fully wired up and will populate automatically as each week gets published from admin.`
-          : `${meta.metricLabel} shown for every week published so far. "–" means that team wasn't included in that week's publish.`}
+          ? `Weekly ${meta.metricLabel} data isn't in yet — check back soon.`
+          : `${meta.metricLabel} shown for every week available so far. "–" means that team wasn't included that week.`}
       </div>
     </div>
   );
