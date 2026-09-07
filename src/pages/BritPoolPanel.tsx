@@ -651,9 +651,17 @@ function SeasonTrackingTab({ season }: { season: number }) {
             <tbody>
               {weeks.map((w) => {
                 const record = summarizeWeekRecord(picksByWeek[w]);
-                const entry = entries[w] ?? { entry_fee: 10, winnings: 0 };
-                const net = entry.winnings - entry.entry_fee;
-                cumulativeNet += net;
+                // Previously defaulted an unsaved week to { entry_fee: 10,
+                // winnings: 0 } for display — indistinguishable from an
+                // actually-saved $10 entry, so this table could show a
+                // "-$10.00" net for a week nothing was ever saved for
+                // (caught when the Balance Sheet, which reads brit_entries
+                // directly, disagreed with what this page showed). An
+                // unsaved week now shows "–" and doesn't affect the
+                // cumulative total until its entry is actually saved.
+                const entry = entries[w];
+                const net = entry ? entry.winnings - entry.entry_fee : 0;
+                if (entry) cumulativeNet += net;
                 return (
                   <tr key={w}>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{w}</td>
@@ -663,21 +671,20 @@ function SeasonTrackingTab({ season }: { season: number }) {
                       {record.pending > 0 ? ` (${record.pending} pending)` : ""}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      ${entry.entry_fee.toFixed(2)}
+                      {entry ? `$${entry.entry_fee.toFixed(2)}` : <span style={{ color: "#a15c00" }}>not saved</span>}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      ${entry.winnings.toFixed(2)}
+                      {entry ? `$${entry.winnings.toFixed(2)}` : "–"}
                     </td>
                     <td
                       style={{
                         padding: "0.4rem 0.6rem",
                         borderBottom: "1px solid var(--hash)",
                         textAlign: "right",
-                        color: net >= 0 ? "green" : "crimson",
+                        color: !entry ? undefined : net >= 0 ? "green" : "crimson",
                       }}
                     >
-                      {net >= 0 ? "+" : ""}
-                      {net.toFixed(2)}
+                      {entry ? `${net >= 0 ? "+" : ""}${net.toFixed(2)}` : "–"}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {cumulativeNet >= 0 ? "+" : ""}
