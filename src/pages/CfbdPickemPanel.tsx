@@ -124,6 +124,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
       if (data.unmatchedTeams?.length > 0) msg += ` No rating found for: ${data.unmatchedTeams.join(", ")}.`;
       if (data.gamesNotFound?.length > 0) msg += ` Game id(s) not found in our own games table: ${data.gamesNotFound.join(", ")}.`;
       if (data.failedSubmits?.length > 0) msg += ` Failed to submit: ${data.failedSubmits.join(", ")}.`;
+      if (data.rawSample !== undefined) msg += ` Raw sample from CFBD: ${JSON.stringify(data.rawSample)}`;
       setSyncResult(msg);
       loadStats();
     } catch (err: any) {

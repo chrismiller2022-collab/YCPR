@@ -69,8 +69,15 @@ async function syncPredictions(res: any) {
   }
   const picksData = await picksRes.json();
   const picks: PredictionsPick[] = Array.isArray(picksData) ? picksData : picksData.picks ?? [];
+  // Diagnostic only — the "gameId"/"pick" field names are inferred from
+  // CFBD's "Copy API Submission Payload" button, which produces a
+  // submission TEMPLATE and may not exactly match this GET response's
+  // real shape. Surfaced back to the client whenever nothing resolves,
+  // so a shape mismatch shows the actual field names instead of a bare
+  // "0 submitted."
+  const rawSample = picks[0] ?? (Array.isArray(picksData) ? null : picksData);
   if (picks.length === 0) {
-    res.status(200).json({ ok: true, totalGames: 0, submitted: 0, unmatchedTeams: [], gamesNotFound: [], failedSubmits: [] });
+    res.status(200).json({ ok: true, totalGames: 0, submitted: 0, unmatchedTeams: [], gamesNotFound: [], failedSubmits: [], rawSample });
     return;
   }
 
@@ -146,6 +153,7 @@ async function syncPredictions(res: any) {
     unmatchedTeams: Array.from(new Set(unmatched)),
     gamesNotFound: Array.from(new Set(gamesNotFound)),
     failedSubmits: [],
+    rawSample: submissions.length === 0 ? rawSample : undefined,
   });
 }
 
