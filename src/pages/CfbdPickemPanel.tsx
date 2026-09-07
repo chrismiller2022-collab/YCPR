@@ -122,8 +122,10 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
       if (!res.ok) throw new Error(data.error || "Sync failed");
       let msg = `Submitted ${data.submitted} of ${data.totalGames} games.`;
       if (data.unmatchedTeams?.length > 0) msg += ` No rating found for: ${data.unmatchedTeams.join(", ")}.`;
+      if (data.gamesNotFound?.length > 0) msg += ` Game id(s) not found in our own games table: ${data.gamesNotFound.join(", ")}.`;
       if (data.failedSubmits?.length > 0) msg += ` Failed to submit: ${data.failedSubmits.join(", ")}.`;
       setSyncResult(msg);
+      loadStats();
     } catch (err: any) {
       setSyncError(err.message ?? "Sync failed");
     } finally {

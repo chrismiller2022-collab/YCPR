@@ -30,9 +30,8 @@ function isTrackedGame(g: any): boolean {
 }
 
 interface PredictionsPick {
-  id: number;
-  homeTeam: string;
-  awayTeam: string;
+  gameId: number;
+  pick: string;
 }
 
 const DEFAULT_HFA = 2.4;
@@ -41,21 +40,44 @@ const DEFAULT_HFA = 2.4;
 // Pick'em contest currently has open, using this site's own live power
 // ratings — same formula/sign convention as CfbdPickemPanel.tsx's
 // manual paste tool (negative = home favored), just without the
-// copy/paste round trip. Re-derives hfaFor()'s tiny lookup inline
-// rather than importing src/lib/odds.ts — every other api/*.ts file in
-// this repo is self-contained (Vercel bundles this directory in
-// isolation from the Vite client build), so this follows the same
-// convention instead of introducing a cross-directory import.
+// copy/paste round trip.
+//
+// Rewritten against the real payload CFBD's own "Copy API Submission
+// Payload" button produces: GET/POST /api/picks both use the shape
+// { picks: [{ gameId, pick }] } (pick is a STRING, "" when unset), with
+// no team names at all — gameId is CFBD's own event id, which matches
+// this site's `games.id` exactly (same source), so games are resolved
+// from our own already-synced `games` table instead of trusting team
+// names that this endpoint apparently no longer sends. Submitted in one
+// batched POST rather than one request per game, matching that same
+// payload shape. Also mirrors every submitted prediction into
+// cfbd_pickem_predictions so CfbdPickemPanel's SU/ATS/MAE/MSE stats
+// pick it up automatically, without a separate manual save step.
+//
+// Re-derives hfaFor()'s tiny lookup inline rather than importing
+// src/lib/odds.ts — every other api/*.ts file in this repo is
+// self-contained (Vercel bundles this directory in isolation from the
+// Vite client build), so this follows the same convention instead of
+// introducing a cross-directory import.
 async function syncPredictions(res: any) {
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
 
-  const [picksRes] = await Promise.all([fetch(`${PREDICTIONS_BASE}/picks`, { headers: { authorization: `Bearer ${CFBD_PREDICTIONS_TOKEN}` } })]);
-
+  const picksRes = await fetch(`${PREDICTIONS_BASE}/picks`, { headers: { authorization: `Bearer ${CFBD_PREDICTIONS_TOKEN}` } });
   if (!picksRes.ok) {
     const text = await picksRes.text().catch(() => "");
     throw new Error(`CFBD predictions API request failed (${picksRes.status}): ${text || picksRes.statusText}`);
   }
-  const picks: PredictionsPick[] = await picksRes.json();
+  const picksData = await picksRes.json();
+  const picks: PredictionsPick[] = Array.isArray(picksData) ? picksData : picksData.picks ?? [];
+  if (picks.length === 0) {
+    res.status(200).json({ ok: true, totalGames: 0, submitted: 0, unmatchedTeams: [], gamesNotFound: [], failedSubmits: [] });
+    return;
+  }
+
+  const gameIds = picks.map((p) => String(p.gameId));
+  const { data: games, error: gamesError } = await supabaseAdmin.from("games").select("id, season, home_team, away_team").in("id", gameIds);
+  if (gamesError) throw gamesError;
+  const gameById = new Map((games ?? []).map((g) => [g.id, g]));
 
   // "latest" isn't a real week label in weekly_team_stats — resolve the
   // actual most-recent week first, same as the rest of the site does.
@@ -76,36 +98,54 @@ async function syncPredictions(res: any) {
   const ratingByTeam = new Map<string, { rating: number; hfa: number | null }>();
   for (const r of ratingRows ?? []) ratingByTeam.set(r.team, { rating: r.rating, hfa: r.hfa });
 
-  let submitted = 0;
+  const submissions: { gameId: number; pick: string }[] = [];
+  const predictionRows: { game_id: string; season: number; predicted_margin: number }[] = [];
   const unmatched: string[] = [];
-  const failures: string[] = [];
+  const gamesNotFound: string[] = [];
 
-  for (const pick of picks) {
-    const home = ratingByTeam.get(pick.homeTeam);
-    const away = ratingByTeam.get(pick.awayTeam);
+  for (const p of picks) {
+    const game = gameById.get(String(p.gameId));
+    if (!game) {
+      gamesNotFound.push(String(p.gameId));
+      continue;
+    }
+    const home = ratingByTeam.get(game.home_team);
+    const away = ratingByTeam.get(game.away_team);
     if (!home || !away) {
-      if (!home) unmatched.push(pick.homeTeam);
-      if (!away) unmatched.push(pick.awayTeam);
+      if (!home) unmatched.push(game.home_team);
+      if (!away) unmatched.push(game.away_team);
       continue;
     }
     const hfa = home.hfa ?? DEFAULT_HFA;
     const predicted = Math.round((home.rating - away.rating - hfa) * 100) / 100;
+    submissions.push({ gameId: p.gameId, pick: String(predicted) });
+    predictionRows.push({ game_id: game.id, season: game.season, predicted_margin: predicted });
+  }
 
+  if (submissions.length > 0) {
     const submitRes = await fetch(`${PREDICTIONS_BASE}/picks`, {
       method: "POST",
       headers: { authorization: `Bearer ${CFBD_PREDICTIONS_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ gameId: pick.id, pick: predicted }),
+      body: JSON.stringify({ picks: submissions }),
     });
-    if (submitRes.ok) submitted++;
-    else failures.push(`${pick.awayTeam} @ ${pick.homeTeam}`);
+    if (!submitRes.ok) {
+      const text = await submitRes.text().catch(() => "");
+      throw new Error(`CFBD picks submission failed (${submitRes.status}): ${text || submitRes.statusText}`);
+    }
+
+    const { error: predError } = await supabaseAdmin
+      .from("cfbd_pickem_predictions")
+      .upsert(predictionRows, { onConflict: "game_id" });
+    if (predError) throw predError;
   }
 
   res.status(200).json({
     ok: true,
     totalGames: picks.length,
-    submitted,
+    submitted: submissions.length,
     unmatchedTeams: Array.from(new Set(unmatched)),
-    failedSubmits: failures,
+    gamesNotFound: Array.from(new Set(gamesNotFound)),
+    failedSubmits: [],
   });
 }
 
