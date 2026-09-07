@@ -9,6 +9,7 @@ import {
   type CfbdPickemStats,
   type CfbdPickemPredictionDetail,
 } from "../lib/api/cfbdPickemStats";
+import { parseCfbdHistoryPaste, CFBD_HISTORY_PASTE_EXAMPLE, type CfbdHistoryImportResult } from "../lib/api/cfbdPickemHistoryImport";
 
 const POOL_URL = "https://predictions.collegefootballdata.com/";
 
@@ -35,6 +36,99 @@ function parseCsv(raw: string): ParsedRow[] {
 
 function fmtPct(n: number, d: number): string {
   return d > 0 ? `(${(n / d).toFixed(3)})` : "";
+}
+
+function HistoryBackfill({ season, onImported }: { season: number; onImported: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<CfbdHistoryImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function handleCheck() {
+    setChecking(true);
+    setMsg(null);
+    try {
+      setResult(await parseCfbdHistoryPaste(text));
+    } catch (err: any) {
+      setMsg(err.message ?? "Failed to parse");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function handleImport() {
+    if (!result || result.resolved.length === 0) return;
+    setImporting(true);
+    setMsg(null);
+    try {
+      const { saved } = await saveCfbdPickemPredictions(season, result.resolved);
+      setMsg(`Saved ${saved} prediction${saved === 1 ? "" : "s"}.`);
+      setResult(null);
+      setText("");
+      onImported();
+    } catch (err: any) {
+      setMsg(err.message ?? "Save failed");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button className="menu-btn" onClick={() => setOpen(true)} style={{ marginBottom: "1rem" }}>
+        Backfill from CFBD's history table
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.85rem 1rem", margin: "1rem 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+        <strong>Backfill from CFBD's history table</strong>
+        <button className="menu-btn" onClick={() => setOpen(false)}>
+          Close
+        </button>
+      </div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", marginTop: 0 }}>
+        Once a week's games close, they drop out of the live sync above (which only sees currently-open
+        games) — so a finished week has to be backfilled instead. Copy the per-game table from CFBD's own
+        Pick'em Workbench (Season, Week, Home Team, Home Score, Away Team, Away Score, Spread, Prediction,
+        Actual — header row optional) and paste it below.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={8}
+        style={{ width: "100%", fontFamily: "monospace", fontSize: "0.78rem" }}
+        placeholder={CFBD_HISTORY_PASTE_EXAMPLE}
+      />
+      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center" }}>
+        <button onClick={handleCheck} disabled={checking || !text.trim()}>
+          {checking ? "Checking…" : "Check"}
+        </button>
+        {result && (
+          <button onClick={handleImport} disabled={importing || result.resolved.length === 0}>
+            {importing ? "Saving…" : `Save ${result.resolved.length} prediction${result.resolved.length === 1 ? "" : "s"}`}
+          </button>
+        )}
+        {msg && <span style={{ color: msg.startsWith("Saved") ? "#8fd39a" : "#e0a030" }}>{msg}</span>}
+      </div>
+      {result && result.errors.length > 0 && (
+        <div style={{ marginTop: "0.5rem", color: "#e0a030", fontSize: "0.78rem" }}>
+          {result.errors.length} row{result.errors.length === 1 ? "" : "s"} couldn't be resolved:
+          <ul>
+            {result.errors.map((e, i) => (
+              <li key={i}>
+                Line {e.line}: {e.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StatsBlock({ stats }: { stats: CfbdPickemStats }) {
@@ -285,6 +379,8 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         {syncResult && <p style={{ color: "#8fd39a", fontSize: "0.82rem" }}>{syncResult}</p>}
         {syncError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{syncError}</p>}
       </div>
+
+      <HistoryBackfill season={currentSeason} onImported={loadStats} />
 
       <label style={{ display: "block", margin: "1rem 0 0.25rem", fontWeight: 600 }}>Paste CSV</label>
       <textarea
