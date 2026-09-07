@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { fetchCfbdPickemStats, saveCfbdPickemPredictions, type CfbdPickemStats } from "../lib/api/cfbdPickemStats";
+import {
+  fetchCfbdPickemStats,
+  fetchCfbdPickemPredictionDetails,
+  saveCfbdPickemPredictions,
+  type CfbdPickemStats,
+  type CfbdPickemPredictionDetail,
+} from "../lib/api/cfbdPickemStats";
 
 const POOL_URL = "https://predictions.collegefootballdata.com/";
 
@@ -70,12 +76,17 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [stats, setStats] = useState<CfbdPickemStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [details, setDetails] = useState<CfbdPickemPredictionDetail[]>([]);
+  const [showDetails, setShowDetails] = useState(false);
   const currentSeason = new Date().getFullYear();
 
   function loadStats() {
     fetchCfbdPickemStats(currentSeason)
       .then(setStats)
       .catch((err) => setStatsError(err.message ?? "Failed to load stats"));
+    fetchCfbdPickemPredictionDetails(currentSeason)
+      .then((rows) => setDetails(rows.sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))))
+      .catch(() => setDetails([]));
   }
 
   useEffect(() => {
@@ -200,6 +211,64 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
 
       {statsError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{statsError}</p>}
       {stats && <StatsBlock stats={stats} />}
+
+      {details.length > 0 && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <button className="menu-btn" onClick={() => setShowDetails((s) => !s)}>
+            {showDetails ? "Hide" : "Show"} saved games ({details.length})
+          </button>
+          {showDetails && (
+            <div style={{ overflowX: "auto", marginTop: "0.5rem", border: "1px solid var(--hash)", borderRadius: 8 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
+                    <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
+                    <th style={{ textAlign: "right", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Predicted</th>
+                    <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Actual</th>
+                    <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>SU</th>
+                    <th style={{ textAlign: "left", padding: "0.35rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>ATS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {details.map((d) => (
+                    <tr key={d.game_id}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{d.week ?? "–"}</td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        {d.away_team} @ {d.home_team}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        {d.predicted_margin.toFixed(2)}
+                      </td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        {d.completed && d.away_points != null && d.home_points != null ? `${d.away_points}-${d.home_points}` : "–"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.3rem 0.5rem",
+                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          color: d.suGrade === "win" ? "#8fd39a" : d.suGrade === "loss" ? "#e07a7a" : "var(--chalk-dim)",
+                        }}
+                      >
+                        {d.suGrade === "pending" ? "–" : d.suGrade}
+                      </td>
+                      <td
+                        style={{
+                          padding: "0.3rem 0.5rem",
+                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          color: d.atsGrade === "win" ? "#8fd39a" : d.atsGrade === "loss" ? "#e07a7a" : "var(--chalk-dim)",
+                        }}
+                      >
+                        {d.atsGrade === "pending" ? "–" : d.atsGrade}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.85rem 1rem", margin: "1rem 0" }}>
         <div style={{ fontWeight: 700, marginBottom: "0.3rem" }}>Sync directly via CFBD's API</div>

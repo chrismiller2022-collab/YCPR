@@ -110,3 +110,80 @@ export async function fetchCfbdPickemStats(season: number, week?: number): Promi
   stats.mse = errCount > 0 ? errSqSum / errCount : null;
   return stats;
 }
+
+export interface CfbdPickemPredictionDetail {
+  game_id: string;
+  week: number | null;
+  start_date: string | null;
+  away_team: string;
+  home_team: string;
+  predicted_margin: number;
+  completed: boolean;
+  away_points: number | null;
+  home_points: number | null;
+  suGrade: "win" | "loss" | "pending";
+  atsGrade: "win" | "loss" | "push" | "pending";
+}
+
+/** Per-game list backing fetchCfbdPickemStats' totals — same grading, one row per saved prediction, for "which games" visibility. */
+export async function fetchCfbdPickemPredictionDetails(season: number): Promise<CfbdPickemPredictionDetail[]> {
+  const predictions = await fetchCfbdPickemPredictions(season);
+  if (predictions.length === 0) return [];
+
+  const gamesWithLines = await fetchGamesWithLines(season);
+  const byId = new Map(gamesWithLines.map((g) => [g.id, g]));
+
+  return predictions.map((p) => {
+    const g = byId.get(p.game_id);
+    if (!g) {
+      return {
+        game_id: p.game_id,
+        week: null,
+        start_date: null,
+        away_team: "Unknown",
+        home_team: "Unknown",
+        predicted_margin: p.predicted_margin,
+        completed: false,
+        away_points: null,
+        home_points: null,
+        suGrade: "pending",
+        atsGrade: "pending",
+      };
+    }
+
+    let suGrade: "win" | "loss" | "pending" = "pending";
+    let atsGrade: "win" | "loss" | "push" | "pending" = "pending";
+
+    if (g.completed && g.home_points != null && g.away_points != null) {
+      const actualHomeMargin = g.home_points - g.away_points;
+      const predictedWinner = p.predicted_margin < 0 ? "home" : p.predicted_margin > 0 ? "away" : null;
+      const actualWinner = actualHomeMargin > 0 ? "home" : actualHomeMargin < 0 ? "away" : null;
+      if (predictedWinner && actualWinner) suGrade = predictedWinner === actualWinner ? "win" : "loss";
+
+      const line = pickLine(g.lines);
+      const vegasAwaySpread = line?.spread != null ? -line.spread : null;
+      if (vegasAwaySpread != null) {
+        const pickedSide: "away" | "home" | null =
+          p.predicted_margin < vegasAwaySpread ? "away" : p.predicted_margin > vegasAwaySpread ? "home" : null;
+        const cover = actualCoverSide(g, vegasAwaySpread);
+        if (pickedSide && cover) {
+          atsGrade = cover === "push" ? "push" : pickedSide === cover ? "win" : "loss";
+        }
+      }
+    }
+
+    return {
+      game_id: p.game_id,
+      week: g.week,
+      start_date: g.start_date,
+      away_team: g.away_team,
+      home_team: g.home_team,
+      predicted_margin: p.predicted_margin,
+      completed: g.completed,
+      away_points: g.away_points,
+      home_points: g.home_points,
+      suGrade,
+      atsGrade,
+    };
+  });
+}
