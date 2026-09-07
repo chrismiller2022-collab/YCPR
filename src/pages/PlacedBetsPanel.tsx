@@ -396,11 +396,27 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
       {!loading && visibleBets.length > 0 && (
         <>
           <h3 style={{ marginBottom: "0.5rem" }}>Bets</h3>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.5rem" }}>
+
+          <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: "0.4rem" }}>
+            Overall
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.2rem" }}>
             <RecordSummary label="Overall" rec={overall} />
+          </div>
+
+          <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: "0.4rem" }}>
+            By Book
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.2rem" }}>
             {Array.from(byBook.entries()).map(([book, rec]) => (
               <RecordSummary key={book} label={BOOK_LABELS[book] ?? book} rec={rec} />
             ))}
+          </div>
+
+          <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: "0.4rem" }}>
+            By Bet Type
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.5rem" }}>
             {Array.from(byType.entries()).map(([type, rec]) => (
               <RecordSummary key={type} label={type.replace("_", " ")} rec={rec} />
             ))}
@@ -411,6 +427,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
               <thead>
                 <tr>
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Placed</th>
+                  <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week</th>
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Book</th>
                   <th style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Type</th>
@@ -432,6 +449,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                   return (
                     <tr key={bet.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
                       <td style={{ padding: "0.35rem 0.6rem", color: "var(--chalk-dim)" }}>{fmtDate(bet.created_at)}</td>
+                      <td style={{ padding: "0.35rem 0.6rem" }}>{bet.week}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>
                         <TeamLogo team={bet.away_team} size={16} /> {bet.away_team} @ <TeamLogo team={bet.home_team} size={16} /> {bet.home_team}
                       </td>

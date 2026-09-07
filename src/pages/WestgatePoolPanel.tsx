@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
@@ -68,6 +68,7 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
   const [checking, setChecking] = useState(false);
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function downloadTemplate() {
     const blob = new Blob([WESTGATE_LINES_CSV_TEMPLATE], { type: "text/csv" });
@@ -79,16 +80,22 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
     URL.revokeObjectURL(url);
   }
 
-  async function handleCheck() {
+  async function handleCheck(csvText: string) {
+    setText(csvText);
     setChecking(true);
     setMsg(null);
     try {
-      setResult(await parseWestgateLinesCsv(season, week, text));
+      setResult(await parseWestgateLinesCsv(season, week, csvText));
     } catch (err: any) {
       setMsg(err.message ?? "Failed to parse CSV");
     } finally {
       setChecking(false);
     }
+  }
+
+  async function handleFile(f: File) {
+    const csvText = await f.text();
+    await handleCheck(csvText);
   }
 
   async function handleImport() {
@@ -131,6 +138,8 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
           Download template
         </button>
       </p>
+      <input ref={fileRef} type="file" accept=".csv" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0.2rem" }}>...or paste CSV text:</p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -139,7 +148,7 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
         style={{ width: "100%", fontFamily: "monospace", fontSize: "0.78rem" }}
       />
       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center" }}>
-        <button onClick={handleCheck} disabled={checking || text.trim() === ""}>
+        <button onClick={() => handleCheck(text)} disabled={checking || text.trim() === ""}>
           {checking ? "Checking…" : "Check"}
         </button>
         {result && (
@@ -292,9 +301,15 @@ function StandingsTab({ season }: { season: number }) {
     URL.revokeObjectURL(url);
   }
 
-  function handleCheck() {
+  function handleCheck(csvText: string) {
+    setText(csvText);
     setMsg(null);
-    setCheckResult(parseWestgateStandingsCsv(text));
+    setCheckResult(parseWestgateStandingsCsv(csvText));
+  }
+
+  async function handleFile(f: File) {
+    const csvText = await f.text();
+    handleCheck(csvText);
   }
 
   async function handleImport() {
@@ -345,6 +360,8 @@ function StandingsTab({ season }: { season: number }) {
               Download template
             </button>
           </p>
+          <input type="file" accept=".csv" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+          <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0.2rem" }}>...or paste CSV text:</p>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -353,7 +370,7 @@ function StandingsTab({ season }: { season: number }) {
             style={{ width: "100%", fontFamily: "monospace", fontSize: "0.78rem" }}
           />
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", alignItems: "center" }}>
-            <button onClick={handleCheck} disabled={text.trim() === ""}>
+            <button onClick={() => handleCheck(text)} disabled={text.trim() === ""}>
               Check
             </button>
             {checkResult && (
