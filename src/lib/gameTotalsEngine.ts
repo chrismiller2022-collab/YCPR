@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { hfaFor } from "./odds";
 import { useWeeklyStats } from "./api/weeklyStats";
+import { fetchGameProjectionLocks, type GameProjectionLockRow } from "./api/gameProjectionLocks";
 import {
   fetchTeamSeasonInputs,
   fetchGamesForTotals,
@@ -183,7 +184,7 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
   // affect the (cheap, client-side) enrichment step, same as
   // useGameTotalsEngine's own rows useMemo does.
   const [perSeasonRaw, setPerSeasonRaw] = useState<
-    { season: number; teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[] }[]
+    { season: number; teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[]; locks: Record<string, GameProjectionLockRow> }[]
   >([]);
   const [settings, setSettings] = useState<GameTotalsSettings>(DEFAULT_GAME_TOTALS_SETTINGS);
   const [loading, setLoading] = useState(true);
@@ -204,13 +205,23 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
     Promise.all(
       seasonList.map((season) =>
         Promise.all([fetchTeamSeasonInputs(season), fetchGamesForTotals(season), fetchGameTotalsSettings(season)]).then(
-          ([teamInputs, games, savedSettings]) => ({ season, teamInputs, games, savedSettings })
+          async ([teamInputs, games, savedSettings]) => {
+            // Locked games (see LockGamesPanel/"Freeze Week") win over
+            // whatever team_season_stats/ratings currently say — without
+            // this, Totals History recomputes every game live on every
+            // load, including already-frozen weeks, which is exactly
+            // what let the same "Week 1" query show different numbers
+            // moments apart (team_season_stats had just been touched).
+            const weekNumbers = Array.from(new Set(games.map((g) => g.week)));
+            const locks = await fetchGameProjectionLocks(season, weekNumbers);
+            return { season, teamInputs, games, savedSettings, locks };
+          }
         )
       )
     )
       .then((perSeason) => {
         if (cancelled) return;
-        setPerSeasonRaw(perSeason.map(({ season, teamInputs, games }) => ({ season, teamInputs, games })));
+        setPerSeasonRaw(perSeason.map(({ season, teamInputs, games, locks }) => ({ season, teamInputs, games, locks })));
         const savedSettings = perSeason[0]?.savedSettings;
         setSettings(
           savedSettings
@@ -231,10 +242,22 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
 
   const rows: EnrichedGameRow[] = useMemo(() => {
     const allRows: EnrichedGameRow[] = [];
-    for (const { teamInputs, games } of perSeasonRaw) {
+    for (const { games, teamInputs, locks } of perSeasonRaw) {
       const league = computeLeagueAverages(Object.values(teamInputs));
       const restDaysByGame = computeRestDaysByGame(games);
-      allRows.push(...computeEnrichedRows(games, teamInputs, league, liveByTeam, restDaysByGame));
+      const enriched = computeEnrichedRows(games, teamInputs, league, liveByTeam, restDaysByGame);
+
+      // Keyed by week|home|away only (no season) — safe here since each
+      // season's locks are only ever applied to that same season's own
+      // slice of rows, never mixed across seasons.
+      const lockedTotalByKey = new Map<string, number>();
+      const lockedAwaySpreadByKey = new Map<string, number>();
+      for (const g of games) {
+        const lock = locks[g.id];
+        if (lock?.my_total != null) lockedTotalByKey.set(`${g.week}|${g.homeTeam}|${g.awayTeam}`, lock.my_total);
+        if (lock?.my_away_spread != null) lockedAwaySpreadByKey.set(`${g.week}|${g.homeTeam}|${g.awayTeam}`, lock.my_away_spread);
+      }
+      allRows.push(...applyLockedSpreadToRows(applyLockedTotals(enriched, lockedTotalByKey), lockedAwaySpreadByKey));
     }
     return allRows;
   }, [perSeasonRaw, liveByTeam]);
