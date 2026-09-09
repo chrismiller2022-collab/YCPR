@@ -4,7 +4,8 @@ import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { scoreWatchability, DEFAULT_WEIGHTS, etDateString, type WatchabilityInput } from "../lib/watchability";
 import { exportNodeAsPng } from "../lib/exportPng";
 
@@ -176,7 +177,28 @@ export default function TvGuidePanel({
   }, [weekNumbers, week, weekOverride]);
 
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
-  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const { locks } = useGameProjectionLocks(season, weekNumbers);
+  const { rows: totalsRowsRaw } = useGameTotalsEngine(season);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const totalsRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const totalByGame = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of totalsRows) {
@@ -199,7 +221,14 @@ export default function TvGuidePanel({
   const watchabilityInputs: WatchabilityInput[] = useMemo(
     () =>
       weekGames.map((g) => {
-        const computed = computeRow(g, ratingsByWeek[g.week] ?? {});
+        const lock = locks[g.id];
+        const computed = computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          undefined,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
         const avgRating = computed.awayTeam && computed.homeTeam ? (computed.awayTeam.rating + computed.homeTeam.rating) / 2 : null;
         return {
           gameId: g.id,
@@ -214,7 +243,7 @@ export default function TvGuidePanel({
           isConferenceGame: g.conference_game,
         };
       }),
-    [weekGames, ratingsByWeek, totalByGame]
+    [weekGames, ratingsByWeek, totalByGame, locks]
   );
   const watchabilityByGame = useMemo(() => {
     const scored = scoreWatchability(watchabilityInputs, DEFAULT_WEIGHTS);
@@ -226,7 +255,14 @@ export default function TvGuidePanel({
       .map((g) => {
         const channelKey = normalizeOutlet(g.tv_outlet!);
         if (!NORMALIZED_CHANNEL_ORDER.some((c) => c.key === channelKey)) return null;
-        const computed = computeRow(g, ratingsByWeek[g.week] ?? {});
+        const lock = locks[g.id];
+        const computed = computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          undefined,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
         return {
           game: g,
           channelKey,
@@ -237,7 +273,7 @@ export default function TvGuidePanel({
         };
       })
       .filter((g): g is TvGame => g != null);
-  }, [weekGames, ratingsByWeek, totalByGame, watchabilityByGame]);
+  }, [weekGames, ratingsByWeek, totalByGame, watchabilityByGame, locks]);
 
   const activeChannels = useMemo(
     () => NORMALIZED_CHANNEL_ORDER.filter((c) => tvGames.some((g) => g.channelKey === c.key)),

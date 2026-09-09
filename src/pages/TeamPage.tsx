@@ -14,14 +14,15 @@ import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks, type GameProjectionLockRow } from "../lib/api/gameProjectionLocks";
 import { splitTeamTotal } from "../lib/gameTotals";
 import ExportPngButton from "../components/ExportPngButton";
 import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 import WinDistributionBarChart from "../components/WinDistributionBarChart";
 
-function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
+function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
   const oppName = isHome ? game.away : game.home;
   const opp = TEAMS_BY_NAME[oppName];
@@ -33,12 +34,29 @@ function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
   const teamRating = liveByTeam[team.team]?.rating ?? team.rating;
   const oppRating = liveByTeam[oppName]?.rating ?? opp.rating;
 
-  // Spread from this team's perspective: negative = this team favored.
-  const spread = isHome
-    ? teamRating - oppRating - hfaFor(team.team, liveByTeam)
-    : teamRating - oppRating + hfaFor(oppName, liveByTeam);
-  const winPct = spreadToWinPct(spread);
+  // Once a game is frozen (see Freeze Week), its spread/win% win
+  // unconditionally over live ratings — this row used to recompute the
+  // spread from scratch every time regardless of lock status, so an
+  // already-played game's "Projected" column kept drifting as ratings
+  // got pushed in later weeks. Rebuilt in away-team perspective first
+  // (matching the lock's own convention), then flipped to this team's
+  // perspective at the end.
+  const homeRatingForSpread = isHome ? teamRating : oppRating;
+  const awayRatingForSpread = isHome ? oppRating : teamRating;
+  const homeTeamNameForHfa = isHome ? team.team : oppName;
+  const liveAwaySpread = awayRatingForSpread - homeRatingForSpread + hfaFor(homeTeamNameForHfa, liveByTeam);
+  const awaySpread = lock?.my_away_spread ?? liveAwaySpread;
+  const awayWinPct = lock?.my_away_win_pct ?? spreadToWinPct(liveAwaySpread);
+
+  const spread = isHome ? -awaySpread : awaySpread;
+  const winPct = isHome ? 1 - awayWinPct : awayWinPct;
   const result = spread < 0 ? "Win" : spread > 0 ? "Loss" : "Even";
+
+  const actualHomePoints = projRow?.game?.homePoints ?? null;
+  const actualAwayPoints = projRow?.game?.awayPoints ?? null;
+  const isCompleted = !!projRow?.game?.completed && actualHomePoints != null && actualAwayPoints != null;
+  const teamActualScore = isCompleted ? (isHome ? actualHomePoints : actualAwayPoints) : null;
+  const oppActualScore = isCompleted ? (isHome ? actualAwayPoints : actualHomePoints) : null;
 
   // Individual-team score projection — sourced from the same Game/Team
   // Totals engine the admin panel uses (Ridge total model + our power-
@@ -99,6 +117,9 @@ function ScheduleRow({ game, team, liveByTeam, projRow, onNavigateTeam }: any) {
         {teamProjScore != null && oppProjScore != null
           ? `${teamProjScore.toFixed(1)}-${oppProjScore.toFixed(1)}`
           : "–"}
+      </td>
+      <td className="wintotals-total-cell">
+        {isCompleted ? `${teamActualScore}-${oppActualScore}` : "–"}
       </td>
     </tr>
   );
@@ -476,18 +497,45 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   // now, not a specific game's own-week projection.
   const scheduleWeekNumbers = useMemo(() => schedule.map((g) => g.week), [schedule]);
   const { byWeek: scheduleRatingsByWeek } = useWeekAccurateRatings(season, scheduleWeekNumbers, season);
+  const { locks } = useGameProjectionLocks(season, scheduleWeekNumbers);
+
+  // Once a game is frozen, its spread/total win over the live model —
+  // same guarantee every other consumer of this engine now has. Keyed
+  // by week+team names since the totals engine's own games use CFBD ids
+  // (matches the static schedule bundle's ids 1:1 in practice, but this
+  // key format is what applyLockedTotals/applyLockedSpreadToRows expect).
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of totalsRows) {
+      const lock: GameProjectionLockRow | undefined = locks[row.game.id];
+      if (lock?.my_total != null) map.set(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`, lock.my_total);
+    }
+    return map;
+  }, [totalsRows, locks]);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of totalsRows) {
+      const lock: GameProjectionLockRow | undefined = locks[row.game.id];
+      if (lock?.my_away_spread != null) map.set(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`, lock.my_away_spread);
+    }
+    return map;
+  }, [totalsRows, locks]);
+  const lockedTotalsRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsRows, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsRows, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
 
   // Game/Team Totals engine keys games by CFBD id (different id space
   // than the static schedule bundle's own ids), so match on week + both
   // team names instead — reliable since both sources describe the same
   // real-world schedule.
   const totalsRowByGame = useMemo(() => {
-    const map = new Map<string, (typeof totalsRows)[number]>();
-    for (const row of totalsRows) {
+    const map = new Map<string, (typeof lockedTotalsRows)[number]>();
+    for (const row of lockedTotalsRows) {
       map.set(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`, row);
     }
     return map;
-  }, [totalsRows]);
+  }, [lockedTotalsRows]);
 
   const maxConfPct = peers.reduce((max, p) => {
     const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
@@ -556,6 +604,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                   <th className="th th-right">Win %</th>
                   <th className="th">Proj. Result</th>
                   <th className="th th-right">Proj. Score</th>
+                  <th className="th th-right">Actual</th>
                 </tr>
               </thead>
               <tbody>
@@ -566,6 +615,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                     team={team}
                     liveByTeam={scheduleRatingsByWeek[g.week] ?? {}}
                     projRow={totalsRowByGame.get(`${g.week}|${g.home}|${g.away}`) ?? null}
+                    lock={locks[g.id]}
                     onNavigateTeam={onNavigateTeam}
                   />
                 ))}

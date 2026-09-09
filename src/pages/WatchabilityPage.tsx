@@ -4,7 +4,8 @@ import ExportPngButton from "../components/ExportPngButton";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useLatestMonteCarloRun } from "../lib/futuresData";
 import {
   scoreWatchability,
@@ -231,13 +232,40 @@ function useWatchabilityInputs(season: number) {
 
   const weekNumbers = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
-  const { rows: totalsRows, loading: totalsLoading } = useGameTotalsEngine(season);
+  const { locks } = useGameProjectionLocks(season, weekNumbers);
+  const { rows: totalsRowsRaw, loading: totalsLoading } = useGameTotalsEngine(season);
   const { results: mcResults, loading: mcLoading } = useLatestMonteCarloRun(season);
   const meanWinsByTeam = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of mcResults ?? []) map.set(r.team, r.meanWins);
     return map;
   }, [mcResults]);
+
+  // Once a game is frozen (see Freeze Week), its spread/total win
+  // unconditionally over live ratings/the total model — this page is
+  // public, and its numbers also flow into the Public Report's
+  // Watchability/TV Guide sections, so it needs the same guarantee
+  // Admin/Public Matchups already have.
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const totalsRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
 
   const totalByGame = useMemo(() => {
     const map = new Map<string, number>();
@@ -252,7 +280,14 @@ function useWatchabilityInputs(season: number) {
     return games
       .filter((g) => (g.home_classification ?? "").toLowerCase() === "fbs" && (g.away_classification ?? "").toLowerCase() === "fbs")
       .map((g) => {
-        const computed = computeRow(g, ratingsByWeek[g.week] ?? {});
+        const lock = locks[g.id];
+        const computed = computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          undefined,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
         const avgRating =
           computed.awayTeam && computed.homeTeam ? (computed.awayTeam.rating + computed.homeTeam.rating) / 2 : null;
         return {
@@ -271,7 +306,7 @@ function useWatchabilityInputs(season: number) {
           isConferenceGame: g.conference_game,
         };
       });
-  }, [games, ratingsByWeek, totalByGame, meanWinsByTeam]);
+  }, [games, ratingsByWeek, totalByGame, meanWinsByTeam, locks]);
 
   return { inputs, weekNumbers, loading: loading || totalsLoading || mcLoading };
 }
