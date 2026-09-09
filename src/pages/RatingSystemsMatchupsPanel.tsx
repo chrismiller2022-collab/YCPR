@@ -12,6 +12,7 @@ import {
   winPct,
   type MultiSystemGameRow,
 } from "../lib/multiRatingMatchups";
+import { ATS_BREAKEVEN_PCT } from "../lib/matchupsCompute";
 
 const CP: React.CSSProperties = {
   padding: "0.3rem 0.5rem",
@@ -424,15 +425,24 @@ function ResultsTable({ weekRows, seasonRows }: { weekRows: MultiSystemGameRow[]
             const sn = seasonPerf[s.key];
             const fmt = (r: { w: number; l: number; push: number }) =>
               `${r.w}-${r.l}${r.push ? `-${r.push}` : ""} (${winPct(r).toFixed(1)}%)`;
+            // Green/red against the same ATS breakeven baseline used
+            // site-wide (52.38%, the fixed -110 vig threshold) — not a
+            // plain 50/50 split, and not colored at all with zero
+            // decided bets (a system with no record yet isn't "bad").
+            const perfColor = (r: { w: number; l: number; push: number }) => {
+              const decided = r.w + r.l;
+              if (decided === 0) return undefined;
+              return winPct(r) >= ATS_BREAKEVEN_PCT * 100 ? "#8fd39a" : "#e07a7a";
+            };
             return (
               <tr key={s.key}>
                 <td style={{ ...CP, fontWeight: 700 }}>{s.label}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(wk.everyBet)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(wk.filteredBet)}</td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(wk.nwfb)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: "var(--gold)" }}>{fmt(sn.everyBet)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: "var(--gold)" }}>{fmt(sn.filteredBet)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: "var(--gold)" }}>{fmt(sn.nwfb)}</td>
+                <td style={{ ...CP, textAlign: "right", color: perfColor(wk.everyBet) }}>{fmt(wk.everyBet)}</td>
+                <td style={{ ...CP, textAlign: "right", color: perfColor(wk.filteredBet) }}>{fmt(wk.filteredBet)}</td>
+                <td style={{ ...CP, textAlign: "right", color: perfColor(wk.nwfb) }}>{fmt(wk.nwfb)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: perfColor(sn.everyBet) ?? "var(--gold)" }}>{fmt(sn.everyBet)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: perfColor(sn.filteredBet) ?? "var(--gold)" }}>{fmt(sn.filteredBet)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: perfColor(sn.nwfb) ?? "var(--gold)" }}>{fmt(sn.nwfb)}</td>
               </tr>
             );
           })}

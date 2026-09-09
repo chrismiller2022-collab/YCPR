@@ -263,40 +263,57 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
 function SystemPerformanceSummary({ season }: { season: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [perf, setPerf] = useState<Record<string, ReturnType<typeof aggregateSystemPerformance>[string]> | null>(null);
+  const [raw, setRaw] = useState<{
+    games: Awaited<ReturnType<typeof fetchGamesWithLines>>;
+    weekly: Awaited<ReturnType<typeof fetchWeeklyPowerRatings>>;
+  } | null>(null);
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
+  // Fetch depends only on `season` — NOT on liveByTeam. useWeeklyStats'
+  // byTeam is a plain object rebuilt every render (not memoized), so
+  // putting it in this effect's dependency array meant every unrelated
+  // re-render of this page (e.g. typing in the YC weight boxes above)
+  // re-fired the fetch and cancelled the in-flight one before it could
+  // ever resolve — this is what got it stuck on "Loading…" indefinitely.
+  // Same bug/fix already applied to useMultiSeasonGameTotalsEngine
+  // earlier — grading itself (which does need liveByTeam) happens in a
+  // separate, cheap useMemo below instead.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     Promise.all([fetchGamesWithLines(season), fetchWeeklyPowerRatings(season)])
       .then(([games, weekly]) => {
-        if (cancelled) return;
-        const byWeek = new Map<number, typeof weekly>();
-        for (const r of weekly) {
-          const list = byWeek.get(r.week) ?? [];
-          list.push(r);
-          byWeek.set(r.week, list);
-        }
-        const ratingsByWeek = new Map<number, Record<string, Record<string, number>>>();
-        for (const [wk, rowsForWeek] of byWeek) ratingsByWeek.set(wk, buildRatingsByTeam(rowsForWeek));
-
-        const graded = [];
-        for (const g of games) {
-          const ratingsByTeam = ratingsByWeek.get(g.week);
-          if (!ratingsByTeam) continue; // no saved snapshot for this game's week yet
-          graded.push(computeMultiSystemRow(g, ratingsByTeam, liveByTeam));
-        }
-        setPerf(aggregateSystemPerformance(graded));
+        if (!cancelled) setRaw({ games, weekly });
       })
       .catch((err) => !cancelled && setError(err.message ?? "Failed to load performance"))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [season, liveByTeam]);
+  }, [season]);
+
+  const perf = useMemo(() => {
+    if (!raw) return null;
+    const { games, weekly } = raw;
+    const byWeek = new Map<number, typeof weekly>();
+    for (const r of weekly) {
+      const list = byWeek.get(r.week) ?? [];
+      list.push(r);
+      byWeek.set(r.week, list);
+    }
+    const ratingsByWeek = new Map<number, Record<string, Record<string, number>>>();
+    for (const [wk, rowsForWeek] of byWeek) ratingsByWeek.set(wk, buildRatingsByTeam(rowsForWeek));
+
+    const graded = [];
+    for (const g of games) {
+      const ratingsByTeam = ratingsByWeek.get(g.week);
+      if (!ratingsByTeam) continue; // no saved snapshot for this game's week yet
+      graded.push(computeMultiSystemRow(g, ratingsByTeam, liveByTeam));
+    }
+    return aggregateSystemPerformance(graded);
+  }, [raw, liveByTeam]);
 
   return (
     <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
