@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { spreadToWinPct, fairMoneylineFromWinPct } from "../lib/odds";
-import { useGameTotalsEngine, buildBetRows } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchOddsFeed, invalidateOddsFeed, BOOK_META, BOOK_ORDER } from "../lib/api/oddsApi";
 import { fetchKalshiCfbMarkets, type KalshiGame } from "../lib/api/kalshi";
 import type { OddsGame } from "../lib/api/oddsApi";
@@ -11,7 +11,9 @@ import { moneylineEdgePct, spreadEdgePts, totalCall, bestIndex, SPREAD_EDGE_THRE
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, homeSideMlValues, mlBetSideFor, type MatchupComputed } from "../lib/matchupsCompute";
+import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useFuturesMarkets, useFuturesWinTotals, type FuturesMarketGroup, type FuturesOutcomeRow } from "../lib/futuresData";
 
 // ---------------------------------------------------------------------
@@ -63,6 +65,7 @@ function useOddsBetSignals(season: number, matched: OddsMatchRow[], siteRows: Re
 
   const weekNumbers = useMemo(() => Array.from(new Set(matched.map((r) => r.game.game.week))), [matched]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
+  const { locks } = useGameProjectionLocks(season, weekNumbers);
 
   const totalBetByGameId = useMemo(() => {
     const rows = buildBetRows(siteRows, filterThresholdMultiplier);
@@ -91,7 +94,14 @@ function useOddsBetSignals(season: number, matched: OddsMatchRow[], siteRows: Re
       let spreadSigmaOff: number | null = null;
 
       if (lineMatch) {
-        const computed = computeRow(lineMatch, ratingsByWeek[g.week] ?? {});
+        const lock = locks[lineMatch.id];
+        const computed = computeRow(
+          lineMatch,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
         const tier = spreadTierFor(computed);
         spreadTier = tier.tier;
         spreadTeam = tier.team;
@@ -122,7 +132,7 @@ function useOddsBetSignals(season: number, matched: OddsMatchRow[], siteRows: Re
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matched, linesGames, ratingsByWeek, totalBetByGameId]);
+  }, [matched, linesGames, ratingsByWeek, locks, totalBetByGameId]);
 }
 
 const GOOD_VALUE_BG = "rgba(63, 185, 80, 0.18)";
@@ -1251,7 +1261,48 @@ type OddscreenTab = "spread" | "moneyline" | "total";
 export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [division, setDivision] = useState("FBS");
-  const { rows: allRows, settings, loading: loadingSite, error: siteError } = useGameTotalsEngine(season);
+  const { rows: allRowsRaw, settings, loading: loadingSite, error: siteError } = useGameTotalsEngine(season);
+
+  // Same lock bridge as Matchups/Watchability — "My Total"/"My Line" on
+  // this dashboard read straight off the totals-engine rows, so a
+  // frozen week needs to show its frozen spread/total here too instead
+  // of whatever the model outputs live right now.
+  const [linesGamesForLocks, setLinesGamesForLocks] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGamesWithLines(season)
+      .then((g) => {
+        if (!cancelled) setLinesGamesForLocks(g);
+      })
+      .catch(() => {
+        if (!cancelled) setLinesGamesForLocks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  const lockWeekNumbers = useMemo(() => Array.from(new Set(linesGamesForLocks.map((g) => g.week))), [linesGamesForLocks]);
+  const { locks: topLocks } = useGameProjectionLocks(season, lockWeekNumbers);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of linesGamesForLocks) {
+      const v = topLocks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [linesGamesForLocks, topLocks]);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of linesGamesForLocks) {
+      const v = topLocks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [linesGamesForLocks, topLocks]);
+  const allRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(allRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [allRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const siteRows = filterRowsByDivision(allRows, division);
 
   const [oddsGames, setOddsGames] = useState<OddsGame[]>([]);

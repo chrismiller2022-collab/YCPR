@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
@@ -9,6 +9,8 @@ import {
   computeGamePerformanceBreakdown,
   computeTeamPerformanceBreakdown,
   computeAmountOffDistribution,
+  applyLockedTotals,
+  applyLockedSpreadToRows,
   type EnrichedGameRow,
   type BetRow,
   type TeamSplitBetRow,
@@ -18,6 +20,8 @@ import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
 import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
 import { invalidateCache } from "../lib/api/cache";
 import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, AmountOffMetricToggle, type ViewMode } from "./PerformanceView";
+import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 const TABS = ["totals", "teamtotals"] as const;
@@ -903,7 +907,48 @@ export function filterRowsByDivision(rows: EnrichedGameRow[], division: string):
 
 export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const { rows, settings, setSettings, error } = useGameTotalsEngine(season);
+  const { rows: rowsRaw, settings, setSettings, error } = useGameTotalsEngine(season);
+
+  // Same lock bridge as Matchups/Watchability/etc. — "My Total" in the
+  // Legacy Composites tab below is a real projection display, not just
+  // raw stat inputs, so a frozen week needs to show its frozen number
+  // here too instead of whatever the model outputs live today.
+  const [linesGames, setLinesGames] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGamesWithLines(season)
+      .then((g) => {
+        if (!cancelled) setLinesGames(g);
+      })
+      .catch(() => {
+        if (!cancelled) setLinesGames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  const weekNumbersInView = useMemo(() => Array.from(new Set(linesGames.map((g) => g.week))), [linesGames]);
+  const { locks } = useGameProjectionLocks(season, weekNumbersInView);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of linesGames) {
+      const v = locks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [linesGames, locks]);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of linesGames) {
+      const v = locks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [linesGames, locks]);
+  const rows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(rowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [rowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
 
   return (
     <div>

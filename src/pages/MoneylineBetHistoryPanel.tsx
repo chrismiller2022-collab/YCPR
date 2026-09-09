@@ -4,6 +4,7 @@ import SortHeader from "../components/SortHeader";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { classOf } from "../lib/matchupsCompute";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { BET_HISTORY } from "../data/betHistory.data";
 import {
   buildMlRowsFromBetHistory,
@@ -37,6 +38,15 @@ function useSeasonMlRows(season: number, conversionMethod: "old" | "billR", bill
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
   const hasRatingsForSeason = useMemo(() => Object.values(ratingsByWeek).some((m) => Object.keys(m).length > 0), [ratingsByWeek]);
+  const { locks } = useGameProjectionLocks(season, weekNumbersInView);
+  const lockedWinPctByGameId = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    for (const g of games) {
+      const v = locks[g.id]?.my_away_win_pct;
+      if (v != null) map[g.id] = v;
+    }
+    return map;
+  }, [games, locks]);
 
   useEffect(() => {
     setLoading(true);
@@ -51,17 +61,17 @@ function useSeasonMlRows(season: number, conversionMethod: "old" | "billR", bill
 
   const { allRows, unmatchedCount } = useMemo(() => {
     if (conversionMethod === "billR" && hasRatingsForSeason) {
-      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor, lockedWinPctByGameId), unmatchedCount: 0 };
     }
     if (hasBetHistoryForSeason) {
       const { rows, unmatchedBetHistory } = buildMlRowsFromBetHistory(season, games);
       return { allRows: rows, unmatchedCount: unmatchedBetHistory.length };
     }
     if (conversionMethod === "billR") {
-      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor), unmatchedCount: 0 };
+      return { allRows: buildMlRowsFromLiveRatingsBillR(games, ratingsByWeek, billRDivisor, lockedWinPctByGameId), unmatchedCount: 0 };
     }
-    return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode), unmatchedCount: 0 };
-  }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode]);
+    return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode, lockedWinPctByGameId), unmatchedCount: 0 };
+  }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode, lockedWinPctByGameId]);
 
   return { games, loading, error, allRows, unmatchedCount, hasBetHistoryForSeason, hasRatingsForSeason };
 }

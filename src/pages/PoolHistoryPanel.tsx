@@ -5,6 +5,8 @@ import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import type { GameProjectionLockRow } from "../lib/api/gameProjectionLocks";
 import { TEAMS_BY_NAME } from "../data/teams";
 import {
   simulateTier,
@@ -48,11 +50,22 @@ function candidatesFromBetHistory(season: number): ContestCandidate[] {
   });
 }
 
-function candidatesFromLive(games: GameWithLines[], ratingsByWeek: Record<number, Record<string, any>>): ContestCandidate[] {
+function candidatesFromLive(
+  games: GameWithLines[],
+  ratingsByWeek: Record<number, Record<string, any>>,
+  locks: Record<string, GameProjectionLockRow>
+): ContestCandidate[] {
   return games
     .filter((g) => g.week <= MAX_WEEK && isFbsGame(g.home_team, g.away_team))
     .map((g) => {
-      const computed = computeRow(g, ratingsByWeek[g.week] ?? {}, "team", DEFAULT_CUSTOM_PARAMS);
+      const lock = locks[g.id];
+      const computed = computeRow(
+        g,
+        ratingsByWeek[g.week] ?? {},
+        "team",
+        DEFAULT_CUSTOM_PARAMS,
+        lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+      );
       if (computed.projCoverTeam == null || computed.line == null) return null;
       const pick = computed.projCoverTeam === "away" ? g.away_team : g.home_team;
       let grade: ContestCandidate["grade"] = null;
@@ -266,8 +279,9 @@ function useLiveGames(season: number, currentSeason: number) {
 
   const weekNumbers = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, currentSeason);
+  const { locks } = useGameProjectionLocks(season, weekNumbers);
 
-  return { games, ratingsByWeek, loading };
+  return { games, ratingsByWeek, locks, loading };
 }
 
 export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
@@ -278,11 +292,11 @@ export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
   const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
 
   const isLive = season === currentSeason;
-  const { games, ratingsByWeek, loading: liveLoading } = useLiveGames(season, currentSeason);
+  const { games, ratingsByWeek, locks, loading: liveLoading } = useLiveGames(season, currentSeason);
 
   const candidates = useMemo(
-    () => (isLive ? candidatesFromLive(games, ratingsByWeek) : candidatesFromBetHistory(season)),
-    [isLive, games, ratingsByWeek, season]
+    () => (isLive ? candidatesFromLive(games, ratingsByWeek, locks) : candidatesFromBetHistory(season)),
+    [isLive, games, ratingsByWeek, locks, season]
   );
 
   const result = useMemo(() => {

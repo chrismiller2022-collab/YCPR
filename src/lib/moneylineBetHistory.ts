@@ -229,7 +229,8 @@ export type HfaMode = "team" | "flat";
 export function buildMlRowsFromLiveRatings(
   games: GameWithLines[],
   ratingsByWeek: Record<number, Record<string, any>>,
-  hfaMode: HfaMode = "team"
+  hfaMode: HfaMode = "team",
+  lockedWinPctByGameId?: Record<string, number | null>
 ): MlGameRow[] {
   const rows: MlGameRow[] = [];
   for (const g of games) {
@@ -244,7 +245,10 @@ export function buildMlRowsFromLiveRatings(
     const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
     const myAwaySpread = awayRating != null && homeRating != null ? awayRating - homeRating + hfa : null;
 
-    rows.push(computeMlRow(g, myAwaySpread, line.away_moneyline, line.home_moneyline));
+    // Once frozen, the locked away win% wins over the live spread —
+    // same guarantee buildMlRowsFromLiveRatingsBillR already applies.
+    const lockedWinPct = lockedWinPctByGameId?.[g.id];
+    rows.push(computeMlRow(g, myAwaySpread, line.away_moneyline, line.home_moneyline, lockedWinPct ?? null));
   }
   return rows;
 }
