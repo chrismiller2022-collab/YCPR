@@ -168,6 +168,52 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
     });
   }
 
+  const [fillingTotals, setFillingTotals] = useState(false);
+  const [fillTotalsMsg, setFillTotalsMsg] = useState<string | null>(null);
+
+  // Backfills a null "Frozen Total" (the old auto-lock's known gap — it
+  // never reliably captured this field) with whatever the totals engine
+  // currently computes, WITHOUT touching an already-frozen spread/win%.
+  // Only meaningful as a stand-in for the true pregame value if the
+  // model's inputs haven't drifted since — e.g. right after temporarily
+  // clearing team_season_stats for the season being backfilled, per the
+  // "does this look like the true pregame total" discussion in chat.
+  async function fillTotalFromCurrent(gameId: string) {
+    const lock = existingLocks[gameId];
+    const game = (games ?? []).find((g) => g.id === gameId);
+    if (!lock || !game) return;
+    const liveTotal = projTotalByGame.get(`${game.week}|${game.home_team}|${game.away_team}`) ?? null;
+    if (liveTotal == null) return;
+    await overrideGameProjectionLock(gameId, { my_away_spread: lock.my_away_spread, my_total: liveTotal, my_away_win_pct: lock.my_away_win_pct });
+    setExistingLocks((prev) => ({ ...prev, [gameId]: { ...prev[gameId], my_total: liveTotal } }));
+  }
+
+  async function fillAllMissingTotals() {
+    setFillingTotals(true);
+    setFillTotalsMsg(null);
+    try {
+      const targets = lockedGames.filter((g) => existingLocks[g.id]?.my_total == null);
+      let filled = 0;
+      let stillMissing = 0;
+      for (const g of targets) {
+        const liveTotal = projTotalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) ?? null;
+        if (liveTotal == null) {
+          stillMissing++;
+          continue;
+        }
+        const lock = existingLocks[g.id];
+        await overrideGameProjectionLock(g.id, { my_away_spread: lock.my_away_spread, my_total: liveTotal, my_away_win_pct: lock.my_away_win_pct });
+        setExistingLocks((prev) => ({ ...prev, [g.id]: { ...prev[g.id], my_total: liveTotal } }));
+        filled++;
+      }
+      setFillTotalsMsg(`Filled ${filled} missing total${filled === 1 ? "" : "s"}.${stillMissing > 0 ? ` ${stillMissing} still have no current total to pull from.` : ""}`);
+    } catch (err: any) {
+      setFillTotalsMsg(err.message ?? "Failed to fill totals");
+    } finally {
+      setFillingTotals(false);
+    }
+  }
+
   async function saveCorrection(gameId: string) {
     setSavingCorrection(true);
     setError(null);
@@ -395,6 +441,11 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
                         <button onClick={() => startEditing(g.id)}>Edit</button>
+                        {lock?.my_total == null && projTotalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) != null && (
+                          <button onClick={() => fillTotalFromCurrent(g.id)} style={{ marginLeft: "0.4rem" }} title="Fill from the current total model">
+                            Fill Total
+                          </button>
+                        )}
                       </td>
                     </>
                   )}
@@ -472,6 +523,14 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     from ratings.
                   </p>
                   {correctionMsg && <p style={{ color: "#8fd39a" }}>{correctionMsg}</p>}
+                  {lockedGames.some((g) => existingLocks[g.id]?.my_total == null) && (
+                    <div style={{ marginBottom: "1rem" }}>
+                      <button onClick={fillAllMissingTotals} disabled={fillingTotals}>
+                        {fillingTotals ? "Filling…" : "Fill All Missing Totals From Current Model"}
+                      </button>
+                      {fillTotalsMsg && <span style={{ marginLeft: "0.6rem", color: "#8fd39a" }}>{fillTotalsMsg}</span>}
+                    </div>
+                  )}
                   {(["fbsVfbs", "cross", "fcsVfcs"] as DivBucket[]).map((b) => (
                     <LockedTable key={b} bucket={b} list={lockedByDiv[b]} />
                   ))}
