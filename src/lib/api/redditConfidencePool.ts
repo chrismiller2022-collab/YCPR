@@ -1,6 +1,8 @@
 import { supabase } from "../supabaseClient";
 import { fetchGamesWithLines, type GameRow, type BettingLineRow } from "./gamesLines";
 import { computeRow } from "../matchupsCompute";
+import { fetchGameProjectionLocks } from "./gameProjectionLocks";
+import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 
 // Reddit's Official CFB Pick 'Em (pickem.redditcfb.com) — a straight
 // confidence pool, exactly 10 games, confidence points 10 (most
@@ -60,7 +62,7 @@ export async function fetchRedditConfidencePicksForWeek(
   if (picksError) throw picksError;
   if (!picks || picks.length === 0) return [];
 
-  const gamesWithLines = await fetchGamesWithLines(season, week);
+  const [gamesWithLines, locks] = await Promise.all([fetchGamesWithLines(season, week), fetchGameProjectionLocks(season, [week])]);
   const byGameId = new Map(gamesWithLines.map((g) => [g.id, g]));
 
   return picks.map((p) => {
@@ -69,7 +71,14 @@ export async function fetchRedditConfidencePicksForWeek(
       return { ...p, game: null, lines: [], myProjAwaySpread: null, myProjAwayWinPct: null, vegasAwaySpread: null, amountOff: null };
     }
 
-    const computed = computeRow(gwl, liveByTeam);
+    const lock = locks[gwl.id];
+    const computed = computeRow(
+      gwl,
+      liveByTeam,
+      "team",
+      DEFAULT_CUSTOM_PARAMS,
+      lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+    );
     const amountOff =
       computed.projAwaySpread != null && computed.vegasAwaySpread != null ? computed.projAwaySpread - computed.vegasAwaySpread : null;
 

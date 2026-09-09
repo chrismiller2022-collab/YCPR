@@ -1,6 +1,8 @@
 import { supabase } from "../supabaseClient";
 import { fetchGamesWithLines } from "./gamesLines";
 import { computeRow } from "../matchupsCompute";
+import { fetchGameProjectionLocks } from "./gameProjectionLocks";
+import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 import type { GameRow } from "./gamesLines";
 
 // CBS and Kelly are two separate real-money contests that happen to
@@ -79,9 +81,10 @@ export function gradeKellyPick(row: CbsSplashRow): CbsSplashGrade {
  * espnMlPool.ts for the full reasoning.
  */
 export async function fetchCbsSplashWeek(season: number, week: number, liveByTeam: Record<string, any> = {}): Promise<CbsSplashRow[]> {
-  const [gamesWithLines, { data: splash, error: splashError }] = await Promise.all([
+  const [gamesWithLines, { data: splash, error: splashError }, locks] = await Promise.all([
     fetchGamesWithLines(season, week),
     supabase.from("cbs_splash_picks").select("*").eq("season", season).eq("week", week),
+    fetchGameProjectionLocks(season, [week]),
   ]);
   if (splashError) throw splashError;
 
@@ -91,7 +94,14 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
   const splashByGame = new Map((splash ?? []).map((p) => [p.game_id, p]));
 
   return fbsGames.map((gwl) => {
-    const computed = computeRow(gwl, liveByTeam);
+    const lock = locks[gwl.id];
+    const computed = computeRow(
+      gwl,
+      liveByTeam,
+      "team",
+      DEFAULT_CUSTOM_PARAMS,
+      lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+    );
     const saved = splashByGame.get(gwl.id);
     // Defaults to Vegas — see peayPool.ts's fetchPeayWeek for the reasoning.
     const splashLine = saved?.splash_line ?? computed.vegasAwaySpread ?? null;

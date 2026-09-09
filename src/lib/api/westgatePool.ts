@@ -1,7 +1,13 @@
 import { supabase } from "../supabaseClient";
 import { fetchGamesWithLines } from "./gamesLines";
 import { computeRow } from "../matchupsCompute";
+import { fetchGameProjectionLocks, type GameProjectionLockRow } from "./gameProjectionLocks";
+import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 import type { GameRow } from "./gamesLines";
+
+function lockArg(lock: GameProjectionLockRow | undefined) {
+  return lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null;
+}
 
 // The real Westgate Supercontest picks exactly 7 games a week — no key
 // picks (that's a Peay/Brit concept, not Westgate's), pushes count as a
@@ -55,9 +61,10 @@ export function westgatePoints(record: { wins: number; losses: number; pushes: n
  * see peayPool.ts for the full reasoning, this mirrors it exactly.
  */
 export async function fetchWestgateWeek(season: number, week: number, liveByTeam: Record<string, any> = {}): Promise<WestgateRow[]> {
-  const [gamesWithLines, { data: westgate, error: westgateError }] = await Promise.all([
+  const [gamesWithLines, { data: westgate, error: westgateError }, locks] = await Promise.all([
     fetchGamesWithLines(season, week),
     supabase.from("westgate_picks").select("*").eq("season", season).eq("week", week),
+    fetchGameProjectionLocks(season, [week]),
   ]);
   if (westgateError) throw westgateError;
 
@@ -67,7 +74,7 @@ export async function fetchWestgateWeek(season: number, week: number, liveByTeam
   const westgateByGame = new Map((westgate ?? []).map((p) => [p.game_id, p]));
 
   return fbsGames.map((gwl) => {
-    const computed = computeRow(gwl, liveByTeam);
+    const computed = computeRow(gwl, liveByTeam, "team", DEFAULT_CUSTOM_PARAMS, lockArg(locks[gwl.id]));
     const saved = westgateByGame.get(gwl.id);
     // Defaults to Vegas — see peayPool.ts's fetchPeayWeek for the reasoning.
     const westgateLine = saved?.westgate_line ?? computed.vegasAwaySpread ?? null;
@@ -105,14 +112,17 @@ export async function fetchWestgateSeasonRows(season: number, liveByTeam: Record
   if (!westgate || westgate.length === 0) return [];
 
   const weeks = Array.from(new Set(westgate.map((w) => w.week)));
-  const gamesByWeek = await Promise.all(weeks.map((w) => fetchGamesWithLines(season, w)));
+  const [gamesByWeek, locks] = await Promise.all([
+    Promise.all(weeks.map((w) => fetchGamesWithLines(season, w))),
+    fetchGameProjectionLocks(season, weeks),
+  ]);
   const gamesById = new Map(gamesByWeek.flat().map((g) => [g.id, g]));
 
   return westgate
     .filter((w) => gamesById.has(w.game_id))
     .map((w) => {
       const gwl = gamesById.get(w.game_id)!;
-      const computed = computeRow(gwl, liveByTeam);
+      const computed = computeRow(gwl, liveByTeam, "team", DEFAULT_CUSTOM_PARAMS, lockArg(locks[gwl.id]));
       return {
         game_id: w.game_id,
         game: gwl,

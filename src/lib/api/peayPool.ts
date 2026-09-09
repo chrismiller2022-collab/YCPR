@@ -1,6 +1,8 @@
 import { supabase } from "../supabaseClient";
 import { fetchGamesWithLines } from "./gamesLines";
 import { computeRow } from "../matchupsCompute";
+import { fetchGameProjectionLocks } from "./gameProjectionLocks";
+import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 import type { GameRow } from "./gamesLines";
 
 export interface PeayRow {
@@ -63,9 +65,10 @@ export function gradePeayPick(row: PeayRow): PeayGrade {
  * see espnMlPool.ts for the full reasoning.
  */
 export async function fetchPeayWeek(season: number, week: number, liveByTeam: Record<string, any> = {}): Promise<PeayRow[]> {
-  const [gamesWithLines, { data: peay, error: peayError }] = await Promise.all([
+  const [gamesWithLines, { data: peay, error: peayError }, locks] = await Promise.all([
     fetchGamesWithLines(season, week),
     supabase.from("peay_picks").select("*").eq("season", season).eq("week", week),
+    fetchGameProjectionLocks(season, [week]),
   ]);
   if (peayError) throw peayError;
 
@@ -75,7 +78,14 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
   const peayByGame = new Map((peay ?? []).map((p) => [p.game_id, p]));
 
   return fbsGames.map((gwl) => {
-    const computed = computeRow(gwl, liveByTeam);
+    const lock = locks[gwl.id];
+    const computed = computeRow(
+      gwl,
+      liveByTeam,
+      "team",
+      DEFAULT_CUSTOM_PARAMS,
+      lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+    );
     const saved = peayByGame.get(gwl.id);
     // Defaults to Vegas so Chris doesn't have to retype every line that
     // matches Vegas exactly — only the ones the actual Peay Pool line
