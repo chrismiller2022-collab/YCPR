@@ -23,6 +23,7 @@ import {
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
   type BetHistoryFilters,
+  type BetHistoryDivision,
   type CustomParams,
   type BreakdownTriple,
   type CategorySplitTally,
@@ -868,7 +869,20 @@ function NwfbSigmaMatrixSection({ points }: { points: AmountOffPoint[] }) {
   );
 }
 
-function FilterBar({ years, toggleYear, week, setWeek, confFilters, toggleConf, teamQuery, setTeamQuery, weeksAvailable, allConfs }: any) {
+function FilterBar({
+  years,
+  toggleYear,
+  week,
+  setWeek,
+  confFilters,
+  toggleConf,
+  teamQuery,
+  setTeamQuery,
+  weeksAvailable,
+  allConfs,
+  division,
+  setDivision,
+}: any) {
   return (
     <div
       style={{
@@ -917,6 +931,16 @@ function FilterBar({ years, toggleYear, week, setWeek, confFilters, toggleConf, 
         </select>
       </label>
 
+      <label style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+        Division{" "}
+        <select value={division} onChange={(e) => setDivision(e.target.value as BetHistoryDivision)}>
+          <option value="FBS">FBS vs FBS</option>
+          <option value="Cross">FBS vs FCS</option>
+          <option value="FCS">FCS vs FCS</option>
+          <option value="All">All</option>
+        </select>
+      </label>
+
       <input placeholder="Search team…" value={teamQuery} onChange={(e) => setTeamQuery(e.target.value)} style={{ minWidth: 150 }} />
 
       <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>Conferences (multi-select):</span>
@@ -952,6 +976,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const [week, setWeek] = useState<number | "all">("all");
   const [confFilters, setConfFilters] = useState<Set<string>>(new Set());
   const [teamQuery, setTeamQuery] = useState("");
+  const [division, setDivision] = useState<BetHistoryDivision>("FBS");
 
   const [params, setParams] = useState<CustomParams>({ ...DEFAULT_CUSTOM_PARAMS });
 
@@ -1007,11 +1032,12 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
     week: week === "all" ? null : week,
     confFilters: Array.from(confFilters),
     teamQuery,
+    division,
   };
 
   const filtered = useMemo(
     () => filterRecords(allRecords, filters),
-    [allRecords, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery]
+    [allRecords, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]
   );
 
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
@@ -1079,6 +1105,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         setTeamQuery={setTeamQuery}
         weeksAvailable={weeksAvailable}
         allConfs={allConfs}
+        division={division}
+        setDivision={setDivision}
       />
 
       {LIVE_SEASONS.length > 0 && (

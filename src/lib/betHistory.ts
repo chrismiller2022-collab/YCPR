@@ -443,11 +443,14 @@ export function computeSplitsCustom(records: BetHistoryRecord[], params: CustomP
 // conference snapshot per record — realignment means this can be
 // slightly off for older seasons if a team has since switched conferences.
 // ---------------------------------------------------------------------
+export type BetHistoryDivision = "FBS" | "Cross" | "FCS" | "All";
+
 export interface BetHistoryFilters {
   years: number[]; // empty = all seasons
   week: number | null; // null = all weeks
   confFilters: string[]; // empty = all; each entry is "P4" | "G6" | an actual conference name — matches if ANY apply
   teamQuery: string;
+  division: BetHistoryDivision; // "FBS" = both teams FBS (the default), "Cross" = one FBS one FCS, "FCS" = both FCS, "All" = no filter
 }
 
 function teamMatchesConfFilter(team: string, conf: string, cf: string): boolean {
@@ -456,10 +459,21 @@ function teamMatchesConfFilter(team: string, conf: string, cf: string): boolean 
   return conf === cf;
 }
 
+function recordMatchesDivision(r: BetHistoryRecord, division: BetHistoryDivision): boolean {
+  if (division === "All") return true;
+  const homeDiv = TEAMS_BY_NAME[r.homeTeam]?.div;
+  const awayDiv = TEAMS_BY_NAME[r.awayTeam]?.div;
+  if (!homeDiv || !awayDiv) return false;
+  if (division === "FBS") return homeDiv === "FBS" && awayDiv === "FBS";
+  if (division === "FCS") return homeDiv === "FCS" && awayDiv === "FCS";
+  return homeDiv !== awayDiv; // "Cross"
+}
+
 export function filterRecords(records: BetHistoryRecord[], f: BetHistoryFilters): BetHistoryRecord[] {
   return records.filter((r) => {
     if (f.years.length > 0 && !f.years.includes(r.season)) return false;
     if (f.week != null && r.week !== f.week) return false;
+    if (!recordMatchesDivision(r, f.division)) return false;
 
     if (f.confFilters.length > 0) {
       const homeConf = TEAMS_BY_NAME[r.homeTeam]?.conf ?? "";
