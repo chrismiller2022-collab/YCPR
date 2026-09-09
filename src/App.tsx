@@ -30,6 +30,7 @@ import Playoff24Page from "./pages/Playoff24Page";
 import WeekReportPage from "./pages/WeekReportPage";
 import PreseasonWeek1RatingsPage from "./pages/PreseasonWeek1RatingsPage";
 import ComingSoon from "./pages/ComingSoon";
+import WeekNavBar from "./components/WeekNavBar";
 import TopNav from "./pages/TopNav";
 import FAQPage from "./pages/FAQPage";
 const AdminPage = lazy(() => import("./pages/AdminPage"));
@@ -257,8 +258,13 @@ export default function App() {
               <Route path="/tools/cfb-survivor" element={<CfbSurvivorToolPage onHome={onHome} />} />
               <Route path="/tools/watchability" element={<WatchabilityPage onHome={onHome} />} />
 
-              <Route path="/power-ratings/week/1" element={<PreseasonWeek1RatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
-              <Route path="/power-ratings/week/:n" element={<ComingSoonRoute catLabel="Weekly Power Ratings" />} />
+              <Route path="/power-ratings/week/1" element={
+                <>
+                  <WeekNavBar basePath="/power-ratings/week" week={1} />
+                  <PreseasonWeek1RatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />
+                </>
+              } />
+              <Route path="/power-ratings/week/:n" element={<ComingSoonRoute catLabel="Weekly Power Ratings" basePath="/power-ratings/week" />} />
               <Route path="/power-ratings/progression" element={<WeeklyProgressionPage metric="power" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
               <Route path="/futures/win-totals/live" element={<LiveWinTotalsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
@@ -290,7 +296,7 @@ export default function App() {
               <Route path="/fcs/power-ratings/live" element={<FCSRatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/power-ratings/progression" element={<WeeklyProgressionPage metric="power" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/power-ratings/preseason" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
-              <Route path="/fcs/power-ratings/week/:n" element={<ComingSoonRoute catLabel="FCS Power Ratings" />} />
+              <Route path="/fcs/power-ratings/week/:n" element={<ComingSoonRoute catLabel="FCS Power Ratings" basePath="/fcs/power-ratings/week" />} />
               <Route path="/fcs/win-totals/live" element={<LiveWinTotalsPage defaultDivision="FCS" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/win-totals/week/:n" element={<FCSWinTotalsWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/fcs/win-totals/progression" element={<WeeklyProgressionPage metric="wintotals" defaultDivision="FCS" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
@@ -339,19 +345,29 @@ function ConferenceRoute({ onNavigateTeam, onHome }: any) {
 
 function MatchupsWeekRoute({ onNavigateTeam, onHome }: any) {
   const { n } = useParams();
-  return <MatchupsPage subKey={`week${n}`} subLabel={weekLabelFor(n)} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <>
+      <WeekNavBar basePath="/matchups/week" week={wk} />
+      <MatchupsPage subKey={`week${n}`} subLabel={weekLabelFor(n)} onNavigateTeam={onNavigateTeam} onHome={onHome} />
+    </>
+  );
 }
 
 function OtherFuturesWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const { n } = useParams();
+  const wk = parseInt(n ?? "", 10);
   return (
-    <OtherFuturesPage
-      subKey={`week${n}`}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/futures/other/week" week={wk} />
+      <OtherFuturesPage
+        subKey={`week${n}`}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -359,12 +375,15 @@ function FCSBracketWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: a
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <FCSBracketPage
-      weekNum={Number.isFinite(wk) ? wk : null}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/fcs/bracket/week" week={wk} />
+      <FCSBracketPage
+        weekNum={Number.isFinite(wk) ? wk : null}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -372,13 +391,16 @@ function ResumeRatingsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <ResumeRatingsWeekPage
-      weekNum={Number.isFinite(wk) ? wk : 1}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/resume-ratings/week" week={wk} />
+      <ResumeRatingsWeekPage
+        weekNum={Number.isFinite(wk) ? wk : 1}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -386,13 +408,16 @@ function SosWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <SosWeekPage
-      weekNum={Number.isFinite(wk) ? wk : 1}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/sos/week" week={wk} />
+      <SosWeekPage
+        weekNum={Number.isFinite(wk) ? wk : 1}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -400,14 +425,17 @@ function FCSSosWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: any) 
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <SosWeekPage
-      defaultDivision="FCS"
-      weekNum={Number.isFinite(wk) ? wk : 1}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/fcs/sos/week" week={wk} />
+      <SosWeekPage
+        defaultDivision="FCS"
+        weekNum={Number.isFinite(wk) ? wk : 1}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -443,12 +471,23 @@ function FCSWinTotalsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }:
 function BracketWeekRoute({ onNavigateTeam, onHome }: any) {
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
-  return <BracketPage subLabel={weekLabelFor(n)} weekNum={Number.isFinite(wk) ? wk : null} onNavigateTeam={onNavigateTeam} onHome={onHome} />;
+  return (
+    <>
+      <WeekNavBar basePath="/bracket/week" week={wk} />
+      <BracketPage subLabel={weekLabelFor(n)} weekNum={Number.isFinite(wk) ? wk : null} onNavigateTeam={onNavigateTeam} onHome={onHome} />
+    </>
+  );
 }
 
-function ComingSoonRoute({ catLabel }: { catLabel: string }) {
+function ComingSoonRoute({ catLabel, basePath }: { catLabel: string; basePath?: string }) {
   const { n } = useParams();
-  return <ComingSoon categoryLabel={catLabel} subLabel={n ? weekLabelFor(n) : undefined} />;
+  const wk = parseInt(n ?? "", 10);
+  return (
+    <>
+      {basePath && Number.isFinite(wk) ? <WeekNavBar basePath={basePath} week={wk} /> : null}
+      <ComingSoon categoryLabel={catLabel} subLabel={n ? weekLabelFor(n) : undefined} />
+    </>
+  );
 }
 
 function ModelResultsYearRoute({ onHome }: any) {
