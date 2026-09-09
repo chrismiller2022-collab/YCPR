@@ -4,10 +4,18 @@ import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine, poolStdDevForTotal, buildTeamSplitBetRows, type TeamSplitBetRow } from "../lib/gameTotalsEngine";
+import {
+  useGameTotalsEngine,
+  poolStdDevForTotal,
+  buildTeamSplitBetRows,
+  applyLockedTotals,
+  applyLockedSpreadToRows,
+  type TeamSplitBetRow,
+} from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { splitTeamTotal } from "../lib/gameTotals";
 import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylineBetHistory";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { BET_HISTORY } from "../data/betHistory.data";
 
@@ -268,8 +276,39 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, [week], season);
   const ratings = ratingsByWeek[week] ?? {};
+  const { locks } = useGameProjectionLocks(season, [week]);
 
-  const { rows: totalsEngineRows } = useGameTotalsEngine(season);
+  // Once a week is frozen (see LockGamesPanel), its spread/win%/total win
+  // unconditionally over anything ratings say right now — same guarantee
+  // Admin/Public Matchups already have, extended to this page since it's
+  // the one Chris actually places bets from.
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const v = locks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [games, locks]);
+  const lockedWinPctByGameId = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    for (const g of games) map[g.id] = locks[g.id]?.my_away_win_pct ?? null;
+    return map;
+  }, [games, locks]);
+
+  const { rows: totalsEngineRowsRaw } = useGameTotalsEngine(season);
+  const totalsEngineRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsEngineRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsEngineRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const projTotalByGame = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of totalsEngineRows) {
@@ -302,8 +341,17 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
   // --- Spreads ---
   const computedGames = useMemo(
-    () => divisionFilteredGames.map((g) => ({ game: g, computed: computeRow(g, ratings) })).filter((r) => r.computed.vegasAwaySpread != null),
-    [divisionFilteredGames, ratings]
+    () =>
+      divisionFilteredGames
+        .map((g) => {
+          const lock = locks[g.id];
+          return {
+            game: g,
+            computed: computeRow(g, ratings, "team", DEFAULT_CUSTOM_PARAMS, lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null),
+          };
+        })
+        .filter((r) => r.computed.vegasAwaySpread != null),
+    [divisionFilteredGames, ratings, locks]
   );
 
   const spreadBetsUnsorted: SpreadBetRow[] = useMemo(
@@ -493,7 +541,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
   // --- Moneyline ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
-    const mlRows = buildMlRowsFromLiveRatingsBillR(divisionFilteredGames, ratingsByWeek);
+    const mlRows = buildMlRowsFromLiveRatingsBillR(divisionFilteredGames, ratingsByWeek, undefined, lockedWinPctByGameId);
     return mlRows
       .filter((r) => r.betSide != null)
       .map((r) => {
@@ -503,7 +551,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         return { row: r, awayScore: split.awayScore, homeScore: split.homeScore };
       })
       .sort((a, b) => (b.row.betEv ?? -Infinity) - (a.row.betEv ?? -Infinity));
-  }, [divisionFilteredGames, ratingsByWeek, projTotalByGame, week, computedGames]);
+  }, [divisionFilteredGames, ratingsByWeek, projTotalByGame, week, computedGames, lockedWinPctByGameId]);
 
   return (
     <div>

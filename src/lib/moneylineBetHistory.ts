@@ -289,20 +289,30 @@ export function billRAwayWinPct(awayRating: number, homeRating: number, divisor:
 export function buildMlRowsFromLiveRatingsBillR(
   games: GameWithLines[],
   ratingsByWeek: Record<number, Record<string, any>>,
-  divisor: number = BILL_R_DEFAULT_DIVISOR
+  divisor: number = BILL_R_DEFAULT_DIVISOR,
+  lockedWinPctByGameId?: Record<string, number | null>
 ): MlGameRow[] {
   const rows: MlGameRow[] = [];
   for (const g of games) {
     const line = pickMoneylineLine(g.lines);
     if (!line) continue;
 
-    const weekRatings = ratingsByWeek[g.week] ?? {};
-    const staticAway = TEAMS_BY_NAME[g.away_team] ?? null;
-    const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
-    const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
-    const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
-
-    const awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor) : null;
+    // Once a game is frozen, its locked away win% wins unconditionally —
+    // same rule computeRow already applies to spread/win%, mirrored here
+    // since this function computes its own moneyline independently
+    // rather than deriving it from computeRow's output.
+    const lockedWinPct = lockedWinPctByGameId?.[g.id];
+    let awayWinPct: number | null;
+    if (lockedWinPct != null) {
+      awayWinPct = lockedWinPct;
+    } else {
+      const weekRatings = ratingsByWeek[g.week] ?? {};
+      const staticAway = TEAMS_BY_NAME[g.away_team] ?? null;
+      const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
+      const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
+      const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
+      awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor) : null;
+    }
 
     rows.push(computeMlRow(g, null, line.away_moneyline, line.home_moneyline, awayWinPct));
   }

@@ -14,7 +14,8 @@ import { conferencesForDivision } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameTotalsEngine, poolStdDevForTotal, buildBetRows } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, poolStdDevForTotal, buildBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks, type GameProjectionLockRow } from "../lib/api/gameProjectionLocks";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { classOf, isTracked, computeRow } from "../lib/matchupsCompute";
 import { buildSlateRow, filterSlateRowsByDay, computeSlatePerformance, type SlateGameRow, type SlatePerformanceSummary } from "../lib/matchupSlate";
@@ -28,7 +29,8 @@ function buildDivisionSlateRows(
   ratings: Record<string, any>,
   projTotalByGame: Map<string, number>,
   matchupType: "FBSvFBS" | "FCSvFCS" | "Cross",
-  poolStdForTotal?: number
+  poolStdForTotal?: number,
+  locksByGameId?: Record<string, GameProjectionLockRow>
 ): SlateGameRow[] {
   return games
     .filter((g) => {
@@ -38,7 +40,10 @@ function buildDivisionSlateRows(
       if (matchupType === "FCSvFCS") return home === "fcs" && away === "fcs";
       return isTracked(home) && isTracked(away) && home !== away;
     })
-    .map((g) => computeRow(g, ratings))
+    .map((g) => {
+      const lock = locksByGameId?.[g.id];
+      return computeRow(g, ratings, "team", undefined, lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null);
+    })
     .filter((c) => c.vegasAwaySpread != null) // hide games with no Vegas line, matching the live page's default
     .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null, poolStdForTotal));
 }
@@ -380,7 +385,35 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     return previousWeekNum != null ? [previousWeekNum, scheduleWeekNum] : [scheduleWeekNum];
   }, [scheduleWeekNum, previousWeekNum]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, ratingsWeeksNeeded, season);
-  const { rows: totalsEngineRows } = useGameTotalsEngine(season);
+  const { locks } = useGameProjectionLocks(season, ratingsWeeksNeeded);
+  const { rows: totalsEngineRowsRaw } = useGameTotalsEngine(season);
+
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of [...scheduleGames, ...(previousWeekGames ?? [])]) {
+      const v = locks[g.id]?.my_away_spread;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [scheduleGames, previousWeekGames, locks]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of [...scheduleGames, ...(previousWeekGames ?? [])]) {
+      const v = locks[g.id]?.my_total;
+      if (v != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [scheduleGames, previousWeekGames, locks]);
+  // Once a week is frozen (LockGamesPanel), its spread/win%/total win
+  // unconditionally over whatever ratings/the total model say right now —
+  // this is what the "Review" section (last week's completed games)
+  // needs above all else, since regenerating that recap during the
+  // FOLLOWING week is exactly the scenario that let Week 1's report
+  // disagree with what actually got frozen.
+  const totalsEngineRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsEngineRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsEngineRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const projTotalByGame = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of totalsEngineRows) {
@@ -403,17 +436,17 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsTotalPoolStd = useMemo(() => poolStdDevForTotal(filterRowsByDivision(totalsEngineRows, "FBS")), [totalsEngineRows]);
   const fcsTotalPoolStd = useMemo(() => poolStdDevForTotal(filterRowsByDivision(totalsEngineRows, "FCS")), [totalsEngineRows]);
   const fbsFbsSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd)),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd, locks)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd, locks]
   );
   const fcsFcsSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FCSvFCS", fcsTotalPoolStd)),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fcsTotalPoolStd]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "FCSvFCS", fcsTotalPoolStd, locks)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fcsTotalPoolStd, locks]
   );
   // FBS vs FCS — "All" per Chris's category list, no Midweek/Saturday split.
   const crossSlateRows = useMemo(
-    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "Cross", fbsTotalPoolStd)),
-    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd]
+    () => (scheduleWeekNum == null ? [] : buildDivisionSlateRows(scheduleGames, matchupRatings, projTotalByGame, "Cross", fbsTotalPoolStd, locks)),
+    [scheduleWeekNum, scheduleGames, matchupRatings, projTotalByGame, fbsTotalPoolStd, locks]
   );
 
   const fbsFbsMidweekRows = useMemo(() => filterSlateRowsByDay(fbsFbsSlateRows, "midweek"), [fbsFbsSlateRows]);
@@ -457,12 +490,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const reviewGames = previousWeekNum != null ? previousWeekGames : scheduleGames;
   const reviewRatings = reviewWeekNum != null ? ratingsByWeek[reviewWeekNum] ?? {} : {};
   const reviewFbsFbsRows = useMemo(
-    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd)),
-    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd]
+    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "FBSvFBS", fbsTotalPoolStd, locks)),
+    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd, locks]
   );
   const reviewCrossRows = useMemo(
-    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "Cross", fbsTotalPoolStd)),
-    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd]
+    () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "Cross", fbsTotalPoolStd, locks)),
+    [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd, locks]
   );
   const reviewRows = useMemo(
     () => [...reviewFbsFbsRows, ...reviewCrossRows].filter((r) => r.completed),

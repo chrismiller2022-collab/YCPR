@@ -269,6 +269,22 @@ export function applyLockedTotals(rows: EnrichedGameRow[], lockedTotalByKey: Map
   });
 }
 
+// Same idea as applyLockedTotals, but for myHomeSpread — this engine
+// computes its own spread independently from live ratings (needed to
+// split a total into a home/away team total), so a locked game's spread
+// has to be threaded in here too, or team totals for an already-played
+// game would keep drifting even after the total itself is frozen.
+// lockedAwaySpreadByKey is away-perspective (game_projection_locks'
+// convention); myHomeSpread is home-perspective, hence the negation.
+export function applyLockedSpreadToRows(rows: EnrichedGameRow[], lockedAwaySpreadByKey: Map<string, number>): EnrichedGameRow[] {
+  if (lockedAwaySpreadByKey.size === 0) return rows;
+  return rows.map((row) => {
+    const locked = lockedAwaySpreadByKey.get(`${row.game.week}|${row.game.homeTeam}|${row.game.awayTeam}`);
+    if (locked == null) return row;
+    return { ...row, myHomeSpread: -locked };
+  });
+}
+
 export function poolStdDevForTotal(rows: EnrichedGameRow[]): number {
   const diffs: number[] = [];
   for (const r of rows) {
