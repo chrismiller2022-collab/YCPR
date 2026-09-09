@@ -5,7 +5,8 @@ import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from
 import { formatProjectedScore } from "../lib/gameTotals";
 import { billRAwayWinPct } from "../lib/moneylineBetHistory";
 import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import type { BettingLineRow } from "../lib/api/gamesLines";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
 import {
@@ -33,15 +34,29 @@ function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
 // twice with two copies of the formula is exactly the kind of divergence
 // bug Chris has hit before (see conventions), so it's one function used
 // both places.
-function computeProjection(g: { away_team: string; home_team: string }, liveByTeam: Record<string, WeeklyTeamStats>) {
+function computeProjection(
+  g: { away_team: string; home_team: string },
+  liveByTeam: Record<string, WeeklyTeamStats>,
+  lock?: { my_away_spread: number | null; my_away_win_pct: number | null } | null
+) {
   const staticAwayTeam = TEAMS_BY_NAME[g.away_team];
   const staticHomeTeam = TEAMS_BY_NAME[g.home_team];
   const awayTeam = staticAwayTeam ? { ...staticAwayTeam, rating: liveByTeam[g.away_team]?.rating ?? staticAwayTeam.rating } : null;
   const homeTeam = staticHomeTeam ? { ...staticHomeTeam, rating: liveByTeam[g.home_team]?.rating ?? staticHomeTeam.rating } : null;
-  const projAwaySpread = awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam) : null;
+  // Once a game is frozen, its locked spread/win% wins over live
+  // ratings — same guarantee every other pool tool and Admin Matchups
+  // already have. Team rating display (Power Ratings column) still
+  // shows live regardless, since that's not what's being frozen.
+  const projAwaySpread =
+    lock?.my_away_spread != null
+      ? lock.my_away_spread
+      : awayTeam && homeTeam
+        ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam)
+        : null;
   // Bill R Method — the canonical site-wide moneyline model — not the
   // spread-derived curve, matching every other pool tool.
-  const awayWinPct = awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+  const awayWinPct =
+    lock?.my_away_win_pct != null ? lock.my_away_win_pct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
   return { awayTeam, homeTeam, projAwaySpread, awayWinPct };
 }
 
@@ -315,7 +330,30 @@ function PickingStep({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
-  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const { rows: totalsRowsRaw } = useGameTotalsEngine(season);
+  const { locks } = useGameProjectionLocks(season, [week]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of picks) {
+      if (!p.game) continue;
+      const v = locks[p.game.id]?.my_total;
+      if (v != null) map.set(`${p.game.week}|${p.game.home_team}|${p.game.away_team}`, v);
+    }
+    return map;
+  }, [picks, locks]);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of picks) {
+      if (!p.game) continue;
+      const v = locks[p.game.id]?.my_away_spread;
+      if (v != null) map.set(`${p.game.week}|${p.game.home_team}|${p.game.away_team}`, v);
+    }
+    return map;
+  }, [picks, locks]);
+  const totalsRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const totalsRowByGame = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of totalsRows) {
@@ -333,7 +371,7 @@ function PickingStep({
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
-          const { awayWinPct } = p.game ? computeProjection(p.game, liveByTeam) : { awayWinPct: null };
+          const { awayWinPct } = p.game ? computeProjection(p.game, liveByTeam, locks[p.game.id]) : { awayWinPct: null };
           // Default to whichever side my model favors outright, if
           // nothing's been picked yet — same idea as ESPN Moneyline's
           // auto-pick. Chris can still change it before saving.
@@ -407,7 +445,7 @@ function PickingStep({
               const g = p.game;
               if (!g) return null;
               const line = pickLine(p.lines);
-              const { awayTeam, homeTeam, projAwaySpread, awayWinPct } = computeProjection(g, liveByTeam);
+              const { awayTeam, homeTeam, projAwaySpread, awayWinPct } = computeProjection(g, liveByTeam, locks[g.id]);
               const homeWinPct = awayWinPct != null ? 1 - awayWinPct : null;
               const vegasAwaySpread = line?.spread != null ? -line.spread : null;
               const vegasAwayWinPct = moneylineToImpliedWinPct(line?.away_moneyline ?? null);
