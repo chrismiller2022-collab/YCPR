@@ -55,8 +55,21 @@ function resolveLabelForWeek(availableWeeks: string[], targetWeekNumber: number)
  * shared "latest" map for everything. Pass `game.week` per game when
  * looking up a team's rating for that specific game.
  */
+// Per-week provenance for the resolved ratings — "exact" means this
+// week has its own saved/archived snapshot; "live" means no snapshot
+// exists yet for this week (it's in the future, or just hasn't been
+// saved), so it's borrowing the most recent EARLIER week's snapshot
+// instead. Lets a page say "Week 14 hasn't happened yet — showing Live
+// Power Ratings (as of Week 2)" instead of silently blending the two
+// with no indication which one a viewer is actually looking at.
+export interface WeekRatingsSource {
+  isExact: boolean;
+  resolvedWeek: number | null;
+}
+
 export function useWeekAccurateRatings(season: number, weekNumbers: number[], currentSeason: number) {
   const [byWeek, setByWeek] = useState<Record<number, Record<string, WeekAccurateRatingRow>>>({});
+  const [sourceByWeek, setSourceByWeek] = useState<Record<number, WeekRatingsSource>>({});
   const [loading, setLoading] = useState(true);
   const key = Array.from(new Set(weekNumbers)).sort((a, b) => a - b).join(",");
 
@@ -67,10 +80,12 @@ export function useWeekAccurateRatings(season: number, weekNumbers: number[], cu
     (async () => {
       const uniqueWeeks = Array.from(new Set(weekNumbers));
       const result: Record<number, Record<string, WeekAccurateRatingRow>> = {};
+      const source: Record<number, WeekRatingsSource> = {};
 
       if (uniqueWeeks.length === 0) {
         if (!cancelled) {
           setByWeek({});
+          setSourceByWeek({});
           setLoading(false);
         }
         return;
@@ -114,21 +129,26 @@ export function useWeekAccurateRatings(season: number, weekNumbers: number[], cu
             const map: Record<string, WeekAccurateRatingRow> = {};
             for (const r of rows) map[r.team] = { rating: r.rating };
             liveResult[wn] = map;
+            const resolvedWeekNumber = label ? weekLabelToNumber(label) : null;
+            source[wn] = { isExact: false, resolvedWeek: resolvedWeekNumber != null && resolvedWeekNumber >= 0 ? resolvedWeekNumber : null };
           }
         }
 
         for (const wn of uniqueWeeks) {
           result[wn] = archivedWeekNumbers.has(wn) ? archivedResult[wn] ?? {} : liveResult[wn] ?? {};
+          if (archivedWeekNumbers.has(wn)) source[wn] = { isExact: true, resolvedWeek: wn };
         }
       } else {
         const bySeasonWeek = await fetchSeasonWeeklyRatingsForWeeks(season, uniqueWeeks);
         for (const wn of uniqueWeeks) {
           result[wn] = bySeasonWeek[wn] ?? {};
+          source[wn] = { isExact: true, resolvedWeek: wn };
         }
       }
 
       if (!cancelled) {
         setByWeek(result);
+        setSourceByWeek(source);
         setLoading(false);
       }
     })().catch(() => {
@@ -141,5 +161,5 @@ export function useWeekAccurateRatings(season: number, weekNumbers: number[], cu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, key, currentSeason]);
 
-  return { byWeek, loading };
+  return { byWeek, sourceByWeek, loading };
 }

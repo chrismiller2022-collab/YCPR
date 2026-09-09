@@ -452,7 +452,10 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
   const [query, setQuery] = useState("");
   const [matchupType, setMatchupType] = useState("All");
   const [mode, setMode] = useState("spreads");
-  const [hideNoLine, setHideNoLine] = useState(true);
+  // Off by default — every game should be visible with its projected
+  // spread even before a Vegas line exists (e.g. a far-future week), not
+  // just the ones a book has already priced.
+  const [hideNoLine, setHideNoLine] = useState(false);
   const [completedOnly, setCompletedOnly] = useState(false);
   const [slateFilter, setSlateFilter] = useState<SlateDayFilter>("all");
   const exportRef = useRef<HTMLDivElement>(null);
@@ -464,7 +467,10 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
 
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
-  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const { byWeek: ratingsByWeek, sourceByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  // Only meaningful on a single-week tab — "all" mixes many weeks with
+  // different provenance, not one story to tell in a single banner.
+  const ratingsSource = !isAll && weekNum != null ? sourceByWeek[weekNum] : null;
   const { locks } = useGameProjectionLocks(season, weekNumbersInView);
   const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
   useAutoSyncTeamTotals(games, season);
@@ -612,6 +618,13 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
             `Projected moneylines and win percentages for every game, derived from current power ratings.`}
           {mode === "totals" && "Vegas totals and, once games are final, the actual Over/Under result."}
         </p>
+        {ratingsSource && !ratingsSource.isExact && (
+          <p className="subtitle team-subtitle" style={{ color: "var(--chalk-dim)", fontStyle: "italic" }}>
+            {ratingsSource.resolvedWeek != null
+              ? `Week ${weekNum} hasn't been saved yet — showing Live Power Ratings (as of Week ${ratingsSource.resolvedWeek}).`
+              : `Week ${weekNum} hasn't been saved yet — showing preseason ratings (no week has been saved yet this season).`}
+          </p>
+        )}
       </div>
 
       <div className="controls matchups-controls" data-export-exclude="true">
