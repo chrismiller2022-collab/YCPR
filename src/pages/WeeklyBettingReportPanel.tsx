@@ -503,12 +503,17 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       teamTotalRowsInDivision
         .filter((r) => r.isFiltered && (hideCompleted ? !r.row.game.completed : true))
         .map((r) => {
-          const spread = computedGames.find((c) => c.game.away_team === r.row.game.awayTeam && c.game.home_team === r.row.game.homeTeam)?.computed
-            .projAwaySpread;
-          const split = projScoreSplit(r.myTeamTotal, spread ?? null);
-          return { ...r, awayScore: split.awayScore, homeScore: split.homeScore };
+          // Split the GAME total (not this team's own total — that was
+          // the bug: re-splitting a single team's ~34-point total as if
+          // it were a whole game's total produced a nonsense score like
+          // "7-27"). r.myTeamTotal is already one side of this exact
+          // split; deriving both sides from the same game total/spread
+          // keeps them consistent with each other and with the Totals
+          // section's own proj score for this same game.
+          const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
+          return { ...r, awayScore: split.away, homeScore: split.home };
         }),
-    [teamTotalRowsInDivision, hideCompleted, computedGames]
+    [teamTotalRowsInDivision, hideCompleted]
   );
   const teamTotalBetsOver = useMemo(
     () => teamTotalBetsAllRaw.filter((r) => r.call === "Over").sort((a, b) => Math.abs(b.stdDevOff ?? 0) - Math.abs(a.stdDevOff ?? 0)),
@@ -529,15 +534,15 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           Math.abs(r.stdDevOff) < TOTAL_BET_THRESHOLD_STDDEV
       )
       .map((r) => {
-        const spread = computedGames.find((c) => c.game.away_team === r.row.game.awayTeam && c.game.home_team === r.row.game.homeTeam)?.computed
-          .projAwaySpread;
         const dir = Math.sign(r.stdDevOff ?? 0) || 1;
         const poolStd = r.amountOff != null && r.stdDevOff ? r.amountOff / r.stdDevOff : null;
         const vegasTtNeeded = poolStd != null ? r.myTeamTotal! - dir * TOTAL_BET_THRESHOLD_STDDEV * poolStd : null;
-        const split = projScoreSplit(r.myTeamTotal, spread ?? null);
-        return { row: r, awayScore: split.awayScore, homeScore: split.homeScore, vegasTtNeeded };
+        // Same fix as teamTotalBetsAllRaw above — split the game total,
+        // not this team's own total.
+        const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
+        return { row: r, awayScore: split.away, homeScore: split.home, vegasTtNeeded };
       });
-  }, [teamTotalRowsInDivision, hideCompleted, computedGames]);
+  }, [teamTotalRowsInDivision, hideCompleted]);
 
   // --- Moneyline ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
