@@ -443,13 +443,16 @@ function WinTotalsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: an
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <LiveWinTotalsPage
-      weekNum={Number.isFinite(wk) ? wk : null}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/futures/win-totals/week" week={wk} />
+      <LiveWinTotalsPage
+        weekNum={Number.isFinite(wk) ? wk : null}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
@@ -457,14 +460,17 @@ function FCSWinTotalsWeekRoute({ onNavigateTeam, onNavigateConference, onHome }:
   const { n } = useParams();
   const wk = parseInt(n ?? "", 10);
   return (
-    <LiveWinTotalsPage
-      defaultDivision="FCS"
-      weekNum={Number.isFinite(wk) ? wk : null}
-      subLabel={weekLabelFor(n)}
-      onNavigateTeam={onNavigateTeam}
-      onNavigateConference={onNavigateConference}
-      onHome={onHome}
-    />
+    <>
+      <WeekNavBar basePath="/fcs/win-totals/week" week={wk} />
+      <LiveWinTotalsPage
+        defaultDivision="FCS"
+        weekNum={Number.isFinite(wk) ? wk : null}
+        subLabel={weekLabelFor(n)}
+        onNavigateTeam={onNavigateTeam}
+        onNavigateConference={onNavigateConference}
+        onHome={onHome}
+      />
+    </>
   );
 }
 
