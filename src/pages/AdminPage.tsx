@@ -506,7 +506,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "This week",
     items: [
       { key: "checklist", label: "Weekly Checklist" },
-      { key: "lockgames", label: "Lock Games" },
+      { key: "lockgames", label: "Freeze Week" },
       { key: "publish", label: "Publish" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },

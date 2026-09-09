@@ -27,14 +27,23 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, action } = req.body ?? {};
-  // lockProjections and syncTeamTotals are both deliberately exempt from
-  // the password gate below: lockProjections is append-only (can never
-  // overwrite an existing lock) and syncTeamTotals just mirrors whatever
-  // The Odds API is currently quoting (upsert, always overwritable by a
-  // fresher pull) — neither can corrupt anything the site actually
-  // computes, and both need to fire from the PUBLIC matchups page, not
-  // only when Chris is logged into admin.
-  if (password !== ADMIN_PASSWORD && action !== "lockProjections" && action !== "syncTeamTotals") {
+  // syncTeamTotals is exempt from the password gate: it just mirrors
+  // whatever The Odds API is currently quoting (upsert, always
+  // overwritable by a fresher pull), can't corrupt anything the site
+  // actually computes, and needs to fire from the PUBLIC matchups page.
+  // lockProjections USED to be exempt too, on the theory that it's
+  // append-only so it couldn't do harm — but "append-only" isn't the
+  // same as "safe": it was firing opportunistically from page views
+  // (see the removed useAutoLockProjections), which meant a game's
+  // projection got frozen at whatever moment someone next happened to
+  // load a page after kickoff, using whatever ratings were live AT THAT
+  // MOMENT — not at kickoff, and not necessarily what was true when
+  // picks were actually made. That's what caused Week 1's locked values
+  // to already disagree with the pregame report before anything else
+  // ever touched them. Freezing a week is now a single deliberate admin
+  // action (see LockGamesPanel.tsx) and requires the password like any
+  // other write.
+  if (password !== ADMIN_PASSWORD && action !== "syncTeamTotals") {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -45,9 +54,17 @@ export default async function handler(req: any, res: any) {
     if (action === "lockProjections") {
       const { candidates } = req.body;
       if (!Array.isArray(candidates) || candidates.length === 0) {
-        res.status(200).json({ locked: 0 });
+        res.status(200).json({ locked: 0, alreadyLocked: [], failed: [] });
         return;
       }
+      const gameIds = candidates.map((c: any) => c.game_id);
+      const { data: existing, error: existingError } = await supabaseAdmin
+        .from("game_projection_locks")
+        .select("game_id")
+        .in("game_id", gameIds);
+      if (existingError) throw existingError;
+      const alreadyLockedIds = new Set((existing ?? []).map((r: any) => r.game_id));
+
       const rows = candidates.map((c: any) => ({
         game_id: c.game_id,
         season: c.season,
@@ -58,11 +75,21 @@ export default async function handler(req: any, res: any) {
         my_total: c.my_total ?? null,
         my_away_win_pct: c.my_away_win_pct ?? null,
       }));
-      const { error, count } = await supabaseAdmin
+      // INSERT ... ON CONFLICT DO NOTHING — a game already locked is
+      // never overwritten by this action, no matter what value is
+      // submitted for it. Correcting an existing lock is a separate,
+      // explicit action (overrideProjectionLock below).
+      const { error } = await supabaseAdmin
         .from("game_projection_locks")
-        .upsert(rows, { onConflict: "game_id", ignoreDuplicates: true, count: "exact" });
+        .upsert(rows, { onConflict: "game_id", ignoreDuplicates: true });
       if (error) throw error;
-      res.status(200).json({ locked: count ?? rows.length });
+
+      const newlyLocked = candidates.filter((c: any) => !alreadyLockedIds.has(c.game_id));
+      res.status(200).json({
+        locked: newlyLocked.length,
+        newlyLockedGameIds: newlyLocked.map((c: any) => c.game_id),
+        alreadyLocked: Array.from(alreadyLockedIds),
+      });
       return;
     }
 

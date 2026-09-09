@@ -85,16 +85,30 @@ export async function overrideGameProjectionLock(
   if (!res.ok) throw new Error(data.error ?? "Failed to correct lock");
 }
 
-export async function lockGameProjections(candidates: LockCandidate[]): Promise<{ locked: number }> {
-  if (candidates.length === 0) return { locked: 0 };
-  // No admin password needed — lockProjections is deliberately exempt
-  // server-side (see api/admin-bets-save.ts) since it's append-only and
-  // needs to fire from public pages too, not just when Chris is logged
-  // into admin.
+export interface LockProjectionsResult {
+  locked: number;
+  newlyLockedGameIds: string[];
+  alreadyLocked: string[];
+}
+
+/**
+ * Freezes projections for the given candidates — insert-only, never
+ * overwrites a game that's already locked (use overrideGameProjectionLock
+ * for that, deliberately). Requires the admin password: this used to be
+ * exempt on the theory that "append-only" made it safe, but it was being
+ * called opportunistically from page views (see the removed
+ * useAutoLockProjections), which is exactly what let Week 1 get locked
+ * at whatever moment someone happened to load a page after kickoff
+ * rather than at a deliberate, known-good moment. Freezing a week is now
+ * a single explicit admin action (LockGamesPanel.tsx).
+ */
+export async function lockGameProjections(candidates: LockCandidate[]): Promise<LockProjectionsResult> {
+  if (candidates.length === 0) return { locked: 0, newlyLockedGameIds: [], alreadyLocked: [] };
+  const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "lockProjections", candidates }),
+    body: JSON.stringify({ password, action: "lockProjections", candidates }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to lock projections");

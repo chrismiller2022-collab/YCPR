@@ -12,7 +12,6 @@ import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotal
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
-import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -860,22 +859,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         );
       }),
     [filteredGames, ratingsByWeek, locks]
-  );
-
-  const projTotalByGameForLock = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of totalsViewRows) {
-      if (r.projection?.projectedTotal != null) {
-        map.set(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`, r.projection.projectedTotal);
-      }
-    }
-    return map;
-  }, [totalsViewRows]);
-
-  useAutoLockProjections(
-    useMemo(() => computedRows.map((c) => ({ game: c.game, computed: c })), [computedRows]),
-    locks,
-    projTotalByGameForLock
   );
 
   const visibleRows = useMemo(() => {

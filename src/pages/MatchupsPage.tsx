@@ -12,7 +12,6 @@ import { isMidweekET, isSaturdayET } from "../lib/watchability";
 import { useGameTotalsEngine, buildBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
 import { useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
-import { useAutoLockProjections } from "../lib/useAutoLockProjections";
 
 function dateLabel(g: GameWithLines) {
   return g.start_date
@@ -550,15 +549,6 @@ export default function MatchupsPage({ subKey, subLabel, onNavigateTeam, onHome 
         );
       }),
     [filteredGames, ratingsByWeek, locks]
-  );
-
-  // Opportunistically locks any game that's kicked off since the last
-  // time this page (or any other page doing the same) was loaded — see
-  // useAutoLockProjections.ts for the full reasoning.
-  useAutoLockProjections(
-    useMemo(() => computedRows.map((c) => ({ game: c.game, computed: c })), [computedRows]),
-    locks,
-    projTotalByGame
   );
 
   const visibleRows = useMemo(() => {
