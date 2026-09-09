@@ -7,7 +7,7 @@ import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats,
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
-import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
@@ -797,6 +797,19 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     return map;
   }, [games, locks]);
 
+  // Same idea, for the spread the Team Totals tab splits that locked
+  // total by — without this, "My TT" was still splitting a frozen total
+  // using a LIVE spread once a game kicked off, drifting the per-team
+  // number even though the game total itself was correctly frozen.
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of games) {
+      const lockedSpread = locks[g.id]?.my_away_spread;
+      if (lockedSpread != null) map.set(`${g.week}|${g.home_team}|${g.away_team}`, lockedSpread);
+    }
+    return map;
+  }, [games, locks]);
+
   const totalsViewRows = useMemo(() => {
     const filtered = totalsEngineRows.filter((r) => {
       if (weekSel !== "all" && r.game.week !== weekSel) return false;
@@ -813,8 +826,8 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       }
       return true;
     });
-    return applyLockedTotals(filtered, lockedTotalByKey);
-  }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey]);
+    return applyLockedSpreadToRows(applyLockedTotals(filtered, lockedTotalByKey), lockedAwaySpreadByKey);
+  }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey]);
 
   useEffect(() => {
     setLoading(true);
