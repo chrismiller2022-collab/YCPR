@@ -9,7 +9,8 @@ import {
 import { spreadColor } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 
 async function espnSpreadSave(body: any) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -205,7 +206,30 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
-  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const { rows: totalsRowsRaw } = useGameTotalsEngine(season);
+  const { locks } = useGameProjectionLocks(season, [week]);
+  const lockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of picks) {
+      if (!p.game) continue;
+      const v = locks[p.game.id]?.my_total;
+      if (v != null) map.set(`${p.game.week}|${p.game.home_team}|${p.game.away_team}`, v);
+    }
+    return map;
+  }, [picks, locks]);
+  const lockedAwaySpreadByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of picks) {
+      if (!p.game) continue;
+      const v = locks[p.game.id]?.my_away_spread;
+      if (v != null) map.set(`${p.game.week}|${p.game.home_team}|${p.game.away_team}`, v);
+    }
+    return map;
+  }, [picks, locks]);
+  const totalsRows = useMemo(
+    () => applyLockedSpreadToRows(applyLockedTotals(totalsRowsRaw, lockedTotalByKey), lockedAwaySpreadByKey),
+    [totalsRowsRaw, lockedTotalByKey, lockedAwaySpreadByKey]
+  );
   const totalsRowByGame = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of totalsRows) {

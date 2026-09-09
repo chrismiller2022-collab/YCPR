@@ -1,6 +1,8 @@
 import { supabase } from "../supabaseClient";
 import { fetchGamesWithLines, type GameRow, type BettingLineRow } from "./gamesLines";
 import { computeRow, homeSideMlValues } from "../matchupsCompute";
+import { fetchGameProjectionLocks } from "./gameProjectionLocks";
+import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 
 export interface EspnConfidencePickRow {
   id: number;
@@ -58,7 +60,7 @@ export async function fetchEspnConfidencePicksForWeek(
   if (picksError) throw picksError;
   if (!picks || picks.length === 0) return [];
 
-  const gamesWithLines = await fetchGamesWithLines(season, week);
+  const [gamesWithLines, locks] = await Promise.all([fetchGamesWithLines(season, week), fetchGameProjectionLocks(season, [week])]);
   const byGameId = new Map(gamesWithLines.map((g) => [g.id, g]));
 
   return picks.map((p) => {
@@ -77,7 +79,17 @@ export async function fetchEspnConfidencePicksForWeek(
       };
     }
 
-    const computed = computeRow(gwl, liveByTeam);
+    // Once a game is frozen, its locked spread/win% wins over whatever
+    // the model outputs live today — same guarantee Admin Matchups
+    // already has, since this pool reuses its computeRow().
+    const lock = locks[gwl.id];
+    const computed = computeRow(
+      gwl,
+      liveByTeam,
+      "team",
+      DEFAULT_CUSTOM_PARAMS,
+      lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+    );
     const { homeMoneyline } = homeSideMlValues(computed);
 
     return {
