@@ -29,6 +29,7 @@ import CbsPickemPanel from "./CbsPickemPanel";
 import SurvivorPoolAdminPanel from "./SurvivorPoolAdminPanel";
 import BetHistoryAdminPanel from "./BetHistoryAdminPanel";
 import LockGamesPanel from "./LockGamesPanel";
+import LockedHistoryPanel from "./LockedHistoryPanel";
 import PublishPage from "./PublishPage";
 import PlacedBetsPanel from "./PlacedBetsPanel";
 import MoneylineBetHistoryPanel from "./MoneylineBetHistoryPanel";
@@ -246,6 +247,7 @@ type AdminView =
   | "survivorpooladmin"
   | "bethistory"
   | "lockgames"
+  | "lockedhistory"
   | "publish"
   | "placedbets"
   | "mlbethistory"
@@ -507,6 +509,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "checklist", label: "Weekly Checklist" },
       { key: "lockgames", label: "Freeze Week" },
+      { key: "lockedhistory", label: "Locked History" },
       { key: "publish", label: "Publish" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
@@ -897,6 +900,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "bethistory" && <BetHistoryAdminPanel onBack={() => setView("home")} />}
           {view === "lockgames" && <LockGamesPanel onBack={() => setView("home")} />}
+          {view === "lockedhistory" && <LockedHistoryPanel onBack={() => setView("home")} />}
           {view === "publish" && <PublishPage onBack={() => setView("home")} onNavigate={(v) => setView(v as AdminView)} />}
           {view === "placedbets" && <PlacedBetsPanel onBack={() => setView("home")} />}
 
