@@ -353,6 +353,115 @@ export function buildBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier:
   });
 }
 
+// ---------------------------------------------------------------------
+// Totals Key Numbers study — how the model performs specifically when
+// my projected total and Vegas's total straddle a real scoring key
+// number. Mirrors the spread version in betHistory.ts's
+// computeKeyNumberStudy, but per-key-number rather than a fixed 3/7 —
+// CFB totals key on a much wider, tiered set of final-score sums.
+//
+// Under bucket for key number X: my total is at or below X, Vegas's is
+// above X (I think the game goes under X, Vegas thinks it goes over —
+// betting Under Vegas's number). Over bucket is the mirror image. Both
+// grade against the real synced Vegas total, same
+// gradeActualTotal/gradeBetCall formulas buildBetRows already uses.
+//
+// Live-only, 2026+ — deliberately: there's no historical totals upload
+// the way betHistory.data.ts covers spreads back to 2024, and Chris
+// explicitly doesn't want this backfilled/estimated for past seasons.
+// Callers are expected to already restrict `rows` to 2026+ seasons
+// (TotalsHistoryPanel.tsx does this by only ever calling
+// useMultiSeasonGameTotalsEngine with seasons >= 2026 for this study,
+// independent of whatever the page's own season picker has selected
+// for its other tabs) — this function itself has no season field to
+// filter on, since EnrichedGameRow doesn't carry one.
+// ---------------------------------------------------------------------
+export interface TotalsKeyNumberTally {
+  w: number;
+  l: number;
+  push: number;
+}
+function emptyTotalsTally(): TotalsKeyNumberTally {
+  return { w: 0, l: 0, push: 0 };
+}
+function addTotalsTally(t: TotalsKeyNumberTally, result: ReturnType<typeof gradeBetCall>) {
+  if (result === "win") t.w++;
+  else if (result === "loss") t.l++;
+  else if (result === "push") t.push++;
+}
+
+export const TOTALS_KEY_NUMBER_TIERS: { label: string; keys: number[] }[] = [
+  { label: "Tier 1 — Critical", keys: [55, 48, 58, 44, 51] },
+  { label: "Tier 2 — High", keys: [41, 45, 65, 59, 52] },
+  { label: "Tier 3 — Elevated", keys: [62, 69, 37, 47, 49] },
+  { label: "Tier 4 — Moderate", keys: [61, 38, 66, 54, 63, 57, 34, 56, 43, 40] },
+];
+
+export interface TotalsKeyNumberByKeyRow {
+  key: number;
+  tier: number; // 1-indexed, matches TOTALS_KEY_NUMBER_TIERS position
+  under: TotalsKeyNumberTally;
+  over: TotalsKeyNumberTally;
+}
+
+export interface TotalsKeyNumberGroupRow {
+  label: string;
+  under: TotalsKeyNumberTally;
+  over: TotalsKeyNumberTally;
+}
+
+export interface TotalsKeyNumberStudy {
+  byKey: TotalsKeyNumberByKeyRow[];
+  pooledAll: TotalsKeyNumberGroupRow;
+  byTier: TotalsKeyNumberGroupRow[];
+  cumulativeTiers: TotalsKeyNumberGroupRow[]; // Tier 1 only, Tier 1-2, Tier 1-3, Tier 1-4 (= pooledAll)
+}
+
+export function computeTotalsKeyNumberStudy(rows: EnrichedGameRow[]): TotalsKeyNumberStudy {
+  const graded = rows
+    .map((r) => ({
+      myTotal: projectedTotal(r),
+      vegasTotal: r.odds.vegasTotal,
+      actualResult: gradeActualTotal(r.actualTotal, r.odds.vegasTotal),
+    }))
+    .filter((r): r is { myTotal: number; vegasTotal: number; actualResult: ReturnType<typeof gradeActualTotal> } =>
+      r.myTotal != null && r.vegasTotal != null && r.actualResult != null
+    );
+
+  const allKeys = TOTALS_KEY_NUMBER_TIERS.flatMap((t) => t.keys);
+
+  const byKey: TotalsKeyNumberByKeyRow[] = allKeys.map((key) => {
+    const tier = TOTALS_KEY_NUMBER_TIERS.findIndex((t) => t.keys.includes(key)) + 1;
+    const under = emptyTotalsTally();
+    const over = emptyTotalsTally();
+    for (const g of graded) {
+      if (g.myTotal <= key && g.vegasTotal > key) addTotalsTally(under, gradeBetCall("Under", g.actualResult));
+      if (g.myTotal >= key && g.vegasTotal < key) addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+    }
+    return { key, tier, under, over };
+  });
+
+  function pooledFor(keys: number[]): { under: TotalsKeyNumberTally; over: TotalsKeyNumberTally } {
+    const under = emptyTotalsTally();
+    const over = emptyTotalsTally();
+    for (const g of graded) {
+      if (keys.some((k) => g.myTotal <= k && g.vegasTotal > k)) addTotalsTally(under, gradeBetCall("Under", g.actualResult));
+      if (keys.some((k) => g.myTotal >= k && g.vegasTotal < k)) addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+    }
+    return { under, over };
+  }
+
+  const pooledAll = { label: "All Key Numbers", ...pooledFor(allKeys) };
+  const byTier = TOTALS_KEY_NUMBER_TIERS.map((t) => ({ label: t.label, ...pooledFor(t.keys) }));
+  const cumulativeTiers = TOTALS_KEY_NUMBER_TIERS.map((_, i) => {
+    const keys = TOTALS_KEY_NUMBER_TIERS.slice(0, i + 1).flatMap((t) => t.keys);
+    const label = i === 0 ? "Tier 1 only" : i === TOTALS_KEY_NUMBER_TIERS.length - 1 ? "Tier 1–4 (all)" : `Tier 1–${i + 1} combined`;
+    return { label, ...pooledFor(keys) };
+  });
+
+  return { byKey, pooledAll, byTier, cumulativeTiers };
+}
+
 export interface TeamSplitBetRow {
   row: EnrichedGameRow;
   team: string;
