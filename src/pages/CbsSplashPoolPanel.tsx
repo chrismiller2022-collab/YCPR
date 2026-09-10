@@ -4,6 +4,7 @@ import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
 // FBS-vs-FBS game" pool.
@@ -71,6 +72,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
@@ -452,8 +454,20 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
                     <tr key={r.game_id} style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : undefined }}>
-                      <td style={cellStyle}><TeamLogo team={r.game.away_team} /> {r.game.away_team}</td>
-                      <td style={cellStyle}><TeamLogo team={r.game.home_team} /> {r.game.home_team}</td>
+                      <td
+                        style={{ ...cellStyle, cursor: "pointer" }}
+                        title="View handicapping preview"
+                        onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                      >
+                        <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                      </td>
+                      <td
+                        style={{ ...cellStyle, cursor: "pointer" }}
+                        title="View handicapping preview"
+                        onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                      >
+                        <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                      </td>
                       <td
                         style={{
                           ...cellStyle,
@@ -631,6 +645,16 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         line is more home-favoring than Vegas. Results grade automatically once CFBD marks a
         game complete with a final score.
       </div>
+
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
+      )}
     </div>
   );
 }

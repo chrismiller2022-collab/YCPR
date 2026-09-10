@@ -4,6 +4,7 @@ import TeamLogo from "../components/TeamLogo";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 
 const POOL_URL =
   "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
@@ -69,6 +70,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
@@ -413,8 +415,20 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
                     <tr key={r.game_id} style={{ background: r.is_key_pick ? "var(--gold-dim)" : undefined }}>
-                      <td style={cellStyle}><TeamLogo team={r.game.away_team} /> {r.game.away_team}</td>
-                      <td style={cellStyle}><TeamLogo team={r.game.home_team} /> {r.game.home_team}</td>
+                      <td
+                        style={{ ...cellStyle, cursor: "pointer" }}
+                        title="View handicapping preview"
+                        onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                      >
+                        <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                      </td>
+                      <td
+                        style={{ ...cellStyle, cursor: "pointer" }}
+                        title="View handicapping preview"
+                        onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                      >
+                        <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                      </td>
                       <td
                         style={{
                           ...cellStyle,
@@ -527,6 +541,16 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         more home-favoring than Vegas. Results grade automatically once CFBD marks a game
         complete with a final score.
       </div>
+
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
+      )}
     </div>
   );
 }
