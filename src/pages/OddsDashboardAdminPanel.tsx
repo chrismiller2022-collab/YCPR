@@ -1307,15 +1307,17 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
 
   const [oddsGames, setOddsGames] = useState<OddsGame[]>([]);
   const [kalshiGames, setKalshiGames] = useState<KalshiGame[]>([]);
-  const [loadingOdds, setLoadingOdds] = useState(true);
+  const [loadingOdds, setLoadingOdds] = useState(false);
+  const [oddsSynced, setOddsSynced] = useState(false);
   const [oddsError, setOddsError] = useState<string | null>(null);
 
   const [topView, setTopView] = useState<TopView>("oddscreen");
   const [oddscreenTab, setOddscreenTab] = useState<OddscreenTab>("spread");
 
-  // Fetch on open, and again only when the Refresh button is clicked —
-  // deliberately no interval/polling so this doesn't burn API credits in
-  // the background while the tab just sits open.
+  // Manual sync only — this used to also fire on page open, but The Odds
+  // API's free tier is only 500 calls/month and every open (plus every
+  // admin reload) was burning through it without Chris ever asking for a
+  // refresh. Now it only ever calls out when he clicks the button below.
   function loadOdds() {
     setLoadingOdds(true);
     setOddsError(null);
@@ -1323,15 +1325,11 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
       .then(([odds, kalshi]) => {
         setOddsGames(odds);
         setKalshiGames(kalshi);
+        setOddsSynced(true);
       })
       .catch((err) => setOddsError(err.message ?? "Failed to load odds"))
       .finally(() => setLoadingOdds(false));
   }
-
-  useEffect(() => {
-    loadOdds();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function handleRefresh() {
     invalidateOddsFeed();
@@ -1442,17 +1440,21 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
       </button>
       <h2 style={{ marginTop: 0 }}>Odds</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        Live snapshot from Novig, BetOnline, and Bovada (via The Odds API) plus Kalshi (moneyline only — it has no
-        spread/total product), lined up against my own projections. Fetched when this page opens and on manual
-        refresh only — nothing polls in the background, to stay well under the API quota.
+        Snapshot from Novig, BetOnline, and Bovada (via The Odds API) plus Kalshi (moneyline only — it has no
+        spread/total product), lined up against my own projections. Manual sync only — it no longer fetches just from
+        opening this page, since The Odds API's free tier is only 500 calls/month. Click "Sync odds" below to pull a
+        fresh snapshot.
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
         <SeasonPicker season={season} setSeason={setSeason} />
         <DivisionPicker division={division} setDivision={setDivision} />
         <button className="menu-btn" onClick={handleRefresh} disabled={loadingOdds}>
-          {loadingOdds ? "Refreshing…" : "Refresh odds"}
+          {loadingOdds ? "Syncing…" : oddsSynced ? "Re-sync odds" : "Sync odds"}
         </button>
+        {oddsSynced && !loadingOdds && (
+          <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Synced — click to refresh.</span>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", gap: "0.4rem" }}>
           <button className={`mode-btn ${topView === "cards" ? "mode-btn-active" : ""}`} onClick={() => setTopView("cards")}>
             Game Cards
@@ -1521,6 +1523,8 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
         <FuturesTab season={season} />
       ) : loading ? (
         <div className="empty">Loading…</div>
+      ) : !oddsSynced ? (
+        <div className="empty">No odds synced yet this session — click "Sync odds" above to pull a snapshot.</div>
       ) : topView === "cards" ? (
         <div>
           {filteredMatched.length === 0 && <div className="empty">No games match these filters.</div>}

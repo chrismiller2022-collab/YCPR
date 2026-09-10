@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { computeRow } from "../lib/matchupsCompute";
+import { computeRow, computeMatchupStats } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import {
   useGameTotalsEngine,
@@ -13,11 +13,13 @@ import {
   type TeamSplitBetRow,
 } from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
-import { splitTeamTotal } from "../lib/gameTotals";
+import { splitTeamTotal, gradeActualTotal, gradeBetCall, type BetGrade } from "../lib/gameTotals";
 import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylineBetHistory";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { BET_HISTORY } from "../data/betHistory.data";
+import { useDefaultToCurrentWeek } from "../lib/currentWeek";
+import { unitsRiskedToWinOne } from "../lib/odds";
 
 // ---------------------------------------------------------------------
 // Weekly Betting Report — "what bets do I need to make and watch out
@@ -25,9 +27,8 @@ import { BET_HISTORY } from "../data/betHistory.data";
 // computed elsewhere on the site — every threshold here is read
 // directly from existing code (DEFAULT_CUSTOM_PARAMS for spreads,
 // computeRow's own filteredBetTeam/weightedFilteredBetTeam/nwfbTeam) or
-// Chris's own explicitly-stated number (1.0 std dev for totals/team
-// totals). Moneyline bets use computeMlRow's "Every Game" rule (any
-// positive EV side, via Bill R).
+// Chris's own explicitly-stated number (1.5 std dev for totals/team
+// totals, 8% EV for moneyline — via Bill R).
 // ---------------------------------------------------------------------
 
 const FILTER_THRESHOLD = DEFAULT_CUSTOM_PARAMS.filterThreshold; // 6 points
@@ -36,8 +37,9 @@ const SIGMA_DIVISOR = DEFAULT_CUSTOM_PARAMS.sigmaDivisor; // 15.7
 const NWFB_POINTS_THRESHOLD = SIGMA_THRESHOLD * SIGMA_DIVISOR; // ~6.28 points
 const SPREAD_WATCH_MARGIN_POINTS = 2;
 const SPREAD_WATCH_MARGIN_SIGMA = 0.1;
-const TOTAL_BET_THRESHOLD_STDDEV = 1.0;
+const TOTAL_BET_THRESHOLD_STDDEV = 1.5;
 const TOTAL_WATCH_MARGIN_STDDEV = 0.5;
+const MONEYLINE_EV_THRESHOLD = 8; // percent — per Chris, only flag a moneyline bet once EV clears this bar
 const CURRENT_SEASON = new Date().getFullYear();
 
 type Division = "FBS" | "FCS" | "Cross";
@@ -133,11 +135,53 @@ function pctOf(rec: { w: number; l: number }): string {
   return decided === 0 ? "–" : `${((rec.w / decided) * 100).toFixed(0)}%`;
 }
 
-const CATEGORY_STATS = {
-  filtered: { allTime: categoryRecord("filtered"), thisSeason: categoryRecord("filtered", CURRENT_SEASON) },
-  wfb: { allTime: categoryRecord("wfb"), thisSeason: categoryRecord("wfb", CURRENT_SEASON) },
-  nwfb: { allTime: categoryRecord("nwfb"), thisSeason: categoryRecord("nwfb", CURRENT_SEASON) },
+// All-time (2024/2025) never changes — BET_HISTORY is a frozen dataset —
+// but CURRENT_SEASON (2026+) has no BET_HISTORY rows at all, so that half
+// used to always show "–". Computed live instead, below, from the exact
+// same computeRow()/computeMatchupStats() pipeline Admin Matchups uses.
+const ALL_TIME_CATEGORY_STATS = {
+  filtered: categoryRecord("filtered"),
+  wfb: categoryRecord("wfb"),
+  nwfb: categoryRecord("nwfb"),
 };
+
+function useLiveSeasonCategoryStats(season: number) {
+  const [games, setGames] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGamesWithLines(season)
+      .then((rows) => {
+        if (!cancelled) setGames(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setGames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const fbsGames = useMemo(() => games.filter((g) => classOf(g, "home") === "fbs" && classOf(g, "away") === "fbs"), [games]);
+  const weekNumbers = useMemo(() => Array.from(new Set(fbsGames.map((g) => g.week))), [fbsGames]);
+  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbers, season);
+  const { locks } = useGameProjectionLocks(season, weekNumbers);
+
+  return useMemo(() => {
+    const rows = fbsGames
+      .map((g) => {
+        const lock = locks[g.id];
+        return computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
+      })
+      .filter((c) => c.vegasAwaySpread != null);
+    return computeMatchupStats(rows);
+  }, [fbsGames, ratingsByWeek, locks]);
+}
 
 function categoryHeaderLabel(label: string, stats: { allTime: { w: number; l: number }; thisSeason: { w: number; l: number } }): string {
   return `${label} (All-time ${pctOf(stats.allTime)}, ${CURRENT_SEASON} ${pctOf(stats.thisSeason)})`;
@@ -237,24 +281,224 @@ function MovementCell({ betTeam, openingLine, currentLine }: { betTeam: "away" |
   if (openingLine == null) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
   const diff = currentLine - openingLine;
   if (diff === 0) return <span style={{ color: "var(--chalk-dim)" }}>{fmtSpread(0).replace("PK", "0.0")}</span>;
-  const direction = betTeam === "away" ? 1 : -1;
+  // awaySpread rising means MORE points to away / a bigger margin for home
+  // to cover — good closing-line value for an away bet (diff < 0 is what's
+  // actually favorable there), bad for a home bet (favorable needs diff >
+  // 0). This was inverted before — direction must be -1 for away, +1 for
+  // home, not the other way around.
+  const direction = betTeam === "away" ? -1 : 1;
   const favorable = direction * diff > 0;
   return (
     <span>
       {diff > 0 ? "+" : ""}
       {diff.toFixed(1)}{" "}
-      <span style={{ color: NEUTRAL_ICON_COLOR }} title={favorable ? "Moved in your favor (smaller edge now)" : "Moved against you (bigger edge now)"}>
+      <span style={{ color: NEUTRAL_ICON_COLOR }} title={favorable ? "Moved with me (smaller edge)" : "Moved against me (bigger edge)"}>
         {favorable ? CHECK : CROSS}
       </span>
     </span>
   );
 }
 
+// ---------------------------------------------------------------------
+// Performance view — "how'd every bet that would have qualified this
+// week actually do." Spread/Totals/Team Totals are always assumed at
+// standard -110 (this app doesn't track a specific price per spread/
+// total bet); Moneyline already carries its own real price via
+// buildMlRowsFromLiveRatingsBillR's toWin1 field, so that's reused
+// as-is rather than re-derived. Every category uses the same "bet X to
+// win 1 unit" convention Chris specified — a win is always +1 unit, a
+// loss costs whatever it took to risk winning that 1 unit.
+// ---------------------------------------------------------------------
+const STANDARD_VIG_UNITS = unitsRiskedToWinOne(-110) ?? 1.1;
+
+function gradeSpreadBetRow(r: SpreadBetRow): BetGrade {
+  if (!r.game.completed || r.game.away_points == null || r.game.home_points == null) return null;
+  const actualAwayMargin = r.game.away_points - r.game.home_points;
+  const coverMargin = actualAwayMargin + r.vegasAwaySpread;
+  if (coverMargin === 0) return "push";
+  const actCoverTeam: "away" | "home" = coverMargin > 0 ? "away" : "home";
+  return r.betTeam === actCoverTeam ? "win" : "loss";
+}
+
+function gradeTotalBetRow(r: TotalBetRow): BetGrade {
+  if (!r.game.completed || r.game.away_points == null || r.game.home_points == null) return null;
+  const actualTotal = r.game.away_points + r.game.home_points;
+  return gradeBetCall(r.call, gradeActualTotal(actualTotal, r.vegasTotal));
+}
+
+interface PerfBucket {
+  label: string;
+  w: number;
+  l: number;
+  p: number;
+  pending: number;
+  units: number;
+}
+
+function summarizeStandardVig(grades: BetGrade[]): PerfBucket {
+  let w = 0,
+    l = 0,
+    p = 0,
+    pending = 0,
+    units = 0;
+  for (const g of grades) {
+    if (g === "win") {
+      w++;
+      units += 1;
+    } else if (g === "loss") {
+      l++;
+      units -= STANDARD_VIG_UNITS;
+    } else if (g === "push") {
+      p++;
+    } else {
+      pending++;
+    }
+  }
+  return { label: "", w, l, p, pending, units };
+}
+
+function PerfRow({ bucket, bold }: { bucket: PerfBucket; bold?: boolean }) {
+  const decided = bucket.w + bucket.l;
+  const winPct = decided > 0 ? (bucket.w / decided) * 100 : null;
+  const cellStyle: CSSProperties = { padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", fontWeight: bold ? 800 : undefined };
+  return (
+    <tr>
+      <td style={cellStyle}>{bucket.label}</td>
+      <td style={{ ...cellStyle, textAlign: "right" }}>
+        {bucket.w}-{bucket.l}
+        {bucket.p > 0 ? `-${bucket.p}` : ""}
+        {bucket.pending > 0 ? ` (${bucket.pending} pending)` : ""}
+      </td>
+      <td style={{ ...cellStyle, textAlign: "right" }}>{winPct != null ? `${winPct.toFixed(1)}%` : "–"}</td>
+      <td
+        style={{
+          ...cellStyle,
+          textAlign: "right",
+          color: bucket.units > 0 ? "#8fd39a" : bucket.units < 0 ? "#c45c52" : undefined,
+        }}
+      >
+        {bucket.units > 0 ? "+" : ""}
+        {bucket.units.toFixed(2)}u
+      </td>
+    </tr>
+  );
+}
+
+function PerformanceSummarySection({
+  week,
+  spreadBets,
+  totalBets,
+  teamTotalBets,
+  moneylineBets,
+  showTotals,
+}: {
+  week: number;
+  spreadBets: SpreadBetRow[];
+  totalBets: TotalBetRow[];
+  teamTotalBets: TeamSplitBetRow[];
+  moneylineBets: MoneylineBetRow[];
+  showTotals: boolean;
+}) {
+  const spreadBucket = useMemo(() => {
+    const b = summarizeStandardVig(spreadBets.map(gradeSpreadBetRow));
+    return { ...b, label: "Spread" };
+  }, [spreadBets]);
+  const totalBucket = useMemo(() => {
+    const b = summarizeStandardVig(totalBets.map(gradeTotalBetRow));
+    return { ...b, label: "Totals" };
+  }, [totalBets]);
+  const teamTotalBucket = useMemo(() => {
+    const b = summarizeStandardVig(teamTotalBets.map((r) => r.grade));
+    return { ...b, label: "Team Totals" };
+  }, [teamTotalBets]);
+  const moneylineBucket = useMemo(() => {
+    let w = 0,
+      l = 0,
+      pending = 0,
+      units = 0;
+    for (const { row: r } of moneylineBets) {
+      if (r.result === "win") {
+        w++;
+        units += r.toWin1?.profit ?? 1;
+      } else if (r.result === "loss") {
+        l++;
+        units += r.toWin1?.profit ?? 0;
+      } else {
+        pending++;
+      }
+    }
+    return { label: "Moneyline", w, l, p: 0, pending, units };
+  }, [moneylineBets]);
+
+  const buckets = showTotals ? [spreadBucket, totalBucket, teamTotalBucket, moneylineBucket] : [spreadBucket, moneylineBucket];
+  const combined = useMemo(() => {
+    let w = 0,
+      l = 0,
+      p = 0,
+      pending = 0,
+      units = 0;
+    for (const b of buckets) {
+      w += b.w;
+      l += b.l;
+      p += b.p;
+      pending += b.pending;
+      units += b.units;
+    }
+    return { label: "All Bets", w, l, p, pending, units };
+  }, [buckets]);
+
+  return (
+    <div>
+      <div className="section-label" style={{ marginBottom: "0.5rem" }}>
+        Week {week} Performance
+      </div>
+      <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Every bet that would have qualified this week, graded against final scores. Spread/Totals/Team Totals assumed
+        at standard -110; Moneyline uses its own actual price. All bets sized "bet X to win 1 unit."
+      </p>
+      <div className="table-scroll">
+        <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", minWidth: 420 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Category</th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
+              <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Units</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buckets.map((b) => (
+              <PerfRow key={b.label} bucket={b} />
+            ))}
+            <PerfRow bucket={combined} bold />
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
+  useDefaultToCurrentWeek(season, week, setWeek);
   const [division, setDivision] = useState<Division>("FBS");
+  const [reportMode, setReportMode] = useState<"regular" | "performance">("regular");
   const [hideCompleted, setHideCompleted] = useState(true);
+  // Performance mode is "how'd every bet that would have qualified this
+  // week actually do" — it needs completed games only, the opposite of
+  // the regular view's "hide completed" toggle, so it overrides that
+  // toggle entirely rather than fighting it.
+  const effectiveHideCompleted = reportMode === "performance" ? false : hideCompleted;
+  const liveSeasonStats = useLiveSeasonCategoryStats(CURRENT_SEASON);
+  const categoryStats = useMemo(
+    () => ({
+      filtered: { allTime: ALL_TIME_CATEGORY_STATS.filtered, thisSeason: liveSeasonStats.filtered },
+      wfb: { allTime: ALL_TIME_CATEGORY_STATS.wfb, thisSeason: liveSeasonStats.wfb },
+      nwfb: { allTime: ALL_TIME_CATEGORY_STATS.nwfb, thisSeason: liveSeasonStats.nwfb },
+    }),
+    [liveSeasonStats]
+  );
   const [spreadSort, setSpreadSort] = useState<"betSize" | "kickoff">("betSize");
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
@@ -328,14 +572,15 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   // just filtered down to empty.
   const divisionFilteredGames = useMemo(() => {
     return games.filter((g) => {
-      if (hideCompleted && isCompleted(g)) return false;
+      if (reportMode === "performance" && !isCompleted(g)) return false;
+      if (effectiveHideCompleted && isCompleted(g)) return false;
       const homeC = classOf(g, "home");
       const awayC = classOf(g, "away");
       if (division === "FBS") return homeC === "fbs" && awayC === "fbs";
       if (division === "FCS") return homeC === "fcs" && awayC === "fcs";
       return (homeC === "fbs" && awayC === "fcs") || (homeC === "fcs" && awayC === "fbs");
     });
-  }, [games, division, hideCompleted]);
+  }, [games, division, effectiveHideCompleted, reportMode]);
 
   const showTotals = division === "FBS" || division === "Cross";
 
@@ -501,7 +746,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const teamTotalBetsAllRaw = useMemo(
     () =>
       teamTotalRowsInDivision
-        .filter((r) => r.isFiltered && (hideCompleted ? !r.row.game.completed : true))
+        .filter((r) => r.isFiltered && (effectiveHideCompleted ? !r.row.game.completed : true))
         .map((r) => {
           // Split the GAME total (not this team's own total — that was
           // the bug: re-splitting a single team's ~34-point total as if
@@ -513,7 +758,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
           return { ...r, awayScore: split.away, homeScore: split.home };
         }),
-    [teamTotalRowsInDivision, hideCompleted]
+    [teamTotalRowsInDivision, effectiveHideCompleted]
   );
   const teamTotalBetsOver = useMemo(
     () => teamTotalBetsAllRaw.filter((r) => r.call === "Over").sort((a, b) => Math.abs(b.stdDevOff ?? 0) - Math.abs(a.stdDevOff ?? 0)),
@@ -528,7 +773,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     return teamTotalRowsInDivision
       .filter(
         (r) =>
-          (hideCompleted ? !r.row.game.completed : true) &&
+          (effectiveHideCompleted ? !r.row.game.completed : true) &&
           r.stdDevOff != null &&
           Math.abs(r.stdDevOff) >= TOTAL_WATCH_MARGIN_STDDEV &&
           Math.abs(r.stdDevOff) < TOTAL_BET_THRESHOLD_STDDEV
@@ -542,13 +787,13 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
         return { row: r, awayScore: split.away, homeScore: split.home, vegasTtNeeded };
       });
-  }, [teamTotalRowsInDivision, hideCompleted]);
+  }, [teamTotalRowsInDivision, effectiveHideCompleted]);
 
   // --- Moneyline ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
     const mlRows = buildMlRowsFromLiveRatingsBillR(divisionFilteredGames, ratingsByWeek, undefined, lockedWinPctByGameId);
     return mlRows
-      .filter((r) => r.betSide != null)
+      .filter((r) => r.betSide != null && r.betEv != null && r.betEv > MONEYLINE_EV_THRESHOLD)
       .map((r) => {
         const myTotal = projTotalByGame.get(`${week}|${r.game.home_team}|${r.game.away_team}`) ?? null;
         const spread = computedGames.find((c) => c.game.id === r.game.id)?.computed.projAwaySpread ?? null;
@@ -576,10 +821,21 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         <label>
           Week <input type="number" value={week} onChange={(e) => setWeek(parseInt(e.target.value, 10))} style={{ width: 60 }} min={0} />
         </label>
-        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
-          Hide completed games
-        </label>
+        {reportMode === "regular" && (
+          <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
+            Hide completed games
+          </label>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <button className={`mode-btn ${reportMode === "regular" ? "mode-btn-active" : ""}`} onClick={() => setReportMode("regular")}>
+          Regular
+        </button>
+        <button className={`mode-btn ${reportMode === "performance" ? "mode-btn-active" : ""}`} onClick={() => setReportMode("performance")}>
+          Performance (how'd it do?)
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
@@ -596,6 +852,15 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
       {loading ? (
         <p>Loading…</p>
+      ) : reportMode === "performance" ? (
+        <PerformanceSummarySection
+          week={week}
+          spreadBets={spreadBetsUnsorted}
+          totalBets={totalBetsAll}
+          teamTotalBets={teamTotalBetsAllRaw}
+          moneylineBets={moneylineBets}
+          showTotals={showTotals}
+        />
       ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
@@ -624,9 +889,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   <th className="th th-right">My Line</th>
                   <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
                   <th className="th">Bet</th>
-                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("Filtered", CATEGORY_STATS.filtered)}</th>
-                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("WFB", CATEGORY_STATS.wfb)}</th>
-                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("NWFB", CATEGORY_STATS.nwfb)}</th>
+                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("Filtered", categoryStats.filtered)}</th>
+                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("WFB", categoryStats.wfb)}</th>
+                  <th className="th" style={{ textAlign: "center" }}>{categoryHeaderLabel("NWFB", categoryStats.nwfb)}</th>
                   <th className="th th-right">Bet Size</th>
                 </tr>
               </thead>

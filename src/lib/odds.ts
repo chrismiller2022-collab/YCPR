@@ -63,6 +63,15 @@ export function moneylineToImpliedWinPct(price) {
   return price > 0 ? 100 / (price + 100) : Math.abs(price) / (Math.abs(price) + 100);
 }
 
+// How many units you must risk to win exactly 1 unit at a given
+// American price — the "bet X to win one unit" sizing convention (as
+// opposed to flat-staking 1 unit on every bet). -110 needs 1.10 units
+// risked to win 1; +150 needs only 0.667.
+export function unitsRiskedToWinOne(americanOdds) {
+  if (americanOdds == null || Number.isNaN(americanOdds) || americanOdds === 0) return null;
+  return americanOdds > 0 ? 100 / americanOdds : Math.abs(americanOdds) / 100;
+}
+
 // Shared with PmAdminPanel's Yes/No pricing (Kalshi-style cents, 0-100 =
 // implied probability directly) — a "Yes" at pct% probability has a "No"
 // at exactly 100-pct%, since these are our own fair-value numbers, not
