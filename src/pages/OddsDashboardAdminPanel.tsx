@@ -1153,7 +1153,7 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
 type FuturesSortMode = "default" | "value";
 
 function FuturesTab({ season }: { season: number }) {
-  const { groups, loading, error } = useFuturesMarkets(season);
+  const { groups, loading, error, sync, synced } = useFuturesMarkets(season);
   const [marketKey, setMarketKey] = useState<string>("championship");
   const [view, setView] = useState<"cards" | "oddscreen">("oddscreen");
   const [sortMode, setSortMode] = useState<FuturesSortMode>("default");
@@ -1180,8 +1180,18 @@ function FuturesTab({ season }: { season: number }) {
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: 0, marginBottom: "0.75rem" }}>
         My fair Yes/No comes from the most recently saved Monte Carlo run (same numbers as Prediction Markets).
         Value = my Yes price minus Kalshi's Yes price, in cents — positive (green) means buying Yes has an edge,
-        negative (red) means buying No does.
+        negative (red) means buying No does. Manual sync only (Championship/Playoff/Conference markets pull from The
+        Odds API, same 500-call/month limit as Oddscreen) — Win Totals below is Kalshi-only and always live.
       </p>
+
+      {marketKey !== "wintotals" && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
+          <button className="menu-btn" onClick={sync} disabled={loading}>
+            {loading ? "Syncing…" : synced ? "Re-sync futures" : "Sync futures"}
+          </button>
+          {synced && !loading && <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Synced — click to refresh.</span>}
+        </div>
+      )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.75rem", alignItems: "center" }}>
         {nonConfGroups.map((g) => (
@@ -1235,6 +1245,8 @@ function FuturesTab({ season }: { season: number }) {
         <FuturesWinTotalsTable season={season} />
       ) : loading ? (
         <div className="empty">Loading futures…</div>
+      ) : !synced ? (
+        <div className="empty">No futures synced yet this session — click "Sync futures" above to pull a snapshot.</div>
       ) : error ? (
         <p style={{ color: "crimson" }}>{error}</p>
       ) : !selectedGroup || selectedGroup.outcomes.length === 0 ? (

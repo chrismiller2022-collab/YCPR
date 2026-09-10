@@ -156,14 +156,19 @@ function espnMarketOutcomes(market: EspnFuturesMarket | undefined): Map<string, 
  * separately (useFuturesWinTotals below) since they're a ladder per
  * team, not a single-outcome-per-team market like these.
  */
+// Manual sync only — this used to auto-fetch on mount and again whenever
+// the Monte Carlo run changed, which meant every Futures tab open (and
+// several no-op re-renders) hit fetchOddsFutures(), one of the same
+// quota-limited Odds API endpoints as the Oddscreen tab's feed. Now it
+// only fetches when the caller explicitly invokes the returned sync().
 export function useFuturesMarkets(season: number) {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [groups, setGroups] = useState<FuturesMarketGroup[]>([]);
+  const [synced, setSynced] = useState(false);
   const { results: mcResults, numTrials: mcNumTrials, loading: mcLoading } = useLatestMonteCarloRun(season);
 
-  useEffect(() => {
-    let cancelled = false;
+  function sync() {
     setLoading(true);
     setError(null);
 
@@ -268,24 +273,16 @@ export function useFuturesMarkets(season: number) {
         if (group.outcomes.length > 0) nextGroups.push(group);
       }
 
-      if (!cancelled) {
-        setGroups(nextGroups);
-        setLoading(false);
-      }
+      setGroups(nextGroups);
+      setLoading(false);
+      setSynced(true);
     })().catch((err) => {
-      if (!cancelled) {
-        setError(err.message ?? "Failed to load futures");
-        setLoading(false);
-      }
+      setError(err.message ?? "Failed to load futures");
+      setLoading(false);
     });
+  }
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season, mcResults, mcNumTrials]);
-
-  return { groups, loading: loading || mcLoading, error };
+  return { groups, loading: loading || mcLoading, error, sync, synced };
 }
 
 // ---------------------------------------------------------------------
