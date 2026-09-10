@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import {
@@ -342,7 +342,7 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
                 return (
                   <tr key={g}>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                      <TeamLogo team={g} /> {g}
+                      <TeamLink team={g} />
                     </td>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {fmtRecord(eb)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(eb)})</span>

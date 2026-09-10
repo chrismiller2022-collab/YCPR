@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { CONFERENCES } from "../data/teams";
 import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
@@ -572,7 +572,7 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
                 <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.div}</td>
                 <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                  <TeamLogo team={r.team} /> {r.team}
+                  <TeamLink team={r.team} />
                 </td>
                 <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>
                   {fmtNum(r.yc)}
@@ -768,7 +768,7 @@ function PowerRatingsHistorySection() {
                   {sorted.map((r) => (
                     <tr key={r.team}>
                       <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                        <TeamLogo team={r.team} /> {r.team}
+                        <TeamLink team={r.team} />
                       </td>
                       <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
                       {systemKeys.map((key) => (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import SortHeader from "../components/SortHeader";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { classOf } from "../lib/matchupsCompute";
@@ -990,10 +991,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         {fmtDateTime(r.game.start_date)}
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                        <TeamLink team={r.game.away_team} />
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                        <TeamLink team={r.game.home_team} />
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
                         {fmtSpread(r.myAwaySpread)}
@@ -1054,8 +1055,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", color: "var(--gold)" }}>
                         {r.betEv != null && r.betEv > evThreshold && r.betSide != null ? (
                           <>
-                            <TeamLogo team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />{" "}
-                            {r.betSide === "away" ? r.game.away_team : r.game.home_team}
+                            <TeamLink team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />
                           </>
                         ) : (
                           "–"

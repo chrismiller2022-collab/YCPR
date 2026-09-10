@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { computeCustomGrading, DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -142,7 +142,7 @@ function WeekDetailTable({ picks }: { picks: ContestSeasonResult["weeks"][number
         {picks.map((p, i) => (
           <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
             <td style={{ padding: "0.25rem 0.5rem" }}>
-              <TeamLogo team={p.pick!} size={16} /> {p.pick}
+              <TeamLink team={p.pick!} size={16} />
             </td>
             <td style={{ padding: "0.25rem 0.5rem", color: "var(--chalk-dim)" }}>
               {p.pick === p.awayTeam ? `@ ${p.opponent}` : `vs ${p.opponent}`}
@@ -231,7 +231,7 @@ function StrategyResultCard({
                             color: p.grade === "win" ? "#8fd39a" : p.grade === "loss" ? "#c45c52" : "var(--chalk-dim)",
                           }}
                         >
-                          <TeamLogo team={p.pick!} size={16} /> {p.pick}
+                          <TeamLink team={p.pick!} size={16} />
                         </span>
                       ))
                     )}

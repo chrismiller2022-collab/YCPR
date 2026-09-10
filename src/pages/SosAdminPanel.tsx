@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { CONFERENCES, TEAMS } from "../data/teams";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -320,7 +320,7 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
                   <tr key={r.team}>
                     <td style={cellStyle}>{r.conf}</td>
                     <td style={{ ...cellStyle, fontWeight: 700 }}>
-                      <TeamLogo team={r.team} /> {r.team}
+                      <TeamLink team={r.team} />
                     </td>
                     <td style={rightCellStyle}>{fmtNum(r.avgOppYcTotal)}</td>
                     <td style={rightCellStyle}>{fmtNum(r.avgOppYcConf)}</td>

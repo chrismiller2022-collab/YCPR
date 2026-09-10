@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import ExportPngButton from "../components/ExportPngButton";
 import { winTotalBuckets } from "../lib/montecarlo/distribution";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -213,7 +213,7 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
               <Fragment key={r.team}>
                 <tr>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={r.team} /> {r.team}
+                    <TeamLink team={r.team} />
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
@@ -517,7 +517,7 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
               return (
                 <tr key={r.team}>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>
-                    <TeamLogo team={r.team} /> {r.team}
+                    <TeamLink team={r.team} />
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmtPct(r.resumePlayoffPct)}
@@ -815,7 +815,7 @@ function SrsStatsTable({ stats }: { stats: SrsTeamRow[] }) {
             {sorted.map((r) => (
               <tr key={r.team}>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                  <TeamLogo team={r.team} /> {r.team}
+                  <TeamLink team={r.team} />
                 </td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{num(r.rating)}</td>
@@ -980,7 +980,7 @@ function McAvgSrsTable({ entries, sampleTrials }: { entries: ResumeComparisonEnt
             {ranked.map((r) => (
               <tr key={r.team}>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                  <TeamLogo team={r.team} /> {r.team}
+                  <TeamLink team={r.team} />
                 </td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 600 }}>
@@ -1289,7 +1289,7 @@ function BettingResultsTable({ results, numTrials }: { results: TeamSimResult[];
             {sorted.map((r) => (
               <tr key={r.team}>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                  <TeamLogo team={r.team} /> {r.team}
+                  <TeamLink team={r.team} />
                 </td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
                 <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtML(r.madeConfChampPct)}</td>
@@ -1453,7 +1453,7 @@ function PlayoffSeedOddsTable({ results }: { results: TeamSimResult[] }) {
           {ranked.map((r, idx) => (
             <tr key={r.team}>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>
-                <TeamLogo team={r.team} /> {r.team}
+                <TeamLink team={r.team} />
               </td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" }}>{r.conf}</td>
               <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>#{idx + 1}</td>

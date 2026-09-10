@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import {
   useGameTotalsEngine,
   buildBetRows,
@@ -142,8 +142,8 @@ export function RawDataTab({ rows }: { rows: EnrichedGameRow[] }) {
           {rows.map((r) => (
             <tr key={r.game.id}>
               <td style={CP}>{r.game.week}</td>
-              <td style={CP}><TeamLogo team={r.game.awayTeam} /> {r.game.awayTeam}</td>
-              <td style={CP}><TeamLogo team={r.game.homeTeam} /> {r.game.homeTeam}</td>
+              <td style={CP}><TeamLink team={r.game.awayTeam} /></td>
+              <td style={CP}><TeamLink team={r.game.homeTeam} /></td>
               <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away?.pointsFor, 0)}</td>
               <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away?.pointsAgainst, 0)}</td>
               <td style={{ ...CP, textAlign: "right" }}>{fmt(r.away?.offensePlays, 0)}</td>
@@ -192,7 +192,7 @@ export function EfficiencyInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
               {r.homeEfficiencyInputs && (
                 <tr key={r.game.id + "-h"}>
                   <td style={CP}>{r.game.week}</td>
-                  <td style={CP}><TeamLogo team={r.game.homeTeam} /> {r.game.homeTeam} (H)</td>
+                  <td style={CP}><TeamLink team={r.game.homeTeam} /> (H)</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedPlays)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedDrives)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.homeEfficiencyInputs.blendedRushAttempts)}</td>
@@ -211,7 +211,7 @@ export function EfficiencyInputsTab({ rows }: { rows: EnrichedGameRow[] }) {
               {r.awayEfficiencyInputs && (
                 <tr key={r.game.id + "-a"}>
                   <td style={CP}>{r.game.week}</td>
-                  <td style={CP}><TeamLogo team={r.game.awayTeam} /> {r.game.awayTeam} (A)</td>
+                  <td style={CP}><TeamLink team={r.game.awayTeam} /> (A)</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedPlays)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedDrives)}</td>
                   <td style={{ ...CP, textAlign: "right" }}>{fmt(r.awayEfficiencyInputs.blendedRushAttempts)}</td>
@@ -261,7 +261,7 @@ function LegacyCompositesTab({ rows }: { rows: EnrichedGameRow[] }) {
               <tr key={r.game.id}>
                 <td style={CP}>{r.game.week}</td>
                 <td style={CP}>
-                  <TeamLogo team={r.game.awayTeam} /> {r.game.awayTeam} @ <TeamLogo team={r.game.homeTeam} /> {r.game.homeTeam}
+                  <TeamLink team={r.game.awayTeam} /> @ <TeamLink team={r.game.homeTeam} />
                 </td>
                 {SYSTEM_KEYS.map((k: SystemKey) => (
                   <td key={k} style={{ ...CP, textAlign: "right" }}>
@@ -393,8 +393,8 @@ export function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; setting
                 <td style={CP}>{b.row.game.week}</td>
                 <td style={CP}>{dateLabel(b.row.game.startDate)}</td>
                 <td style={CP}>{kickoffLabel(b.row.game.startDate)}</td>
-                <td style={CP}><TeamLogo team={b.row.game.awayTeam} /> {b.row.game.awayTeam}</td>
-                <td style={CP}><TeamLogo team={b.row.game.homeTeam} /> {b.row.game.homeTeam}</td>
+                <td style={CP}><TeamLink team={b.row.game.awayTeam} /></td>
+                <td style={CP}><TeamLink team={b.row.game.homeTeam} /></td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
                 <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined }}>
@@ -592,14 +592,14 @@ function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRo
               </tr>
               <tr>
                 <td style={CP} colSpan={2}>
-                  <TeamLogo team={r.game.game.awayTeam} /> {r.game.game.awayTeam}
+                  <TeamLink team={r.game.game.awayTeam} />
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (away)</span>
                 </td>
                 <TeamTotalsStatCells t={r.away} absMode={absMode} />
               </tr>
               <tr style={{ borderBottom: "1px solid var(--hash)" }}>
                 <td style={CP} colSpan={2}>
-                  <TeamLogo team={r.game.game.homeTeam} /> {r.game.game.homeTeam}
+                  <TeamLink team={r.game.game.homeTeam} />
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (home)</span>
                 </td>
                 <TeamTotalsStatCells t={r.home} absMode={absMode} />

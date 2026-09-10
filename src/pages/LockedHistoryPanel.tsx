@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, classOf } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -181,7 +181,7 @@ export default function LockedHistoryPanel({ onBack }: { onBack: () => void }) {
     const gameCell = (
       <td style={cellStyle}>
         {!r.frozen && <span title="Not frozen — showing live value" style={{ color: "#e0a030", marginRight: "0.3rem" }}>⚠</span>}
-        <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
+        <TeamLink team={r.game.away_team} size={16} /> @ <TeamLink team={r.game.home_team} size={16} />
       </td>
     );
     switch (tab) {

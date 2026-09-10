@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
@@ -241,7 +242,7 @@ function GameSelectionStep({
             >
               <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggle(g.id)} />
               <span style={{ flex: 1 }}>
-                <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
               </span>
               {selected.has(g.id) && (
                 <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
@@ -291,7 +292,7 @@ function GameSelectionStep({
                   }}
                 >
                   <span style={{ flex: 1 }}>
-                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                   </span>
                   <button className="menu-btn" onClick={() => addNonFbsGame(g)}>
                     Add
@@ -456,7 +457,7 @@ function PickingStep({
               return (
                 <tr key={p.id} style={{ background: p.is_special ? "var(--gold-dim)" : undefined }}>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                     {p.is_special && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Special game{line?.over_under != null ? ` · Vegas Total ${line.over_under}` : ""}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME } from "../data/teams";
 import {
   SURVIVOR_WEEKS,
@@ -485,7 +486,7 @@ export default function SurvivorPanel({ onBack }: { onBack?: () => void }) {
                         <span key={i} style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
                           {p.team ? (
                             <>
-                              <TeamLogo team={p.team} size={18} /> {p.team}{" "}
+                              <TeamLink team={p.team} size={18} />{" "}
                               <span style={{ color: "var(--chalk-dim)" }}>
                                 {p.winProb != null ? `(${(p.winProb * 100).toFixed(1)}%)` : ""}
                               </span>

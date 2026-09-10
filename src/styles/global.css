@@ -378,6 +378,15 @@
 
         .week-nav-btn:hover { color: var(--gold); border-color: var(--gold); }
 
+        .admin-team-link {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          color: inherit;
+          text-decoration: none;
+        }
+        .admin-team-link:hover { text-decoration: underline; color: var(--gold); }
+
         .back-link {
           background: none;
           border: none;

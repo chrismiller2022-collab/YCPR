@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { splitTeamTotal } from "../lib/gameTotals";
 import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows, type EnrichedGameRow } from "../lib/gameTotalsEngine";
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
@@ -85,7 +85,7 @@ const awayCol: Column = {
   value: (r) => r.game.game.awayTeam,
   render: (r) => (
     <>
-      <TeamLogo team={r.game.game.awayTeam} /> {r.game.game.awayTeam}
+      <TeamLink team={r.game.game.awayTeam} />
     </>
   ),
 };
@@ -95,7 +95,7 @@ const homeCol: Column = {
   value: (r) => r.game.game.homeTeam,
   render: (r) => (
     <>
-      <TeamLogo team={r.game.game.homeTeam} /> {r.game.game.homeTeam}
+      <TeamLink team={r.game.game.homeTeam} />
     </>
   ),
 };

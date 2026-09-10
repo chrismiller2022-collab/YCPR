@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
   importPlacedBets,
@@ -451,7 +451,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                       <td style={{ padding: "0.35rem 0.6rem", color: "var(--chalk-dim)" }}>{fmtDate(bet.created_at)}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>{bet.week}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>
-                        <TeamLogo team={bet.away_team} size={16} /> {bet.away_team} @ <TeamLogo team={bet.home_team} size={16} /> {bet.home_team}
+                        <TeamLink team={bet.away_team} size={16} /> @ <TeamLink team={bet.home_team} size={16} />
                       </td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>{BOOK_LABELS[bet.book] ?? bet.book}</td>
                       <td style={{ padding: "0.35rem 0.6rem", textTransform: "capitalize" }}>{bet.bet_type.replace("_", " ")}</td>

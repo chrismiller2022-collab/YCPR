@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { spreadToWinPct, fairMoneylineFromWinPct } from "../lib/odds";
 import { useGameTotalsEngine, buildBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchOddsFeed, invalidateOddsFeed, BOOK_META, BOOK_ORDER } from "../lib/api/oddsApi";
@@ -1022,7 +1023,7 @@ function FuturesOddscreenTable({ group }: { group: FuturesMarketGroup }) {
             return (
               <tr key={row.team} style={{ borderTop: "1px solid var(--hash)" }}>
                 <td style={TD}>
-                  <TeamLogo team={row.team} size={18} /> {row.team}
+                  <TeamLink team={row.team} size={18} />
                 </td>
                 <td style={{ ...TD, textAlign: "right" }}>{fmtCents(row.myYesPct)}</td>
                 <td style={{ ...TD, textAlign: "right" }}>{fmtCents(row.myNoPct)}</td>
@@ -1116,7 +1117,7 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
             {sorted.map((row) => (
               <tr key={row.team} style={{ borderTop: "1px solid var(--hash)" }}>
                 <td style={STICKY_TEAM_TD}>
-                  <TeamLogo team={row.team} size={18} /> {row.team}
+                  <TeamLink team={row.team} size={18} />
                 </td>
                 {thresholds.map((t) => {
                   const cell = row.byThreshold[t];

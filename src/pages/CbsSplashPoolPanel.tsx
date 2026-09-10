@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
@@ -459,14 +460,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                         title="View handicapping preview"
                         onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
                       >
-                        <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                        <TeamLink team={r.game.away_team} />
                       </td>
                       <td
                         style={{ ...cellStyle, cursor: "pointer" }}
                         title="View handicapping preview"
                         onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
                       >
-                        <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                        <TeamLink team={r.game.home_team} />
                       </td>
                       <td
                         style={{

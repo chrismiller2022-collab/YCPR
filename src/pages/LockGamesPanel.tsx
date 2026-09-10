@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, classOf } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -341,7 +341,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     {g.start_date ? new Date(g.start_date).toLocaleString() : "–"}
                   </td>
                   <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={g.away_team} size={16} /> {g.away_team} @ <TeamLogo team={g.home_team} size={16} /> {g.home_team}
+                    <TeamLink team={g.away_team} size={16} /> @ <TeamLink team={g.home_team} size={16} />
                   </td>
                   <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {computed.projAwaySpread != null ? computed.projAwaySpread.toFixed(1) : "–"}
@@ -387,7 +387,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     {g.start_date ? new Date(g.start_date).toLocaleString() : "–"}
                   </td>
                   <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={g.away_team} size={16} /> {g.away_team} @ <TeamLogo team={g.home_team} size={16} /> {g.home_team}
+                    <TeamLink team={g.away_team} size={16} /> @ <TeamLink team={g.home_team} size={16} />
                   </td>
                   {isEditing ? (
                     <>

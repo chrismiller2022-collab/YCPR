@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import {
   fetchFbsGamesForWeek,
   fetchRedditConfidencePicksForWeek,
@@ -169,7 +170,7 @@ function GameSelectionStep({
                 >
                   <input type="checkbox" checked={selected.has(g.id)} disabled={atCap} onChange={() => toggle(g.id)} />
                   <span style={{ flex: 1 }}>
-                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                   </span>
                 </label>
               );
@@ -331,7 +332,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               return (
                 <tr key={p.id}>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                   </td>
                   <td
                     style={{

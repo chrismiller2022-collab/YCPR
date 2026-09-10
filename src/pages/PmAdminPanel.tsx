@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import SortHeader from "../components/SortHeader";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fairMoneylineFromWinPct, fairYesNoPct } from "../lib/odds";
 import { undefeatedPct, type TeamSimResult } from "../lib/montecarlo/engine";
@@ -208,7 +208,7 @@ function MarketsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mode:
                 {rows.map(({ r, val }) => (
                   <tr key={r.team}>
                     <td style={tdBase}>
-                      <TeamLogo team={r.team} /> {r.team}
+                      <TeamLink team={r.team} />
                     </td>
                     <td style={tdBase}>{r.conf}</td>
                     <td style={tdRight}>{val != null ? `${val.toFixed(1)}%` : "–"}</td>
@@ -276,7 +276,7 @@ function SeedsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mode: P
                   {rows.map(({ r, val }) => (
                     <tr key={r.team}>
                       <td style={tdBase}>
-                        <TeamLogo team={r.team} /> {r.team}
+                        <TeamLink team={r.team} />
                       </td>
                       <td style={tdBase}>{r.conf}</td>
                       <td style={tdRight}>{val!.toFixed(1)}%</td>
@@ -435,7 +435,7 @@ function WinTotalsTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mod
                       {vegasRows.map(({ r, line, over }) => (
                         <tr key={r.team}>
                           <td style={tdBase}>
-                            <TeamLogo team={r.team} /> {r.team}
+                            <TeamLink team={r.team} />
                           </td>
                           <td style={tdRight}>{line!.toFixed(1)}</td>
                           <td style={tdRight}>{over!.toFixed(1)}%</td>
@@ -598,7 +598,7 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                 <tbody>
                   <tr>
                     <td style={tdBase}>
-                      <TeamLogo team={resultA.team} /> {resultA.team}
+                      <TeamLink team={resultA.team} />
                     </td>
                     <td style={tdRight}>{resultA.meanWins.toFixed(1)}</td>
                     <td style={tdRight}>
@@ -627,7 +627,7 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                   </tr>
                   <tr>
                     <td style={tdBase}>
-                      <TeamLogo team={resultB.team} /> {resultB.team}
+                      <TeamLink team={resultB.team} />
                     </td>
                     <td style={tdRight}>{resultB.meanWins.toFixed(1)}</td>
                     <td style={tdRight}>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import {
   fetchFbsGamesForWeek,
   fetchEspnSpreadPicksForWeek,
@@ -176,7 +177,7 @@ function GameSelectionStep({
               >
                 <input type="checkbox" checked={selected.has(g.id)} disabled={atCap} onChange={() => toggle(g.id)} />
                 <span style={{ flex: 1 }}>
-                  <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                  <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                 </span>
                 {selected.has(g.id) && (
                   <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
@@ -367,7 +368,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               return (
                 <tr key={p.id} style={{ background: p.is_key_game ? "var(--gold-dim)" : undefined }}>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLogo team={g.away_team} /> {g.away_team} @ <TeamLogo team={g.home_team} /> {g.home_team}
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
                     {p.is_key_game && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Key game

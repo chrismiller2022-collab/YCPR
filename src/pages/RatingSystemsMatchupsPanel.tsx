@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import TeamLogo from "../components/TeamLogo";
+import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME, CONFERENCES } from "../data/teams";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -123,10 +123,10 @@ function GamesTable({
               <tr key={r.game.id}>
                 <td style={CP}>{fmtDateTime(r.game.start_date)}</td>
                 <td style={CP}>
-                  <TeamLogo team={r.game.away_team} /> {r.game.away_team}
+                  <TeamLink team={r.game.away_team} />
                 </td>
                 <td style={CP}>
-                  <TeamLogo team={r.game.home_team} /> {r.game.home_team}
+                  <TeamLink team={r.game.home_team} />
                 </td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.vegasAwaySpread)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{r.game.away_points ?? "–"}</td>
@@ -377,9 +377,9 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
               >
                 <span style={{ color: "var(--chalk-dim)" }}>Wk {r.game.week}</span>
                 <span style={{ color: "var(--chalk-dim)" }}>{fmtDateTime(r.game.start_date)}</span>
-                <span><TeamLogo team={r.game.away_team} /> {r.game.away_team}</span>
+                <span><TeamLink team={r.game.away_team} /></span>
                 <span style={{ color: "var(--chalk-dim)" }}>@</span>
-                <span><TeamLogo team={r.game.home_team} /> {r.game.home_team}</span>
+                <span><TeamLink team={r.game.home_team} /></span>
                 <span style={{ color: "var(--chalk-dim)" }}>Vegas {fmtSpread(r.vegasAwaySpread)}</span>
               </div>
             ))}
