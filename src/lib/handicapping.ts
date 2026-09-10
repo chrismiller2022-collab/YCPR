@@ -63,6 +63,21 @@ export interface SituationalSpots {
   prevOpponent: string | null;
 }
 
+export interface LastGameInfo {
+  week: number;
+  opponent: string;
+  isHome: boolean;
+  vegasSpreadForTeam: number | null;
+  teamPoints: number | null;
+  oppPoints: number | null;
+}
+
+export interface NextGameInfo {
+  week: number;
+  opponent: string;
+  myProjSpreadForTeam: number | null;
+}
+
 export interface TeamHandicap {
   team: string;
   log: TeamGameLogRow[];
@@ -70,6 +85,10 @@ export interface TeamHandicap {
   homeAway: RecordSplit; // this team's record in the role (home/away) it has in the current game
   favoriteDog: RecordSplit | null; // this team's record in the role (favorite/dog) it has in the current game, null if the current game has no favorite/dog side (pick'em or no line/projection at all)
   spots: SituationalSpots;
+  currentRating: number | null; // this week's power rating (lower = better)
+  ratingChangeFromLastWeek: number | null; // currentRating - previous week's rating; negative = improved
+  lastGame: LastGameInfo | null;
+  nextGame: NextGameInfo | null;
 }
 
 export interface MatchupHandicap {
@@ -254,8 +273,14 @@ function buildTeamHandicap(
   isHomeInCurrentGame: boolean,
   isFavoriteInCurrentGame: boolean | null,
   log: TeamGameLogRow[],
-  week: number
+  week: number,
+  ratingsByWeek: Record<number, Record<string, any>>
 ): TeamHandicap {
+  const prevGame = log.find((r) => r.week === week - 1) ?? null;
+  const nextGameRow = log.find((r) => r.week === week + 1) ?? null;
+  const currentRating = ratingsByWeek[week]?.[team]?.rating ?? null;
+  const prevRating = ratingsByWeek[week - 1]?.[team]?.rating ?? null;
+
   return {
     team,
     log,
@@ -268,6 +293,21 @@ function buildTeamHandicap(
             isFavoriteInCurrentGame ? (r.vegasSpreadForTeam ?? 0) < 0 : (r.vegasSpreadForTeam ?? 0) > 0
           ),
     spots: computeSituationalSpots(log, week),
+    currentRating,
+    ratingChangeFromLastWeek: currentRating != null && prevRating != null ? currentRating - prevRating : null,
+    lastGame: prevGame
+      ? {
+          week: prevGame.week,
+          opponent: prevGame.opponent,
+          isHome: prevGame.isHome,
+          vegasSpreadForTeam: prevGame.vegasSpreadForTeam,
+          teamPoints: prevGame.teamPoints,
+          oppPoints: prevGame.oppPoints,
+        }
+      : null,
+    nextGame: nextGameRow
+      ? { week: nextGameRow.week, opponent: nextGameRow.opponent, myProjSpreadForTeam: nextGameRow.myProjSpreadForTeam }
+      : null,
   };
 }
 
@@ -309,6 +349,10 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         homeAway: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null },
         favoriteDog: null,
         spots: { lookahead: false, sandwich: false, letdown: false, letdownBadBeat: false, nextOpponent: null, prevOpponent: null },
+        currentRating: null,
+        ratingChangeFromLastWeek: null,
+        lastGame: null,
+        nextGame: null,
       };
       return {
         season,
@@ -342,8 +386,8 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
       week,
       awayTeam,
       homeTeam,
-      away: buildTeamHandicap(awayTeam, false, awayIsFavorite, awayLog, week),
-      home: buildTeamHandicap(homeTeam, true, homeIsFavorite, homeLog, week),
+      away: buildTeamHandicap(awayTeam, false, awayIsFavorite, awayLog, week, ratingsByWeek),
+      home: buildTeamHandicap(homeTeam, true, homeIsFavorite, homeLog, week, ratingsByWeek),
       favoriteTeam,
       loading: false,
       error,

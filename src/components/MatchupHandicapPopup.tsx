@@ -14,6 +14,30 @@ function fmtMargin(v: number | null): string {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
+function fmtRating(v: number | null): string {
+  return v == null ? "–" : v.toFixed(2);
+}
+
+// Lower rating = better team (site-wide convention) — a negative change
+// (rating went down) is an improvement, shown green with a down arrow;
+// a positive change (rating went up) is a decline, shown red with an
+// up arrow.
+function RatingChange({ v }: { v: number | null }) {
+  if (v == null) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  if (Math.abs(v) < 0.005) return <span style={{ color: "var(--chalk-dim)" }}>flat</span>;
+  const improved = v < 0;
+  return (
+    <span style={{ color: improved ? "#8fd39a" : "#c45c52" }}>
+      {improved ? "▼" : "▲"} {Math.abs(v).toFixed(2)}
+    </span>
+  );
+}
+
+function fmtSpread(v: number | null): string {
+  if (v == null) return "–";
+  return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
+}
+
 function SplitRow({ label, split }: { label: string; split: RecordSplit | null }) {
   if (!split) return null;
   const decided = split.su.w + split.su.l;
@@ -79,6 +103,8 @@ function SpotBadges({ hc }: { hc: TeamHandicap }) {
 }
 
 function TeamColumn({ hc, roleLabel, favLabel }: { hc: TeamHandicap; roleLabel: string; favLabel: string | null }) {
+  const showNextGame = (hc.spots.lookahead || hc.spots.sandwich) && hc.nextGame;
+
   return (
     <div style={{ flex: 1, minWidth: 220 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}>
@@ -86,19 +112,39 @@ function TeamColumn({ hc, roleLabel, favLabel }: { hc: TeamHandicap; roleLabel: 
         <span style={{ fontWeight: 700 }}>{hc.team}</span>
       </div>
 
-      <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
-        {hc.rest.byeLastWeek
-          ? "Off a bye"
-          : hc.rest.daysOfRest != null
-            ? `${hc.rest.daysOfRest} days rest`
-            : "Season opener"}
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", padding: "0.15rem 0" }}>
+        <span style={{ color: "var(--chalk-dim)" }}>Power rating</span>
+        <span>
+          {fmtRating(hc.currentRating)} (<RatingChange v={hc.ratingChangeFromLastWeek} /> vs last wk)
+        </span>
+      </div>
+
+      <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", margin: "0.3rem 0 0.5rem" }}>
+        {hc.rest.byeLastWeek ? "Off a bye" : hc.rest.daysOfRest != null ? `${hc.rest.daysOfRest} days rest` : "Season opener"}
       </div>
 
       <div style={{ marginBottom: "0.6rem" }}>
         <SpotBadges hc={hc} />
       </div>
 
-      <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.3rem" }}>
+      {hc.lastGame && (
+        <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Last week: </span>
+          {hc.lastGame.isHome ? "vs" : "@"} {hc.lastGame.opponent} ({fmtSpread(hc.lastGame.vegasSpreadForTeam)}) —{" "}
+          {hc.lastGame.teamPoints != null && hc.lastGame.oppPoints != null
+            ? `${hc.lastGame.teamPoints}-${hc.lastGame.oppPoints}`
+            : "not final"}
+        </div>
+      )}
+
+      {showNextGame && hc.nextGame && (
+        <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Next week: </span>
+          {hc.nextGame.opponent} (my line {fmtSpread(hc.nextGame.myProjSpreadForTeam)})
+        </div>
+      )}
+
+      <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.3rem", marginTop: "0.4rem" }}>
         <SplitRow label={roleLabel} split={hc.homeAway} />
         {hc.favoriteDog && favLabel && <SplitRow label={favLabel} split={hc.favoriteDog} />}
       </div>
