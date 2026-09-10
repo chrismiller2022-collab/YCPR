@@ -20,8 +20,10 @@ import {
   buildNwfbSigmaMatrix,
   tallyAmountOffCustom,
   buildLiveBetHistoryRecords,
+  computeKeyNumberStudy,
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
+  type KeyNumberStudy,
   type BetHistoryFilters,
   type BetHistoryDivision,
   type CustomParams,
@@ -45,6 +47,50 @@ function fmtRecord(t: RecordTally) {
 }
 function fmtPct(t: RecordTally) {
   return `${winPct(t).toFixed(1)}%`;
+}
+
+function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
+  const rows: { label: string; tally: RecordTally }[] = [
+    { label: "Underdog +3 (my line 0–3, Vegas above +3)", tally: study.underdog.plus3 },
+    { label: "Underdog +7 (my line 0–7, Vegas above +7)", tally: study.underdog.plus7 },
+    { label: "Underdog Both (my line under 3, Vegas above +7)", tally: study.underdog.both },
+    { label: "Favorite -3 (my line -3 to -7, Vegas above -3)", tally: study.favorite.minus3 },
+    { label: "Favorite -7 (my line -7 or beyond, Vegas above -7)", tally: study.favorite.minus7 },
+    { label: "Favorite Both (my line beyond -7, Vegas above -3)", tally: study.favorite.both },
+  ];
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "1rem" }}>
+        How the model performs specifically when my line and Vegas's line straddle the 3- and 7-point key numbers —
+        the underdog rows are games where my line for the underdog is smaller than Vegas's (I project the underdog
+        to cover the extra cushion Vegas is giving them); the favorite rows are the mirror image (my line for the
+        favorite is more negative than Vegas's, so I project the favorite to cover). Graded against the real closing
+        line, same cover-margin formula as everywhere else on this page.
+      </p>
+      <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", width: "100%", maxWidth: 640 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Key Number</th>
+            <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Games</th>
+            <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Record</th>
+            <th style={{ textAlign: "right", padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>Win %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>{r.label}</td>
+              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                {r.tally.w + r.tally.l + r.tally.push}
+              </td>
+              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(r.tally)}</td>
+              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(r.tally)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function ParamGroup({ title, children }: { title: string; children: ReactNode }) {
@@ -970,7 +1016,7 @@ function FilterBar({
 
 export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void }) {
   const allConfs = useMemo(() => availableConferences(), []);
-  const [tab, setTab] = useState<"plain" | "custom">("custom");
+  const [tab, setTab] = useState<"plain" | "custom" | "keynumbers">("custom");
 
   const [years, setYears] = useState<Set<number>>(new Set(SEASONS));
   const [week, setWeek] = useState<number | "all">("all");
@@ -1040,6 +1086,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
     [allRecords, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]
   );
 
+  const keyNumberStudy = useMemo(() => computeKeyNumberStudy(filtered), [filtered]);
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
   const customAgg = useMemo(() => aggregateCustom(filtered, params), [filtered, params]);
   const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
@@ -1091,6 +1138,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </button>
         <button className={`mode-btn ${tab === "custom" ? "mode-btn-active" : ""}`} onClick={() => setTab("custom")}>
           Custom
+        </button>
+        <button className={`mode-btn ${tab === "keynumbers" ? "mode-btn-active" : ""}`} onClick={() => setTab("keynumbers")}>
+          Key Numbers
         </button>
       </div>
 
@@ -1151,6 +1201,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
         </>
+      ) : tab === "keynumbers" ? (
+        <KeyNumbersSection study={keyNumberStudy} />
       ) : (
         <>
           <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>

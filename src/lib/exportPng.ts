@@ -1,4 +1,5 @@
 import { toPng, toBlob } from "html-to-image";
+import { PDFDocument } from "pdf-lib";
 
 // Row-count helper shared by ExportPngButton (to decide whether to show
 // the Full List/Top 25 prompt at all) and limitToTopN below (to actually
@@ -236,6 +237,64 @@ export async function exportNodeAsPngBlob(
   const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten, includeBranding);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
+}
+
+function blobToImageData(blob: Blob): Promise<{ bytes: ArrayBuffer; width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = async () => {
+      const { naturalWidth, naturalHeight } = img;
+      URL.revokeObjectURL(url);
+      try {
+        const bytes = await blob.arrayBuffer();
+        resolve({ bytes, width: naturalWidth, height: naturalHeight });
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to measure image dimensions"));
+    };
+    img.src = url;
+  });
+}
+
+/**
+ * Single-page PDF of a captured node — same rasterization as
+ * exportNodeAsPng, just wrapped in a one-page PDF sized to match the
+ * image's own pixel dimensions (no letterboxing/cropping) instead of a
+ * fixed page size. Uses pdf-lib, same as the Weekly Image Dump's
+ * multi-page report — see that file's doc comment for why not jsPDF
+ * (blows past V8's max string length on many embedded images; a single
+ * page never gets close, but there's no reason to introduce a second
+ * PDF library into the codebase for one page).
+ */
+export async function exportNodeAsPdf(
+  node: HTMLElement,
+  filename: string,
+  topN?: number,
+  rowMatch?: (row: HTMLTableRowElement) => boolean,
+  tighten?: boolean
+) {
+  const blob = await exportNodeAsPngBlob(node, topN, rowMatch, tighten);
+  const img = await blobToImageData(blob);
+  const pdfDoc = await PDFDocument.create();
+  const pngImage = await pdfDoc.embedPng(img.bytes);
+  const page = pdfDoc.addPage([img.width, img.height]);
+  page.drawImage(pngImage, { x: 0, y: 0, width: img.width, height: img.height });
+  const pdfBytes = await pdfDoc.save();
+  const pdfBlob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+
+  const url = URL.createObjectURL(pdfBlob);
+  const link = document.createElement("a");
+  link.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+  link.href = url;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------

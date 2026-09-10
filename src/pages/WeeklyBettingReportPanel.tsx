@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -20,6 +20,8 @@ import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { BET_HISTORY } from "../data/betHistory.data";
 import { useDefaultToCurrentWeek } from "../lib/currentWeek";
 import { unitsRiskedToWinOne } from "../lib/odds";
+import ExportPngButton from "../components/ExportPngButton";
+import ExportPdfButton from "../components/ExportPdfButton";
 
 // ---------------------------------------------------------------------
 // Weekly Betting Report — "what bets do I need to make and watch out
@@ -482,6 +484,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
   useDefaultToCurrentWeek(season, week, setWeek);
+  const exportRef = useRef<HTMLDivElement>(null);
   const [division, setDivision] = useState<Division>("FBS");
   const [reportMode, setReportMode] = useState<"regular" | "performance">("regular");
   const [hideCompleted, setHideCompleted] = useState(true);
@@ -808,10 +811,16 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         ‹ Admin
       </button>
+      <div ref={exportRef}>
       <h2 style={{ marginTop: 0 }}>Weekly Betting Report</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Run this after syncing this week's games/lines and pushing live ratings.
       </p>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", justifyContent: "flex-end" }} data-export-exclude="true">
+        <ExportPngButton targetRef={exportRef} filename={() => `weekly-betting-report-${season}-wk${week}`} showTweet={false} />
+        <ExportPdfButton targetRef={exportRef} filename={() => `weekly-betting-report-${season}-wk${week}`} />
+      </div>
 
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
         <label>
@@ -1191,6 +1200,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

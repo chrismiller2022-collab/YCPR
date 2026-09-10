@@ -188,6 +188,75 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
 }
 
 // ---------------------------------------------------------------------
+// Key Numbers study — how spread bets perform specifically when my line
+// and Vegas's line straddle the 3-point and 7-point key numbers, since
+// those two margins account for a disproportionate share of real CFB
+// final margins. Six buckets, independently tested per game (never
+// mutually exclusive across the underdog/favorite split — a game can
+// only ever land in one side, since "my line" and "Vegas's line" can't
+// simultaneously favor projecting the dog to cover AND the favorite to
+// cover on the same game):
+//
+// Underdog (I project the underdog to cover — my dog-side line is
+// smaller than Vegas's, so Vegas is giving the dog more cushion than I
+// think they need):
+//   +3   — my line for the dog is 0 to 3, Vegas's is above 3
+//   +7   — my line for the dog is 0 to 7, Vegas's is above 7
+//   Both — my line for the dog is under 3, Vegas's is above 7
+//
+// Favorite (I project the favorite to cover — my favorite-side line is
+// more negative than Vegas's, so I think they deserve to be favored by
+// more than Vegas has them):
+//   -3   — my line for the favorite is -3 to -7, Vegas's is above -3
+//   -7   — my line for the favorite is -7 or beyond, Vegas's is above -7
+//   Both — my line for the favorite is beyond -7, Vegas's is above -3
+//
+// Grading reuses the exact same cover-margin formula as
+// computeCustomGrading's actualCoverTeam (coverMargin = awayScore -
+// homeScore - spread), just graded against whichever side (favorite or
+// underdog) the bucket in question is about.
+// ---------------------------------------------------------------------
+export interface KeyNumberStudy {
+  underdog: { plus3: RecordTally; plus7: RecordTally; both: RecordTally };
+  favorite: { minus3: RecordTally; minus7: RecordTally; both: RecordTally };
+}
+
+export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStudy {
+  const study: KeyNumberStudy = {
+    underdog: { plus3: emptyTally(), plus7: emptyTally(), both: emptyTally() },
+    favorite: { minus3: emptyTally(), minus7: emptyTally(), both: emptyTally() },
+  };
+
+  for (const r of records) {
+    if (r.homeScore == null || r.awayScore == null) continue;
+    if (r.spread === 0) continue; // pick'em — no favorite/underdog side to test
+
+    const favoriteIsHome = r.spread < 0;
+    const favoriteTeam = favoriteIsHome ? r.homeTeam : r.awayTeam;
+    const underdogTeam = favoriteIsHome ? r.awayTeam : r.homeTeam;
+
+    const vegasFavLine = favoriteIsHome ? r.spread : -r.spread; // <= 0
+    const myFavLine = favoriteIsHome ? r.prediction : -r.prediction;
+    const vegasDogLine = -vegasFavLine; // >= 0
+    const myDogLine = -myFavLine;
+
+    const coverMargin = r.awayScore - r.homeScore - r.spread;
+    const actualCoverTeam = coverMargin > 0 ? r.awayTeam : coverMargin < 0 ? r.homeTeam : null;
+    const resultFor = (betTeam: string): BetPick => (actualCoverTeam == null ? "push" : actualCoverTeam === betTeam ? "win" : "loss");
+
+    if (myDogLine >= 0 && myDogLine <= 3 && vegasDogLine > 3) tallyAdd(study.underdog.plus3, resultFor(underdogTeam));
+    if (myDogLine >= 0 && myDogLine <= 7 && vegasDogLine > 7) tallyAdd(study.underdog.plus7, resultFor(underdogTeam));
+    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine > 7) tallyAdd(study.underdog.both, resultFor(underdogTeam));
+
+    if (myFavLine <= -3 && myFavLine >= -7 && vegasFavLine > -3) tallyAdd(study.favorite.minus3, resultFor(favoriteTeam));
+    if (myFavLine <= -7 && vegasFavLine > -7) tallyAdd(study.favorite.minus7, resultFor(favoriteTeam));
+    if (myFavLine < -7 && vegasFavLine > -3) tallyAdd(study.favorite.both, resultFor(favoriteTeam));
+  }
+
+  return study;
+}
+
+// ---------------------------------------------------------------------
 // Live path — for seasons with no BET_HISTORY upload (2026+), builds
 // BetHistoryRecord-shaped rows straight from synced games/lines + live
 // power ratings, so they flow through every aggregation function above
