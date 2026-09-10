@@ -51,12 +51,12 @@ function fmtPct(t: RecordTally) {
 
 function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
   const rows: { label: string; tally: RecordTally }[] = [
-    { label: "Underdog +3 (my line 0–3, Vegas above +3)", tally: study.underdog.plus3 },
-    { label: "Underdog +7 (my line 0–7, Vegas above +7)", tally: study.underdog.plus7 },
-    { label: "Underdog Both (my line under 3, Vegas above +7)", tally: study.underdog.both },
-    { label: "Favorite -3 (my line -3 to -7, Vegas above -3)", tally: study.favorite.minus3 },
-    { label: "Favorite -7 (my line -7 or beyond, Vegas above -7)", tally: study.favorite.minus7 },
-    { label: "Favorite Both (my line beyond -7, Vegas above -3)", tally: study.favorite.both },
+    { label: "Underdog +3 (my line 0–3, Vegas at/above +3)", tally: study.underdog.plus3 },
+    { label: "Underdog +7 (my line 3–7, Vegas at/above +7)", tally: study.underdog.plus7 },
+    { label: "Underdog Both (my line under 3, Vegas at/above +7)", tally: study.underdog.both },
+    { label: "Favorite -3 (my line -3 to -7, Vegas at/above -3)", tally: study.favorite.minus3 },
+    { label: "Favorite -7 (my line -7 or below, Vegas at/above -7)", tally: study.favorite.minus7 },
+    { label: "Favorite Both (my line below -7, Vegas at/above -3)", tally: study.favorite.both },
   ];
   return (
     <div>
@@ -64,8 +64,10 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
         How the model performs specifically when my line and Vegas's line straddle the 3- and 7-point key numbers —
         the underdog rows are games where my line for the underdog is smaller than Vegas's (I project the underdog
         to cover the extra cushion Vegas is giving them); the favorite rows are the mirror image (my line for the
-        favorite is more negative than Vegas's, so I project the favorite to cover). Graded against the real closing
-        line, same cover-margin formula as everywhere else on this page.
+        favorite is more negative than Vegas's, so I project the favorite to cover). My own line excludes the exact
+        key number named in each row (landing exactly on it is genuinely undecided, not a lean); Vegas's line counts
+        as clearing the key number if it lands exactly on it. Graded against the real closing line, same cover-margin
+        formula as everywhere else on this page.
       </p>
       <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", width: "100%", maxWidth: 640 }}>
         <thead>

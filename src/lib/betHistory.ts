@@ -200,16 +200,27 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
 // Underdog (I project the underdog to cover — my dog-side line is
 // smaller than Vegas's, so Vegas is giving the dog more cushion than I
 // think they need):
-//   +3   — my line for the dog is 0 to 3, Vegas's is above 3
-//   +7   — my line for the dog is 0 to 7, Vegas's is above 7
-//   Both — my line for the dog is under 3, Vegas's is above 7
+//   +3   — my line for the dog is [0, 3), Vegas's is >= 3
+//   +7   — my line for the dog is [3, 7), Vegas's is >= 7
+//   Both — my line for the dog is [0, 3), Vegas's is >= 7
 //
 // Favorite (I project the favorite to cover — my favorite-side line is
 // more negative than Vegas's, so I think they deserve to be favored by
 // more than Vegas has them):
-//   -3   — my line for the favorite is -3 to -7, Vegas's is above -3
-//   -7   — my line for the favorite is -7 or beyond, Vegas's is above -7
-//   Both — my line for the favorite is beyond -7, Vegas's is above -3
+//   -3   — my line for the favorite is [-7, -3), Vegas's is >= -3
+//   -7   — my line for the favorite is < -7, Vegas's is >= -7
+//   Both — my line for the favorite is < -7, Vegas's is >= -3
+//
+// Per Chris: "my line" always excludes the exact key number that names
+// its own bucket (landing exactly on my own +3 doesn't count as being
+// under it — that's genuinely undecided, not a lean either way), while
+// the OTHER boundary of a bucket's range (the one it shares with an
+// adjacent bucket) stays inclusive, so nothing in between falls through
+// a gap or gets double-counted. This is also why +7 reads 3 to 7, not 0
+// to 7 — 0 to 3 already belongs to +3. Vegas's own boundary is the
+// opposite: landing exactly on the key number counts as clearing it
+// (a real Vegas line sitting exactly on 3 or 7 is common and meaningful,
+// unlike totals, so it's treated as having reached that number).
 //
 // Grading reuses the exact same cover-margin formula as
 // computeCustomGrading's actualCoverTeam (coverMargin = awayScore -
@@ -244,13 +255,13 @@ export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStu
     const actualCoverTeam = coverMargin > 0 ? r.awayTeam : coverMargin < 0 ? r.homeTeam : null;
     const resultFor = (betTeam: string): BetPick => (actualCoverTeam == null ? "push" : actualCoverTeam === betTeam ? "win" : "loss");
 
-    if (myDogLine >= 0 && myDogLine <= 3 && vegasDogLine > 3) tallyAdd(study.underdog.plus3, resultFor(underdogTeam));
-    if (myDogLine >= 0 && myDogLine <= 7 && vegasDogLine > 7) tallyAdd(study.underdog.plus7, resultFor(underdogTeam));
-    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine > 7) tallyAdd(study.underdog.both, resultFor(underdogTeam));
+    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 3) tallyAdd(study.underdog.plus3, resultFor(underdogTeam));
+    if (myDogLine >= 3 && myDogLine < 7 && vegasDogLine >= 7) tallyAdd(study.underdog.plus7, resultFor(underdogTeam));
+    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 7) tallyAdd(study.underdog.both, resultFor(underdogTeam));
 
-    if (myFavLine <= -3 && myFavLine >= -7 && vegasFavLine > -3) tallyAdd(study.favorite.minus3, resultFor(favoriteTeam));
-    if (myFavLine <= -7 && vegasFavLine > -7) tallyAdd(study.favorite.minus7, resultFor(favoriteTeam));
-    if (myFavLine < -7 && vegasFavLine > -3) tallyAdd(study.favorite.both, resultFor(favoriteTeam));
+    if (myFavLine < -3 && myFavLine >= -7 && vegasFavLine >= -3) tallyAdd(study.favorite.minus3, resultFor(favoriteTeam));
+    if (myFavLine < -7 && vegasFavLine >= -7) tallyAdd(study.favorite.minus7, resultFor(favoriteTeam));
+    if (myFavLine < -7 && vegasFavLine >= -3) tallyAdd(study.favorite.both, resultFor(favoriteTeam));
   }
 
   return study;
