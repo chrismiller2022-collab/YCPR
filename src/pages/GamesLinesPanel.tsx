@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
@@ -20,6 +21,7 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [wholeSeason, setWholeSeason] = useState(false);
   const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [syncedWeeks, setSyncedWeeks] = useState<{ season: number; week: number }[]>([]);

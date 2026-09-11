@@ -44,6 +44,8 @@ import { CHECKLIST_ITEMS } from "../lib/checklistItems";
 import ChecklistItemsBlock from "../components/ChecklistItemsBlock";
 import AdminChecklistPage from "./AdminChecklistPage";
 import { WEEK_OPTIONS } from "../lib/weekOptions";
+import { AdminWeekProvider } from "../lib/adminWeek";
+import AdminWeekSelector from "../components/AdminWeekSelector";
 
 // Maps flexible/human column headers (however you happen to label them when
 // pasting from a spreadsheet) to the actual database column names. Keys are
@@ -854,6 +856,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   }
 
   return (
+    <AdminWeekProvider season={new Date().getFullYear()}>
     <div
       className="page admin-page"
       style={{
@@ -870,7 +873,10 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           ← Back to site
         </a>
       </p>
-      <h1 style={{ fontSize: "1.4rem", margin: "0 0 1.25rem" }}>Admin</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem", margin: "0 0 1.25rem" }}>
+        <h1 style={{ fontSize: "1.4rem", margin: 0 }}>Admin</h1>
+        <AdminWeekSelector />
+      </div>
 
       <div style={{ display: "flex", gap: "1.75rem", alignItems: "flex-start" }}>
         <AdminSidebar view={view} onNavigate={setView} />
@@ -954,5 +960,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
         </div>
       </div>
     </div>
+    </AdminWeekProvider>
   );
 }

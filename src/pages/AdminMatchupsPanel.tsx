@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -723,6 +724,7 @@ function compareValues(a: number | string | null, b: number | string | null, dir
 export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [weekSel, setWeekSel] = useState<"all" | number>("all");
+  useDefaultToAdminWeek(setWeekSel);
   const [query, setQuery] = useState("");
   // Defaults: FBS vs FBS, sorted by Bet Size descending (biggest bets
   // first, the rows most worth acting on) — per Chris's request, this is
@@ -731,7 +733,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [matchupType, setMatchupType] = useState("FBSvFBS");
   const [mode, setMode] = useState("spreads");
   const [mlEvThreshold, setMlEvThreshold] = useState(0);
-  const [hideNoLine, setHideNoLine] = useState(true);
+  const [hideNoLine, setHideNoLine] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState<string | null>("betSize");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");

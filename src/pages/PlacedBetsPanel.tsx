@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
@@ -300,6 +301,7 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
 export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<number | "all">("all");
+  useDefaultToAdminWeek(setWeek);
   const [bets, setBets] = useState<PlacedBetRow[]>([]);
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [poolSummary, setPoolSummary] = useState<PoolBalanceSummary | null>(null);

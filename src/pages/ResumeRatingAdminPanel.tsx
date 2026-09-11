@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLogo from "../components/TeamLogo";
 import SortHeader from "../components/SortHeader";
 import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
@@ -159,6 +160,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   // scoped from the start (mirrors the SOS fix), so this needs to be
   // explicit.
   const [saveWeek, setSaveWeek] = useState(1);
+  useDefaultToAdminWeek(setSaveWeek);
   const [savingToSite, setSavingToSite] = useState(false);
   const [saveToSiteMsg, setSaveToSiteMsg] = useState<string | null>(null);
 

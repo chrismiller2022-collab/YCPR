@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME, CONFERENCES } from "../data/teams";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -458,6 +459,7 @@ function ResultsTable({ weekRows, seasonRows }: { weekRows: MultiSystemGameRow[]
 export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
+  useDefaultToAdminWeek(setWeek);
   const [tab, setTab] = useState<"spreads" | "spreadchart" | "cover" | "filtered" | "nwfb" | "results">("spreads");
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
   const [confFilter, setConfFilter] = useState("");

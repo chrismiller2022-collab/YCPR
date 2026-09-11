@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
@@ -878,6 +879,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
 export default function WestgatePoolPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
   const [tab, setTab] = useState<"picks" | "standings">("picks");
 
   return (

@@ -18,7 +18,7 @@ import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylin
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { BET_HISTORY } from "../data/betHistory.data";
-import { useDefaultToCurrentWeek } from "../lib/currentWeek";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { unitsRiskedToWinOne } from "../lib/odds";
 import ExportPngButton from "../components/ExportPngButton";
 import ExportPdfButton from "../components/ExportPdfButton";
@@ -483,7 +483,7 @@ function PerformanceSummarySection({
 export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
-  useDefaultToCurrentWeek(season, week, setWeek);
+  useDefaultToAdminWeek(setWeek);
   const exportRef = useRef<HTMLDivElement>(null);
   const [division, setDivision] = useState<Division>("FBS");
   const [reportMode, setReportMode] = useState<"regular" | "performance">("regular");

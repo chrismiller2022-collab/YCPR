@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, classOf } from "../lib/matchupsCompute";
@@ -56,6 +57,7 @@ interface HistoryRow {
 export default function LockedHistoryPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [compareWeek, setCompareWeek] = useState(1);
+  useDefaultToAdminWeek(setCompareWeek);
   const [weekFilter, setWeekFilter] = useState<number | "all">("all");
   const [tab, setTab] = useState<Tab>("spread");
   const [divisionOnly, setDivisionOnly] = useState(true);

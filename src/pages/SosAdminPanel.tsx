@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { CONFERENCES, TEAMS } from "../data/teams";
@@ -89,6 +90,7 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
   // a single overwritten row per team before), so this needs to be
   // explicit rather than assumed.
   const [saveWeek, setSaveWeek] = useState(1);
+  useDefaultToAdminWeek(setSaveWeek);
   const { byTeam: liveByTeam, loading: liveLoading } = useWeeklyStats("latest");
 
   const [games, setGames] = useState<GameWithLines[]>([]);

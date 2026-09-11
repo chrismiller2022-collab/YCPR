@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, classOf } from "../lib/matchupsCompute";
@@ -55,6 +56,7 @@ function groupByDivision<T extends GameWithLines>(games: T[]): Record<DivBucket,
 export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
   const [games, setGames] = useState<GameWithLines[] | null>(null);
   const [existingLocks, setExistingLocks] = useState<Record<string, ExistingLock>>({});
   const [loading, setLoading] = useState(false);

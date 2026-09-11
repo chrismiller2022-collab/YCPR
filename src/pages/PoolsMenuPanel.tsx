@@ -3,6 +3,7 @@ import { fetchPoolLiveScores, type LiveRecord, type PoolLiveScores } from "../li
 import { fetchSurvivorLiveWeek, type SurvivorLiveWeek } from "../lib/api/survivorLiveScores";
 import { fetchCfbdPickemStats, type CfbdPickemStats } from "../lib/api/cfbdPickemStats";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useAdminWeek } from "../lib/adminWeek";
 
 // Single-user personal tracking, same pattern as everywhere else on the
 // site that doesn't need a Supabase round trip for one person's own
@@ -226,6 +227,7 @@ export default function PoolsMenuPanel({
   const [splashSurvivorLive, setSplashSurvivorLive] = useState<SurvivorLiveWeek | null>(null);
   const [cfbdStats, setCfbdStats] = useState<CfbdPickemStats | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
+  const { week: adminWeek } = useAdminWeek();
 
   useEffect(() => {
     setChecklist(loadChecklist());
@@ -233,10 +235,10 @@ export default function PoolsMenuPanel({
 
   useEffect(() => {
     if (ratingsLoading) return;
-    fetchPoolLiveScores(new Date().getFullYear(), liveByTeam)
+    fetchPoolLiveScores(new Date().getFullYear(), liveByTeam, adminWeek)
       .then(setLiveScores)
       .catch((err) => setLiveScoresError(err.message ?? "Failed to load live scores"));
-  }, [ratingsLoading]);
+  }, [ratingsLoading, adminWeek]);
 
   useEffect(() => {
     if (!liveScores) return;

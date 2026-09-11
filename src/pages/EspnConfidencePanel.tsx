@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
@@ -527,6 +528,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
 export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
   const [refreshKey, setRefreshKey] = useState(0);
 
   return (

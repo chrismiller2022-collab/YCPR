@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
@@ -62,6 +63,7 @@ function fmtAbs(v: number | null, decimals = 2) {
 export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
   const [rows, setRows] = useState<CbsSplashRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

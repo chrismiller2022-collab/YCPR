@@ -55,10 +55,18 @@ export interface PoolLiveScores {
  * Survivor/Splash Survivor aren't included either — their "current
  * pick" lives in browser localStorage, not a game_id-bearing Supabase
  * row, so they need their own resolution path (see SurvivorPanel.tsx).
+ *
+ * `weekOverride` lets a caller pin this to a specific week (the
+ * site-wide Admin week selector) instead of auto-resolving "this week"
+ * from synced games.
  */
-export async function fetchPoolLiveScores(season: number, liveByTeam: Record<string, any> = {}): Promise<PoolLiveScores> {
+export async function fetchPoolLiveScores(
+  season: number,
+  liveByTeam: Record<string, any> = {},
+  weekOverride?: number
+): Promise<PoolLiveScores> {
   const seasonGames = await fetchGamesWithLines(season);
-  const week = computeCurrentWeek(seasonGames.map((g) => ({ week: g.week, completed: g.completed })));
+  const week = weekOverride ?? computeCurrentWeek(seasonGames.map((g) => ({ week: g.week, completed: g.completed })));
 
   const [cbsSplashRows, peayRows, westgateRows, britPicks, espnMlRows, espnSpreadRows, cbsPickemRows] = await Promise.all([
     fetchCbsSplashWeek(season, week, liveByTeam),
