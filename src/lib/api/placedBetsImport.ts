@@ -10,8 +10,9 @@ import type { BetBook, BetType, BetResult, NewPlacedBet } from "./placedBets";
 //
 // - date: anything Date.parse can read (e.g. 2026-08-15, 8/15/2026) —
 //   used only to narrow which season's games to search, not stored.
-// - book: bovada | betonline | novig | kalshi (case-insensitive, "bet
-//   online"/"betonlineag" all accepted).
+// - book: bovada | betonline | novig | kalshi | dkpredictions
+//   (case-insensitive, "bet online"/"betonlineag" and "dk predictions"/"dk"
+//   all accepted).
 // - away_team / home_team: any reasonably recognizable team name —
 //   matched against the site's canonical roster the same way The Odds
 //   API's "School Mascot" names are (see teamNameMatch.ts). A row that
@@ -49,6 +50,9 @@ const BOOK_ALIASES: Record<string, BetBook> = {
   "bet online": "betonlineag",
   novig: "novig",
   kalshi: "kalshi",
+  dkpredictions: "dkpredictions",
+  "dk predictions": "dkpredictions",
+  dk: "dkpredictions",
 };
 
 const BET_TYPE_ALIASES: Record<string, BetType> = {

@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 
-export type BetBook = "bovada" | "betonlineag" | "novig" | "kalshi";
+export type BetBook = "bovada" | "betonlineag" | "novig" | "kalshi" | "dkpredictions";
 export type BetType = "spread" | "moneyline" | "total" | "team_total";
 export type BetResult = "win" | "loss" | "push" | "pending";
 
@@ -78,4 +78,5 @@ export const BOOK_LABELS: Record<BetBook, string> = {
   betonlineag: "BetOnline",
   novig: "Novig",
   kalshi: "Kalshi",
+  dkpredictions: "DK Predictions",
 };

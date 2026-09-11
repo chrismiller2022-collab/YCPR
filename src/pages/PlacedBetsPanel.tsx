@@ -142,6 +142,132 @@ function fmtMoneyPlain(v: number): string {
   return v.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 }
 
+// ---------------------------------------------------------------------
+// Exposure Tracker — every game with money on it, grouped across all
+// books, so a quick glance shows what's actually riding on each kickoff
+// this week. "Rooting interest" translates the stored side/line back
+// into what you're actually hoping happens on the field, independent of
+// which book's own market wording it came from.
+// ---------------------------------------------------------------------
+function fmtLineAbs(v: number | null): string {
+  return v == null ? "–" : v.toFixed(1);
+}
+function fmtStake(v: number | null): string {
+  return v == null ? "–" : `$${v.toFixed(2)}`;
+}
+function fmtKickoff(iso: string | null): string {
+  if (!iso) return "TBD";
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function rootingInterest(bet: PlacedBetRow): string {
+  if (bet.bet_type === "moneyline") return `${bet.side} to win`;
+  if (bet.bet_type === "spread") return `${bet.side} ${fmtLine(bet.line_value)} to cover`;
+  if (bet.bet_type === "team_total") {
+    const s = splitTeamTotalSide(bet.side);
+    return s ? `${s.team} team total ${s.dir} ${fmtLineAbs(bet.line_value)}` : bet.side;
+  }
+  return `Game ${bet.side} ${fmtLineAbs(bet.line_value)}`;
+}
+
+interface GameExposure {
+  gameId: string;
+  game: GameWithLines;
+  bets: PlacedBetRow[];
+  totalStake: number;
+}
+
+function buildExposure(bets: PlacedBetRow[], gamesById: Map<string, GameWithLines>): GameExposure[] {
+  const byGame = new Map<string, PlacedBetRow[]>();
+  bets.forEach((b) => {
+    if (b.stake == null || b.stake === 0) return;
+    if (!byGame.has(b.game_id)) byGame.set(b.game_id, []);
+    byGame.get(b.game_id)!.push(b);
+  });
+  const out: GameExposure[] = [];
+  byGame.forEach((gameBets, gameId) => {
+    const game = gamesById.get(gameId);
+    if (!game) return;
+    const totalStake = gameBets.reduce((sum, b) => sum + (b.stake ?? 0), 0);
+    out.push({ gameId, game, bets: gameBets, totalStake });
+  });
+  return out;
+}
+
+type ExposureSortKey = "kickoff" | "stake";
+
+function ExposureTrackerSection({ bets, gamesById }: { bets: PlacedBetRow[]; gamesById: Map<string, GameWithLines> }) {
+  const [sortKey, setSortKey] = useState<ExposureSortKey>("kickoff");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const exposures = useMemo(() => {
+    const list = buildExposure(bets, gamesById);
+    return [...list].sort((a, b) => {
+      const av = sortKey === "kickoff" ? new Date(a.game.start_date ?? 0).getTime() : a.totalStake;
+      const bv = sortKey === "kickoff" ? new Date(b.game.start_date ?? 0).getTime() : b.totalStake;
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [bets, gamesById, sortKey, sortDir]);
+
+  function toggleSort(key: ExposureSortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "kickoff" ? "asc" : "desc");
+    }
+  }
+
+  const totalAcrossGames = useMemo(() => exposures.reduce((sum, ex) => sum + ex.totalStake, 0), [exposures]);
+
+  if (exposures.length === 0) {
+    return <p style={{ color: "var(--chalk-dim)" }}>No games with a stake in view.</p>;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort by:</span>
+        <button className="menu-btn" onClick={() => toggleSort("kickoff")} style={{ fontWeight: sortKey === "kickoff" ? 700 : 400 }}>
+          Kickoff {sortKey === "kickoff" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+        </button>
+        <button className="menu-btn" onClick={() => toggleSort("stake")} style={{ fontWeight: sortKey === "stake" ? 700 : 400 }}>
+          Total Stake {sortKey === "stake" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+        </button>
+        <span style={{ marginLeft: "auto", fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
+          {exposures.length} game{exposures.length === 1 ? "" : "s"} · {fmtStake(totalAcrossGames)} total across all books
+        </span>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+        {exposures.map((ex) => (
+          <div
+            key={ex.gameId}
+            style={{ padding: "0.7rem 0.9rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.4rem" }}>
+              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                <TeamLink team={ex.game.away_team} size={16} /> @ <TeamLink team={ex.game.home_team} size={16} />
+              </div>
+              <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{fmtKickoff(ex.game.start_date)}</div>
+              <div style={{ fontWeight: 700, color: "var(--gold, #d9a441)" }}>{fmtStake(ex.totalStake)} total</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+              {ex.bets.map((bet) => (
+                <div key={bet.id} style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem" }}>
+                  <span>
+                    <span style={{ color: "var(--chalk-dim)" }}>{BOOK_LABELS[bet.book] ?? bet.book}:</span> {rootingInterest(bet)}
+                  </span>
+                  <span style={{ flexShrink: 0 }}>{fmtStake(bet.stake)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PoolSummaryChip({ label, cost, winnings }: { label: string; cost: number; winnings: number }) {
   const net = winnings - cost;
   return (
@@ -397,6 +523,14 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
       {!loading && visibleBets.length > 0 && (
         <>
+          <h3 style={{ marginBottom: "0.5rem" }}>Exposure Tracker</h3>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+            Every game in view with a stake on it, across all books, with what you're actually rooting for.
+          </p>
+          <div style={{ marginBottom: "1.75rem" }}>
+            <ExposureTrackerSection bets={visibleBets} gamesById={gamesById} />
+          </div>
+
           <h3 style={{ marginBottom: "0.5rem" }}>Bets</h3>
 
           <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: "0.4rem" }}>
