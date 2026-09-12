@@ -10,7 +10,10 @@ import WatchabilityPage from "./WatchabilityPage";
 import TvGuidePanel, { STREAMING_CHANNEL_KEY } from "./TvGuidePanel";
 import { isSaturdayET, etDateString } from "../lib/watchability";
 import ConferencePreviewPage from "./ConferencePreviewPage";
-import { conferencesForDivision } from "../data/teams";
+import { fetchTeamSos, type TeamSosRow } from "../lib/api/ratingSystems";
+import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
+import type { TeamSimResult } from "../lib/montecarlo/engine";
+import { conferencesForDivision, TEAMS_BY_NAME } from "../data/teams";
 import { fetchAvailableWeeks, fetchWeeklyStats, weekLabel, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -19,7 +22,8 @@ import { useGameProjectionLocks, type GameProjectionLockRow } from "../lib/api/g
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { classOf, isTracked, computeRow } from "../lib/matchupsCompute";
 import { buildSlateRow, filterSlateRowsByDay, computeSlatePerformance, type SlateGameRow, type SlatePerformanceSummary } from "../lib/matchupSlate";
-import { BET_HISTORY } from "../data/betHistory.data";
+import { BET_HISTORY, type BetHistoryRecord } from "../data/betHistory.data";
+import { buildLiveBetHistoryRecords } from "../lib/betHistory";
 
 // Shared by every Matchups target below — same filter+compute+shape
 // pipeline the live Weekly Matchups page uses (classOf -> computeRow ->
@@ -49,6 +53,7 @@ function buildDivisionSlateRows(
 }
 import {
   buildDivisionResolvedTeams,
+  buildActualRecordByTeam,
   metricGainersLosers,
   toLossesLeftRows,
   toRatingRows,
@@ -345,6 +350,26 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     };
   }, [season, previousWeekNum]);
 
+  // Whole-season games (every week, not just the one being reported) —
+  // needed to tally each team's REAL wins/losses so far for Win Totals'
+  // Wins Left/Losses Left, instead of trusting the weekly upload's
+  // live_wins/live_losses columns (see buildActualRecordByTeam).
+  const [seasonGamesAll, setSeasonGamesAll] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGamesWithLines(season).then((games) => {
+      if (!cancelled) setSeasonGamesAll(games);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const actualRecordByTeam = useMemo(
+    () => buildActualRecordByTeam(seasonGamesAll, scheduleWeekNum),
+    [seasonGamesAll, scheduleWeekNum]
+  );
+
   // TV Guide's own week-based filter combines every day in the schedule
   // week onto one grid — fine normally, but CFBD's week numbering can
   // bundle a Week 0 slate (played a full week earlier) into "Week 1",
@@ -478,10 +503,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // grouped into two labeled sections (not blended/interleaved) within
   // one graphic per Chris — see MatchupGridGraphic.tsx's sections prop.
 
-  // "Review" — last week's FBS-vs-FBS + FBS-vs-FCS games (all days,
-  // completed only), combined into one graphic. Week 1 has no previous
-  // week to review, so it reviews its own completed-so-far games
-  // instead — same shape, different source week and a distinctly-worded
+  // "Review" — last week's FBS-vs-FBS and FBS-vs-FCS games (all days,
+  // completed only), as two SEPARATE graphics (see matchupsReviewFbsFbsRef/
+  // matchupsReviewCrossRef below) — a combined single image ran too long.
+  // Week 1 has no previous week to review, so it reviews its own
+  // completed-so-far games instead — same shape, different source week
+  // and a distinctly-worded
   // label (reviewLabel below) so it's never confused with a genuine
   // previous-week review once Week 2's package also contains "Week 1"
   // games, just framed as the completed prior week rather than
@@ -497,33 +524,48 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     () => (reviewWeekNum == null ? [] : buildDivisionSlateRows(reviewGames, reviewRatings, projTotalByGame, "Cross", fbsTotalPoolStd, locks)),
     [reviewWeekNum, reviewGames, reviewRatings, projTotalByGame, fbsTotalPoolStd, locks]
   );
-  const reviewRows = useMemo(
-    () => [...reviewFbsFbsRows, ...reviewCrossRows].filter((r) => r.completed),
-    [reviewFbsFbsRows, reviewCrossRows]
-  );
   // Used as the graphic's HEADER now (not eyebrow) — natural casing,
   // since the header's own styling already applies text-transform:
   // uppercase visually.
   const reviewLabel = previousWeekNum != null ? `${weekLabel(`week${previousWeekNum}`)} Review` : `${weekLabel(currentWeek)} Results So Far`;
 
-  // "This image" performance — the exact rows shown in the Review
-  // graphic (already FBS-vs-FBS + Cross only, FCS-vs-FCS never
-  // included by construction — see reviewFbsFbsRows/reviewCrossRows
-  // above).
-  const reviewImagePerformance = useMemo(() => computeSlatePerformance(reviewRows), [reviewRows]);
+  // "This image" performance — split the same way the Review graphic
+  // itself is now split (see reviewFbsFbsRows/reviewCrossRows above and
+  // the two separate MatchupGridGraphic calls below). computeSlatePerformance
+  // already skips incomplete rows internally, so no extra filtering needed.
+  const reviewFbsFbsPerformance = useMemo(() => computeSlatePerformance(reviewFbsFbsRows), [reviewFbsFbsRows]);
+  const reviewCrossPerformance = useMemo(() => computeSlatePerformance(reviewCrossRows), [reviewCrossRows]);
 
   // Season-long performance — deliberately NOT built from SlateGameRow
-  // (that would need week-accurate ratings for every week of the
-  // season just to answer this one question). Spreads pull from
-  // BET_HISTORY (already-graded historical data, one row per game);
-  // totals pull from gameTotalsEngine's own full-season rows via
-  // buildBetRows, the same function/threshold (1.0 std dev) already
-  // used for Total Bets everywhere else in this file. Both exclude
-  // FCS-vs-FCS: BET_HISTORY only ever contained FBS games to begin
-  // with (this site's core betting focus historically), and totals
-  // uses filterRowsByDivision-style logic to keep FBS-vs-FBS + Cross.
-  const seasonSpreadPerformance = useMemo(() => {
-    const rows = BET_HISTORY.filter((r) => r.season === season);
+  // (that would need week-accurate ratings for every week of the season
+  // just to answer this one question). Spreads pull from BET_HISTORY
+  // (already-graded historical data, one row per game) for a season it
+  // covers (2024/2025), or from buildLiveBetHistoryRecords — the exact
+  // same live-computation BetHistoryAdminPanel uses for 2026+ — for a
+  // season it doesn't. Split into FBS-vs-FBS and FBS-vs-FCS (Cross) by
+  // each record's own two team names; FCS-vs-FCS is dropped from both
+  // (this site's core betting focus never covered it). Totals pull from
+  // gameTotalsEngine's own full-season rows via buildBetRows, the same
+  // function/threshold (1.0 std dev) already used for Total Bets
+  // everywhere else in this file — Cross has none: FBS-vs-FCS games
+  // don't reliably carry a total line/projection, so that performance
+  // block only ever shows spreads (see showTotals={false} below).
+  const seasonSpreadRecords = useMemo(() => {
+    const historical = BET_HISTORY.filter((r) => r.season === season);
+    const live = historical.length > 0 ? [] : buildLiveBetHistoryRecords(seasonGamesAll, liveByTeam, "team");
+    return [...historical, ...live];
+  }, [season, seasonGamesAll, liveByTeam]);
+
+  function classifyRecord(r: BetHistoryRecord): "fbsfbs" | "cross" | "fcsfcs" | "other" {
+    const home = TEAMS_BY_NAME[r.homeTeam]?.div;
+    const away = TEAMS_BY_NAME[r.awayTeam]?.div;
+    if (home === "FBS" && away === "FBS") return "fbsfbs";
+    if (home === "FCS" && away === "FCS") return "fcsfcs";
+    if (home && away) return "cross";
+    return "other";
+  }
+
+  function tallySpreadRecords(rows: BetHistoryRecord[]) {
     const everyGameSpreads = { w: 0, l: 0, push: 0 };
     const spreadBets = { w: 0, l: 0, push: 0 };
     const errors: number[] = [];
@@ -550,13 +592,19 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         : (absErrors[absErrors.length / 2 - 1] + absErrors[absErrors.length / 2]) / 2;
     const meanSquaredError = errors.length > 0 ? errors.reduce((sum, e) => sum + e * e, 0) / errors.length : null;
     return { everyGameSpreads, spreadBets, meanAbsError, medianAbsError, meanSquaredError };
-  }, [season]);
+  }
 
-  const seasonTotalsPerformance = useMemo(() => {
-    const notFcsVFcs = totalsEngineRows.filter(
-      (r) => !(r.game.homeClassification === "fcs" && r.game.awayClassification === "fcs")
-    );
-    const betRows = buildBetRows(notFcsVFcs, 1.0);
+  const seasonSpreadPerformanceFbsFbs = useMemo(
+    () => tallySpreadRecords(seasonSpreadRecords.filter((r) => classifyRecord(r) === "fbsfbs")),
+    [seasonSpreadRecords]
+  );
+  const seasonSpreadPerformanceCross = useMemo(
+    () => tallySpreadRecords(seasonSpreadRecords.filter((r) => classifyRecord(r) === "cross")),
+    [seasonSpreadRecords]
+  );
+
+  function tallyTotalsRows(rows: typeof totalsEngineRows) {
+    const betRows = buildBetRows(rows, 1.0);
     const everyGameTotals = { w: 0, l: 0, push: 0 };
     const totalBets = { w: 0, l: 0, push: 0 };
     for (const r of betRows) {
@@ -570,15 +618,20 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       }
     }
     return { everyGameTotals, totalBets };
-  }, [totalsEngineRows]);
+  }
+
+  const seasonTotalsPerformanceFbsFbs = useMemo(
+    () => tallyTotalsRows(totalsEngineRows.filter((r) => r.game.homeClassification === "fbs" && r.game.awayClassification === "fbs")),
+    [totalsEngineRows]
+  );
 
   const fbsRows = useMemo(
-    () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam),
-    [liveByTeam, ratingChangeByTeam]
+    () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam, actualRecordByTeam),
+    [liveByTeam, ratingChangeByTeam, actualRecordByTeam]
   );
   const fcsRows = useMemo(
-    () => buildDivisionResolvedTeams("FCS", liveByTeam, ratingChangeByTeam),
-    [liveByTeam, ratingChangeByTeam]
+    () => buildDivisionResolvedTeams("FCS", liveByTeam, ratingChangeByTeam, actualRecordByTeam),
+    [liveByTeam, ratingChangeByTeam, actualRecordByTeam]
   );
 
   // --- Power Ratings (FBS + FCS) ---
@@ -598,14 +651,18 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsResumeLosers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeChangeByTeam, "losers", true, TOP_N);
 
   // --- SOS (FBS only) ---
-  // SOS convention: positive = harder schedule, negative = easier (see
-  // imageDump.ts's toSosRows). "Top 30 Hardest"/"Top 30 Easiest" are two
-  // independent ranked lists of equal length (rank 1 = hardest on the
-  // left, rank 1 = easiest on the right), not two halves of one list —
-  // each gets its own rank computed fresh here rather than reusing
-  // sosRank (which is a single ascending-only rank across the whole
-  // division and would show confusing high numbers at the top of the
-  // Hardest side). Equal length matters for more than symmetry: a
+  // SOS convention: negative = harder schedule, positive = easier — same
+  // sign convention as Power Rating (lower/negative = better team, so a
+  // more negative average-opponent number means tougher opponents).
+  // Colored accordingly (see CompactPowerRatingsGraphic's ratingColor):
+  // higherIsBetter=true on these calls makes negative read red (hard)
+  // and positive read green (easy). "Top 30 Hardest"/"Top 30 Easiest"
+  // are two independent ranked lists of equal length (rank 1 = hardest
+  // on the left, rank 1 = easiest on the right), not two halves of one
+  // list — each gets its own rank computed fresh here rather than
+  // reusing sosRank (which is a single ascending-only rank across the
+  // whole division and would show confusing high numbers at the top of
+  // the Hardest side). Equal length matters for more than symmetry: a
   // shorter Easiest column read as visually lopsided next to the full
   // Hardest column.
   const fbsSosFull = toSosRows(fbsRows);
@@ -614,27 +671,29 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     .map((r) => ({ team: r.team, conf: r.conf, sos: r.sos }))
     .filter((r): r is { team: string; conf: string; sos: number } => r.sos != null);
   const fbsSosHardest = fbsSosValues
-    .filter((r) => r.sos > 0)
-    .sort((a, b) => b.sos - a.sos)
-    .slice(0, TOP_N)
-    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
-  const fbsSosEasiest = fbsSosValues
     .filter((r) => r.sos < 0)
     .sort((a, b) => a.sos - b.sos)
     .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
+  const fbsSosEasiest = fbsSosValues
+    .filter((r) => r.sos > 0)
+    .sort((a, b) => b.sos - a.sos)
+    .slice(0, TOP_N)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.sos }));
 
+  // A team's SOS getting more NEGATIVE is its schedule getting harder
+  // (same sign convention as above) — "Got Harder" is change < 0.
   const fbsSosChanges = fbsRows
     .map((r) => ({ team: r.team, conf: r.conf, change: sosChangeByTeam[r.team]?.change ?? null }))
     .filter((r): r is { team: string; conf: string; change: number } => r.change != null);
   const fbsSosGotHarder = fbsSosChanges
-    .filter((r) => r.change > 0)
-    .sort((a, b) => b.change - a.change)
+    .filter((r) => r.change < 0)
+    .sort((a, b) => a.change - b.change)
     .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
   const fbsSosGotEasier = fbsSosChanges
-    .filter((r) => r.change < 0)
-    .sort((a, b) => a.change - b.change)
+    .filter((r) => r.change > 0)
+    .sort((a, b) => b.change - a.change)
     .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
 
@@ -696,7 +755,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
   const crossMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
-  const matchupsReviewRef = useRef<HTMLDivElement>(null);
+  const matchupsReviewFbsFbsRef = useRef<HTMLDivElement>(null);
+  const matchupsReviewCrossRef = useRef<HTMLDivElement>(null);
   // Watchability / TV Guide refs — passed straight into the live pages as
   // shareRef, so these ARE the exact nodes their own Export PNG buttons
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx). Both are
@@ -727,6 +787,31 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     ],
     []
   );
+
+  // Pre-fetched here (once, on mount, well before Generate is ever
+  // clicked) and handed to ConferencePreviewPage as an override instead
+  // of letting it fetch these itself — its own fetches are genuinely
+  // async, so the alphabetically-FIRST conference in the swap-through
+  // sequence above used to get captured before they'd resolved (this
+  // page has just mounted at that instant), showing 0.00 win projections
+  // and no Monte Carlo table only on that one conference. Every later
+  // conference reused the same mounted instance's by-then-resolved
+  // state, so the bug looked conference-specific (always whichever
+  // conference sorts first) but was really a first-capture race.
+  const [confPreviewSosByTeam, setConfPreviewSosByTeam] = useState<Record<string, TeamSosRow>>({});
+  useEffect(() => {
+    fetchTeamSos(season)
+      .then(setConfPreviewSosByTeam)
+      .catch(() => setConfPreviewSosByTeam({}));
+  }, [season]);
+
+  const [confPreviewMc, setConfPreviewMc] = useState<{ results: TeamSimResult[]; numTrials: number } | null>(null);
+  useEffect(() => {
+    fetchMonteCarloRuns(season)
+      .then((runs) => (runs.length > 0 ? fetchMonteCarloRun(runs[0].id) : null))
+      .then((run) => setConfPreviewMc(run ? { results: run.results, numTrials: run.num_trials } : null))
+      .catch(() => setConfPreviewMc(null));
+  }, [season]);
   const [activeConferenceIdx, setActiveConferenceIdx] = useState<number | null>(null);
   const conferencePreviewRef = useRef<HTMLDivElement>(null);
 
@@ -752,10 +837,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "19-fcs-win-totals-wins-losses-left", node: () => fcsWinsLossesLeftRef.current, branding: false, division: "FCS" },
     { key: "20-fbs-playoff-bracket", node: () => fbsBracketRef.current, division: "FBS" },
     { key: "21-fcs-playoff-bracket", node: () => fcsBracketRef.current, division: "FCS" },
-    // Review — last week's FBS-vs-FBS + FBS-vs-FCS (all days, completed
-    // only); Week 1 reviews its own completed-so-far games instead of a
-    // previous week (see reviewLabel/reviewRows above).
-    { key: "22-matchups-review", node: () => matchupsReviewRef.current, branding: false, division: "FBS" },
+    // Review — last week's FBS-vs-FBS and FBS-vs-FCS (all days, completed
+    // only), as two separate images; Week 1 reviews its own completed-so-far
+    // games instead of a previous week (see reviewLabel above).
+    { key: "22-matchups-review-fbs-fbs", node: () => matchupsReviewFbsFbsRef.current, branding: false, division: "FBS" },
+    { key: "22b-matchups-review-fbs-fcs", node: () => matchupsReviewCrossRef.current, branding: false, division: "FBS" },
     // Upcoming Midweek — FBS-vs-FBS midweek + FBS-vs-FCS midweek
     // combined into one graphic per Chris, replacing what used to be
     // FBS-vs-FBS midweek's own solo target.
@@ -1157,12 +1243,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
             {/* SOS — FBS only */}
             <div ref={sosFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Full List" sections={[{ title: "", rows: fbsSosFull }]} valueLabel="SOS" />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Strength of Schedule — Full List" sections={[{ title: "", rows: fbsSosFull }]} valueLabel="SOS" higherIsBetter />
             </div>
             <div ref={sosHardEasyRef} style={CAPTURE_WRAP_STYLE}>
               {/* Two independent lists side by side, not one list split in
-                  half — left is the 30 toughest schedules (positive SOS),
-                  right is the 25 easiest (negative SOS). Each section is
+                  half — left is the 30 toughest schedules (negative SOS),
+                  right is the 25 easiest (positive SOS). Each section is
                   its own single column (targetRowsPerColumn=30 keeps both
                   under one column since neither list exceeds 30 rows). */}
               <CompactPowerRatingsGraphic
@@ -1174,6 +1260,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 ]}
                 targetRowsPerColumn={TOP_N}
                 valueLabel="SOS"
+                higherIsBetter
                 sideBySide
               />
             </div>
@@ -1187,6 +1274,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 ]}
                 targetRowsPerColumn={TOP_N}
                 valueLabel="CHANGE"
+                higherIsBetter
                 sideBySide
               />
             </div>
@@ -1260,33 +1348,56 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 Saturday slate read as too long scrolling down one
                 column.
 
-                Six graphics per Chris's spec:
-                - Review: last week's FBS-vs-FBS + FBS-vs-FCS, all days,
-                  completed only, combined into one graphic. Week 1 has
-                  no previous week, so it reviews its own completed-so-far
-                  games instead (reviewLabel makes this distinction
-                  explicit rather than both cases just saying "Week 1").
+                Seven graphics per Chris's spec:
+                - Review: last week's FBS-vs-FBS and FBS-vs-FCS, all days,
+                  completed only, as two SEPARATE graphics (a combined one
+                  ran too long). Week 1 has no previous week, so it reviews
+                  its own completed-so-far games instead (reviewLabel makes
+                  this distinction explicit rather than both cases just
+                  saying "Week 1").
                 - Upcoming Midweek: FBS-vs-FBS midweek + FBS-vs-FCS
                   midweek combined into one graphic.
                 - FBS vs FBS Saturday and FBS vs FCS Saturday: two
                   separate graphics, same as the original design.
                 - FCS vs FCS Midweek and Saturday: unaffected by any of
                   the above — still their own separate graphics. */}
-            <div ref={matchupsReviewRef} style={CAPTURE_WRAP_STYLE}>
+            <div ref={matchupsReviewFbsFbsRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic
                 eyebrow="Review"
-                header={reviewLabel}
-                rows={reviewRows}
+                header={`${reviewLabel} — FBS vs FBS`}
+                rows={reviewFbsFbsRows}
                 performanceTable={{
-                  thisImage: reviewImagePerformance,
+                  title: "Performance (FBS vs FBS)",
+                  thisImage: reviewFbsFbsPerformance,
                   seasonLong: {
-                    everyGameSpreads: seasonSpreadPerformance.everyGameSpreads,
-                    spreadBets: seasonSpreadPerformance.spreadBets,
-                    everyGameTotals: seasonTotalsPerformance.everyGameTotals,
-                    totalBets: seasonTotalsPerformance.totalBets,
-                    meanAbsError: seasonSpreadPerformance.meanAbsError,
-                    medianAbsError: seasonSpreadPerformance.medianAbsError,
-                    meanSquaredError: seasonSpreadPerformance.meanSquaredError,
+                    everyGameSpreads: seasonSpreadPerformanceFbsFbs.everyGameSpreads,
+                    spreadBets: seasonSpreadPerformanceFbsFbs.spreadBets,
+                    everyGameTotals: seasonTotalsPerformanceFbsFbs.everyGameTotals,
+                    totalBets: seasonTotalsPerformanceFbsFbs.totalBets,
+                    meanAbsError: seasonSpreadPerformanceFbsFbs.meanAbsError,
+                    medianAbsError: seasonSpreadPerformanceFbsFbs.medianAbsError,
+                    meanSquaredError: seasonSpreadPerformanceFbsFbs.meanSquaredError,
+                  },
+                }}
+              />
+            </div>
+            <div ref={matchupsReviewCrossRef} style={CAPTURE_WRAP_STYLE}>
+              <MatchupGridGraphic
+                eyebrow="Review"
+                header={`${reviewLabel} — FBS vs FCS`}
+                rows={reviewCrossRows}
+                performanceTable={{
+                  title: "Performance (FBS vs FCS)",
+                  showTotals: false,
+                  thisImage: reviewCrossPerformance,
+                  seasonLong: {
+                    everyGameSpreads: seasonSpreadPerformanceCross.everyGameSpreads,
+                    spreadBets: seasonSpreadPerformanceCross.spreadBets,
+                    everyGameTotals: { w: 0, l: 0, push: 0 },
+                    totalBets: { w: 0, l: 0, push: 0 },
+                    meanAbsError: seasonSpreadPerformanceCross.meanAbsError,
+                    medianAbsError: seasonSpreadPerformanceCross.medianAbsError,
+                    meanSquaredError: seasonSpreadPerformanceCross.meanSquaredError,
                   },
                 }}
               />
@@ -1367,7 +1478,13 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 activeConferenceIdx above). Not mounted at all when idle. */}
             {activeConferenceIdx != null && (
               <div ref={conferencePreviewRef} style={CAPTURE_WRAP_STYLE}>
-                <ConferencePreviewPage conference={divisionConferences[activeConferenceIdx].conf} onNavigateTeam={() => {}} onHome={() => {}} />
+                <ConferencePreviewPage
+                  conference={divisionConferences[activeConferenceIdx].conf}
+                  onNavigateTeam={() => {}}
+                  onHome={() => {}}
+                  sosByTeamOverride={confPreviewSosByTeam}
+                  mcOverride={confPreviewMc}
+                />
               </div>
             )}
           </OffscreenStage>

@@ -6,6 +6,7 @@ import { gamesForTeam } from "../data/games";
 import { TEAM_WIN_TOTALS, buildRankMap } from "./ranks";
 import { bucketFor } from "./conferenceBuckets";
 import { fetchWeeklyStats, type WeeklyTeamStats } from "./api/weeklyStats";
+import type { GameWithLines } from "./api/gamesLines";
 import type { CompactRatingRow } from "./compactPowerRatings";
 
 // ---------------------------------------------------------------------
@@ -57,21 +58,65 @@ export interface ImageDumpTeamRow {
 }
 
 /**
+ * Real win/loss tallies from actual completed games (score-decided, not
+ * just "kicked off") through a given week — same reasoning as
+ * schedule.ts's own liveWins/liveLosses (TeamPage's stat cards): the
+ * weekly upload's live_wins/live_losses columns depend on Chris pasting
+ * them by hand and silently read as 0 when he hasn't, which is
+ * indistinguishable from "actually 0-0." Recomputing from the synced
+ * `games` table instead is always right regardless of that column.
+ * `throughWeek` scopes this to a specific week's snapshot (so
+ * regenerating an older week's report doesn't count games that hadn't
+ * been played yet as of that week) — pass null for "every synced game."
+ */
+export function buildActualRecordByTeam(
+  games: GameWithLines[],
+  throughWeek: number | null
+): Record<string, { wins: number; losses: number }> {
+  const record: Record<string, { wins: number; losses: number }> = {};
+  const bump = (team: string, won: boolean) => {
+    if (!record[team]) record[team] = { wins: 0, losses: 0 };
+    if (won) record[team].wins++;
+    else record[team].losses++;
+  };
+
+  for (const g of games) {
+    if (throughWeek != null && g.week > throughWeek) continue;
+    if (!g.completed || g.home_points == null || g.away_points == null) continue;
+    if (g.home_points === g.away_points) continue; // no such thing in CFB, but guards a push either way
+    bump(g.home_team, g.home_points > g.away_points);
+    bump(g.away_team, g.away_points > g.home_points);
+  }
+
+  return record;
+}
+
+/**
  * Resolves every team in one division to its live-preferred values (same
  * live-over-preseason precedence as HomePage.tsx's resolvedAll), then
  * ranks/sorts strictly within that division. `liveByTeam` should be keyed
  * by team name, from fetchWeeklyStats(week) for whatever week the caller
  * has selected as "current."
+ *
+ * `actualRecordByTeam`, when given, overrides live_wins/live_losses with
+ * a real tally from completed games (see buildActualRecordByTeam) —
+ * those two upload columns depend on Chris pasting them by hand every
+ * week, which he doesn't reliably do, and silently default to 0 (i.e.
+ * "no wins banked yet") when missing rather than erroring. Wins
+ * Left/Losses Left need the real count regardless of whether that
+ * column was ever filled in, so the caller should always pass this now.
  */
 export function buildDivisionResolvedTeams(
   division: "FBS" | "FCS",
   liveByTeam: Record<string, WeeklyTeamStats>,
-  changeByTeam: Record<string, { change: number | null }> = {}
+  changeByTeam: Record<string, { change: number | null }> = {},
+  actualRecordByTeam: Record<string, { wins: number; losses: number }> = {}
 ): ImageDumpTeamRow[] {
   const divTeams = TEAMS.filter((t) => t.div === division);
 
   const withRating = divTeams.map((t) => {
     const live = liveByTeam[t.team];
+    const actual = actualRecordByTeam[t.team];
     return {
       team: t.team,
       conf: t.conf,
@@ -82,8 +127,8 @@ export function buildDivisionResolvedTeams(
       sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
       resumeRating: live?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
       resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
-      liveWins: live?.live_wins ?? 0,
-      liveLosses: live?.live_losses ?? 0,
+      liveWins: actual?.wins ?? live?.live_wins ?? 0,
+      liveLosses: actual?.losses ?? live?.live_losses ?? 0,
     };
   });
 

@@ -95,7 +95,12 @@ function ratingColor(
   if (colorScale === "percentile") {
     return rankPercentileColor(rank, totalRows, higherIsBetter);
   }
-  return absoluteRatingColor(value);
+  // Same sign-flip as the change-value branch above — higherIsBetter=true
+  // reads a higher raw value as the "good" (green) end. Every existing
+  // threshold caller (Power Rating) leaves this false, so this only
+  // changes behavior for a caller that explicitly opts in (SOS's
+  // Hardest/Easiest, where a higher value is the tougher schedule).
+  return absoluteRatingColor(higherIsBetter ? -value : value);
 }
 
 function CompactSection({

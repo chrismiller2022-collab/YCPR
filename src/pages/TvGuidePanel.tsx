@@ -51,6 +51,15 @@ export const STREAMING_CHANNEL_KEY = NORMALIZED_CHANNEL_ORDER.find((c) => c.labe
 
 const SLOT_MINUTES = 15;
 const GAME_LENGTH_MINUTES = 3.5 * 60;
+// Hard stop at 2:00 AM the following day, regardless of how late a game
+// actually kicked off or how long GAME_LENGTH_MINUTES would otherwise run
+// it — a chart that stretches out to whenever the single latest kickoff's
+// assumed length ends left almost every other channel's row mostly blank
+// space out to that point. Bars still in progress at the cutoff are
+// shortened to end exactly at the grid's right edge instead of overflowing
+// past it (see the width calc below), so the image itself never runs past
+// 2 AM either.
+const HARD_CUTOFF_MINUTES = 26 * 60;
 
 interface TvGame {
   game: GameWithLines;
@@ -306,7 +315,10 @@ export default function TvGuidePanel({
     if (tvGames.length === 0) return { axisStart: 12 * 60, slotCount: Math.round(GAME_LENGTH_MINUTES / SLOT_MINUTES) };
     const starts = tvGames.map((g) => g.startMinutes);
     const earliest = Math.min(...starts) - (Math.min(...starts) % SLOT_MINUTES);
-    const latest = Math.max(...starts) + GAME_LENGTH_MINUTES;
+    // Never past the 2 AM hard cutoff — but also never forced OUT to it
+    // when every game's actually done well before then (that's the same
+    // "blank space for no reason" problem in the other direction).
+    const latest = Math.min(Math.max(...starts) + GAME_LENGTH_MINUTES, HARD_CUTOFF_MINUTES);
     const end = Math.ceil(latest / SLOT_MINUTES) * SLOT_MINUTES;
     return { axisStart: earliest, slotCount: Math.max(1, Math.round((end - earliest) / SLOT_MINUTES)) };
   }, [tvGames]);
@@ -314,7 +326,7 @@ export default function TvGuidePanel({
   const slots = useMemo(() => Array.from({ length: slotCount + 1 }, (_, i) => axisStart + i * SLOT_MINUTES), [slotCount, axisStart]);
 
   const COL_WIDTH = 34;
-  const LANE_HEIGHT = 64;
+  const LANE_HEIGHT = 74;
   const CHANNEL_COL_WIDTH = 130;
 
   const exportFilenameLabel = dateOverride || (week != null ? `week-${week}` : "guide");
@@ -500,7 +512,11 @@ export default function TvGuidePanel({
                     ))}
                     {channelGames.map((g) => {
                       const left = ((g.startMinutes - axisStart) / SLOT_MINUTES) * COL_WIDTH;
-                      const width = (GAME_LENGTH_MINUTES / SLOT_MINUTES) * COL_WIDTH;
+                      // Shortened to the 2 AM cutoff for a game still
+                      // "on" at that point instead of running its full
+                      // assumed length past the grid's own right edge.
+                      const cutoffMinutes = Math.min(g.startMinutes + GAME_LENGTH_MINUTES, HARD_CUTOFF_MINUTES) - g.startMinutes;
+                      const width = (cutoffMinutes / SLOT_MINUTES) * COL_WIDTH;
                       return (
                         <div
                           key={g.game.id}
@@ -515,17 +531,23 @@ export default function TvGuidePanel({
                             borderRadius: 6,
                             padding: "0.3rem 0.4rem",
                             overflow: "hidden",
-                            fontSize: "0.7rem",
+                            fontSize: "0.78rem",
                           }}
                           title={`${g.game.away_team} @ ${g.game.home_team}`}
                         >
-                          <div style={{ fontWeight: 700, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                            <TeamLogo team={g.game.away_team} size={14} /> {g.game.away_team}
+                          <div style={{ fontWeight: 700, fontSize: "0.86rem", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                            <TeamLogo team={g.game.away_team} size={16} /> {g.game.away_team}
                             <span style={{ color: "var(--chalk-dim)" }}>@</span>
-                            <TeamLogo team={g.game.home_team} size={14} /> {g.game.home_team}
+                            <TeamLogo team={g.game.home_team} size={16} /> {g.game.home_team}
                           </div>
-                          <div style={{ color: "var(--chalk-dim)", whiteSpace: "nowrap", marginTop: "0.15rem" }}>
-                            {fmtTime(g.startMinutes)} · {fmtSpread(g.mySpread)} · {g.myTotal != null ? g.myTotal.toFixed(1) : "–"} ·{" "}
+                          <div style={{ color: "var(--chalk-dim)", whiteSpace: "nowrap", marginTop: "0.2rem" }}>
+                            {fmtTime(g.startMinutes)}
+                            {" · "}
+                            <span style={{ color: "rgba(255,255,255,0.45)" }}>Spread</span> {fmtSpread(g.mySpread)}
+                            {" · "}
+                            <span style={{ color: "rgba(255,255,255,0.45)" }}>Total</span> {g.myTotal != null ? g.myTotal.toFixed(1) : "–"}
+                            {" · "}
+                            <span style={{ color: "rgba(255,255,255,0.45)" }}>Watch</span>{" "}
                             {g.watchability != null ? g.watchability.toFixed(1) : "–"}
                           </div>
                         </div>

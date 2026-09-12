@@ -269,7 +269,17 @@ function numStr(v: number | null): string {
 // totals, total bets, then the three spread-accuracy stats. FCS-vs-FCS
 // is excluded from both columns' data before it ever reaches this
 // component — see WeeklyImageDumpAdminPanel.tsx.
-function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerformanceSummary; seasonLong: SlatePerformanceSummary }) {
+function PerformanceTable({
+  thisImage,
+  seasonLong,
+  title = "Performance (FBS + FBS vs FCS)",
+  showTotals = true,
+}: {
+  thisImage: SlatePerformanceSummary;
+  seasonLong: SlatePerformanceSummary;
+  title?: string;
+  showTotals?: boolean;
+}) {
   const rowStyle: CSSProperties = { padding: "3px 8px", borderBottom: "1px solid rgba(255,255,255,0.08)" };
   const labelStyle: CSSProperties = { ...rowStyle, color: "rgba(255,255,255,0.7)", textAlign: "left" };
   const valStyle: CSSProperties = { ...rowStyle, color: "#fff", fontWeight: 700, textAlign: "right" };
@@ -277,7 +287,7 @@ function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerforman
   return (
     <div style={{ marginTop: 16, marginBottom: 4 }}>
       <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.05em", color: "var(--gold, #d9a441)", textTransform: "uppercase", marginBottom: 8, textAlign: "center" }}>
-        Performance (FBS + FBS vs FCS)
+        {title}
       </div>
       <table style={{ borderCollapse: "collapse", fontSize: 10.5, margin: "0 auto" }}>
         <thead>
@@ -306,6 +316,7 @@ function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerforman
               {recordStr(seasonLong.spreadBets)} ({winPctStr(seasonLong.spreadBets)})
             </td>
           </tr>
+          {showTotals && (
           <tr>
             <td style={labelStyle}>Every Game — Totals</td>
             <td style={valStyle}>
@@ -315,6 +326,8 @@ function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerforman
               {recordStr(seasonLong.everyGameTotals)} ({winPctStr(seasonLong.everyGameTotals)})
             </td>
           </tr>
+          )}
+          {showTotals && (
           <tr>
             <td style={labelStyle}>Total Bets</td>
             <td style={valStyle}>
@@ -324,6 +337,7 @@ function PerformanceTable({ thisImage, seasonLong }: { thisImage: SlatePerforman
               {recordStr(seasonLong.totalBets)} ({winPctStr(seasonLong.totalBets)})
             </td>
           </tr>
+          )}
           <tr>
             <td style={labelStyle}>Spread Abs Error</td>
             <td style={valStyle}>{numStr(thisImage.meanAbsError)}</td>
@@ -374,7 +388,16 @@ export default function MatchupGridGraphic({
    * graphic, above the branding footer — for the Review graphic only.
    * See WeeklyImageDumpAdminPanel.tsx for how thisImage/seasonLong get
    * computed. */
-  performanceTable?: { thisImage: SlatePerformanceSummary; seasonLong: SlatePerformanceSummary };
+  performanceTable?: {
+    thisImage: SlatePerformanceSummary;
+    seasonLong: SlatePerformanceSummary;
+    /** Defaults to "Performance (FBS + FBS vs FCS)" — override for a
+     * division-scoped Review image (e.g. "Performance (FBS vs FBS)"). */
+    title?: string;
+    /** false hides the Every Game — Totals/Total Bets rows entirely —
+     * for FBS-vs-FCS, which doesn't reliably carry a total line/projection. */
+    showTotals?: boolean;
+  };
 }) {
   const resolvedSections: { label: string | null; rows: SlateGameRow[] }[] = sections ?? [{ label: null, rows: rows ?? [] }];
   const allEmpty = resolvedSections.every((s) => s.rows.length === 0);
@@ -441,7 +464,14 @@ export default function MatchupGridGraphic({
         })
       )}
 
-      {performanceTable && <PerformanceTable thisImage={performanceTable.thisImage} seasonLong={performanceTable.seasonLong} />}
+      {performanceTable && (
+        <PerformanceTable
+          thisImage={performanceTable.thisImage}
+          seasonLong={performanceTable.seasonLong}
+          title={performanceTable.title}
+          showTotals={performanceTable.showTotals}
+        />
+      )}
 
       <div
         style={{

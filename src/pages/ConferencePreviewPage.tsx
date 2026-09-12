@@ -75,36 +75,60 @@ function ConferencePreviewRow({ team, live, sim, sos, maxPct, showVegasWinLines,
   );
 }
 
-export default function ConferencePreviewPage({ conference, onNavigateTeam, onHome }: any) {
+export default function ConferencePreviewPage({
+  conference,
+  onNavigateTeam,
+  onHome,
+  sosByTeamOverride,
+  mcOverride,
+}: any) {
   const exportRef = useRef<HTMLDivElement>(null);
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   const season = new Date().getFullYear();
-  const [sosByTeam, setSosByTeam] = useState<Record<string, TeamSosRow>>({});
-  const [mcResults, setMcResults] = useState<TeamSimResult[] | null>(null);
-  const [mcNumTrials, setMcNumTrials] = useState(0);
+  const [sosByTeamOwn, setSosByTeamOwn] = useState<Record<string, TeamSosRow>>({});
+  const [mcResultsOwn, setMcResultsOwn] = useState<TeamSimResult[] | null>(null);
+  const [mcNumTrialsOwn, setMcNumTrialsOwn] = useState(0);
 
+  // The Weekly Image Dump swaps ONE mounted instance of this page through
+  // every conference to build the report's conference previews (see
+  // WeeklyImageDumpAdminPanel.tsx) — for the very FIRST conference in that
+  // sequence, this page has JUST mounted, so these two fetches are still
+  // in flight the instant it gets screenshotted, and that capture would
+  // show 0.00 win projections and no Monte Carlo table (every LATER
+  // conference in the same sequence reuses this same mounted instance's
+  // already-resolved state, so only the first one was ever affected — the
+  // bug looked conference-specific but wasn't). sosByTeamOverride/mcOverride
+  // let that caller pre-fetch both once, before capturing anything, and
+  // hand them down instead of racing its own mount. The live page (visited
+  // directly, no override passed) is unaffected — it still fetches its own.
   useEffect(() => {
+    if (sosByTeamOverride) return;
     fetchTeamSos(season)
-      .then(setSosByTeam)
-      .catch(() => setSosByTeam({}));
-  }, [season]);
+      .then(setSosByTeamOwn)
+      .catch(() => setSosByTeamOwn({}));
+  }, [season, sosByTeamOverride]);
 
   // Always the most recently saved Monte Carlo run for the season — this
   // table refreshes itself the moment a new run gets saved from Admin,
   // nothing on this page needs to change to pick it up.
   useEffect(() => {
-    setMcResults(null);
+    if (mcOverride) return;
+    setMcResultsOwn(null);
     fetchMonteCarloRuns(season)
       .then((runs) => (runs.length > 0 ? fetchMonteCarloRun(runs[0].id) : null))
       .then((run) => {
         if (run) {
-          setMcResults(run.results);
-          setMcNumTrials(run.num_trials);
+          setMcResultsOwn(run.results);
+          setMcNumTrialsOwn(run.num_trials);
         }
       })
-      .catch(() => setMcResults(null));
-  }, [season]);
+      .catch(() => setMcResultsOwn(null));
+  }, [season, mcOverride]);
+
+  const sosByTeam = sosByTeamOverride ?? sosByTeamOwn;
+  const mcResults = mcOverride ? mcOverride.results : mcResultsOwn;
+  const mcNumTrials = mcOverride ? mcOverride.numTrials : mcNumTrialsOwn;
 
   // Same run this page already fetches for playoff/conf-title odds below —
   // reused here for winTotal/confWinTotal too, instead of adding a second,
