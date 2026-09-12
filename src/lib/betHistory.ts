@@ -227,15 +227,44 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
 // homeScore - spread), just graded against whichever side (favorite or
 // underdog) the bucket in question is about.
 // ---------------------------------------------------------------------
+// One graded game behind a bucket's tally — enough to render a
+// drill-down list of the actual games making up that count.
+export interface KeyNumberGame {
+  season: number;
+  week: number;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number;
+  awayScore: number;
+  betTeam: string; // the favorite or underdog, whichever side this bucket is about
+  myLine: number; // my line for betTeam's side (dog line or fav line, matching the bucket)
+  vegasLine: number; // Vegas's line for that same side
+  result: BetPick;
+}
+
+export interface KeyNumberBucket {
+  tally: RecordTally;
+  games: KeyNumberGame[];
+}
+
+function emptyBucket(): KeyNumberBucket {
+  return { tally: emptyTally(), games: [] };
+}
+
+function addToBucket(bucket: KeyNumberBucket, result: BetPick, game: KeyNumberGame) {
+  tallyAdd(bucket.tally, result);
+  bucket.games.push(game);
+}
+
 export interface KeyNumberStudy {
-  underdog: { plus3: RecordTally; plus7: RecordTally; both: RecordTally };
-  favorite: { minus3: RecordTally; minus7: RecordTally; both: RecordTally };
+  underdog: { plus3: KeyNumberBucket; plus7: KeyNumberBucket; both: KeyNumberBucket };
+  favorite: { minus3: KeyNumberBucket; minus7: KeyNumberBucket; both: KeyNumberBucket };
 }
 
 export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStudy {
   const study: KeyNumberStudy = {
-    underdog: { plus3: emptyTally(), plus7: emptyTally(), both: emptyTally() },
-    favorite: { minus3: emptyTally(), minus7: emptyTally(), both: emptyTally() },
+    underdog: { plus3: emptyBucket(), plus7: emptyBucket(), both: emptyBucket() },
+    favorite: { minus3: emptyBucket(), minus7: emptyBucket(), both: emptyBucket() },
   };
 
   for (const r of records) {
@@ -255,13 +284,34 @@ export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStu
     const actualCoverTeam = coverMargin > 0 ? r.awayTeam : coverMargin < 0 ? r.homeTeam : null;
     const resultFor = (betTeam: string): BetPick => (actualCoverTeam == null ? "push" : actualCoverTeam === betTeam ? "win" : "loss");
 
-    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 3) tallyAdd(study.underdog.plus3, resultFor(underdogTeam));
-    if (myDogLine >= 3 && myDogLine < 7 && vegasDogLine >= 7) tallyAdd(study.underdog.plus7, resultFor(underdogTeam));
-    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 7) tallyAdd(study.underdog.both, resultFor(underdogTeam));
+    function baseGame(betTeam: string, myLine: number, vegasLine: number): KeyNumberGame {
+      return {
+        season: r.season,
+        week: r.week,
+        homeTeam: r.homeTeam,
+        awayTeam: r.awayTeam,
+        homeScore: r.homeScore!,
+        awayScore: r.awayScore!,
+        betTeam,
+        myLine,
+        vegasLine,
+        result: resultFor(betTeam),
+      };
+    }
 
-    if (myFavLine < -3 && myFavLine >= -7 && vegasFavLine >= -3) tallyAdd(study.favorite.minus3, resultFor(favoriteTeam));
-    if (myFavLine < -7 && vegasFavLine >= -7) tallyAdd(study.favorite.minus7, resultFor(favoriteTeam));
-    if (myFavLine < -7 && vegasFavLine >= -3) tallyAdd(study.favorite.both, resultFor(favoriteTeam));
+    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 3)
+      addToBucket(study.underdog.plus3, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
+    if (myDogLine >= 3 && myDogLine < 7 && vegasDogLine >= 7)
+      addToBucket(study.underdog.plus7, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
+    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 7)
+      addToBucket(study.underdog.both, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
+
+    if (myFavLine < -3 && myFavLine >= -7 && vegasFavLine >= -3)
+      addToBucket(study.favorite.minus3, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
+    if (myFavLine < -7 && vegasFavLine >= -7)
+      addToBucket(study.favorite.minus7, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
+    if (myFavLine < -7 && vegasFavLine >= -3)
+      addToBucket(study.favorite.both, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
   }
 
   return study;

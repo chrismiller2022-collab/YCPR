@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
@@ -24,6 +24,8 @@ import {
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
   type KeyNumberStudy,
+  type KeyNumberBucket,
+  type KeyNumberGame,
   type BetHistoryFilters,
   type BetHistoryDivision,
   type CustomParams,
@@ -49,14 +51,62 @@ function fmtPct(t: RecordTally) {
   return `${winPct(t).toFixed(1)}%`;
 }
 
+function fmtSpreadLine(n: number): string {
+  return n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1);
+}
+
+function KeyNumberGamesTable({ games }: { games: KeyNumberGame[] }) {
+  const sorted = [...games].sort((a, b) => a.season - b.season || a.week - b.week);
+  return (
+    <table style={{ borderCollapse: "collapse", fontSize: "0.78rem", width: "100%", maxWidth: 640 }}>
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Season/Wk</th>
+          <th style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Matchup</th>
+          <th style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Bet</th>
+          <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Line</th>
+          <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Line</th>
+          <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map((g, i) => (
+          <tr key={i}>
+            <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+              {g.season} / Wk {g.week}
+            </td>
+            <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+              {g.awayTeam} {g.awayScore}, {g.homeTeam} {g.homeScore}
+            </td>
+            <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.betTeam}</td>
+            <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtSpreadLine(g.myLine)}</td>
+            <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtSpreadLine(g.vegasLine)}</td>
+            <td
+              style={{
+                padding: "0.3rem 0.6rem",
+                borderBottom: "1px solid var(--hash)",
+                textAlign: "right",
+                color: g.result === "win" ? "var(--pos-green)" : g.result === "loss" ? "var(--neg-red)" : undefined,
+              }}
+            >
+              {g.result ?? "–"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
-  const rows: { label: string; tally: RecordTally }[] = [
-    { label: "Underdog +3 (my line 0–3, Vegas at/above +3)", tally: study.underdog.plus3 },
-    { label: "Underdog +7 (my line 3–7, Vegas at/above +7)", tally: study.underdog.plus7 },
-    { label: "Underdog Both (my line under 3, Vegas at/above +7)", tally: study.underdog.both },
-    { label: "Favorite -3 (my line -3 to -7, Vegas at/above -3)", tally: study.favorite.minus3 },
-    { label: "Favorite -7 (my line -7 or below, Vegas at/above -7)", tally: study.favorite.minus7 },
-    { label: "Favorite Both (my line below -7, Vegas at/above -3)", tally: study.favorite.both },
+  const [openLabel, setOpenLabel] = useState<string | null>(null);
+  const rows: { label: string; bucket: KeyNumberBucket }[] = [
+    { label: "Underdog +3 (my line 0–3, Vegas at/above +3)", bucket: study.underdog.plus3 },
+    { label: "Underdog +7 (my line 3–7, Vegas at/above +7)", bucket: study.underdog.plus7 },
+    { label: "Underdog Both (my line under 3, Vegas at/above +7)", bucket: study.underdog.both },
+    { label: "Favorite -3 (my line -3 to -7, Vegas at/above -3)", bucket: study.favorite.minus3 },
+    { label: "Favorite -7 (my line -7 or below, Vegas at/above -7)", bucket: study.favorite.minus7 },
+    { label: "Favorite Both (my line below -7, Vegas at/above -3)", bucket: study.favorite.both },
   ];
   return (
     <div>
@@ -67,7 +117,7 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
         favorite is more negative than Vegas's, so I project the favorite to cover). My own line excludes the exact
         key number named in each row (landing exactly on it is genuinely undecided, not a lean); Vegas's line counts
         as clearing the key number if it lands exactly on it. Graded against the real closing line, same cover-margin
-        formula as everywhere else on this page.
+        formula as everywhere else on this page. Click a row to see the actual games behind it.
       </p>
       <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", width: "100%", maxWidth: 640 }}>
         <thead>
@@ -79,16 +129,39 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.label}>
-              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>{r.label}</td>
-              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                {r.tally.w + r.tally.l + r.tally.push}
-              </td>
-              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(r.tally)}</td>
-              <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(r.tally)}</td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const isOpen = openLabel === r.label;
+            return (
+              <Fragment key={r.label}>
+                <tr
+                  onClick={() => setOpenLabel(isOpen ? null : r.label)}
+                  style={{ cursor: "pointer", background: isOpen ? "var(--hash)" : undefined }}
+                >
+                  <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)" }}>{r.label}</td>
+                  <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {r.bucket.tally.w + r.bucket.tally.l + r.bucket.tally.push}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtRecord(r.bucket.tally)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmtPct(r.bucket.tally)}
+                  </td>
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={4} style={{ padding: "0.6rem 0.7rem 1rem", borderBottom: "1px solid var(--hash)" }}>
+                      {r.bucket.games.length === 0 ? (
+                        <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>No games in this bucket.</span>
+                      ) : (
+                        <KeyNumberGamesTable games={r.bucket.games} />
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -397,17 +397,36 @@ export const TOTALS_KEY_NUMBER_TIERS: { label: string; keys: number[] }[] = [
   { label: "Tier 4 — Moderate", keys: [61, 38, 66, 54, 63, 57, 34, 56, 43, 40] },
 ];
 
+// One graded game behind a bucket's tally — enough to render a
+// drill-down list of the actual games making up that count, without
+// re-fetching or re-joining anything.
+export interface TotalsKeyNumberGame {
+  week: number;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  myTotal: number;
+  vegasTotal: number;
+  call: "Over" | "Under";
+  result: ReturnType<typeof gradeBetCall>;
+}
+
 export interface TotalsKeyNumberByKeyRow {
   key: number;
   tier: number; // 1-indexed, matches TOTALS_KEY_NUMBER_TIERS position
   under: TotalsKeyNumberTally;
   over: TotalsKeyNumberTally;
+  underGames: TotalsKeyNumberGame[];
+  overGames: TotalsKeyNumberGame[];
 }
 
 export interface TotalsKeyNumberGroupRow {
   label: string;
   under: TotalsKeyNumberTally;
   over: TotalsKeyNumberTally;
+  underGames: TotalsKeyNumberGame[];
+  overGames: TotalsKeyNumberGame[];
 }
 
 export interface TotalsKeyNumberStudy {
@@ -420,13 +439,32 @@ export interface TotalsKeyNumberStudy {
 export function computeTotalsKeyNumberStudy(rows: EnrichedGameRow[]): TotalsKeyNumberStudy {
   const graded = rows
     .map((r) => ({
+      game: r.game,
       myTotal: projectedTotal(r),
       vegasTotal: r.odds.vegasTotal,
       actualResult: gradeActualTotal(r.actualTotal, r.odds.vegasTotal),
     }))
-    .filter((r): r is { myTotal: number; vegasTotal: number; actualResult: ReturnType<typeof gradeActualTotal> } =>
-      r.myTotal != null && r.vegasTotal != null && r.actualResult != null
+    .filter(
+      (r): r is { game: GameForTotals; myTotal: number; vegasTotal: number; actualResult: ReturnType<typeof gradeActualTotal> } =>
+        r.myTotal != null && r.vegasTotal != null && r.actualResult != null
     );
+
+  function toKeyNumberGame(
+    g: { game: GameForTotals; myTotal: number; vegasTotal: number; actualResult: ReturnType<typeof gradeActualTotal> },
+    call: "Over" | "Under"
+  ): TotalsKeyNumberGame {
+    return {
+      week: g.game.week,
+      homeTeam: g.game.homeTeam,
+      awayTeam: g.game.awayTeam,
+      homeScore: g.game.homePoints,
+      awayScore: g.game.awayPoints,
+      myTotal: g.myTotal,
+      vegasTotal: g.vegasTotal,
+      call,
+      result: gradeBetCall(call, g.actualResult),
+    };
+  }
 
   const allKeys = TOTALS_KEY_NUMBER_TIERS.flatMap((t) => t.keys);
 
@@ -434,21 +472,42 @@ export function computeTotalsKeyNumberStudy(rows: EnrichedGameRow[]): TotalsKeyN
     const tier = TOTALS_KEY_NUMBER_TIERS.findIndex((t) => t.keys.includes(key)) + 1;
     const under = emptyTotalsTally();
     const over = emptyTotalsTally();
+    const underGames: TotalsKeyNumberGame[] = [];
+    const overGames: TotalsKeyNumberGame[] = [];
     for (const g of graded) {
-      if (g.myTotal <= key && g.vegasTotal > key) addTotalsTally(under, gradeBetCall("Under", g.actualResult));
-      if (g.myTotal >= key && g.vegasTotal < key) addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+      if (g.myTotal <= key && g.vegasTotal > key) {
+        addTotalsTally(under, gradeBetCall("Under", g.actualResult));
+        underGames.push(toKeyNumberGame(g, "Under"));
+      }
+      if (g.myTotal >= key && g.vegasTotal < key) {
+        addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+        overGames.push(toKeyNumberGame(g, "Over"));
+      }
     }
-    return { key, tier, under, over };
+    return { key, tier, under, over, underGames, overGames };
   });
 
-  function pooledFor(keys: number[]): { under: TotalsKeyNumberTally; over: TotalsKeyNumberTally } {
+  function pooledFor(keys: number[]): {
+    under: TotalsKeyNumberTally;
+    over: TotalsKeyNumberTally;
+    underGames: TotalsKeyNumberGame[];
+    overGames: TotalsKeyNumberGame[];
+  } {
     const under = emptyTotalsTally();
     const over = emptyTotalsTally();
+    const underGames: TotalsKeyNumberGame[] = [];
+    const overGames: TotalsKeyNumberGame[] = [];
     for (const g of graded) {
-      if (keys.some((k) => g.myTotal <= k && g.vegasTotal > k)) addTotalsTally(under, gradeBetCall("Under", g.actualResult));
-      if (keys.some((k) => g.myTotal >= k && g.vegasTotal < k)) addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+      if (keys.some((k) => g.myTotal <= k && g.vegasTotal > k)) {
+        addTotalsTally(under, gradeBetCall("Under", g.actualResult));
+        underGames.push(toKeyNumberGame(g, "Under"));
+      }
+      if (keys.some((k) => g.myTotal >= k && g.vegasTotal < k)) {
+        addTotalsTally(over, gradeBetCall("Over", g.actualResult));
+        overGames.push(toKeyNumberGame(g, "Over"));
+      }
     }
-    return { under, over };
+    return { under, over, underGames, overGames };
   }
 
   const pooledAll = { label: "All Key Numbers", ...pooledFor(allKeys) };

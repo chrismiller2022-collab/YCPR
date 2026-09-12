@@ -12,6 +12,7 @@ import {
   computeTotalsKeyNumberStudy,
   TOTALS_KEY_NUMBER_TIERS,
   type TotalsKeyNumberTally,
+  type TotalsKeyNumberGame,
 } from "../lib/gameTotalsEngine";
 import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./PerformanceView";
 
@@ -40,8 +41,76 @@ function KeyNumberTallyCells({ tally }: { tally: TotalsKeyNumberTally }) {
   );
 }
 
+function TotalsKeyNumberGamesTable({ games, label }: { games: TotalsKeyNumberGame[]; label: string }) {
+  const sorted = [...games].sort((a, b) => a.week - b.week);
+  return (
+    <div style={{ marginBottom: "0.75rem" }}>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", marginBottom: "0.25rem" }}>{label}</div>
+      {sorted.length === 0 ? (
+        <span style={{ color: "var(--chalk-dim)", fontSize: "0.8rem" }}>No games.</span>
+      ) : (
+        <table style={{ borderCollapse: "collapse", fontSize: "0.78rem", width: "100%", maxWidth: 640 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Wk</th>
+              <th style={{ textAlign: "left", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Matchup</th>
+              <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Total</th>
+              <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Total</th>
+              <th style={{ textAlign: "right", padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((g, i) => (
+              <tr key={i}>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{g.week}</td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {g.awayTeam} {g.awayScore ?? "–"}, {g.homeTeam} {g.homeScore ?? "–"}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{g.myTotal.toFixed(1)}</td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{g.vegasTotal.toFixed(1)}</td>
+                <td
+                  style={{
+                    padding: "0.3rem 0.6rem",
+                    borderBottom: "1px solid var(--hash)",
+                    textAlign: "right",
+                    color: g.result === "win" ? "var(--pos-green)" : g.result === "loss" ? "var(--neg-red)" : undefined,
+                  }}
+                >
+                  {g.call} {g.result ?? "–"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function KeyNumberDrilldownRow({
+  isOpen,
+  underGames,
+  overGames,
+}: {
+  isOpen: boolean;
+  underGames: TotalsKeyNumberGame[];
+  overGames: TotalsKeyNumberGame[];
+}) {
+  if (!isOpen) return null;
+  return (
+    <tr>
+      <td colSpan={7} style={{ padding: "0.6rem 0.6rem 1rem", borderBottom: "1px solid var(--hash)" }}>
+        <TotalsKeyNumberGamesTable games={underGames} label="Under bets" />
+        <TotalsKeyNumberGamesTable games={overGames} label="Over bets" />
+      </td>
+    </tr>
+  );
+}
+
 function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType<typeof useMultiSeasonGameTotalsEngine>["rows"]; hasEligibleSeason: boolean }) {
   const study = useMemo(() => computeTotalsKeyNumberStudy(rows), [rows]);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const toggle = (key: string) => setOpenRow((cur) => (cur === key ? null : key));
 
   if (!hasEligibleSeason) {
     return (
@@ -95,7 +164,7 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
         Under rows are games where my total is at or below that key number and Vegas's is above it (I project the
         Under to cover); Over rows are the mirror image. Live-only, {KEY_NUMBER_MIN_SEASON}+ — no historical
         backfill. "Pooled" counts a game once if it clears at least one key number in that group, not once per key
-        number it happens to clear.
+        number it happens to clear. Click any row to see the actual games behind it.
       </p>
 
       <div className="section-label" style={{ marginBottom: "0.5rem" }}>
@@ -108,11 +177,12 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
             {subHeaderRow}
           </thead>
           <tbody>
-            <tr>
+            <tr onClick={() => toggle("pooled")} style={{ cursor: "pointer", background: openRow === "pooled" ? "var(--hash)" : undefined }}>
               <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", fontWeight: 700 }}>{study.pooledAll.label}</td>
               <KeyNumberTallyCells tally={study.pooledAll.under} />
               <KeyNumberTallyCells tally={study.pooledAll.over} />
             </tr>
+            <KeyNumberDrilldownRow isOpen={openRow === "pooled"} underGames={study.pooledAll.underGames} overGames={study.pooledAll.overGames} />
           </tbody>
         </table>
       </div>
@@ -127,13 +197,19 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
             {subHeaderRow}
           </thead>
           <tbody>
-            {study.byTier.map((t) => (
-              <tr key={t.label}>
-                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{t.label}</td>
-                <KeyNumberTallyCells tally={t.under} />
-                <KeyNumberTallyCells tally={t.over} />
-              </tr>
-            ))}
+            {study.byTier.map((t, i) => {
+              const key = `tier:${i}`;
+              return (
+                <Fragment key={t.label}>
+                  <tr onClick={() => toggle(key)} style={{ cursor: "pointer", background: openRow === key ? "var(--hash)" : undefined }}>
+                    <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{t.label}</td>
+                    <KeyNumberTallyCells tally={t.under} />
+                    <KeyNumberTallyCells tally={t.over} />
+                  </tr>
+                  <KeyNumberDrilldownRow isOpen={openRow === key} underGames={t.underGames} overGames={t.overGames} />
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -148,13 +224,19 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
             {subHeaderRow}
           </thead>
           <tbody>
-            {study.cumulativeTiers.map((t) => (
-              <tr key={t.label}>
-                <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{t.label}</td>
-                <KeyNumberTallyCells tally={t.under} />
-                <KeyNumberTallyCells tally={t.over} />
-              </tr>
-            ))}
+            {study.cumulativeTiers.map((t, i) => {
+              const key = `cum:${i}`;
+              return (
+                <Fragment key={t.label}>
+                  <tr onClick={() => toggle(key)} style={{ cursor: "pointer", background: openRow === key ? "var(--hash)" : undefined }}>
+                    <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{t.label}</td>
+                    <KeyNumberTallyCells tally={t.under} />
+                    <KeyNumberTallyCells tally={t.over} />
+                  </tr>
+                  <KeyNumberDrilldownRow isOpen={openRow === key} underGames={t.underGames} overGames={t.overGames} />
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -171,6 +253,7 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
           <tbody>
             {study.byKey.map((r, i) => {
               const isNewTier = i === 0 || study.byKey[i - 1].tier !== r.tier;
+              const key = `key:${r.key}`;
               return (
                 <Fragment key={r.key}>
                   {isNewTier && (
@@ -180,11 +263,12 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
                       </td>
                     </tr>
                   )}
-                  <tr>
+                  <tr onClick={() => toggle(key)} style={{ cursor: "pointer", background: openRow === key ? "var(--hash)" : undefined }}>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.key}</td>
                     <KeyNumberTallyCells tally={r.under} />
                     <KeyNumberTallyCells tally={r.over} />
                   </tr>
+                  <KeyNumberDrilldownRow isOpen={openRow === key} underGames={r.underGames} overGames={r.overGames} />
                 </Fragment>
               );
             })}
