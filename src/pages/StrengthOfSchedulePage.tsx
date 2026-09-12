@@ -30,10 +30,6 @@ function SosRow({ rank, team, sos, change, showChange, onNavigateTeam, onNavigat
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
-      </td>
       <td className="wintotals-total-cell" style={sos != null ? { color: spreadColor(-sos) } : undefined}>
         {sos != null ? (sos > 0 ? "+" : "") + sos.toFixed(2) : "–"}
       </td>
@@ -56,10 +52,6 @@ function HypoWinsRow({ rank, team, hypoWins, onNavigateTeam, onNavigateConferenc
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
-      </td>
       <td className="wintotals-total-cell">{hypoWins != null ? hypoWins.toFixed(2) : "–"}</td>
     </tr>
   );
@@ -78,10 +70,6 @@ function Top7Row({ rank, team, top7, onNavigateTeam, onNavigateConference }: any
       </td>
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
-      </td>
-      <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
-        {team.rating > 0 ? "+" : ""}
-        {team.rating.toFixed(2)}
       </td>
       <td className={`rating-cell ${top7 != null && top7 < 0 ? "rating-good" : "rating-bad"}`}>
         {top7 != null ? (top7 > 0 ? "+" : "") + top7.toFixed(2) : "–"}
@@ -103,7 +91,6 @@ function RankedTable({ title, rows, mode, changeByTeam, showChange, onNavigateTe
               <th className="th">#</th>
               <th className="th">Team</th>
               <th className="th">Conference</th>
-              <th className="th th-right">Power Rating</th>
               {mode === "sos" ? (
                 <>
                   <th className="th th-right">SOS</th>
@@ -151,7 +138,7 @@ function RankedTable({ title, rows, mode, changeByTeam, showChange, onNavigateTe
             )}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="empty">
+                <td colSpan={5} className="empty">
                   No teams match that search.
                 </td>
               </tr>
