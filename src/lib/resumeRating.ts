@@ -117,13 +117,21 @@ export function computeRawResumeMetrics(
   // margins for every uncompleted game, so a live number would jump around
   // on every render instead of being a stable resume input.
   srsByTeam: Record<string, number | null> = {},
-  vsrsByTeam: Record<string, number | null> = {}
+  vsrsByTeam: Record<string, number | null> = {},
+  // true = every "season-wide" metric below (avgProjLine, avgOppPR,
+  // projWins/projLosses, mov, bestWin/bestLoss/worstLoss) is restricted to
+  // games actually played so far — no rest-of-season projection blended
+  // in. Per Chris: a simpler, no-forward-looking view of the resume as it
+  // stands today. actWins/losses/avgActLine/atsMargin were already
+  // completed-only in both modes, so those are unaffected.
+  completedOnly = false
 ): RawResumeMetrics {
   const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
 
   const teamGames = seasonGames.filter((g) => g.home_team === team.team || g.away_team === team.team);
   const completedGames = teamGames.filter((g) => g.completed && g.home_points != null && g.away_points != null);
+  const seasonWideGames = completedOnly ? completedGames : teamGames;
 
   // Avg Projected Line and Avg Opponent PR are season-wide — every game
   // on the schedule, played or not, using each opponent's CURRENT rating.
@@ -147,7 +155,7 @@ export function computeRawResumeMetrics(
   let projWins = 0;
   let projLosses = 0;
 
-  for (const g of teamGames) {
+  for (const g of seasonWideGames) {
     const isHome = g.home_team === team.team;
     const oppName = isHome ? g.away_team : g.home_team;
     const opponent = TEAMS_BY_NAME[oppName];
@@ -208,6 +216,12 @@ export function computeRawResumeMetrics(
   }
 
   const bw = computeBestWorst(team, seasonGames, liveByTeam);
+  // .proj includes hypothetical results for games that haven't been played
+  // yet (win/loss decided by which side the model favors); .actual is
+  // real completed games only — the one completedOnly needs.
+  const bwBestWin = completedOnly ? bw.bestWin.actual : bw.bestWin.proj;
+  const bwBestLoss = completedOnly ? bw.bestLoss.actual : bw.bestLoss.proj;
+  const bwWorstLoss = completedOnly ? bw.worstLoss.actual : bw.worstLoss.proj;
 
   return {
     expWins: null,
@@ -226,9 +240,9 @@ export function computeRawResumeMetrics(
     atsMargin: atsN > 0 ? sumAts / atsN : null,
     avgOppPR: oppPRN > 0 ? sumOppPR / oppPRN : null,
     sos: liveByTeam[team.team]?.sor ?? null,
-    bestWin: bw.bestWin.proj?.oppCurrentRating ?? null,
-    bestLoss: bw.bestLoss.proj?.oppCurrentRating ?? null,
-    worstLoss: bw.worstLoss.proj?.oppCurrentRating ?? null,
+    bestWin: bwBestWin?.oppCurrentRating ?? null,
+    bestLoss: bwBestLoss?.oppCurrentRating ?? null,
+    worstLoss: bwWorstLoss?.oppCurrentRating ?? null,
   };
 }
 

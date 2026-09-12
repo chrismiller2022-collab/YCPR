@@ -39,6 +39,11 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
 
   const [sortKey, setSortKey] = useState("score");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Off by default (matches existing behavior) — on, every season-wide
+  // metric (avg projected line/opp PR, projected wins/losses, MOV,
+  // best/worst win/loss) is restricted to games actually played so far,
+  // with no rest-of-season projection blended in.
+  const [completedOnly, setCompletedOnly] = useState(false);
 
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
@@ -72,10 +77,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const rawByTeam = useMemo(() => {
     const map = new Map<string, RawResumeMetrics>();
     for (const t of teams) {
-      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, srsByTeam, vsrsByTeam));
+      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly));
     }
     return map;
-  }, [teams, games, liveByTeam, srsByTeam, vsrsByTeam]);
+  }, [teams, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly]);
 
   const normalizedByTeam = useMemo(() => {
     const pools: Partial<Record<keyof RawResumeMetrics, (number | null)[]>> = {};
@@ -231,6 +236,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
             </option>
           ))}
         </select>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem", marginLeft: "0.5rem" }}>
+          <input type="checkbox" checked={completedOnly} onChange={(e) => setCompletedOnly(e.target.checked)} />
+          Completed games only (no rest-of-season projection)
+        </label>
       </div>
 
       {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
