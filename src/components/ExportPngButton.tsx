@@ -15,6 +15,23 @@ export interface ExportRowMode {
   match: (row: HTMLTableRowElement) => boolean;
 }
 
+// A checkbox-driven export mode — for pages built of several named
+// blocks (tag each with data-report-section="<key>") where someone may
+// want more than one at once, each as its OWN image, rather than
+// picking exactly one view the way rowModes does. `sections` lists
+// which data-report-section keys that checkbox includes.
+export interface ExportSectionMode {
+  label: string;
+  sections: string[];
+}
+
+function slugify(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 // Renders Export PNG next to a Tweet button everywhere this component is
 // already used, site-wide — a single change here instead of touching
 // every page that has an export button. Pass showTweet={false} to opt a
@@ -26,6 +43,7 @@ export default function ExportPngButton({
   showTweet = true,
   tweetText = "",
   rowModes,
+  checkboxModes,
   tighten,
 }: {
   targetRef: RefObject<HTMLElement>;
@@ -38,12 +56,20 @@ export default function ExportPngButton({
   // When provided, replaces the Top-N prompt with buttons for each mode,
   // still only shown once the row count clears TOP_N_PROMPT_THRESHOLD.
   rowModes?: ExportRowMode[];
+  // For pages where "Full List/Top 25" doesn't mean anything AND more
+  // than one section might be wanted at once (e.g. Weekly Betting
+  // Report's Spread/Total/Team Total/To-Watch blocks) — replaces the
+  // whole Top-N prompt with a checkbox per mode and a Generate button,
+  // always shown on click regardless of row count. Exports one PNG per
+  // checked box, sequentially. Mutually exclusive with rowModes.
+  checkboxModes?: ExportSectionMode[];
   // Tightens every cell's padding for capture only — for wide multi-
   // column tables that read sparse once shrunk down for mobile viewing.
   tighten?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [checkedLabels, setCheckedLabels] = useState<Set<string>>(new Set());
 
   const runExport = async (topN?: number, rowMatch?: (row: HTMLTableRowElement) => boolean) => {
     if (!targetRef.current || busy) return;
@@ -59,8 +85,41 @@ export default function ExportPngButton({
     }
   };
 
+  function toggleChecked(label: string) {
+    setCheckedLabels((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
+
+  const runCheckboxExport = async () => {
+    if (!targetRef.current || busy || !checkboxModes) return;
+    const modes = checkboxModes.filter((m) => checkedLabels.has(m.label));
+    if (modes.length === 0) return;
+    setChoosing(false);
+    setBusy(true);
+    try {
+      const baseName = typeof filename === "function" ? filename() : filename;
+      for (const mode of modes) {
+        const allowed = new Set(mode.sections);
+        await exportNodeAsPng(targetRef.current, `${baseName}-${slugify(mode.label)}`, undefined, undefined, tighten, undefined, true, (s) => allowed.has(s));
+      }
+    } catch (err) {
+      console.error("PNG export failed", err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleClick = () => {
     if (!targetRef.current || busy) return;
+    if (checkboxModes) {
+      setCheckedLabels(new Set(checkboxModes.map((m) => m.label)));
+      setChoosing(true);
+      return;
+    }
     const rowCount = getMaxTableBodyRowCount(targetRef.current);
     if (rowCount > TOP_N_PROMPT_THRESHOLD) {
       setChoosing(true);
@@ -68,6 +127,32 @@ export default function ExportPngButton({
     }
     void runExport();
   };
+
+  if (choosing && checkboxModes) {
+    return (
+      <span style={{ display: "inline-flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }} data-export-exclude="true">
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Export:</span>
+        {checkboxModes.map((mode) => (
+          <label key={mode.label} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={checkedLabels.has(mode.label)} onChange={() => toggleChecked(mode.label)} disabled={busy} />
+            {mode.label}
+          </label>
+        ))}
+        <button type="button" className="export-png-btn" onClick={() => void runCheckboxExport()} disabled={busy || checkedLabels.size === 0}>
+          {busy ? "Exporting…" : `Generate (${checkedLabels.size})`}
+        </button>
+        <button
+          type="button"
+          className="export-png-btn"
+          onClick={() => setChoosing(false)}
+          disabled={busy}
+          title="Cancel"
+        >
+          ✕
+        </button>
+      </span>
+    );
+  }
 
   if (choosing) {
     return (

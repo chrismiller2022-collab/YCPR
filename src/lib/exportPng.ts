@@ -62,6 +62,31 @@ export function filterRowsByMatch(root: HTMLElement, match: (row: HTMLTableRowEl
   return () => restores.forEach((restore) => restore());
 }
 
+// For pages built out of several distinct named blocks (e.g. Weekly
+// Betting Report's Spread/Total/Team Total/To-Watch sections) — hides
+// every element tagged data-report-section whose value the predicate
+// rejects, header/table and all, not just individual rows the way
+// filterRowsByMatch does. A section tag can nest (e.g. a shared "watch"
+// wrapper around three narrower ones) — hiding the outer one is enough,
+// so an already-hidden ancestor is skipped rather than redundantly
+// hidden again. Same restore pattern as filterRowsByMatch.
+export function filterSectionsByMatch(root: HTMLElement, match: (section: string) => boolean): () => void {
+  const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-report-section]"));
+  const restores: (() => void)[] = [];
+  for (const el of sections) {
+    if (el.style.display === "none") continue;
+    const key = el.dataset.reportSection ?? "";
+    if (!match(key)) {
+      const prevDisplay = el.style.display;
+      el.style.display = "none";
+      restores.push(() => {
+        el.style.display = prevDisplay;
+      });
+    }
+  }
+  return () => restores.forEach((restore) => restore());
+}
+
 // Wide data tables (many columns, each with its normal interactive
 // padding) read fine on desktop but look sparse once exported and
 // viewed shrunk down on a phone — there's no good way to reflow a
@@ -155,10 +180,12 @@ async function withCapturePrep<T>(
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
   tighten?: boolean,
-  includeBranding = true
+  includeBranding = true,
+  sectionMatch?: (section: string) => boolean
 ): Promise<T> {
   const restoreTopN = topN != null ? limitToTopN(node, topN) : () => {};
   const restoreMatch = rowMatch != null ? filterRowsByMatch(node, rowMatch) : () => {};
+  const restoreSections = sectionMatch != null ? filterSectionsByMatch(node, sectionMatch) : () => {};
   const restoreTighten = tighten ? tightenPadding(node) : () => {};
   const restoreScroll = expandScrollAreas(node);
   // Opt-out for graphics that already bake in their own header/footer
@@ -173,6 +200,7 @@ async function withCapturePrep<T>(
     removeBranding();
     restoreScroll();
     restoreTighten();
+    restoreSections();
     restoreMatch();
     restoreTopN();
   }
@@ -204,6 +232,10 @@ const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: should
  * the node's own scrollWidth/scrollHeight (measured after any
  * pre-capture DOM tweaks, e.g. hiding a row) as explicitSize once
  * overflow is actually un-clipped, to size the canvas to match.
+ * @param sectionMatch - For pages built of several named blocks tagged
+ * data-report-section (e.g. Weekly Betting Report's Spread/Total/Team
+ * Total/To-Watch sections) — hides every block whose tag this predicate
+ * rejects, not just individual rows within one table.
  */
 export async function exportNodeAsPng(
   node: HTMLElement,
@@ -212,10 +244,11 @@ export async function exportNodeAsPng(
   rowMatch?: (row: HTMLTableRowElement) => boolean,
   tighten?: boolean,
   explicitSize?: { width: number; height: number },
-  includeBranding = true
+  includeBranding = true,
+  sectionMatch?: (section: string) => boolean
 ) {
   const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
-  const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten, includeBranding);
+  const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten, includeBranding, sectionMatch);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
   link.href = dataUrl;
@@ -224,17 +257,18 @@ export async function exportNodeAsPng(
   link.remove();
 }
 
-/** Same rasterization (branding + scroll-area expansion + optional Top N truncation, row-match filter, or padding tighten) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button and the Weekly Image Dump's batch ZIP. See exportNodeAsPng's explicitSize doc — same reasoning applies here (e.g. nodes rendered off-screen for batch capture, whose shrink-to-fit width can't be trusted). */
+/** Same rasterization (branding + scroll-area expansion + optional Top N truncation, row-match filter, section filter, or padding tighten) as exportNodeAsPng, but returns a Blob instead of triggering a download — used by the Tweet button and the Weekly Image Dump's batch ZIP. See exportNodeAsPng's explicitSize doc — same reasoning applies here (e.g. nodes rendered off-screen for batch capture, whose shrink-to-fit width can't be trusted). */
 export async function exportNodeAsPngBlob(
   node: HTMLElement,
   topN?: number,
   rowMatch?: (row: HTMLTableRowElement) => boolean,
   tighten?: boolean,
   explicitSize?: { width: number; height: number },
-  includeBranding = true
+  includeBranding = true,
+  sectionMatch?: (section: string) => boolean
 ): Promise<Blob> {
   const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
-  const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten, includeBranding);
+  const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten, includeBranding, sectionMatch);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;
 }

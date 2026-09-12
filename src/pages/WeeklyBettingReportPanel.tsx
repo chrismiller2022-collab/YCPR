@@ -502,7 +502,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     }),
     [liveSeasonStats]
   );
-  const [spreadSort, setSpreadSort] = useState<"betSize" | "kickoff">("betSize");
+  const [spreadSort, setSpreadSort] = useState<"betSize" | "kickoff" | "amountOff" | "wfbAbs">("betSize");
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -631,6 +631,8 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const spreadBets = useMemo(() => {
     const sorted = [...spreadBetsUnsorted];
     if (spreadSort === "betSize") sorted.sort((a, b) => (b.betSizePct ?? 0) - (a.betSizePct ?? 0));
+    else if (spreadSort === "amountOff") sorted.sort((a, b) => b.amountOff - a.amountOff);
+    else if (spreadSort === "wfbAbs") sorted.sort((a, b) => Math.abs(b.amountOff) - Math.abs(a.amountOff));
     else sorted.sort((a, b) => (a.kickoffIso ? new Date(a.kickoffIso).getTime() : Infinity) - (b.kickoffIso ? new Date(b.kickoffIso).getTime() : Infinity));
     return sorted;
   }, [spreadBetsUnsorted, spreadSort]);
@@ -818,7 +820,17 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", justifyContent: "flex-end" }} data-export-exclude="true">
-        <ExportPngButton targetRef={exportRef} filename={() => `weekly-betting-report-${season}-wk${week}`} showTweet={false} />
+        <ExportPngButton
+          targetRef={exportRef}
+          filename={() => `weekly-betting-report-${season}-wk${week}`}
+          showTweet={false}
+          checkboxModes={[
+            { label: "Spread Bets", sections: ["spread"] },
+            { label: "Total Bets", sections: ["total"] },
+            { label: "Team Total Bets", sections: ["teamtotal"] },
+            { label: "To Watch (All)", sections: ["watch-spread", "watch-total", "watch-teamtotal"] },
+          ]}
+        />
         <ExportPdfButton targetRef={exportRef} filename={() => `weekly-betting-report-${season}-wk${week}`} />
       </div>
 
@@ -872,15 +884,22 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         />
       ) : (
         <>
+          <div data-report-section="spread">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
             <div className="section-label">Spread Bets ({spreadBets.length})</div>
-            <div style={{ display: "flex", gap: "0.4rem" }}>
+            <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
               <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort:</span>
               <button className={`mode-btn ${spreadSort === "betSize" ? "mode-btn-active" : ""}`} onClick={() => setSpreadSort("betSize")}>
                 Bet Size
               </button>
               <button className={`mode-btn ${spreadSort === "kickoff" ? "mode-btn-active" : ""}`} onClick={() => setSpreadSort("kickoff")}>
                 Kickoff
+              </button>
+              <button className={`mode-btn ${spreadSort === "amountOff" ? "mode-btn-active" : ""}`} onClick={() => setSpreadSort("amountOff")}>
+                Amount Off
+              </button>
+              <button className={`mode-btn ${spreadSort === "wfbAbs" ? "mode-btn-active" : ""}`} onClick={() => setSpreadSort("wfbAbs")}>
+                WFB Abs
               </button>
             </div>
           </div>
@@ -935,9 +954,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </tbody>
             </table>
           )}
+          </div>
 
           {showTotals && (
             <>
+              <div data-report-section="total">
               <div className="section-label">Total Bets ({totalBetsAll.length})</div>
               {totalBetsAll.length === 0 ? (
                 <p style={{ color: "var(--chalk-dim)" }}>No total bets flagged this week.</p>
@@ -984,7 +1005,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   )}
                 </>
               )}
+              </div>
 
+              <div data-report-section="teamtotal">
               <div className="section-label">Team Total Bets ({teamTotalBetsAllRaw.length})</div>
               {teamTotalBetsAllRaw.length === 0 ? (
                 <p style={{ color: "var(--chalk-dim)" }}>No team total bets flagged this week.</p>
@@ -1033,9 +1056,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   )}
                 </>
               )}
+              </div>
             </>
           )}
 
+          <div data-report-section="moneyline">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
             <div className="section-label">Moneyline Bets ({moneylineBets.length})</div>
           </div>
@@ -1072,7 +1097,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </tbody>
             </table>
           )}
+          </div>
 
+          <div data-report-section="watch-spread">
           <div className="section-label">To Watch — Spreads ({spreadWatch.length})</div>
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
             Within {SPREAD_WATCH_MARGIN_POINTS} points of the {FILTER_THRESHOLD}-point Filtered threshold, or within{" "}
@@ -1111,9 +1138,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </tbody>
             </table>
           )}
+          </div>
 
           {showTotals && (
             <>
+              <div data-report-section="watch-total">
               <div className="section-label">To Watch — Totals ({totalWatch.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
                 Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold, rounded to the nearest real half-point that still clears it.
@@ -1152,7 +1181,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   </tbody>
                 </table>
               )}
+              </div>
 
+              <div data-report-section="watch-teamtotal">
               <div className="section-label">To Watch — Team Totals ({teamTotalWatch.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
                 Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold. Not
@@ -1196,6 +1227,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   </tbody>
                 </table>
               )}
+              </div>
             </>
           )}
         </>
