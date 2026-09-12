@@ -51,6 +51,25 @@ function buildDivisionSlateRows(
     .filter((c) => c.vegasAwaySpread != null) // hide games with no Vegas line, matching the live page's default
     .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null, poolStdForTotal));
 }
+
+// Lookahead (a future, not-yet-lined week) needs the same FBS-vs-FBS
+// filter+compute+shape pipeline as buildDivisionSlateRows above, but
+// WITHOUT its "hide games with no Vegas line" filter — Vegas typically
+// hasn't posted a line that far out yet, and the whole point of this
+// section is to show my own projection anyway (computeRow's
+// projAwaySpread comes from live power ratings + HFA, independent of
+// whether a Vegas line exists).
+function buildLookaheadSlateRows(
+  games: GameWithLines[],
+  ratings: Record<string, any>,
+  projTotalByGame: Map<string, number>,
+  poolStdForTotal?: number
+): SlateGameRow[] {
+  return games
+    .filter((g) => classOf(g, "home") === "fbs" && classOf(g, "away") === "fbs")
+    .map((g) => computeRow(g, ratings, "team"))
+    .map((c) => buildSlateRow(c, projTotalByGame.get(`${c.game.week}|${c.game.home_team}|${c.game.away_team}`) ?? null, poolStdForTotal));
+}
 import {
   buildDivisionResolvedTeams,
   buildActualRecordByTeam,
@@ -350,6 +369,28 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     };
   }, [season, previousWeekNum]);
 
+  // Lookahead graphic (see below) needs next week's games — one week
+  // ahead of the schedule week being reported, FBS-vs-FBS only. Vegas
+  // usually hasn't posted lines this far out, so this uses live ratings
+  // (not a week-accurate historical snapshot — there's no such thing for
+  // a week that hasn't happened yet) straight into computeRow, same as
+  // buildLookaheadSlateRows above expects.
+  const lookaheadWeekNum = scheduleWeekNum != null ? scheduleWeekNum + 1 : null;
+  const [lookaheadGames, setLookaheadGames] = useState<GameWithLines[]>([]);
+  useEffect(() => {
+    if (lookaheadWeekNum == null) {
+      setLookaheadGames([]);
+      return;
+    }
+    let cancelled = false;
+    fetchGamesWithLines(season, lookaheadWeekNum).then((games) => {
+      if (!cancelled) setLookaheadGames(games);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [season, lookaheadWeekNum]);
+
   // Whole-season games (every week, not just the one being reported) —
   // needed to tally each team's REAL wins/losses so far for Win Totals'
   // Wins Left/Losses Left, instead of trusting the weekly upload's
@@ -497,6 +538,15 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // stand as its own graphic alongside FBS-vs-FBS Saturday.
   const crossMidweekRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "midweek"), [crossSlateRows]);
   const crossSaturdayRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "saturday"), [crossSlateRows]);
+
+  // Lookahead — next week's FBS-vs-FBS games, my projection only (Vegas
+  // usually hasn't lined them yet). Live ratings, not a week-accurate
+  // snapshot (see lookaheadGames above for why).
+  const lookaheadFbsFbsRows = useMemo(
+    () => (lookaheadWeekNum == null ? [] : buildLookaheadSlateRows(lookaheadGames, liveByTeam, projTotalByGame, fbsTotalPoolStd)),
+    [lookaheadWeekNum, lookaheadGames, liveByTeam, projTotalByGame, fbsTotalPoolStd]
+  );
+  const lookaheadLabel = lookaheadWeekNum != null ? weekLabel(`week${lookaheadWeekNum}`) : null;
 
 
   // "Upcoming Midweek" — FBS-vs-FBS midweek and FBS-vs-FCS midweek,
@@ -757,6 +807,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const crossMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
   const matchupsReviewFbsFbsRef = useRef<HTMLDivElement>(null);
   const matchupsReviewCrossRef = useRef<HTMLDivElement>(null);
+  const matchupsLookaheadRef = useRef<HTMLDivElement>(null);
   // Watchability / TV Guide refs — passed straight into the live pages as
   // shareRef, so these ARE the exact nodes their own Export PNG buttons
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx). Both are
@@ -854,6 +905,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "25-fbs-vs-fcs-matchups-saturday", node: () => crossMatchupsSaturdayRef.current, branding: false, division: "FBS" },
     { key: "26-fcs-matchups-midweek", node: () => fcsMatchupsMidweekRef.current, branding: false, division: "FCS" },
     { key: "27-fcs-matchups-saturday", node: () => fcsMatchupsSaturdayRef.current, branding: false, division: "FCS" },
+    // Lookahead — next week's FBS-vs-FBS slate, my projection only
+    // (Vegas usually hasn't posted lines that far out).
+    { key: "27b-fbs-matchups-lookahead", node: () => matchupsLookaheadRef.current, branding: false, division: "FBS" },
     { key: "28-watchability-saturday-overall", node: () => watchabilityRef.current, branding: false, division: "FBS" },
     { key: "29-watchability-saturday-by-slate", node: () => watchabilityByWindowRef.current, branding: false, division: "FBS" },
     {
@@ -1432,6 +1486,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fcsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic eyebrow={fcsEyebrow} header="FCS vs FCS — Saturday" rows={fcsFcsSaturdayRows} />
             </div>
+            {lookaheadLabel && (
+              <div ref={matchupsLookaheadRef} style={CAPTURE_WRAP_STYLE}>
+                <MatchupGridGraphic eyebrow={fbsEyebrow} header={`Lookahead — ${lookaheadLabel} FBS vs FBS`} rows={lookaheadFbsFbsRows} showDayOfWeek />
+              </div>
+            )}
 
             {/* Watchability / TV Guide — the live pages themselves,
                 pinned to this tool's selected week (see the weekOverride/
