@@ -412,6 +412,48 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Brit finance: weekly entry fee/winnings + end-of-season bonus
+    // payout. Separate tables (brit_entries/brit_season_bonus) from
+    // brit_picks — picks themselves still flow through the generic Brit
+    // block below via selectGames/savePicks/resetPicks. This was
+    // previously entirely unhandled: both actions fell through to the
+    // "Unknown action" 400 below, so brit_entries/brit_season_bonus never
+    // got a single row written despite the frontend having a full save UI
+    // for both (BritPoolPanel.tsx's WeeklyEntryStep/SeasonTrackingTab) —
+    // which is why the Pool Balance Sheet's Brit numbers never moved. ---
+    if (pool === "brit" && (action === "saveEntry" || action === "saveSeasonBonus")) {
+      const { season } = req.body;
+      if (!season) {
+        res.status(400).json({ error: "Missing season" });
+        return;
+      }
+      if (action === "saveEntry") {
+        const { week, entry_fee, winnings, note } = req.body;
+        if (!week) {
+          res.status(400).json({ error: "Missing week" });
+          return;
+        }
+        const row = {
+          season,
+          week,
+          entry_fee: entry_fee ?? 10,
+          winnings: winnings ?? 0,
+          note: note ?? null,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabaseAdmin.from("brit_entries").upsert(row, { onConflict: "season,week" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      const { payout, note } = req.body;
+      const row = { season, payout: payout ?? 0, note: note ?? null, updated_at: new Date().toISOString() };
+      const { error } = await supabaseAdmin.from("brit_season_bonus").upsert(row, { onConflict: "season" });
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     // --- Brit / ESPN ML / ESPN Spreads / ESPN Confidence / CBS Pickem ---
     const table = POOL_TABLES[pool];
     const specialField = SPECIAL_FIELD[pool];

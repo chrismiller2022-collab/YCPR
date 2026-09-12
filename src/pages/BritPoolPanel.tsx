@@ -602,6 +602,7 @@ function WeeklyEntryStep({ season, week }: { season: number; week: number }) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchBritEntries(season).then((entries) => {
@@ -615,9 +616,12 @@ function WeeklyEntryStep({ season, week }: { season: number; week: number }) {
   async function handleSave() {
     setSaving(true);
     setSaved(false);
+    setSaveError(null);
     try {
       await britSave({ action: "saveEntry", season, week, entry_fee: entryFee, winnings, note });
       setSaved(true);
+    } catch (err: any) {
+      setSaveError(err.message ?? "Save failed");
     } finally {
       setSaving(false);
     }
@@ -645,6 +649,7 @@ function WeeklyEntryStep({ season, week }: { season: number; week: number }) {
           {saving ? "Saving…" : "Save"}
         </button>
         {saved && <span style={{ color: "green" }}>Saved</span>}
+        {saveError && <span style={{ color: "crimson" }}>Error: {saveError}</span>}
       </div>
     </div>
   );
@@ -659,6 +664,8 @@ function SeasonTrackingTab({ season }: { season: number }) {
   const [bonusPayout, setBonusPayout] = useState(0);
   const [bonusNote, setBonusNote] = useState("");
   const [savingBonus, setSavingBonus] = useState(false);
+  const [bonusSaved, setBonusSaved] = useState(false);
+  const [bonusError, setBonusError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -681,8 +688,13 @@ function SeasonTrackingTab({ season }: { season: number }) {
 
   async function saveBonus() {
     setSavingBonus(true);
+    setBonusSaved(false);
+    setBonusError(null);
     try {
       await britSave({ action: "saveSeasonBonus", season, payout: bonusPayout, note: bonusNote });
+      setBonusSaved(true);
+    } catch (err: any) {
+      setBonusError(err.message ?? "Save failed");
     } finally {
       setSavingBonus(false);
     }
@@ -777,6 +789,8 @@ function SeasonTrackingTab({ season }: { season: number }) {
           <button onClick={saveBonus} disabled={savingBonus}>
             {savingBonus ? "Saving…" : "Save"}
           </button>
+          {bonusSaved && <span style={{ color: "green" }}>Saved</span>}
+          {bonusError && <span style={{ color: "crimson" }}>Error: {bonusError}</span>}
         </div>
       </div>
 
