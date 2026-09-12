@@ -555,14 +555,38 @@ function TeamTotalsStatCells({ t, absMode }: { t: TeamSplitBetRow; absMode: bool
 // easier to scan game-by-game than as one very wide row. The old table
 // is still there (toggle below) since it's still the better shape for
 // sorting/scanning one metric across every game at once.
+// A game's own "amount off" for sorting purposes: whichever of its two
+// teams' totals disagrees with Vegas MORE, by absolute value — sorting
+// by a single team's side would arbitrarily bury a game where the away
+// total is unremarkable but the home total is the most extreme number
+// on the page. Missing data (-Infinity) never wins that max, so a game
+// with only one side's amount off still sorts by the value it has.
+function maxAbsAmountOff(r: CombinedTeamRow): number {
+  const a = r.away.amountOff == null ? -Infinity : Math.abs(r.away.amountOff);
+  const h = r.home.amountOff == null ? -Infinity : Math.abs(r.home.amountOff);
+  return Math.max(a, h);
+}
+
 function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRow[]; absMode: boolean }) {
-  const sorted = useMemo(
-    () => [...combined].sort((a, b) => a.game.game.week - b.game.game.week || (a.game.game.startDate ?? "").localeCompare(b.game.game.startDate ?? "")),
-    [combined]
-  );
+  const [sortMode, setSortMode] = useState<"week" | "amountOff">("week");
+  const sorted = useMemo(() => {
+    if (sortMode === "amountOff") {
+      return [...combined].sort((a, b) => maxAbsAmountOff(b) - maxAbsAmountOff(a));
+    }
+    return [...combined].sort((a, b) => a.game.game.week - b.game.game.week || (a.game.game.startDate ?? "").localeCompare(b.game.game.startDate ?? ""));
+  }, [combined, sortMode]);
 
   return (
     <div className="table-scroll">
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort:</span>
+        <button className={`mode-btn ${sortMode === "week" ? "mode-btn-active" : ""}`} onClick={() => setSortMode("week")}>
+          Week
+        </button>
+        <button className={`mode-btn ${sortMode === "amountOff" ? "mode-btn-active" : ""}`} onClick={() => setSortMode("amountOff")}>
+          Amount Off
+        </button>
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
