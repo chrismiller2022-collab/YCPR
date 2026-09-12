@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useLoadToken } from "../lib/staleGuard";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
@@ -94,16 +95,24 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
     );
   }
 
+  const { next, isCurrent } = useLoadToken();
+
   function load() {
+    const token = next();
     setLoading(true);
     setError(null);
     fetchCbsSplashWeek(season, week, liveByTeam)
       .then((data) => {
+        if (!isCurrent(token)) return;
         setRows(data);
         setSavedSnapshot(snapshotOf(data));
       })
-      .catch((err) => setError(err.message ?? "Failed to load"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setError(err.message ?? "Failed to load");
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —

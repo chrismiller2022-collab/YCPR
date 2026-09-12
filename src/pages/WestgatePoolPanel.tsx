@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useLoadToken } from "../lib/staleGuard";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
@@ -474,16 +475,24 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
     return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.westgate_line, p: r.picked_side })));
   }
 
+  const { next, isCurrent } = useLoadToken();
+
   function load() {
+    const token = next();
     setLoading(true);
     setError(null);
     fetchWestgateWeek(season, week, liveByTeam)
       .then((data) => {
+        if (!isCurrent(token)) return;
         setRows(data);
         setSavedSnapshot(snapshotOf(data));
       })
-      .catch((err) => setError(err.message ?? "Failed to load"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setError(err.message ?? "Failed to load");
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   useEffect(() => {

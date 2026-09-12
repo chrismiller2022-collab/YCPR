@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useLoadToken } from "../lib/staleGuard";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
@@ -36,16 +37,24 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
   const [fpiResult, setFpiResult] = useState<string | null>(null);
   const [fpiError, setFpiError] = useState<string | null>(null);
 
+  const { next, isCurrent } = useLoadToken();
+
   function loadView() {
+    const token = next();
     setLoading(true);
     setLoadError(null);
     Promise.all([fetchGamesWithLines(season, wholeSeason ? undefined : week), fetchSyncedWeeks()])
       .then(([g, weeks]) => {
+        if (!isCurrent(token)) return;
         setGames(g);
         setSyncedWeeks(weeks);
       })
-      .catch((err) => setLoadError(err.message ?? "Failed to load games/lines"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setLoadError(err.message ?? "Failed to load games/lines");
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   useEffect(() => {

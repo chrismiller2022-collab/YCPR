@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useLoadToken } from "../lib/staleGuard";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME } from "../data/teams";
@@ -111,17 +112,31 @@ function GameSelectionStep({
   const [nonFbsError, setNonFbsError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Guarded against useDefaultToAdminWeek's own auto-default firing a
+    // second, later fetch for the real week right after this effect's
+    // initial mount-time fetch (for week=1) already started — see
+    // AdminMatchupsPanel.tsx for the full explanation. Without this,
+    // whichever request happened to resolve last won.
+    let cancelled = false;
     setLoading(true);
     setError(null);
     Promise.all([fetchFbsGamesForWeek(season, week), fetchBritPicksForWeek(season, week)])
       .then(([games, picks]) => {
+        if (cancelled) return;
         setAvailable(games);
         setSelected(new Set(picks.map((p) => p.game_id)));
         const special = picks.find((p) => p.is_special);
         setSpecialId(special?.game_id ?? null);
       })
-      .catch((err) => setError(err.message ?? "Failed to load games"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) setError(err.message ?? "Failed to load games");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [season, week]);
 
   function toggle(gameId: string) {
@@ -366,10 +381,14 @@ function PickingStep({
     return map;
   }, [totalsRows]);
 
+  const { next, isCurrent } = useLoadToken();
+
   function load() {
+    const token = next();
     setLoading(true);
     fetchBritPicksForWeek(season, week)
       .then((data) => {
+        if (!isCurrent(token)) return;
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
@@ -387,8 +406,12 @@ function PickingStep({
         }
         setDraft(d);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setError(err.message);
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —

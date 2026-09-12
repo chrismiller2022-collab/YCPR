@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useLoadToken } from "../lib/staleGuard";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import {
@@ -53,17 +54,25 @@ function GameSelectionStep({
   const [gameSearch, setGameSearch] = useState("");
   const [collapsed, setCollapsed] = useState(false);
 
+  const { next, isCurrent } = useLoadToken();
+
   function load() {
+    const token = next();
     setLoading(true);
     setError(null);
     Promise.all([fetchFbsGamesForWeek(season, week), fetchEspnSpreadPicksForWeek(season, week)])
       .then(([games, picks]) => {
+        if (!isCurrent(token)) return;
         setAvailable(games);
         setSelected(new Set(picks.map((p) => p.game_id)));
         setKeyGameId(picks.find((p) => p.is_key_game)?.game_id ?? null);
       })
-      .catch((err) => setError(err.message ?? "Failed to load games"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setError(err.message ?? "Failed to load games");
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   useEffect(load, [season, week, refreshToken]);
@@ -242,10 +251,14 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     return map;
   }, [totalsRows]);
 
+  const { next, isCurrent } = useLoadToken();
+
   function load() {
+    const token = next();
     setLoading(true);
     fetchEspnSpreadPicksForWeek(season, week, liveByTeam)
       .then((data) => {
+        if (!isCurrent(token)) return;
         setPicks(data);
         const d: Record<number, any> = {};
         for (const p of data) {
@@ -270,8 +283,12 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
         }
         setDraft(d);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (isCurrent(token)) setError(err.message);
+      })
+      .finally(() => {
+        if (isCurrent(token)) setLoading(false);
+      });
   }
 
   // See EspnMoneylinePanel.tsx for why this waits on ratingsLoading —

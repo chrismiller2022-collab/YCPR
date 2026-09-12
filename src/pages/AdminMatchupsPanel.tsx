@@ -832,12 +832,31 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey]);
 
   useEffect(() => {
+    // Guarded against the week selector's own auto-default (see
+    // useDefaultToAdminWeek): mounting with weekSel="all" kicks off a
+    // whole-season fetch immediately, and that hook then flips weekSel
+    // to the admin-selected week a moment later, kicking off a second,
+    // smaller fetch. Without this guard, whichever request happened to
+    // finish LAST won — and the bigger "all weeks" one, having more data
+    // to transfer, routinely finished after the single-week one, so the
+    // page ended up showing every game while the dropdown still said the
+    // correct week.
+    let cancelled = false;
     setLoading(true);
     setLoadError(null);
     fetchGamesWithLines(season, weekSel === "all" ? undefined : weekSel)
-      .then(setGames)
-      .catch((err) => setLoadError(err.message ?? "Failed to load games"))
-      .finally(() => setLoading(false));
+      .then((g) => {
+        if (!cancelled) setGames(g);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err.message ?? "Failed to load games");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [season, weekSel]);
 
   useEffect(() => {
