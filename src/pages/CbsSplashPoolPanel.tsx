@@ -8,6 +8,19 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import { TEAMS_BY_NAME } from "../data/teams";
+
+// CBS's own rules exclude games between two teams that are BOTH outside
+// these five conferences — Kelly has no such restriction, so a game can
+// be Kelly-eligible without ever being CBS-eligible. Only one side needs
+// to be in this set for the game to count for CBS.
+const CBS_ELIGIBLE_CONFERENCES = new Set(["Big Ten", "Big 12", "ACC", "Mountain West", "SEC"]);
+
+function isCbsEligible(r: CbsSplashRow): boolean {
+  const awayConf = TEAMS_BY_NAME[r.game.away_team]?.conf;
+  const homeConf = TEAMS_BY_NAME[r.game.home_team]?.conf;
+  return (!!awayConf && CBS_ELIGIBLE_CONFERENCES.has(awayConf)) || (!!homeConf && CBS_ELIGIBLE_CONFERENCES.has(homeConf));
+}
 
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
 // FBS-vs-FBS game" pool.
@@ -72,6 +85,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [showPickedOnly, setShowPickedOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
+  const [cbsEligibleOnly, setCbsEligibleOnly] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
@@ -139,6 +153,29 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   // doesn't touch CBS.
   function copyCbsToKelly() {
     setRows((prev) => prev.map((r) => (r.cbsSelected ? { ...r, kellySelected: true, kellyPickedSide: r.cbsPickedSide } : r)));
+  }
+
+  // Kelly-first workflow: Kelly has no conference restriction and picks
+  // 7 games; CBS shares the same line but only allows games with at
+  // least one team in CBS_ELIGIBLE_CONFERENCES, and only picks 6. Copies
+  // every Kelly pick that's ALSO CBS-eligible over to CBS (same side),
+  // stopping at CBS_GAMES_TARGET — Kelly's 7 can exceed CBS's 6 even
+  // after the ineligible ones are excluded, so this never overshoots
+  // the cap; anything left over (ineligible, or past the cap) still
+  // needs a manual CBS pick afterward. Doesn't touch a game already
+  // selected for CBS, so it's safe to run more than once.
+  function copyKellyToCbsEligible() {
+    setRows((prev) => {
+      let cbsCount = prev.filter((r) => r.cbsSelected).length;
+      return prev.map((r) => {
+        if (r.cbsSelected) return r;
+        if (!r.kellySelected || r.kellyPickedSide == null) return r;
+        if (!isCbsEligible(r)) return r;
+        if (cbsCount >= CBS_GAMES_TARGET) return r;
+        cbsCount++;
+        return { ...r, cbsSelected: true, cbsPickedSide: r.kellyPickedSide };
+      });
+    });
   }
 
   async function handleSave() {
@@ -220,6 +257,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const visibleRows = useMemo(() => {
     let list = showPickedOnly ? rows.filter((r) => r.cbsPickedSide != null || r.kellyPickedSide != null) : rows;
     if (hideCompleted) list = list.filter((r) => !r.game.completed);
+    if (cbsEligibleOnly) list = list.filter(isCbsEligible);
     if (gameSearch.trim() !== "") {
       const q = gameSearch.trim().toLowerCase();
       list = list.filter((r) => r.game.away_team.toLowerCase().includes(q) || r.game.home_team.toLowerCase().includes(q));
@@ -246,7 +284,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, hideCompleted, cbsEligibleOnly, sortKey, sortDir, gameSearch, sortMode]);
 
   const cbsSelectedCount = rows.filter((r) => r.cbsSelected).length;
   const cbsKeyCount = rows.filter((r) => r.cbsIsKeyPick).length;
@@ -304,9 +342,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       </div>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Every FBS-vs-FBS game this week, automatically, shared between two separate contests on
-        the same line: check a game into CBS ({CBS_GAMES_TARGET} games, {CBS_KEY_PICKS_TARGET} key
-        pick) and/or Kelly ({KELLY_GAMES_TARGET} games, no key pick) and pick a side for each.
-        Splash line convention matches the rest of the site: negative = away favored.
+        the same line: check a game into Kelly ({KELLY_GAMES_TARGET} games, no key pick) and/or CBS
+        ({CBS_GAMES_TARGET} games, {CBS_KEY_PICKS_TARGET} key pick) and pick a side for each. CBS
+        excludes any game between two teams that are BOTH outside {Array.from(CBS_ELIGIBLE_CONFERENCES).join(", ")} —
+        Kelly has no such restriction, so a game can be Kelly-eligible without ever being pickable
+        for CBS. Suggested flow: save lines, make all of Kelly's picks first, "Copy Kelly → CBS
+        (eligible)" to carry over whichever of those are also CBS-eligible, then check "CBS:
+        eligible conferences only" to fill in CBS's remaining picks. Splash line convention matches
+        the rest of the site: negative = away favored.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -337,15 +380,26 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <input type="checkbox" checked={cbsEligibleOnly} onChange={(e) => setCbsEligibleOnly(e.target.checked)} />
+          CBS: eligible conferences only
+        </label>
+        <span style={{ fontSize: "0.82rem", color: kellySelectedCount === KELLY_GAMES_TARGET ? "green" : "#a15c00" }}>
+          Kelly: {kellySelectedCount}/{KELLY_GAMES_TARGET} selected · {kellyPickedCount} picked · {kellyRecord.wins}-{kellyRecord.losses}
+          {kellyRecord.pushes > 0 ? `-${kellyRecord.pushes}` : ""}
+        </span>
         <span style={{ fontSize: "0.82rem", color: cbsSelectedCount === CBS_GAMES_TARGET && cbsKeyCount === CBS_KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
           CBS: {cbsSelectedCount}/{CBS_GAMES_TARGET} selected · {cbsPickedCount} picked · Key {cbsKeyCount}/{CBS_KEY_PICKS_TARGET} · {cbsRecord.wins}-
           {cbsRecord.losses}
           {cbsRecord.pushes > 0 ? `-${cbsRecord.pushes}` : ""}
         </span>
-        <span style={{ fontSize: "0.82rem", color: kellySelectedCount === KELLY_GAMES_TARGET ? "green" : "#a15c00" }}>
-          Kelly: {kellySelectedCount}/{KELLY_GAMES_TARGET} selected · {kellyPickedCount} picked · {kellyRecord.wins}-{kellyRecord.losses}
-          {kellyRecord.pushes > 0 ? `-${kellyRecord.pushes}` : ""}
-        </span>
+        <button
+          className="menu-btn"
+          onClick={copyKellyToCbsEligible}
+          title={`Copies Kelly's picks onto CBS for every game that's also CBS-eligible (${Array.from(CBS_ELIGIBLE_CONFERENCES).join(", ")}), up to CBS's ${CBS_GAMES_TARGET}-game cap — doesn't touch Kelly or overwrite an existing CBS pick`}
+        >
+          Copy Kelly → CBS (eligible)
+        </button>
         <button className="menu-btn" onClick={copyCbsToKelly} title="Copies CBS's current selections/picks onto Kelly — doesn't touch CBS">
           Copy CBS → Kelly
         </button>
@@ -450,13 +504,13 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   <th className="th">Proj Cover</th>
                   <th className="th">Actual Cover</th>
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
+                  <th className="th">Kelly?</th>
+                  <th className="th">Kelly Pick</th>
+                  <th className="th">Kelly Result</th>
                   <th className="th">CBS?</th>
                   <th className="th">CBS Pick</th>
                   <th className="th">Key</th>
                   <th className="th">CBS Result</th>
-                  <th className="th">Kelly?</th>
-                  <th className="th">Kelly Pick</th>
-                  <th className="th">Kelly Result</th>
                 </tr>
               </thead>
               <tbody>
@@ -540,6 +594,46 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                         </div>
                       </td>
 
+                      {/* Kelly */}
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={r.kellySelected}
+                          onChange={(e) => {
+                            if (e.target.checked && kellySelectedCount >= KELLY_GAMES_TARGET) {
+                              setSaveMsg(`Kelly is already at ${KELLY_GAMES_TARGET} games — uncheck one first.`);
+                              return;
+                            }
+                            updateRow(r.game_id, e.target.checked ? { kellySelected: true } : { kellySelected: false, kellyPickedSide: null });
+                          }}
+                        />
+                      </td>
+                      <td style={cellStyle}>
+                        {r.kellySelected && (
+                          <div style={{ display: "flex", gap: "0.2rem" }}>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.kellyPickedSide === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "away" ? null : "away" })}
+                              title={r.game.away_team}
+                            >
+                              <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
+                            </button>
+                            <button
+                              className="menu-btn"
+                              style={{ opacity: r.kellyPickedSide === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
+                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "home" ? null : "home" })}
+                              title={r.game.home_team}
+                            >
+                              <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        {r.kellySelected ? (kellyGrade === "pending" ? "–" : kellyGrade === "win" ? "✅ Win" : kellyGrade === "push" ? "Push" : "❌ Loss") : ""}
+                      </td>
+
                       {/* CBS */}
                       <td style={{ ...cellStyle, textAlign: "center" }}>
                         <input
@@ -593,46 +687,6 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                       </td>
                       <td style={cellStyle}>
                         {r.cbsSelected ? (cbsGrade === "pending" ? "–" : cbsGrade === "win" ? "✅ Win" : cbsGrade === "push" ? "Push" : "❌ Loss") : ""}
-                      </td>
-
-                      {/* Kelly */}
-                      <td style={{ ...cellStyle, textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={r.kellySelected}
-                          onChange={(e) => {
-                            if (e.target.checked && kellySelectedCount >= KELLY_GAMES_TARGET) {
-                              setSaveMsg(`Kelly is already at ${KELLY_GAMES_TARGET} games — uncheck one first.`);
-                              return;
-                            }
-                            updateRow(r.game_id, e.target.checked ? { kellySelected: true } : { kellySelected: false, kellyPickedSide: null });
-                          }}
-                        />
-                      </td>
-                      <td style={cellStyle}>
-                        {r.kellySelected && (
-                          <div style={{ display: "flex", gap: "0.2rem" }}>
-                            <button
-                              className="menu-btn"
-                              style={{ opacity: r.kellyPickedSide === "away" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "away" ? null : "away" })}
-                              title={r.game.away_team}
-                            >
-                              <TeamLogo team={r.game.away_team} size={16} /> {fmt(r.splash_line)}
-                            </button>
-                            <button
-                              className="menu-btn"
-                              style={{ opacity: r.kellyPickedSide === "home" ? 1 : 0.4, padding: "0.15rem 0.4rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                              onClick={() => updateRow(r.game_id, { kellyPickedSide: r.kellyPickedSide === "home" ? null : "home" })}
-                              title={r.game.home_team}
-                            >
-                              <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.splash_line != null ? -r.splash_line : null)}
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                      <td style={cellStyle}>
-                        {r.kellySelected ? (kellyGrade === "pending" ? "–" : kellyGrade === "win" ? "✅ Win" : kellyGrade === "push" ? "Push" : "❌ Loss") : ""}
                       </td>
                     </tr>
                   );
