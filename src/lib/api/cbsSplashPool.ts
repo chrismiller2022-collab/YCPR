@@ -129,7 +129,7 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
       splashVsMine: splashLine != null && computed.projAwaySpread != null ? splashLine - computed.projAwaySpread : null,
       splashVsVegas: splashLine != null && computed.vegasAwaySpread != null ? splashLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
-      wfbAmountOff: computed.weightedFilteredBetTeam != null ? computed.absAmountOff : null,
+      wfbAmountOff: computed.absAmountOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, splashLine),
     };

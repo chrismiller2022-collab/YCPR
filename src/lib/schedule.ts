@@ -32,7 +32,14 @@ export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam = {
 
 export function computeNextOpponent(team, liveByTeam = {}) {
   const schedule = gamesForTeam(team.team);
-  const nextGame = schedule[0] || null;
+  // schedule[0] used to mean "the next game" only on the literal first
+  // week of the season — every week after that it was still Week 1's
+  // opponent, since nothing here ever advanced past the front of the
+  // (date-sorted) list. Find the first game that hasn't kicked off yet
+  // instead, so this tracks the actual upcoming game all season,
+  // including through bye weeks.
+  const now = Date.now();
+  const nextGame = schedule.find((g) => new Date(g.date).getTime() >= now) ?? null;
   if (!nextGame) return null;
   const isHome = nextGame.home === team.team;
   const oppName = isHome ? nextGame.away : nextGame.home;

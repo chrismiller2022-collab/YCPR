@@ -23,11 +23,10 @@ export interface PeayRow {
   // Which side (if any) the Weighted Filtered Bet signal favors — same
   // computeRow() field Admin Matchups' WFB column reads.
   wfbTeam: "away" | "home" | null;
-  // Magnitude behind that WFB signal (computeRow's absAmountOff) — WFB
-  // firing is a yes/no threshold check, but the actual size of the
-  // disagreement still varies underneath it, and Chris wants to see
-  // that even on a WFB game that doesn't also clear a bigger amount-off
-  // bar elsewhere.
+  // Magnitude behind the WFB signal (computeRow's absAmountOff) — shown
+  // for every game, not just ones where WFB actually fired, so Chris can
+  // see how close a non-bet game was. wfbTeam (not this) is what marks
+  // whether it's an actual bet.
   wfbAmountOff: number | null;
   // Which side my model likes against the Peay line specifically (not
   // Vegas) — informational only, doesn't drive picked_side/Pick
@@ -112,7 +111,7 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
       peayVsMine: peayLine != null && computed.projAwaySpread != null ? peayLine - computed.projAwaySpread : null,
       peayVsVegas: peayLine != null && computed.vegasAwaySpread != null ? peayLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
-      wfbAmountOff: computed.weightedFilteredBetTeam != null ? computed.absAmountOff : null,
+      wfbAmountOff: computed.absAmountOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, peayLine),
     };

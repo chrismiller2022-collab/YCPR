@@ -495,7 +495,9 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           ) : (
                             <span style={{ color: "var(--chalk-dim)" }}>–</span>
                           )}
-                          {r.wfbTeam != null && <span style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtAbs(r.wfbAmountOff)}</span>}
+                          <span style={{ fontSize: "0.72rem", color: r.wfbTeam != null ? undefined : "var(--chalk-dim)", fontWeight: r.wfbTeam != null ? 700 : 400 }}>
+                            {fmtAbs(r.wfbAmountOff)}
+                          </span>
                         </div>
                       </td>
                       <td style={cellStyle}>

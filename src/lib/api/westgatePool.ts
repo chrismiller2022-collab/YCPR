@@ -98,7 +98,7 @@ export async function fetchWestgateWeek(season: number, week: number, liveByTeam
       westgateVsMine: westgateLine != null && computed.projAwaySpread != null ? westgateLine - computed.projAwaySpread : null,
       westgateVsVegas: westgateLine != null && computed.vegasAwaySpread != null ? westgateLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
-      wfbAmountOff: computed.weightedFilteredBetTeam != null ? computed.absAmountOff : null,
+      wfbAmountOff: computed.absAmountOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, westgateLine),
     };
