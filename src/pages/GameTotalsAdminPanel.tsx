@@ -765,6 +765,173 @@ export function TeamTotalsTab({
   );
 }
 
+// ---------------------------------------------------------------------
+// Team Stats drill-down — pick one FBS team, see its most recent
+// completed game (actual vs. projected, both game-level and team-level)
+// and its next scheduled game's current projection, in one place instead
+// of scanning the full Totals/Team Totals tables for two specific rows.
+// Reuses buildTeamSplitBetRows (same function Team Totals itself uses)
+// filtered down to one team, so the numbers here can never drift from
+// what that tab shows for the same games.
+//
+// NOT built here: pull-over-pull diffing (freezing this once "totals are
+// run" and comparing a later pull against it, per Chris's spec). This
+// engine is entirely live-computed — there's no discrete "run" event to
+// snapshot against today, so that needs a new table plus a decision on
+// what should actually trigger a snapshot before it can be built.
+// ---------------------------------------------------------------------
+function TeamGameStatCard({ label, r, team }: { label: string; r: TeamSplitBetRow | undefined; team: string }) {
+  if (!r) {
+    return (
+      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", flex: 1, minWidth: 260 }}>
+        <div className="section-label" style={{ marginBottom: "0.5rem" }}>{label}</div>
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>No game found.</p>
+      </div>
+    );
+  }
+  const opponent = r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam;
+  const completed = r.row.game.completed;
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", flex: 1, minWidth: 260 }}>
+      <div className="section-label" style={{ marginBottom: "0.5rem" }}>{label}</div>
+      <div style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+        Week {r.row.game.week} · {r.isHome ? "vs" : "at"} <TeamLink team={opponent} />
+      </div>
+      <table style={{ fontSize: "0.82rem", width: "100%" }}>
+        <tbody>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas Total (game)</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.row.odds.vegasTotal, 1)}</td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>My Total (game)</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.row.projection?.projectedTotal ?? null, 1)}</td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>{team} Proj. Team Total</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.myTeamTotal, 1)}</td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas Team Total (derived/actual)</td>
+            <td style={{ textAlign: "right" }}>{fmt(r.actualVegasTeamTotal ?? r.vegasTeamTotal, 1)}</td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Actual Game Total</td>
+            <td style={{ textAlign: "right" }}>{completed ? fmt(r.row.actualTotal, 0) : "–"}</td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>{team} Actual Points</td>
+            <td style={{ textAlign: "right" }}>{completed ? fmt(r.actualTeamPoints, 0) : "–"}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function TeamStatsDrilldownTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
+  const teamSplitRows = useMemo(
+    () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier),
+    [rows, settings.filterThresholdMultiplier]
+  );
+  const teams = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      if (r.game.homeClassification === "fbs") set.add(r.game.homeTeam);
+      if (r.game.awayClassification === "fbs") set.add(r.game.awayTeam);
+    }
+    return Array.from(set).sort();
+  }, [rows]);
+  const [team, setTeam] = useState<string>("");
+
+  const teamRows = useMemo(
+    () => teamSplitRows.filter((r) => r.team === team).sort((a, b) => a.row.game.week - b.row.game.week),
+    [teamSplitRows, team]
+  );
+  const lastGame = useMemo(() => [...teamRows].reverse().find((r) => r.row.game.completed), [teamRows]);
+  const nextGame = useMemo(() => teamRows.find((r) => !r.row.game.completed), [teamRows]);
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Pick one FBS team to see its most recent game (actual vs. projected) and its next scheduled game's current
+        projection, side by side. Same numbers Team Totals shows for these games, just filtered to one team.
+      </p>
+      <select className="filter" value={team} onChange={(e) => setTeam(e.target.value)} style={{ marginBottom: "1rem" }}>
+        <option value="">Select a team…</option>
+        {teams.map((t) => (
+          <option key={t} value={t}>{t}</option>
+        ))}
+      </select>
+      {team && (
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+          <TeamGameStatCard label="Most Recent Game" r={lastGame} team={team} />
+          <TeamGameStatCard label="Next Game" r={nextGame} team={team} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Games Ahead — the following week's slate, shown even before Vegas has
+// posted lines for it (Vegas Total/My TT columns just read "–" until a
+// line syncs). Chris's spec also wants this to show the change from the
+// last time totals were pulled once a new pull runs — same blocker as
+// the Stats tab above: no discrete "run" to snapshot against yet, so
+// this only shows the current live projection, no "New Proj"/"Change"
+// columns yet.
+// ---------------------------------------------------------------------
+export function GamesAheadTab({ rows, nextWeek }: { rows: EnrichedGameRow[]; nextWeek: number }) {
+  const nextWeekRows = useMemo(
+    () =>
+      rows
+        .filter((r) => r.game.week === nextWeek && r.game.homeClassification === "fbs" && r.game.awayClassification === "fbs")
+        .sort((a, b) => (a.game.startDate ? new Date(a.game.startDate).getTime() : Infinity) - (b.game.startDate ? new Date(b.game.startDate).getTime() : Infinity)),
+    [rows, nextWeek]
+  );
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Week {nextWeek} — the week after whatever's currently selected above. Vegas often hasn't posted a total this
+        far out yet, so "Vegas Total" reads "–" until one syncs; "My Total" is my own projection regardless.
+      </p>
+      <div className="table-scroll">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={CP}>Date</th>
+              <th style={CP}>Kickoff</th>
+              <th style={CP}>Away</th>
+              <th style={CP}>Home</th>
+              <th style={{ ...CP, textAlign: "right" }}>Vegas Total</th>
+              <th style={{ ...CP, textAlign: "right" }}>My Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {nextWeekRows.map((r) => (
+              <tr key={r.game.id}>
+                <td style={CP}>{dateLabel(r.game.startDate)}</td>
+                <td style={CP}>{kickoffLabel(r.game.startDate)}</td>
+                <td style={CP}><TeamLink team={r.game.awayTeam} /></td>
+                <td style={CP}><TeamLink team={r.game.homeTeam} /></td>
+                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.vegasTotal, 1)}</td>
+                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.projection?.projectedTotal ?? null, 1)}</td>
+              </tr>
+            ))}
+            {nextWeekRows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="empty">No games found for Week {nextWeek} yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
   const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeTeamPerformanceBreakdown(betRows), [betRows]);
