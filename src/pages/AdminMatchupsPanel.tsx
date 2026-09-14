@@ -734,7 +734,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState("spreads");
   const [mlEvThreshold, setMlEvThreshold] = useState(0);
   const [hideNoLine, setHideNoLine] = useState(false);
-  const [hideCompleted, setHideCompleted] = useState(false);
+  const [completedFilter, setCompletedFilter] = useState<"all" | "hideCompleted" | "completedOnly">("all");
   const [sortKey, setSortKey] = useState<string | null>("betSize");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -897,14 +897,16 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
   const visibleRows = useMemo(() => {
     return computedRows.filter((c) => {
-      if (hideCompleted && c.game.away_points != null && c.game.home_points != null) return false;
+      const isCompleted = c.game.away_points != null && c.game.home_points != null;
+      if (completedFilter === "hideCompleted" && isCompleted) return false;
+      if (completedFilter === "completedOnly" && !isCompleted) return false;
       if (!hideNoLine) return true;
       if (mode === "spreads") return c.vegasAwaySpread != null;
       if (mode === "moneyline") return c.vegasMoneyline != null;
       if (mode === "totals") return c.line?.over_under != null;
       return true;
     });
-  }, [computedRows, hideNoLine, hideCompleted, mode]);
+  }, [computedRows, hideNoLine, completedFilter, mode]);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return visibleRows;
@@ -1029,8 +1031,16 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
               Hide games with no Vegas {mode === "spreads" ? "line" : "moneyline"}
             </label>
             <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-              <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
-              Hide completed games
+              Games:
+              <select
+                className="filter"
+                value={completedFilter}
+                onChange={(e) => setCompletedFilter(e.target.value as "all" | "hideCompleted" | "completedOnly")}
+              >
+                <option value="all">All</option>
+                <option value="hideCompleted">Hide completed</option>
+                <option value="completedOnly">Completed only</option>
+              </select>
             </label>
           </>
         )}
