@@ -105,15 +105,28 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     try {
       const data = await syncCfbdRatings(year);
       const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
-        if (r.error) return `${key}: error (${r.error})`;
+        const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
+        if (r.error) return `${label}: error (${r.error})`;
         // yearUsed differs from the requested year whenever the primary
         // year came back empty and the server fell back to year-1 (e.g.
         // this year's ratings aren't published by CFBD yet) — surface that
         // so a stale/wrong-year pull is obvious instead of silent.
         const yearNote = r.yearUsed != null && r.yearUsed !== year ? ` [fell back to ${r.yearUsed}]` : ` [${r.yearUsed ?? year}]`;
-        return `${key}: ${r.saved}/${r.fetched}${yearNote}`;
+        // changed/unchanged/newTeams — a pull can "succeed" (fetched N,
+        // saved N, no error) yet be a silent no-op if CFBD served a
+        // cached/stale response. Comparing against what was already
+        // stored, right before this upsert overwrote it, catches that:
+        // 0 changed across a real weekly sync is the loud signal that
+        // nothing actually moved.
+        const diffNote =
+          r.changed != null
+            ? ` — ${r.changed} changed, ${r.unchanged} unchanged${r.newTeams ? `, ${r.newTeams} new` : ""}${
+                r.changed > 0 ? ` (avg Δ${r.avgAbsDelta.toFixed(2)}, max Δ${r.maxAbsDelta.toFixed(2)})` : ""
+              }`
+            : "";
+        return `${label}: ${r.saved}/${r.fetched}${yearNote}${diffNote}`;
       });
-      setLog(`CFBD sync — ${parts.join(", ")}`);
+      setLog(`CFBD sync — ${parts.join("; ")}`);
       onDataChanged();
     } catch (err: any) {
       setLog(err.message ?? "CFBD sync failed");

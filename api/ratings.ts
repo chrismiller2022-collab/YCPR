@@ -183,7 +183,18 @@ export default async function handler(req: any, res: any) {
       return { rows, yearUsed };
     }
 
-    const results: Record<string, { fetched: number; saved: number; yearUsed?: number; error?: string }> = {};
+    interface SyncResult {
+      fetched: number;
+      saved: number;
+      yearUsed?: number;
+      error?: string;
+      changed?: number;
+      unchanged?: number;
+      newTeams?: number;
+      avgAbsDelta?: number;
+      maxAbsDelta?: number;
+    }
+    const results: Record<string, SyncResult> = {};
     for (const [systemKey, pull] of Object.entries(pullers)) {
       try {
         const { rows, yearUsed } = await pullWithFallback(pull, year);
@@ -201,6 +212,43 @@ export default async function handler(req: any, res: any) {
           })),
           (r) => `${r.system_key}::${r.team}`
         );
+
+        // Snapshot what's already stored for this system BEFORE the
+        // upsert overwrites it — a pull that "succeeds" (rows fetched,
+        // upsert has no error) can still be a silent no-op if CFBD served
+        // a cached/stale response, so "did the value actually move" is a
+        // real signal the fetched/saved counts alone can't give.
+        const { data: existingRows } = await supabaseAdmin
+          .from("rating_pulls")
+          .select("team, value")
+          .eq("system_key", systemKey);
+        const existingByTeam = new Map((existingRows ?? []).map((r: any) => [r.team, Number(r.value)]));
+
+        let changed = 0;
+        let unchanged = 0;
+        let newTeams = 0;
+        let deltaSum = 0;
+        let maxAbsDelta = 0;
+        for (const r of upsertRows) {
+          const old = existingByTeam.get(r.team);
+          if (old == null) {
+            newTeams++;
+            continue;
+          }
+          const delta = Math.abs(r.value - old);
+          if (delta < 0.005) {
+            unchanged++;
+          } else {
+            changed++;
+            deltaSum += delta;
+            if (delta > maxAbsDelta) maxAbsDelta = delta;
+          }
+        }
+        results[systemKey].changed = changed;
+        results[systemKey].unchanged = unchanged;
+        results[systemKey].newTeams = newTeams;
+        results[systemKey].avgAbsDelta = changed > 0 ? deltaSum / changed : 0;
+        results[systemKey].maxAbsDelta = maxAbsDelta;
 
         const { error, count } = await supabaseAdmin
           .from("rating_pulls")
