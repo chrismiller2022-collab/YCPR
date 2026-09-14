@@ -344,9 +344,12 @@ export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStu
 // ---------------------------------------------------------------------
 export type HfaMode = "team" | "flat";
 
+export type LineMode = "open" | "close";
+
 const LIVE_PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickSpreadLine(lines: BettingLineRow[]): BettingLineRow | null {
-  const withSpread = lines.filter((l) => l.spread != null);
+function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
+  const field = lineMode === "open" ? "opening_spread" : "spread";
+  const withSpread = lines.filter((l) => l[field] != null);
   if (withSpread.length === 0) return null;
   for (const p of LIVE_PREFERRED_PROVIDERS) {
     const match = withSpread.find((l) => l.provider === p);
@@ -357,21 +360,34 @@ function pickSpreadLine(lines: BettingLineRow[]): BettingLineRow | null {
 
 export function buildLiveBetHistoryRecords(
   games: GameWithLines[],
-  liveByTeam: Record<string, any>,
-  hfaMode: HfaMode = "team"
+  ratingsByWeek: Record<number, Record<string, any>>,
+  hfaMode: HfaMode = "team",
+  // Only meaningful for live seasons (2026+) — the static BET_HISTORY
+  // upload only ever carried the closing line, so "open" here has no
+  // effect on historical seasons regardless of what the caller passes.
+  lineMode: LineMode = "close"
 ): BetHistoryRecord[] {
   const records: BetHistoryRecord[] = [];
 
   for (const g of games) {
     if (!g.completed || g.home_points == null || g.away_points == null) continue; // nothing to grade yet
-    const line = pickSpreadLine(g.lines);
-    if (!line || line.spread == null) continue;
+    const line = pickSpreadLine(g.lines, lineMode);
+    const spreadValue = lineMode === "open" ? line?.opening_spread : line?.spread;
+    if (!line || spreadValue == null) continue;
 
-    const homeRating = liveByTeam[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
-    const awayRating = liveByTeam[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
+    // Week-accurate, not "whatever the ratings are today" — the same
+    // fix AdminMatchupsPanel and the Weekly Image Dump's Review section
+    // already apply. Using today's live ratings for every game all
+    // season (the old behavior here) silently reprojects Week 1 with
+    // Week 10's ratings once the season moves on, so this page's own
+    // "performance" drifted away from what Admin Matchups' bet filter
+    // shows for the exact same games — the discrepancy Chris flagged.
+    const weekRatings = ratingsByWeek[g.week] ?? {};
+    const homeRating = weekRatings[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
+    const awayRating = weekRatings[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
     if (homeRating == null || awayRating == null) continue;
 
-    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, liveByTeam);
+    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
     const awayPerspectivePrediction = awayRating - homeRating + hfa;
 
     const base: BetHistoryRecord = {
@@ -381,7 +397,7 @@ export function buildLiveBetHistoryRecords(
       awayTeam: g.away_team,
       homeScore: g.home_points,
       awayScore: g.away_points,
-      spread: line.spread,
+      spread: spreadValue,
       prediction: -awayPerspectivePrediction,
       actualFinalSpread: g.home_points - g.away_points,
       everyBetTeam: null,
@@ -393,7 +409,7 @@ export function buildLiveBetHistoryRecords(
       everyBetResult: null,
       filteredBetResult: null,
       weightedFilteredBetResult: null,
-      absBettingLine: Math.abs(line.spread),
+      absBettingLine: Math.abs(spreadValue),
       relativeAmountOff: 0,
     };
 

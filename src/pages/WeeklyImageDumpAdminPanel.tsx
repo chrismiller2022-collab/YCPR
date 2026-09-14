@@ -600,11 +600,24 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // everywhere else in this file — Cross has none: FBS-vs-FCS games
   // don't reliably carry a total line/projection, so that performance
   // block only ever shows spreads (see showTotals={false} below).
+  // buildLiveBetHistoryRecords now takes a per-week ratings map (see
+  // betHistory.ts) so it can be week-accurate the way BetHistoryAdminPanel
+  // now is — but doing that properly here too would mean fetching
+  // week-accurate ratings for every week of the whole season just for
+  // this one season-long summary block (the exact cost the comment above
+  // already opted out of). This blanket map preserves that same
+  // deliberate simplification (every week gets today's live ratings)
+  // while satisfying the new signature — not a regression, just not yet
+  // upgraded to match BetHistoryAdminPanel's fix.
+  const blanketRatingsByWeek = useMemo(() => {
+    const weeks = new Set(seasonGamesAll.map((g) => g.week));
+    return Object.fromEntries(Array.from(weeks).map((w) => [w, liveByTeam]));
+  }, [seasonGamesAll, liveByTeam]);
   const seasonSpreadRecords = useMemo(() => {
     const historical = BET_HISTORY.filter((r) => r.season === season);
-    const live = historical.length > 0 ? [] : buildLiveBetHistoryRecords(seasonGamesAll, liveByTeam, "team");
+    const live = historical.length > 0 ? [] : buildLiveBetHistoryRecords(seasonGamesAll, blanketRatingsByWeek, "team");
     return [...historical, ...live];
-  }, [season, seasonGamesAll, liveByTeam]);
+  }, [season, seasonGamesAll, blanketRatingsByWeek]);
 
   function classifyRecord(r: BetHistoryRecord): "fbsfbs" | "cross" | "fcsfcs" | "other" {
     const home = TEAMS_BY_NAME[r.homeTeam]?.div;

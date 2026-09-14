@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
+import { type BetHistoryRecord, type BetPick, BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import {
   aggregatePlain,
   aggregateCustom,
+  computeCustomGrading,
   breakdownByConference,
   breakdownByTeam,
   filterRecords,
@@ -34,6 +35,7 @@ import {
   type SplitBucket,
   type AmountOffPoint,
   type HfaMode,
+  type LineMode,
 } from "../lib/betHistory";
 
 const SEASONS = [2024, 2025, 2026];
@@ -164,6 +166,87 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Every game behind whatever's currently filtered/aggregated above —
+// Chris's ask after finding Bet History's numbers disagreed with Admin
+// Matchups' own bet filter: "I need to see every game that falls under
+// the data selected," so a mismatch is checkable game-by-game instead of
+// just trusting two different aggregate tallies.
+interface GameTableRow {
+  record: BetHistoryRecord;
+  everyBetTeam: string | null;
+  everyBetResult: BetPick;
+  filteredBetTeam: string | null;
+  filteredBetResult: BetPick;
+  weightedFilteredBetTeam: string | null;
+  weightedFilteredBetResult: BetPick;
+}
+
+function resultColor(result: BetPick): string | undefined {
+  return result === "win" ? "var(--pos-green)" : result === "loss" ? "var(--neg-red)" : undefined;
+}
+
+function betCell(team: string | null, result: BetPick) {
+  if (team == null) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  return <span style={{ color: resultColor(result), fontWeight: 700 }}>{team} {result ?? ""}</span>;
+}
+
+function GamesTable({ rows }: { rows: GameTableRow[] }) {
+  const sorted = [...rows].sort((a, b) => a.record.season - b.record.season || a.record.week - b.record.week);
+  return (
+    <div style={{ marginBottom: "1.5rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.5rem" }}>
+        Games ({sorted.length})
+      </div>
+      <div style={{ overflowX: "auto", maxHeight: 500, overflowY: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: "0.8rem", width: "100%" }}>
+          <thead>
+            <tr>
+              <th className="th">Season/Wk</th>
+              <th className="th">Matchup</th>
+              <th className="th th-right">Vegas</th>
+              <th className="th th-right">Mine</th>
+              <th className="th th-right">Amount Off</th>
+              <th className="th">Every Bet</th>
+              <th className="th">Filtered</th>
+              <th className="th">WFB</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr key={i}>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {r.record.season} / Wk {r.record.week}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {r.record.awayTeam} {r.record.awayScore} – {r.record.homeTeam} {r.record.homeScore}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                  {fmtSpreadLine(r.record.spread)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                  {fmtSpreadLine(r.record.prediction)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                  {Math.abs(r.record.spread - r.record.prediction).toFixed(1)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {betCell(r.everyBetTeam, r.everyBetResult)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {betCell(r.filteredBetTeam, r.filteredBetResult)}
+                </td>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                  {betCell(r.weightedFilteredBetTeam, r.weightedFilteredBetResult)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1106,8 +1189,12 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   // buildLiveBetHistoryRecords whenever ratings or the HFA toggle change,
   // then concatenated with the static upload before any filter is applied.
   const [hfaMode, setHfaMode] = useState<HfaMode>("team");
+  // Which Vegas line to grade against — opening or closing. Defaults to
+  // closing per Chris's ask. Only affects live seasons (2026+): the
+  // static BET_HISTORY upload only ever carried the closing line, so
+  // 2024/2025 always grades against close regardless of this toggle.
+  const [lineMode, setLineMode] = useState<LineMode>("close");
   const [liveGamesBySeason, setLiveGamesBySeason] = useState<Record<number, GameWithLines[]>>({});
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
 
   useEffect(() => {
     if (LIVE_SEASONS.length === 0) return;
@@ -1116,13 +1203,41 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
       .catch(() => setLiveGamesBySeason({}));
   }, []);
 
+  // Week-accurate ratings, not "whatever the ratings are today" — using
+  // one blanket live snapshot for every game all season (the old
+  // behavior here) silently reprojects Week 1 with the current week's
+  // ratings once the season moves on, so this page's own performance
+  // drifted away from what Admin Matchups' bet filter shows for the
+  // exact same games. useWeekAccurateRatings is per-season, so this
+  // calls it once per SEASONS slot (bounded/fixed, matches Rules of
+  // Hooks) and only the slots actually in LIVE_SEASONS end up with any
+  // weeks requested — add another call here if SEASONS ever grows past
+  // three entries.
+  const currentSeason = new Date().getFullYear();
+  const weekNumbersBySeason = useMemo(() => {
+    const map: Record<number, number[]> = {};
+    for (const s of SEASONS) map[s] = Array.from(new Set((liveGamesBySeason[s] ?? []).map((g) => g.week)));
+    return map;
+  }, [liveGamesBySeason]);
+  const seasonRatings0 = useWeekAccurateRatings(SEASONS[0], weekNumbersBySeason[SEASONS[0]] ?? [], currentSeason);
+  const seasonRatings1 = useWeekAccurateRatings(SEASONS[1], weekNumbersBySeason[SEASONS[1]] ?? [], currentSeason);
+  const seasonRatings2 = useWeekAccurateRatings(SEASONS[2], weekNumbersBySeason[SEASONS[2]] ?? [], currentSeason);
+  const ratingsBySeasonThenWeek = useMemo(
+    () => ({
+      [SEASONS[0]]: seasonRatings0.byWeek,
+      [SEASONS[1]]: seasonRatings1.byWeek,
+      [SEASONS[2]]: seasonRatings2.byWeek,
+    }),
+    [seasonRatings0.byWeek, seasonRatings1.byWeek, seasonRatings2.byWeek]
+  );
+
   const liveRecords = useMemo(() => {
     const all: BetHistoryRecord[] = [];
     for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], liveByTeam, hfaMode));
+      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode));
     }
     return all;
-  }, [liveGamesBySeason, liveByTeam, hfaMode]);
+  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
 
   const allRecords = useMemo(() => [...BET_HISTORY, ...liveRecords], [liveRecords]);
 
@@ -1164,6 +1279,35 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const keyNumberStudy = useMemo(() => computeKeyNumberStudy(filtered), [filtered]);
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
   const customAgg = useMemo(() => aggregateCustom(filtered, params), [filtered, params]);
+  const plainGameRows: GameTableRow[] = useMemo(
+    () =>
+      filtered.map((r) => ({
+        record: r,
+        everyBetTeam: r.everyBetTeam,
+        everyBetResult: r.everyBetResult,
+        filteredBetTeam: r.filteredBetTeam,
+        filteredBetResult: r.filteredBetResult,
+        weightedFilteredBetTeam: r.weightedFilteredBetTeam,
+        weightedFilteredBetResult: r.weightedFilteredBetResult,
+      })),
+    [filtered]
+  );
+  const customGameRows: GameTableRow[] = useMemo(
+    () =>
+      filtered.map((r) => {
+        const g = computeCustomGrading(r, params);
+        return {
+          record: r,
+          everyBetTeam: g.everyBetTeam,
+          everyBetResult: g.everyBetResult,
+          filteredBetTeam: g.filteredBetTeam,
+          filteredBetResult: g.filteredBetResult,
+          weightedFilteredBetTeam: g.weightedFilteredBetTeam,
+          weightedFilteredBetResult: g.weightedFilteredBetResult,
+        };
+      }),
+    [filtered, params]
+  );
   const errorStats = useMemo(() => computeErrorStatsFromBetHistory(filtered), [filtered]);
   const plainSplits = useMemo(() => computeSplitsPlain(filtered), [filtered]);
   const customSplits = useMemo(() => computeSplitsCustom(filtered, params), [filtered, params]);
@@ -1241,9 +1385,14 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             <option value="team">Team-specific</option>
             <option value="flat">Flat 2.4</option>
           </select>
+          <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginLeft: "0.4rem" }}>Grade vs:</span>
+          <select value={lineMode} onChange={(e) => setLineMode(e.target.value as LineMode)}>
+            <option value="close">Closing line</option>
+            <option value="open">Opening line</option>
+          </select>
           <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>
             Live seasons only ({LIVE_SEASONS.join(", ")}) — {SEASONS.filter((s) => !LIVE_SEASONS.includes(s)).join("/")} keeps using
-            the uploaded historical prediction, no HFA recompute possible there.
+            the uploaded historical prediction (closing line only, no HFA recompute possible there).
           </span>
         </div>
       )}
@@ -1269,6 +1418,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             overall={plainAgg.overall.weightedFilteredBet}
             byWeek={toWeekMap(plainAgg, "weightedFilteredBet")}
           />
+          <GamesTable rows={plainGameRows} />
           <SplitsSection splits={plainSplits.overall} hideNwfb />
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
@@ -1401,6 +1551,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             </ParamGroup>
           </div>
 
+          <GamesTable rows={customGameRows} />
           <SplitsSection splits={customSplits.overall} />
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
