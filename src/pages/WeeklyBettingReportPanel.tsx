@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, computeMatchupStats } from "../lib/matchupsCompute";
@@ -22,6 +22,7 @@ import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { unitsRiskedToWinOne } from "../lib/odds";
 import ExportPngButton from "../components/ExportPngButton";
 import ExportPdfButton from "../components/ExportPdfButton";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 
 // ---------------------------------------------------------------------
 // Weekly Betting Report — "what bets do I need to make and watch out
@@ -41,6 +42,11 @@ const SPREAD_WATCH_MARGIN_POINTS = 2;
 const SPREAD_WATCH_MARGIN_SIGMA = 0.1;
 const TOTAL_BET_THRESHOLD_STDDEV = 1.5;
 const TOTAL_WATCH_MARGIN_STDDEV = 0.5;
+// The std-dev margin above alone let a wide-pool-std-dev game clear the
+// bar while still needing an unrealistic double-digit point move to
+// actually hit the bet threshold — Chris's "way too many totals/team
+// totals" complaint. This caps it to a move that's actually plausible.
+const TOTAL_WATCH_MAX_MOVEMENT_POINTS = 2.5;
 const MONEYLINE_EV_THRESHOLD = 8; // percent — per Chris, only flag a moneyline bet once EV clears this bar
 const CURRENT_SEASON = new Date().getFullYear();
 
@@ -311,6 +317,42 @@ function MovementCell({ betTeam, openingLine, currentLine }: { betTeam: "away" |
 // win 1 unit" convention Chris specified — a win is always +1 unit, a
 // loss costs whatever it took to risk winning that 1 unit.
 // ---------------------------------------------------------------------
+
+// The tiles above only ever showed the aggregate record — Chris's ask:
+// "It just shows performance on bets but I want to see each bet." One
+// small table per category, reusing the same bet-description cells
+// (TeamSpreadCell/TeamTotalCell/MoneylineBetCell) the regular report's
+// own tables already use, so a bet reads identically in both places.
+function PerfGamesTable({ title, rows }: { title: string; rows: { key: string; cell: ReactNode; result: BetGrade }[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ marginBottom: "1.25rem" }}>
+      <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>
+        {title} ({rows.length})
+      </div>
+      <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key}>
+              <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.cell}</td>
+              <td
+                style={{
+                  padding: "0.3rem 0.6rem",
+                  borderBottom: "1px solid var(--hash)",
+                  textAlign: "right",
+                  fontWeight: 700,
+                  color: r.result === "win" ? "var(--pos-green)" : r.result === "loss" ? "var(--neg-red)" : undefined,
+                }}
+              >
+                {r.result ?? "pending"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 const STANDARD_VIG_UNITS = unitsRiskedToWinOne(-110) ?? 1.1;
 
 function gradeSpreadBetRow(r: SpreadBetRow): BetGrade {
@@ -476,6 +518,53 @@ function PerformanceSummarySection({
           </tbody>
         </table>
       </div>
+
+      <PerfGamesTable
+        title="Spread"
+        rows={spreadBets.map((r) => ({
+          key: r.game.id,
+          cell: <TeamSpreadCell team={r.betTeam === "away" ? r.game.away_team : r.game.home_team} spread={r.betTeam === "away" ? r.vegasAwaySpread : -r.vegasAwaySpread} />,
+          result: gradeSpreadBetRow(r),
+        }))}
+      />
+      {showTotals && (
+        <>
+          <PerfGamesTable
+            title="Totals"
+            rows={totalBets.map((r) => ({
+              key: r.game.id,
+              cell: (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                  <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}{" "}
+                  <span style={{ fontWeight: 700 }}>{r.call} {fmtTotal(r.vegasTotal)}</span>
+                </span>
+              ),
+              result: gradeTotalBetRow(r),
+            }))}
+          />
+          <PerfGamesTable
+            title="Team Totals"
+            rows={teamTotalBets.map((r) => ({
+              key: `${r.row.game.id}-${r.team}`,
+              cell: <TeamTotalCell team={r.team} call={r.call} total={r.vegasTeamTotal} />,
+              result: r.grade,
+            }))}
+          />
+        </>
+      )}
+      <PerfGamesTable
+        title="Moneyline"
+        rows={moneylineBets.map(({ row: r }) => ({
+          key: r.game.id,
+          cell: (
+            <MoneylineBetCell
+              team={r.betSide === "away" ? r.game.away_team : r.game.home_team}
+              ml={r.betSide === "away" ? r.vegasAwayMoneyline : r.vegasHomeMoneyline}
+            />
+          ),
+          result: r.result,
+        }))}
+      />
     </div>
   );
 }
@@ -487,7 +576,13 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const exportRef = useRef<HTMLDivElement>(null);
   const [division, setDivision] = useState<Division>("FBS");
   const [reportMode, setReportMode] = useState<"regular" | "performance">("regular");
-  const [hideCompleted, setHideCompleted] = useState(true);
+  // Defaults to showing everything, kickoff or no — this is the record of
+  // what was bet-worthy THIS week, not a "still biddable right now" live
+  // odds board. Checking it Saturday at 4pm shouldn't make the noon games
+  // disappear just because they've started. The checkbox stays for
+  // anyone who does want the live-only view.
+  const [hideCompleted, setHideCompleted] = useState(false);
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
   // Performance mode is "how'd every bet that would have qualified this
   // week actually do" — it needs completed games only, the opposite of
   // the regular view's "hide completed" toggle, so it overrides that
@@ -718,6 +813,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           const raw = r.myTotal! - dir * TOTAL_BET_THRESHOLD_STDDEV * fbsTotalPoolStd;
           const spread = computedGames.find((c) => c.game.id === r.game.id)?.computed.projAwaySpread ?? null;
           const split = projScoreSplit(r.myTotal, spread);
+          const vegasTotalNeeded = roundToHalfCrossing(raw, r.myTotal!);
           return {
             game: r.game,
             vegasTotal: r.vegasTotal!,
@@ -725,9 +821,10 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
             awayScore: split.awayScore,
             homeScore: split.homeScore,
             stdDevOff: r.stdDevOff!,
-            vegasTotalNeeded: roundToHalfCrossing(raw, r.myTotal!),
+            vegasTotalNeeded,
           };
-        }),
+        })
+        .filter((r) => Math.abs(r.vegasTotalNeeded - r.vegasTotal) < TOTAL_WATCH_MAX_MOVEMENT_POINTS),
     [totalGames, fbsTotalPoolStd, computedGames]
   );
 
@@ -774,7 +871,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     [teamTotalBetsAllRaw]
   );
 
-  const teamTotalWatch = useMemo(() => {
+  const teamTotalWatchAll = useMemo(() => {
     return teamTotalRowsInDivision
       .filter(
         (r) =>
@@ -790,9 +887,17 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         // Same fix as teamTotalBetsAllRaw above — split the game total,
         // not this team's own total.
         const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
-        return { row: r, awayScore: split.away, homeScore: split.home, vegasTtNeeded };
-      });
+        // The line actually being graded against (myTeamTotal minus the
+        // already-computed amountOff), not necessarily r.vegasTeamTotal —
+        // team totals can grade against a real synced market line instead
+        // of the synthetic split (see gradingLineFor in gameTotalsEngine.ts).
+        const currentLine = r.myTeamTotal != null ? r.myTeamTotal - (r.amountOff ?? 0) : null;
+        return { row: r, awayScore: split.away, homeScore: split.home, vegasTtNeeded, currentLine };
+      })
+      .filter((r) => r.vegasTtNeeded != null && r.currentLine != null && Math.abs(r.vegasTtNeeded - r.currentLine) < TOTAL_WATCH_MAX_MOVEMENT_POINTS);
   }, [teamTotalRowsInDivision, effectiveHideCompleted]);
+  const teamTotalWatchOver = useMemo(() => teamTotalWatchAll.filter((r) => r.row.call === "Over"), [teamTotalWatchAll]);
+  const teamTotalWatchUnder = useMemo(() => teamTotalWatchAll.filter((r) => r.row.call === "Under"), [teamTotalWatchAll]);
 
   // --- Moneyline ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
@@ -926,7 +1031,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               <tbody>
                 {spreadBets.map((r) => (
                   <tr key={r.game.id}>
-                    <td style={cellStyle}>
+                    <td
+                      style={{ ...cellStyle, cursor: "pointer" }}
+                      title="View handicapping preview"
+                      onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                    >
                       <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
                     </td>
                     <td style={{ ...cellStyle, textAlign: "right" }}>{fmtSpread(r.openingAwaySpread)}</td>
@@ -986,7 +1095,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                             <tbody>
                               {rows.map((r) => (
                                 <tr key={r.game.id}>
-                                  <td style={cellStyle}>
+                                  <td
+                                    style={{ ...cellStyle, cursor: "pointer" }}
+                                    title="View handicapping preview"
+                                    onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                                  >
                                     <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
                                   </td>
                                   <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTotal)}</td>
@@ -1035,7 +1148,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                             <tbody>
                               {rows.map((r) => (
                                 <tr key={`${r.row.game.id}-${r.team}`}>
-                                  <td style={cellStyle}>
+                                  <td
+                                    style={{ ...cellStyle, cursor: "pointer" }}
+                                    title="View handicapping preview"
+                                    onClick={() => setHandicapGame({ awayTeam: r.row.game.awayTeam, homeTeam: r.row.game.homeTeam })}
+                                  >
                                     <TeamTotalCell team={r.team} call={r.call} total={r.vegasTeamTotal} />
                                   </td>
                                   <td style={cellStyle}>
@@ -1079,7 +1196,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               <tbody>
                 {moneylineBets.map(({ row: r, awayScore, homeScore }) => (
                   <tr key={r.game.id}>
-                    <td style={cellStyle}>
+                    <td
+                      style={{ ...cellStyle, cursor: "pointer" }}
+                      title="View handicapping preview"
+                      onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                    >
                       <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
                     </td>
                     <td style={centerCellStyle}>
@@ -1115,24 +1236,32 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                   <th className="th">Game</th>
                   <th className="th th-right">Vegas Line</th>
                   <th className="th th-right">My Line</th>
+                  <th className="th th-right">Amount Off</th>
                   <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
                   <th className="th">Near</th>
                   <th className="th th-right">Watch For</th>
+                  <th className="th th-right">Movement Needed</th>
                 </tr>
               </thead>
               <tbody>
                 {spreadWatch.map((r) => (
                   <tr key={r.game.id}>
-                    <td style={cellStyle}>
+                    <td
+                      style={{ ...cellStyle, cursor: "pointer" }}
+                      title="View handicapping preview"
+                      onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                    >
                       <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
                     </td>
                     <td style={{ ...cellStyle, textAlign: "right" }}>{fmtSpread(r.vegasAwaySpread)}</td>
                     <td style={{ ...cellStyle, textAlign: "right" }}>{fmtSpread(r.myAwaySpread)}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{Math.abs(r.myAwaySpread - r.vegasAwaySpread).toFixed(1)}</td>
                     <td style={centerCellStyle}>
                       <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.awayScore} homeScore={r.homeScore} />
                     </td>
                     <td style={cellStyle}>{r.nearLabel}</td>
                     <td style={{ ...cellStyle, textAlign: "right" }}>{fmtSpread(r.vegasLineNeeded)}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{Math.abs(r.vegasLineNeeded - r.vegasAwaySpread).toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1145,7 +1274,10 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               <div data-report-section="watch-total">
               <div className="section-label">To Watch — Totals ({totalWatch.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
-                Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold, rounded to the nearest real half-point that still clears it.
+                Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold AND under{" "}
+                {TOTAL_WATCH_MAX_MOVEMENT_POINTS} points from it — a wide-pool game can clear the std-dev bar while still
+                needing an unrealistic point move, so both have to hold. Rounded to the nearest real half-point that
+                still clears it.
               </p>
               {totalWatch.length === 0 ? (
                 <p style={{ color: "var(--chalk-dim)" }}>Nothing close this week.</p>
@@ -1159,12 +1291,17 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                       <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
                       <th className="th th-right">Std Dev Off</th>
                       <th className="th th-right">Watch For</th>
+                      <th className="th th-right">Movement Needed</th>
                     </tr>
                   </thead>
                   <tbody>
                     {totalWatch.map((r) => (
                       <tr key={r.game.id}>
-                        <td style={cellStyle}>
+                        <td
+                          style={{ ...cellStyle, cursor: "pointer" }}
+                          title="View handicapping preview"
+                          onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                        >
                           <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
                         </td>
                         <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTotal)}</td>
@@ -1176,6 +1313,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                         <td style={{ ...cellStyle, textAlign: "right" }}>
                           {fmtTotal(r.vegasTotalNeeded)} ({r.stdDevOff > 0 ? "Over" : "Under"})
                         </td>
+                        <td style={{ ...cellStyle, textAlign: "right" }}>{Math.abs(r.vegasTotalNeeded - r.vegasTotal).toFixed(1)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1184,48 +1322,69 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </div>
 
               <div data-report-section="watch-teamtotal">
-              <div className="section-label">To Watch — Team Totals ({teamTotalWatch.length})</div>
+              <div className="section-label">To Watch — Team Totals ({teamTotalWatchAll.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
-                Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold. Not
-                rounded — "Vegas TT" is your own estimate, not a real quoted line.
+                Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold AND
+                under {TOTAL_WATCH_MAX_MOVEMENT_POINTS} points from the bet threshold — a wide-pool game can clear the
+                std-dev bar while still needing an unrealistic point move, so both have to hold. Not rounded — "Vegas TT"
+                is your own estimate, not a real quoted line.
               </p>
-              {teamTotalWatch.length === 0 ? (
+              {teamTotalWatchAll.length === 0 ? (
                 <p style={{ color: "var(--chalk-dim)" }}>Nothing close this week.</p>
               ) : (
-                <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
-                  <thead>
-                    <tr>
-                      <th className="th">Team</th>
-                      <th className="th">Opponent</th>
-                      <th className="th th-right">Vegas TT</th>
-                      <th className="th th-right">My TT</th>
-                      <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
-                      <th className="th th-right">Std Dev Off</th>
-                      <th className="th th-right">Watch For</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {teamTotalWatch.map(({ row: r, awayScore, homeScore, vegasTtNeeded }) => (
-                      <tr key={`${r.row.game.id}-${r.team}`}>
-                        <td style={cellStyle}>
-                          <OpponentCell team={r.team} />
-                        </td>
-                        <td style={cellStyle}>
-                          <OpponentCell team={r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam} />
-                        </td>
-                        <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTeamTotal)}</td>
-                        <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTeamTotal)}</td>
-                        <td style={centerCellStyle}>
-                          <ProjScoreCell awayTeam={r.row.game.awayTeam} homeTeam={r.row.game.homeTeam} awayScore={awayScore} homeScore={homeScore} />
-                        </td>
-                        <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff?.toFixed(2) ?? "–"}</td>
-                        <td style={{ ...cellStyle, textAlign: "right" }}>
-                          {fmtTotal(vegasTtNeeded)} ({(r.stdDevOff ?? 0) > 0 ? "Over" : "Under"})
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <>
+                  {[
+                    { label: "Overs", rows: teamTotalWatchOver },
+                    { label: "Unders", rows: teamTotalWatchUnder },
+                  ].map(
+                    ({ label, rows }) =>
+                      rows.length > 0 && (
+                        <div key={label} style={{ marginBottom: "1rem" }}>
+                          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>{label}</div>
+                          <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                            <thead>
+                              <tr>
+                                <th className="th">Team</th>
+                                <th className="th">Opponent</th>
+                                <th className="th th-right">Vegas TT</th>
+                                <th className="th th-right">My TT</th>
+                                <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
+                                <th className="th th-right">Std Dev Off</th>
+                                <th className="th th-right">Watch For</th>
+                                <th className="th th-right">Movement Needed</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map(({ row: r, awayScore, homeScore, vegasTtNeeded, currentLine }) => (
+                                <tr key={`${r.row.game.id}-${r.team}`}>
+                                  <td
+                                    style={{ ...cellStyle, cursor: "pointer" }}
+                                    title="View handicapping preview"
+                                    onClick={() => setHandicapGame({ awayTeam: r.row.game.awayTeam, homeTeam: r.row.game.homeTeam })}
+                                  >
+                                    <OpponentCell team={r.team} />
+                                  </td>
+                                  <td style={cellStyle}>
+                                    <OpponentCell team={r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam} />
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTeamTotal)}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTeamTotal)}</td>
+                                  <td style={centerCellStyle}>
+                                    <ProjScoreCell awayTeam={r.row.game.awayTeam} homeTeam={r.row.game.homeTeam} awayScore={awayScore} homeScore={homeScore} />
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff?.toFixed(2) ?? "–"}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(vegasTtNeeded)}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>
+                                    {vegasTtNeeded != null && currentLine != null ? Math.abs(vegasTtNeeded - currentLine).toFixed(1) : "–"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                  )}
+                </>
               )}
               </div>
             </>
@@ -1233,6 +1392,16 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         </>
       )}
       </div>
+
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
+      )}
     </div>
   );
 }

@@ -521,6 +521,23 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
       {!loading && bets.length === 0 && <p style={{ color: "var(--chalk-dim)" }}>No bets logged for {season} yet.</p>}
 
+      {/* This page defaults its week filter to the site-wide Admin week
+          selector (useDefaultToAdminWeek above), which advances once a
+          week's games are done — so as soon as that happens, this filter
+          can silently mismatch every bet actually logged. Before this,
+          that produced a totally blank page below the filters with no
+          "whole season" escape hatch, which read as "my bets are gone"
+          (they weren't — see the week filter). */}
+      {!loading && bets.length > 0 && visibleBets.length === 0 && (
+        <p style={{ color: "var(--chalk-dim)" }}>
+          No bets logged for {week === "all" ? "the whole season" : `Week ${week}`} — {bets.length} bet{bets.length === 1 ? "" : "s"}{" "}
+          logged this season across week{availableWeeks.length === 1 ? "" : "s"} {availableWeeks.join(", ")}.{" "}
+          <button className="menu-btn" onClick={() => setWeek("all")} style={{ padding: "0.15rem 0.6rem", fontSize: "0.8rem" }}>
+            Show whole season
+          </button>
+        </p>
+      )}
+
       {!loading && visibleBets.length > 0 && (
         <>
           <h3 style={{ marginBottom: "0.5rem" }}>Exposure Tracker</h3>
