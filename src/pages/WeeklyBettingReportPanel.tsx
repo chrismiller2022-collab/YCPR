@@ -277,12 +277,26 @@ function TeamTotalCell({ team, call, total }: { team: string; call: string | nul
 // Colored green/red only once there's enough of a sample to mean
 // anything (n >= 8) — a 1-for-1 bucket isn't a real signal either way.
 function TeamTotalSegmentBadge({ segment }: { segment: PerformanceSegment | undefined }) {
-  if (!segment || segment.fb.n === 0) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  if (!segment) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  if (segment.fb.n === 0) {
+    return (
+      <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.3 }}>
+        <span style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>{segment.label}</span>
+        <span style={{ color: "var(--chalk-dim)" }}>–</span>
+      </span>
+    );
+  }
   const { wins, losses, n, winPct } = segment.fb;
   const color = n < 8 ? "var(--chalk-dim)" : winPct != null && winPct >= 0.55 ? "var(--pos-green)" : winPct != null && winPct <= 0.45 ? "var(--neg-red)" : undefined;
   return (
-    <span title={`${segment.label} — filtered bets ${wins}-${losses}${n < 8 ? " (small sample)" : ""}`} style={{ color, fontWeight: n >= 8 ? 700 : undefined }}>
-      {winPct != null ? `${(winPct * 100).toFixed(0)}%` : "–"} ({wins}-{losses})
+    <span
+      title={`${segment.label} — filtered bets ${wins}-${losses}${n < 8 ? " (small sample)" : ""}`}
+      style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.3 }}
+    >
+      <span style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>{segment.label}</span>
+      <span style={{ color, fontWeight: n >= 8 ? 700 : undefined }}>
+        {winPct != null ? `${(winPct * 100).toFixed(0)}%` : "–"} ({wins}-{losses})
+      </span>
     </span>
   );
 }
@@ -344,7 +358,17 @@ function MovementCell({ betTeam, openingLine, currentLine }: { betTeam: "away" |
 // small table per category, reusing the same bet-description cells
 // (TeamSpreadCell/TeamTotalCell/MoneylineBetCell) the regular report's
 // own tables already use, so a bet reads identically in both places.
-function PerfGamesTable({ title, rows }: { title: string; rows: { key: string; cell: ReactNode; result: BetGrade }[] }) {
+// margin is "how many points/units the bet won or lost by," signed from
+// the bet's own perspective (positive = covered/won by that much,
+// negative = missed by that much) — not a statistical margin of error,
+// which isn't a meaningful per-bet quantity.
+function PerfGamesTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: { key: string; cell: ReactNode; projection: ReactNode; actual: ReactNode; margin: number | null; result: BetGrade }[];
+}) {
   if (rows.length === 0) return null;
   return (
     <div style={{ marginBottom: "1.25rem" }}>
@@ -352,10 +376,31 @@ function PerfGamesTable({ title, rows }: { title: string; rows: { key: string; c
         {title} ({rows.length})
       </div>
       <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
+        <thead>
+          <tr>
+            <th className="th">Bet</th>
+            <th className="th">Projection</th>
+            <th className="th">Actual Result</th>
+            <th className="th th-right">Margin</th>
+            <th className="th th-right">Result</th>
+          </tr>
+        </thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.key}>
               <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.cell}</td>
+              <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.projection}</td>
+              <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.actual}</td>
+              <td
+                style={{
+                  padding: "0.3rem 0.6rem",
+                  borderBottom: "1px solid var(--hash)",
+                  textAlign: "right",
+                  color: r.margin == null ? "var(--chalk-dim)" : r.margin > 0 ? "var(--pos-green)" : r.margin < 0 ? "var(--neg-red)" : undefined,
+                }}
+              >
+                {r.margin == null ? "–" : `${r.margin > 0 ? "+" : ""}${r.margin.toFixed(1)}`}
+              </td>
               <td
                 style={{
                   padding: "0.3rem 0.6rem",
@@ -542,49 +587,93 @@ function PerformanceSummarySection({
 
       <PerfGamesTable
         title="Spread"
-        rows={spreadBets.map((r) => ({
-          key: r.game.id,
-          cell: <TeamSpreadCell team={r.betTeam === "away" ? r.game.away_team : r.game.home_team} spread={r.betTeam === "away" ? r.vegasAwaySpread : -r.vegasAwaySpread} />,
-          result: gradeSpreadBetRow(r),
-        }))}
+        rows={spreadBets.map((r) => {
+          // Cover margin from the BET's own perspective — positive means
+          // it covered by that many points, negative means it missed by
+          // that many. actualAwayMargin/coverMargin mirror gradeSpreadBetRow
+          // exactly, just kept (not collapsed to win/loss) here.
+          const actualAwayMargin = r.game.away_points != null && r.game.home_points != null ? r.game.away_points - r.game.home_points : null;
+          const coverMargin = actualAwayMargin != null ? actualAwayMargin + r.vegasAwaySpread : null;
+          const margin = coverMargin == null ? null : r.betTeam === "away" ? coverMargin : -coverMargin;
+          return {
+            key: r.game.id,
+            cell: (
+              <TeamSpreadCell team={r.betTeam === "away" ? r.game.away_team : r.game.home_team} spread={r.betTeam === "away" ? r.vegasAwaySpread : -r.vegasAwaySpread} />
+            ),
+            projection: <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.awayScore} homeScore={r.homeScore} />,
+            actual: <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.game.away_points} homeScore={r.game.home_points} />,
+            margin,
+            result: gradeSpreadBetRow(r),
+          };
+        })}
       />
       {showTotals && (
         <>
           <PerfGamesTable
             title="Totals"
-            rows={totalBets.map((r) => ({
-              key: r.game.id,
-              cell: (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-                  <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}{" "}
-                  <span style={{ fontWeight: 700 }}>{r.call} {fmtTotal(r.vegasTotal)}</span>
-                </span>
-              ),
-              result: gradeTotalBetRow(r),
-            }))}
+            rows={totalBets.map((r) => {
+              const actualTotal = r.game.away_points != null && r.game.home_points != null ? r.game.away_points + r.game.home_points : null;
+              const margin = actualTotal == null ? null : r.call === "Over" ? actualTotal - r.vegasTotal : r.vegasTotal - actualTotal;
+              return {
+                key: r.game.id,
+                cell: (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                    <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}{" "}
+                    <span style={{ fontWeight: 700 }}>{r.call} {fmtTotal(r.vegasTotal)}</span>
+                  </span>
+                ),
+                projection: fmtTotal(r.myTotal),
+                actual: actualTotal == null ? "–" : fmtTotal(actualTotal),
+                margin,
+                result: gradeTotalBetRow(r),
+              };
+            })}
           />
           <PerfGamesTable
             title="Team Totals"
-            rows={teamTotalBets.map((r) => ({
-              key: `${r.row.game.id}-${r.team}`,
-              cell: <TeamTotalCell team={r.team} call={r.call} total={r.vegasTeamTotal} />,
-              result: r.grade,
-            }))}
+            rows={teamTotalBets.map((r) => {
+              const gradingLine = r.actualVegasTeamTotal ?? r.vegasTeamTotal;
+              const margin =
+                r.actualTeamPoints == null || gradingLine == null || r.call == null
+                  ? null
+                  : r.call === "Over"
+                  ? r.actualTeamPoints - gradingLine
+                  : gradingLine - r.actualTeamPoints;
+              return {
+                key: `${r.row.game.id}-${r.team}`,
+                cell: <TeamTotalCell team={r.team} call={r.call} total={r.vegasTeamTotal} />,
+                projection: fmtTotal(r.myTeamTotal),
+                actual: r.actualTeamPoints == null ? "–" : fmtTotal(r.actualTeamPoints),
+                margin,
+                result: r.grade,
+              };
+            })}
           />
         </>
       )}
       <PerfGamesTable
         title="Moneyline"
-        rows={moneylineBets.map(({ row: r }) => ({
-          key: r.game.id,
-          cell: (
-            <MoneylineBetCell
-              team={r.betSide === "away" ? r.game.away_team : r.game.home_team}
-              ml={r.betSide === "away" ? r.vegasAwayMoneyline : r.vegasHomeMoneyline}
-            />
-          ),
-          result: r.result,
-        }))}
+        rows={moneylineBets.map(({ row: r, awayScore, homeScore }) => {
+          const betSideActualMargin =
+            r.game.away_points == null || r.game.home_points == null
+              ? null
+              : r.betSide === "away"
+              ? r.game.away_points - r.game.home_points
+              : r.game.home_points - r.game.away_points;
+          return {
+            key: r.game.id,
+            cell: (
+              <MoneylineBetCell
+                team={r.betSide === "away" ? r.game.away_team : r.game.home_team}
+                ml={r.betSide === "away" ? r.vegasAwayMoneyline : r.vegasHomeMoneyline}
+              />
+            ),
+            projection: <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={awayScore} homeScore={homeScore} />,
+            actual: <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.game.away_points} homeScore={r.game.home_points} />,
+            margin: betSideActualMargin,
+            result: r.result,
+          };
+        })}
       />
     </div>
   );
@@ -828,7 +917,15 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const totalWatch: TotalWatchRow[] = useMemo(
     () =>
       totalGames
-        .filter((r) => Math.abs(r.stdDevOff!) >= TOTAL_WATCH_MARGIN_STDDEV && Math.abs(r.stdDevOff!) < TOTAL_BET_THRESHOLD_STDDEV)
+        // "Within TOTAL_WATCH_MARGIN_STDDEV of the threshold" means the
+        // floor is (threshold minus margin), not the margin itself — e.g.
+        // "within 0.5 of 1.5" means 1.0 up to 1.5, not 0.5 up to 1.5. The
+        // old floor here was the bare margin, so games as low as 0.5 std
+        // dev off were showing up as "close" when they were nowhere near it.
+        .filter(
+          (r) =>
+            Math.abs(r.stdDevOff!) >= TOTAL_BET_THRESHOLD_STDDEV - TOTAL_WATCH_MARGIN_STDDEV && Math.abs(r.stdDevOff!) < TOTAL_BET_THRESHOLD_STDDEV
+        )
         .map((r) => {
           const dir = Math.sign(r.stdDevOff!) || 1;
           const raw = r.myTotal! - dir * TOTAL_BET_THRESHOLD_STDDEV * fbsTotalPoolStd;
@@ -845,7 +942,8 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
             vegasTotalNeeded,
           };
         })
-        .filter((r) => Math.abs(r.vegasTotalNeeded - r.vegasTotal) < TOTAL_WATCH_MAX_MOVEMENT_POINTS),
+        .filter((r) => Math.abs(r.vegasTotalNeeded - r.vegasTotal) < TOTAL_WATCH_MAX_MOVEMENT_POINTS)
+        .sort((a, b) => Math.abs(b.stdDevOff) - Math.abs(a.stdDevOff)),
     [totalGames, fbsTotalPoolStd, computedGames]
   );
 
@@ -915,7 +1013,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         (r) =>
           (effectiveHideCompleted ? !r.row.game.completed : true) &&
           r.stdDevOff != null &&
-          Math.abs(r.stdDevOff) >= TOTAL_WATCH_MARGIN_STDDEV &&
+          // Same fix as the game-Totals watch filter above — the floor is
+          // (threshold - margin), not the bare margin.
+          Math.abs(r.stdDevOff) >= TOTAL_BET_THRESHOLD_STDDEV - TOTAL_WATCH_MARGIN_STDDEV &&
           Math.abs(r.stdDevOff) < TOTAL_BET_THRESHOLD_STDDEV
       )
       .map((r) => {
@@ -934,8 +1034,14 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       })
       .filter((r) => r.vegasTtNeeded != null && r.currentLine != null && Math.abs(r.vegasTtNeeded - r.currentLine) < TOTAL_WATCH_MAX_MOVEMENT_POINTS);
   }, [teamTotalRowsInDivision, effectiveHideCompleted]);
-  const teamTotalWatchOver = useMemo(() => teamTotalWatchAll.filter((r) => r.row.call === "Over"), [teamTotalWatchAll]);
-  const teamTotalWatchUnder = useMemo(() => teamTotalWatchAll.filter((r) => r.row.call === "Under"), [teamTotalWatchAll]);
+  const teamTotalWatchOver = useMemo(
+    () => teamTotalWatchAll.filter((r) => r.row.call === "Over").sort((a, b) => Math.abs(b.row.stdDevOff ?? 0) - Math.abs(a.row.stdDevOff ?? 0)),
+    [teamTotalWatchAll]
+  );
+  const teamTotalWatchUnder = useMemo(
+    () => teamTotalWatchAll.filter((r) => r.row.call === "Under").sort((a, b) => Math.abs(b.row.stdDevOff ?? 0) - Math.abs(a.row.stdDevOff ?? 0)),
+    [teamTotalWatchAll]
+  );
 
   // --- Moneyline ---
   const moneylineBets: MoneylineBetRow[] = useMemo(() => {
