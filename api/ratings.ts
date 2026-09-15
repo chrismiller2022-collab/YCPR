@@ -30,6 +30,27 @@ async function cfbdFetch(path: string) {
   return res.json();
 }
 
+// House standard for any system whose native scale doesn't already sit
+// roughly where this site's own ratings do — best team -> -30, worst ->
+// +55, matching Elo's and Massey's min-max normalization exactly (see the
+// "sync" action's elo puller and normalizeMasseyRows in ratingsCsv.ts;
+// both converge on this same range despite looking different in code).
+// `rawHigherIsBetter` says which direction the SOURCE's own raw numbers
+// run — this always outputs in this site's negative-is-better convention
+// regardless.
+function minMaxNormalize<T>(rows: T[], valueOf: (r: T) => number, rawHigherIsBetter: boolean): number[] {
+  const values = rows.map(valueOf);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  return rows.map((r) => {
+    const raw = valueOf(r);
+    const t = span === 0 ? 0.5 : (raw - min) / span; // 0 = worst raw value, 1 = best raw value
+    const bestSideT = rawHigherIsBetter ? t : 1 - t;
+    return 55 + bestSideT * (-30 - 55); // best -> -30, worst -> +55
+  });
+}
+
 interface IncomingSaveRow {
   team: string;
   conference?: string | null;
@@ -102,6 +123,12 @@ export default async function handler(req: any, res: any) {
   // every real row this returns (only spot-checked against the visible
   // top of the list) — a real sync surfaces unmatched names the same way
   // Sheet/McIllece/Massey uploads already do, rather than guessing.
+  //
+  // Sagarin's raw scale (roughly 0-95+, higher = better) isn't in the
+  // same ballpark as this site's own ratings — min-max normalized to
+  // the same [-30, +55] range Elo/Massey already use, not just sign-
+  // flipped, so it doesn't skew Consensus/YC out of proportion to
+  // everything else feeding them.
   // -----------------------------------------------------------------
   if (action === "sagarinProxy") {
     try {
@@ -110,18 +137,18 @@ export default async function handler(req: any, res: any) {
       const html = await pageRes.text();
       const text = html.replace(/<[^>]+>/g, "");
       const lineRe = /^\s*\d+\s+(.+?)\s{2,}[A-Z]\s*=\s*(-?[\d.]+)\s/;
-      const rows: { team: string; values: Record<string, number> }[] = [];
+      const parsed: { team: string; rawRating: number }[] = [];
       for (const line of text.split("\n")) {
         const m = lineRe.exec(line);
         if (!m) continue;
         const team = m[1].trim();
         const rating = parseFloat(m[2]);
         if (!team || Number.isNaN(rating)) continue;
-        // Sign-flipped — Sagarin's own RATING column is higher-is-better,
-        // this site's convention is negative-is-better.
-        rows.push({ team, values: { sagarin: -rating } });
+        parsed.push({ team, rawRating: rating });
       }
-      if (rows.length === 0) throw new Error("Parsed 0 rows — sagarin.com's page layout may have changed");
+      if (parsed.length === 0) throw new Error("Parsed 0 rows — sagarin.com's page layout may have changed");
+      const normalized = minMaxNormalize(parsed, (r) => r.rawRating, true);
+      const rows = parsed.map((r, i) => ({ team: r.team, values: { sagarin: normalized[i] } }));
       res.status(200).json({ ok: true, rows });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Sagarin fetch failed" });
@@ -136,6 +163,11 @@ export default async function handler(req: any, res: any) {
   // same simple <table><tr><td> layout: rank, team, record, FBS record,
   // then the rating itself as the 5th cell — parsed generically by
   // parseBcftoysTable below rather than two near-duplicate parsers.
+  //
+  // Both run on a roughly -2..+2 raw scale (higher = better), nothing
+  // like this site's own ratings — min-max normalized to the same
+  // [-30, +55] range Elo/Massey use, independently for FEI and F+ (two
+  // different metrics/team pools), before merging by team.
   // -----------------------------------------------------------------
   if (action === "fplusProxy") {
     const { year } = req.body ?? {};
@@ -173,24 +205,26 @@ export default async function handler(req: any, res: any) {
           const team = cells[1];
           const value = parseFloat(cells[4]);
           if (!team || Number.isNaN(value)) continue;
-          // Sign-flipped — bcftoys.com's own ratings are higher-is-better.
-          out.push({ team, value: -value });
+          out.push({ team, value }); // raw — bcftoys.com's own scale, higher = better
         }
         return out;
       }
 
-      const feiRows = parseBcftoysTable(feiHtml);
-      const fplusRows = parseBcftoysTable(fplusHtml);
-      if (feiRows.length === 0 && fplusRows.length === 0) {
+      const feiRaw = parseBcftoysTable(feiHtml);
+      const fplusRaw = parseBcftoysTable(fplusHtml);
+      if (feiRaw.length === 0 && fplusRaw.length === 0) {
         throw new Error("Parsed 0 rows from either page — bcftoys.com's table layout may have changed");
       }
+      const feiNormalized = minMaxNormalize(feiRaw, (r) => r.value, true);
+      const fplusNormalized = minMaxNormalize(fplusRaw, (r) => r.value, true);
+
       const byTeam = new Map<string, { team: string; values: Record<string, number> }>();
-      for (const r of feiRows) byTeam.set(r.team, { team: r.team, values: { fei_avg: r.value } });
-      for (const r of fplusRows) {
+      feiRaw.forEach((r, i) => byTeam.set(r.team, { team: r.team, values: { fei_avg: feiNormalized[i] } }));
+      fplusRaw.forEach((r, i) => {
         const existing = byTeam.get(r.team);
-        if (existing) existing.values.f_plus = r.value;
-        else byTeam.set(r.team, { team: r.team, values: { f_plus: r.value } });
-      }
+        if (existing) existing.values.f_plus = fplusNormalized[i];
+        else byTeam.set(r.team, { team: r.team, values: { f_plus: fplusNormalized[i] } });
+      });
       res.status(200).json({ ok: true, rows: Array.from(byTeam.values()) });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "bcftoys.com fetch failed" });
