@@ -81,10 +81,10 @@ export async function fetchTeamSeasonInputs(season: number): Promise<Record<stri
 async function fetchTeamSeasonInputsUncached(season: number): Promise<Record<string, TeamSeasonInputs>> {
   const [statsRows, prevStatsRows, gameRows] = await Promise.all([
     fetchAllRows<any>((from, to) =>
-      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season).range(from, to)
+      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season).order("id").range(from, to)
     ),
     fetchAllRows<any>((from, to) =>
-      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season - 1).range(from, to)
+      supabase.from("team_season_stats").select(TEAM_SEASON_STATS_COLUMNS).eq("season", season - 1).order("id").range(from, to)
     ),
     fetchAllRows<any>((from, to) =>
       supabase
@@ -92,6 +92,7 @@ async function fetchTeamSeasonInputsUncached(season: number): Promise<Record<str
         .select("home_team, away_team, home_points, away_points, completed")
         .eq("season", season)
         .eq("completed", true)
+        .order("id")
         .range(from, to)
     ),
   ]);
@@ -223,6 +224,13 @@ export async function fetchGamesForTotals(season: number): Promise<GameForTotals
 }
 
 async function fetchGamesForTotalsUncached(season: number): Promise<GameForTotals[]> {
+  // .order("id") on both queries below is load-bearing, not cosmetic —
+  // this season's games/betting_lines tables are well past the 1000-row
+  // page size, and PostgREST doesn't guarantee stable row order across
+  // separate paginated requests without an explicit ORDER BY. Without
+  // it, the same row could land in two different pages (a duplicate
+  // "Team Totals" bet showing up twice in the Weekly Betting Report) while
+  // another row silently fell through the gap between them.
   const games = await fetchAllRows<any>((from, to) =>
     supabase
       .from("games")
@@ -230,6 +238,7 @@ async function fetchGamesForTotalsUncached(season: number): Promise<GameForTotal
         "id, week, home_team, away_team, home_classification, away_classification, completed, home_points, away_points, neutral_site, start_date"
       )
       .eq("season", season)
+      .order("id")
       .range(from, to)
   );
 
@@ -238,6 +247,7 @@ async function fetchGamesForTotalsUncached(season: number): Promise<GameForTotal
       .from("betting_lines")
       .select("game_id, spread, over_under, opening_spread, opening_over_under, provider")
       .eq("season", season)
+      .order("id")
       .range(from, to)
   );
 

@@ -11,8 +11,15 @@ export interface RatingPullRow {
 }
 
 export async function fetchRatingPulls(): Promise<RatingPullRow[]> {
+  // .order("id") is load-bearing — this table (every system x every
+  // team, no filter) is several pages past the 1000-row page size, and
+  // without an explicit order PostgREST doesn't guarantee stable
+  // pagination across separate page requests. Without it, a row can
+  // silently fall through the gap between two pages (e.g. a specific
+  // team's Massey/Sagarin value going "missing" from the admin table
+  // despite existing in the database) while another gets duplicated.
   return fetchAllRows<RatingPullRow>((from, to) =>
-    supabase.from("rating_pulls").select("system_key, team, division, conference, value, pulled_at").range(from, to)
+    supabase.from("rating_pulls").select("system_key, team, division, conference, value, pulled_at").order("id").range(from, to)
   );
 }
 
@@ -100,7 +107,7 @@ export interface TeamSosRow {
 /** Latest saved week's row per team for this season — team_sos can now have multiple rows per team (one per saved week; see the "week" column), so this picks the highest week number available for each team rather than assuming exactly one row. */
 export async function fetchTeamSos(season: number): Promise<Record<string, TeamSosRow>> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
-    supabase.from("team_sos").select("*").eq("season", season).range(from, to)
+    supabase.from("team_sos").select("*").eq("season", season).order("id").range(from, to)
   );
   const out: Record<string, TeamSosRow> = {};
   for (const r of rows) {
@@ -114,7 +121,7 @@ export async function fetchTeamSos(season: number): Promise<Record<string, TeamS
 /** Every team's saved SOS snapshot for one SPECIFIC week — for the SOS Week N public page, as opposed to fetchTeamSos's "latest per team" resolution. */
 export async function fetchTeamSosForWeek(season: number, week: number): Promise<Record<string, TeamSosRow>> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
-    supabase.from("team_sos").select("*").eq("season", season).eq("week", week).range(from, to)
+    supabase.from("team_sos").select("*").eq("season", season).eq("week", week).order("id").range(from, to)
   );
   const out: Record<string, TeamSosRow> = {};
   for (const r of rows) out[r.team] = r;
@@ -123,7 +130,7 @@ export async function fetchTeamSosForWeek(season: number, week: number): Promise
 
 export async function fetchTeamSosByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
-    supabase.from("team_sos").select("*").eq("season", season).range(from, to)
+    supabase.from("team_sos").select("*").eq("season", season).order("id").range(from, to)
   );
   const weekSet = new Set<number>();
   const byWeek: Record<number, Record<string, number | null>> = {};
@@ -183,13 +190,15 @@ export interface WeeklyPowerRatingRow {
 }
 
 export async function fetchWeeklyPowerRatings(season: number, week?: number): Promise<WeeklyPowerRatingRow[]> {
+  // 15,000+ rows total (every system x every team x every saved week) —
+  // .order("id") keeps pagination stable across pages; see fetchRatingPulls above.
   return fetchAllRows<WeeklyPowerRatingRow>((from, to) => {
     let q = supabase
       .from("weekly_power_ratings")
       .select("season, week, team, division, conference, system_key, value")
       .eq("season", season);
     if (week != null) q = q.eq("week", week);
-    return q.range(from, to);
+    return q.order("id").range(from, to);
   });
 }
 

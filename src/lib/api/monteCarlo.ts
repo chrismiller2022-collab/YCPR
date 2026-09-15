@@ -9,11 +9,16 @@ export interface SeasonGame extends SimGame {
 
 /** Every game for a season (any classification) — the engine itself filters by FBS/FCS as needed. */
 export async function fetchSeasonGames(season: number): Promise<SeasonGame[]> {
+  // .order("id") — this table is well past the 1000-row page size for a
+  // full season, and without an explicit order PostgREST doesn't
+  // guarantee stable pagination, which can silently duplicate one game
+  // across two pages while dropping another entirely.
   return fetchAllRows<SeasonGame>((from, to) =>
     supabase
       .from("games")
       .select("week, home_team, away_team, neutral_site, conference_game, completed, home_points, away_points")
       .eq("season", season)
+      .order("id")
       .range(from, to)
   );
 }
