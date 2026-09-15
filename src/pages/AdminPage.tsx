@@ -265,8 +265,9 @@ type AdminView =
   | "checklist";
 
 // ---------------------------------------------------------------------
-// Password gate — verifies against /api/admin-auth on the server before
-// granting access (previously this just checked the field wasn't empty).
+// Password gate — verifies against /api/admin-save (action: "checkPassword")
+// on the server before granting access (previously this just checked the
+// field wasn't empty).
 // ---------------------------------------------------------------------
 function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?: () => void }) {
   const [password, setPassword] = useState("");
@@ -281,10 +282,10 @@ function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?
     setChecking(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin-auth", {
+      const res = await fetch("/api/admin-save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, action: "checkPassword" }),
       });
       const data = await res.json();
       if (!res.ok) {

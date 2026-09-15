@@ -3,6 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 // the service role key is used, and it's the only code path allowed to write
 // to weekly_team_stats or teams. The browser only ever holds the public
 // anon (read-only) key.
+//
+// Also absorbs what used to be admin-auth.ts (action: "checkPassword") and
+// montecarlo-save.ts (action: "saveMonteCarloRun") — Vercel's Hobby plan
+// caps a deployment at 12 serverless functions, and this project was
+// already at that ceiling before adding the JuiceReel OAuth callback.
+// Sending no `action` at all keeps behaving exactly like the original
+// admin-save.ts (saving weekly team stats), so the one existing caller
+// that predates this merge didn't need to change.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -63,15 +71,60 @@ export default async function handler(req: any, res: any) {
     res.status(500).json({ error: "ADMIN_PASSWORD is not configured on the server" });
     return;
   }
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    res.status(500).json({ error: "Supabase server env vars are not configured" });
-    return;
-  }
-  const { password, week, rows } = req.body ?? {};
+
+  const { password, action } = req.body ?? {};
   if (password !== ADMIN_PASSWORD) {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
+
+  // Formerly admin-auth.ts in full — the Admin gate just wants a yes/no on
+  // the password, no Supabase access needed.
+  if (action === "checkPassword") {
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    res.status(500).json({ error: "Supabase server env vars are not configured" });
+    return;
+  }
+  const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+  // Formerly montecarlo-save.ts in full.
+  if (action === "saveMonteCarloRun") {
+    const { season, week, numTrials, results, unmatchedTeams, resumeComparison, resumeComparisonTrials } = req.body ?? {};
+    if (!season || !week || !numTrials || !Array.isArray(results)) {
+      res.status(400).json({ error: "Missing season, week, numTrials, or results" });
+      return;
+    }
+    try {
+      const { data, error } = await supabaseAdmin
+        .from("monte_carlo_runs")
+        .insert([
+          {
+            season,
+            week,
+            num_trials: numTrials,
+            results,
+            unmatched_teams: unmatchedTeams ?? [],
+            resume_comparison: resumeComparison ?? null,
+            resume_comparison_trials: resumeComparisonTrials ?? null,
+          },
+        ])
+        .select("id")
+        .single();
+      if (error) throw error;
+      res.status(200).json({ ok: true, id: data.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Save failed" });
+    }
+    return;
+  }
+
+  // Default (no action, or action: "saveWeeklyStats") — original
+  // admin-save.ts behavior, unchanged.
+  const { week, rows } = req.body ?? {};
   if (!week || typeof week !== "string") {
     res.status(400).json({ error: "Missing or invalid 'week'" });
     return;
@@ -85,7 +138,6 @@ export default async function handler(req: any, res: any) {
     res.status(400).json({ error: "One or more rows is missing a team name" });
     return;
   }
-  const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   // Keep the teams table in sync automatically: if a row includes div/conf
   // (the paste tool sends these even though they aren't stored per-week),
   // upsert them so a new team shows up immediately and conference
