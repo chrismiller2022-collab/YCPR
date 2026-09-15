@@ -29,6 +29,14 @@ import {
   type GameOdds,
 } from "./gameTotals";
 
+// Chris's own explicitly-stated std-dev threshold for "is this actually a
+// bet" on totals/team totals (as opposed to the Totals admin page's own
+// filterThresholdMultiplier, which defaults to 0.5 and is meant to be
+// looser/tunable for that live working view). Weekly Betting Report and
+// Totals History both use this same fixed bar so "filtered bets" means
+// the same thing in both places.
+export const TOTAL_BET_THRESHOLD_STDDEV = 1.5;
+
 export interface EnrichedGameRow {
   game: GameForTotals;
   home: TeamSeasonInputs | null;

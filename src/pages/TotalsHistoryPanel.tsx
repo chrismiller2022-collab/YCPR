@@ -11,6 +11,7 @@ import {
   useMultiSeasonGameTotalsEngine,
   computeTotalsKeyNumberStudy,
   TOTALS_KEY_NUMBER_TIERS,
+  TOTAL_BET_THRESHOLD_STDDEV,
   type TotalsKeyNumberTally,
   type TotalsKeyNumberGame,
 } from "../lib/gameTotalsEngine";
@@ -321,8 +322,13 @@ function MultiSeasonPicker({ seasons, setSeasons }: { seasons: number[]; setSeas
 export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
   const [seasons, setSeasons] = useState<number[]>([new Date().getFullYear()]);
   const [division, setDivision] = useState("FBS");
-  const { rows: allRows, settings, loading, error } = useMultiSeasonGameTotalsEngine(seasons);
+  const { rows: allRows, settings: liveSettings, loading, error } = useMultiSeasonGameTotalsEngine(seasons);
   const rows = filterRowsByDivision(allRows, division);
+  // "Filtered bets" here should mean the same thing it does in the Weekly
+  // Betting Report — Chris's own fixed 1.5 std-dev bar — not whatever the
+  // Totals admin page's own (looser, tunable) filterThresholdMultiplier
+  // happens to be saved as for live weekly work.
+  const settings = useMemo(() => ({ ...liveSettings, filterThresholdMultiplier: TOTAL_BET_THRESHOLD_STDDEV }), [liveSettings]);
   const [tab, setTab] = useState<Tab>("performance");
   const singleSeason = seasons.length === 1;
 

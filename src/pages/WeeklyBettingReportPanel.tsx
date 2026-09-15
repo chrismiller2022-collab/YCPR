@@ -10,7 +10,10 @@ import {
   buildTeamSplitBetRows,
   applyLockedTotals,
   applyLockedSpreadToRows,
+  computeTeamPerformanceBreakdown,
+  TOTAL_BET_THRESHOLD_STDDEV,
   type TeamSplitBetRow,
+  type PerformanceSegment,
 } from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { splitTeamTotal, gradeActualTotal, gradeBetCall, type BetGrade } from "../lib/gameTotals";
@@ -40,7 +43,9 @@ const SIGMA_DIVISOR = DEFAULT_CUSTOM_PARAMS.sigmaDivisor; // 15.7
 const NWFB_POINTS_THRESHOLD = SIGMA_THRESHOLD * SIGMA_DIVISOR; // ~6.28 points
 const SPREAD_WATCH_MARGIN_POINTS = 2;
 const SPREAD_WATCH_MARGIN_SIGMA = 0.1;
-const TOTAL_BET_THRESHOLD_STDDEV = 1.5;
+// TOTAL_BET_THRESHOLD_STDDEV itself now lives in gameTotalsEngine.ts —
+// Totals History uses the same constant so "filtered bets" means the
+// same thing in both places.
 const TOTAL_WATCH_MARGIN_STDDEV = 0.5;
 // The std-dev margin above alone let a wide-pool-std-dev game clear the
 // bar while still needing an unrealistic double-digit point move to
@@ -262,6 +267,22 @@ function TeamTotalCell({ team, call, total }: { team: string; call: string | nul
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
       <TeamLogo team={team} size={16} /> {team} <span style={{ fontWeight: 700 }}>{call} {fmtTotal(total)}</span>
+    </span>
+  );
+}
+
+// Season-to-date record for this bet's Home/Away x Favorite/Underdog x
+// Over/Under bucket (e.g. "Away Underdog Under") — filtered-bets pool
+// only, since that's the population this week's bet actually belongs to.
+// Colored green/red only once there's enough of a sample to mean
+// anything (n >= 8) — a 1-for-1 bucket isn't a real signal either way.
+function TeamTotalSegmentBadge({ segment }: { segment: PerformanceSegment | undefined }) {
+  if (!segment || segment.fb.n === 0) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  const { wins, losses, n, winPct } = segment.fb;
+  const color = n < 8 ? "var(--chalk-dim)" : winPct != null && winPct >= 0.55 ? "var(--pos-green)" : winPct != null && winPct <= 0.45 ? "var(--neg-red)" : undefined;
+  return (
+    <span title={`${segment.label} — filtered bets ${wins}-${losses}${n < 8 ? " (small sample)" : ""}`} style={{ color, fontWeight: n >= 8 ? 700 : undefined }}>
+      {winPct != null ? `${(winPct * 100).toFixed(0)}%` : "–"} ({wins}-{losses})
     </span>
   );
 }
@@ -836,6 +857,23 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     return buildTeamSplitBetRows(filterRowsByDivision(totalsEngineRows, "FBS"), TOTAL_BET_THRESHOLD_STDDEV);
   }, [totalsEngineRows, showTotals]);
 
+  // Season-to-date track record for each Home/Away x Favorite/Underdog x
+  // Over/Under bucket (same 8 cells as Totals History's Team Totals
+  // Performance tab) — surfaced per Chris's request to flag which buckets
+  // are actually worth sizing up (e.g. Away Underdog Under) vs. ones with
+  // a poor track record (e.g. Away Favorite Over), right on each bet this
+  // week rather than making him cross-reference Totals History by hand.
+  const teamTotalSegmentByKey = useMemo(() => {
+    const segments = computeTeamPerformanceBreakdown(teamTotalPoolRows);
+    return new Map(segments.map((s) => [s.key, s]));
+  }, [teamTotalPoolRows]);
+
+  function teamTotalSegmentFor(r: { isHome: boolean; isFavorite: boolean | null; call: "Over" | "Under" | null }): PerformanceSegment | undefined {
+    if (r.isFavorite == null || r.call == null) return undefined;
+    const key = `${r.isHome ? "home" : "away"}-${r.isFavorite ? "fav" : "dog"}-${r.call === "Over" ? "over" : "under"}`;
+    return teamTotalSegmentByKey.get(key);
+  }
+
   const teamTotalGameIds = useMemo(() => new Set(divisionFilteredGames.map((g) => g.id)), [divisionFilteredGames]);
   // TeamSplitBetRow doesn't carry the game's CFBD id, only week+team
   // names — match the same way TeamPage/other totals consumers already
@@ -1143,6 +1181,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                                 <th className="th th-right">My TT</th>
                                 <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
                                 <th className="th th-right">Std Dev Off</th>
+                                <th className="th th-right" title="Season-to-date filtered-bet record for this bucket (Home/Away x Favorite/Underdog x Over/Under)">
+                                  Bucket
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1164,6 +1205,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                                     <ProjScoreCell awayTeam={r.row.game.awayTeam} homeTeam={r.row.game.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
                                   </td>
                                   <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff?.toFixed(2) ?? "–"}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>
+                                    <TeamTotalSegmentBadge segment={teamTotalSegmentFor(r)} />
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
