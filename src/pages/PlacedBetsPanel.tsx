@@ -5,11 +5,17 @@ import {
   fetchPlacedBets,
   importPlacedBets,
   BOOK_LABELS,
+  fetchJuicereelAuthorizeUrl,
+  fetchJuicereelStatus,
+  disconnectJuicereel,
+  syncJuicereel,
   type PlacedBetRow,
   type BetBook,
   type BetType,
   type BetResult,
   type NewPlacedBet,
+  type JuicereelStatus,
+  type JuicereelSyncResult,
 } from "../lib/api/placedBets";
 import { parsePlacedBetsCsv, PLACED_BETS_CSV_TEMPLATE, type PlacedBetImportError } from "../lib/api/placedBetsImport";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -353,6 +359,158 @@ function RecordSummary({ label, rec }: { label: string; rec: Record_ }) {
   );
 }
 
+// Reads the `?juicereel=connected|error` params JuiceReel's OAuth
+// redirect lands back on this site with (see juicereel-oauth-callback.ts)
+// once, on mount, then strips them from the URL so a page refresh doesn't
+// re-show the same message.
+function useJuicereelRedirectStatus(): { status: "connected" | "error"; message: string | null } | null {
+  const [result, setResult] = useState<{ status: "connected" | "error"; message: string | null } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("juicereel");
+    if (status === "connected" || status === "error") {
+      setResult({ status, message: params.get("juicereel_message") });
+      params.delete("juicereel");
+      params.delete("juicereel_message");
+      const newSearch = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
+    }
+  }, []);
+  return result;
+}
+
+function JuicereelConnectControl({ onImported }: { onImported: () => void }) {
+  const [status, setStatus] = useState<JuicereelStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<"connect" | "sync" | "disconnect" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<JuicereelSyncResult | null>(null);
+  const redirectResult = useJuicereelRedirectStatus();
+
+  function refreshStatus() {
+    setLoading(true);
+    fetchJuicereelStatus()
+      .then(setStatus)
+      .catch((err) => setMessage(err.message ?? "Failed to load JuiceReel status"))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    refreshStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!redirectResult) return;
+    if (redirectResult.status === "connected") {
+      setMessage("JuiceReel connected.");
+      refreshStatus();
+    } else {
+      setMessage(`JuiceReel connection failed: ${redirectResult.message ?? "unknown error"}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redirectResult]);
+
+  async function handleConnect() {
+    setBusy("connect");
+    setMessage(null);
+    try {
+      const { url } = await fetchJuicereelAuthorizeUrl();
+      window.location.href = url;
+    } catch (err: any) {
+      setMessage(err.message ?? "Failed to start JuiceReel connection");
+      setBusy(null);
+    }
+  }
+
+  async function handleSync() {
+    setBusy("sync");
+    setMessage(null);
+    setSyncResult(null);
+    try {
+      const result = await syncJuicereel();
+      setSyncResult(result);
+      if (result.imported > 0) onImported();
+    } catch (err: any) {
+      setMessage(err.message ?? "Sync failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!window.confirm("Disconnect JuiceReel? You can reconnect any time.")) return;
+    setBusy("disconnect");
+    setMessage(null);
+    try {
+      await disconnectJuicereel();
+      setSyncResult(null);
+      refreshStatus();
+    } catch (err: any) {
+      setMessage(err.message ?? "Failed to disconnect");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.5rem" }}>
+        JuiceReel Bet Sync
+      </div>
+      {loading ? (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>Checking connection…</p>
+      ) : status?.connected ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.85rem" }}>
+            Connected{status.displayName ? ` as ${status.displayName}` : ""}
+            {status.lastSyncCheckpoint && (
+              <span style={{ color: "var(--chalk-dim)" }}> · last synced {new Date(status.lastSyncCheckpoint).toLocaleString()}</span>
+            )}
+          </span>
+          <button className="menu-btn" onClick={handleSync} disabled={busy != null}>
+            {busy === "sync" ? "Syncing…" : "Sync Now"}
+          </button>
+          <button className="menu-btn" onClick={handleDisconnect} disabled={busy != null}>
+            {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
+            Automatically syncs settled/open college football bets from Kalshi, NoVig, BetOnline, Bovada, and DK
+            Predictions via JuiceReel's account connection — no password ever passes through this site.
+          </p>
+          <button className="menu-btn" onClick={handleConnect} disabled={busy != null}>
+            {busy === "connect" ? "Redirecting…" : "Connect JuiceReel"}
+          </button>
+        </div>
+      )}
+      {message && <p style={{ fontSize: "0.82rem", marginTop: "0.6rem", marginBottom: 0 }}>{message}</p>}
+      {syncResult && (
+        <div style={{ fontSize: "0.82rem", marginTop: "0.6rem" }}>
+          <p style={{ margin: 0 }}>
+            Fetched {syncResult.fetched}, imported {syncResult.imported}
+            {syncResult.skipped.length > 0 ? `, skipped ${syncResult.skipped.length}` : ""}.
+          </p>
+          {syncResult.skipped.length > 0 && (
+            <details style={{ marginTop: "0.3rem" }}>
+              <summary style={{ cursor: "pointer", color: "var(--chalk-dim)" }}>Why bets were skipped</summary>
+              <ul style={{ margin: "0.3rem 0 0", paddingLeft: "1.2rem" }}>
+                {syncResult.skipped.map((s) => (
+                  <li key={s.juicereelBetId}>
+                    Bet {s.juicereelBetId}: {s.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CsvImportControl({ onImported }: { onImported: () => void }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -564,6 +722,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
         line, which becomes a stable "closing" reference once a game has kicked off.
       </p>
 
+      <JuicereelConnectControl onImported={() => setReloadTick((n) => n + 1)} />
       <CsvImportControl onImported={() => setReloadTick((n) => n + 1)} />
 
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", alignItems: "center" }}>

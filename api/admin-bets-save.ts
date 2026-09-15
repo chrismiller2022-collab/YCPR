@@ -1,16 +1,110 @@
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 // Handles more than just bets now — saveBets (Admin Matchups),
-// saveResumeWeights (Admin Resume Rating), and weeklyReportSign (Weekly
-// Image Dump's PDF publish step) share this one function deliberately,
-// to avoid adding a new serverless function on Vercel Hobby's
-// 12-function cap. Same action-dispatched, password-gated pattern as
-// brit-save.ts and friends.
+// saveResumeWeights (Admin Resume Rating), weeklyReportSign (Weekly
+// Image Dump's PDF publish step), and now the JuiceReel bet-sync actions
+// share this one function deliberately, to avoid adding a new serverless
+// function on Vercel Hobby's 12-function cap. Same action-dispatched,
+// password-gated pattern as brit-save.ts and friends. (The JuiceReel
+// OAuth redirect callback itself is the one piece that couldn't live
+// here — its URL is fixed by what's registered on the JuiceReel OAuth
+// application — see juicereel-oauth-callback.ts.)
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const WEEKLY_REPORTS_BUCKET = "weekly-reports";
+
+const JUICEREEL_CLIENT_ID = process.env.JUICEREEL_CLIENT_ID;
+const JUICEREEL_CLIENT_SECRET = process.env.JUICEREEL_CLIENT_SECRET;
+const JUICEREEL_API_BASE = "https://external-api.juicereel.com";
+const JUICEREEL_AUTHORIZE_URL = "https://www.juicereel.com/oauth2/authorize";
+// Must exactly match juicereel-oauth-callback.ts's own REDIRECT_URI and
+// the Redirect URI registered on the JuiceReel OAuth application.
+const JUICEREEL_REDIRECT_URI = "https://ycpr.vercel.app/api/juicereel-oauth-callback";
+
+// JuiceReel's own book names, mapped to this site's fixed BetBook enum
+// (bovada/betonlineag/novig/kalshi/dkpredictions). Anything not listed
+// here (FanDuel, BetMGM, Caesars, PrizePicks, etc.) is a book JuiceReel
+// tracks but this site doesn't — those bets are silently skipped during
+// sync, not treated as errors. NOT yet verified against a real synced
+// bet from every one of these five — confirm the exact `Site.name`
+// spelling JuiceReel sends once a real sync runs, and adjust here if any
+// don't actually match.
+const JUICEREEL_BOOK_MAP: Record<string, string> = {
+  novig: "novig",
+  kalshi: "kalshi",
+  bovada: "bovada",
+  betonline: "betonlineag",
+  "betonline.ag": "betonlineag",
+  "draftkings predictions": "dkpredictions",
+  "dk predictions": "dkpredictions",
+};
+
+function base64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// subbetType -> this site's fixed BetType enum. Only "Moneyline" is
+// confirmed from JuiceReel's own docs example — the rest are a best
+// guess at their naming and NOT yet verified against a real bet; a
+// sync that can't confidently classify a subbetType skips it (see
+// mapBetType's null return) rather than guessing wrong on real money.
+function mapBetType(subbetType: string): "spread" | "moneyline" | "total" | "team_total" | null {
+  const t = (subbetType ?? "").toLowerCase();
+  if (t.includes("team") && t.includes("total")) return "team_total";
+  if (t.includes("total")) return "total";
+  if (t.includes("spread")) return "spread";
+  if (t.includes("money")) return "moneyline";
+  return null;
+}
+
+// JuiceReel's settlement result -> this site's fixed BetResult enum.
+// "Cancelled"/"Void" is treated as a push (stake returned, no money
+// changed hands) rather than dropped, so it still shows up as settled.
+function mapJuicereelResult(r: string | null | undefined): "win" | "loss" | "push" | "pending" {
+  const t = (r ?? "").toLowerCase();
+  if (t === "won" || t === "win") return "win";
+  if (t === "lost" || t === "loss") return "loss";
+  if (t === "push" || t === "cancelled" || t === "canceled" || t === "voided" || t === "void") return "push";
+  return "pending";
+}
+
+async function refreshJuiceReelTokenIfNeeded(supabaseAdmin: any, connection: any) {
+  const expiresAt = new Date(connection.expires_at).getTime();
+  if (expiresAt - Date.now() > 60_000) return connection; // still good for another minute+
+  const res = await fetch(`${JUICEREEL_API_BASE}/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${JUICEREEL_CLIENT_ID}:${JUICEREEL_CLIENT_SECRET}`).toString("base64")}`,
+      "X-OAuth-Client-Id": JUICEREEL_CLIENT_ID!,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: connection.refresh_token }),
+  });
+  const data: any = await res.json();
+  if (!res.ok) throw new Error(data.error_description ?? data.error ?? "JuiceReel token refresh failed");
+  const updated = {
+    ...connection,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: new Date(Date.now() + data.expires_in * 1000).toISOString(),
+    scope: data.scope ?? connection.scope,
+  };
+  const { error } = await supabaseAdmin
+    .from("juicereel_connection")
+    .update({
+      access_token: updated.access_token,
+      refresh_token: updated.refresh_token,
+      expires_at: updated.expires_at,
+      scope: updated.scope,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+  if (error) throw error;
+  return updated;
+}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
@@ -313,6 +407,214 @@ export default async function handler(req: any, res: any) {
       const { error, count } = await supabaseAdmin.from("placed_bets").insert(rows, { count: "exact" });
       if (error) throw error;
       res.status(200).json({ imported: count ?? rows.length });
+      return;
+    }
+
+    if (action === "juicereelAuthorizeUrl") {
+      if (!JUICEREEL_CLIENT_ID || !JUICEREEL_CLIENT_SECRET) {
+        res.status(500).json({ error: "JuiceReel client credentials are not configured on the server" });
+        return;
+      }
+      const state = base64url(crypto.randomBytes(32));
+      const verifier = base64url(crypto.randomBytes(32));
+      const challenge = base64url(crypto.createHash("sha256").update(verifier).digest());
+      const { error } = await supabaseAdmin.from("juicereel_oauth_state").insert({ state, code_verifier: verifier });
+      if (error) throw error;
+
+      const url = new URL(JUICEREEL_AUTHORIZE_URL);
+      url.search = new URLSearchParams({
+        client_id: JUICEREEL_CLIENT_ID,
+        redirect_uri: JUICEREEL_REDIRECT_URI,
+        response_type: "code",
+        scope: "bets.open.read bets.settled.read",
+        state,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      }).toString();
+      res.status(200).json({ url: url.toString() });
+      return;
+    }
+
+    if (action === "juicereelStatus") {
+      const { data, error } = await supabaseAdmin
+        .from("juicereel_connection")
+        .select("display_name, expires_at, scope, last_sync_checkpoint")
+        .eq("id", 1)
+        .maybeSingle();
+      if (error) throw error;
+      // Deliberately never returns access_token/refresh_token — this
+      // response goes straight back to the browser.
+      res.status(200).json({
+        connected: !!data,
+        displayName: data?.display_name ?? null,
+        scope: data?.scope ?? null,
+        lastSyncCheckpoint: data?.last_sync_checkpoint ?? null,
+      });
+      return;
+    }
+
+    if (action === "juicereelDisconnect") {
+      const { data: connection } = await supabaseAdmin.from("juicereel_connection").select("refresh_token").eq("id", 1).maybeSingle();
+      if (connection?.refresh_token && JUICEREEL_CLIENT_ID && JUICEREEL_CLIENT_SECRET) {
+        // Best-effort — a failed revoke on JuiceReel's end shouldn't block
+        // clearing our own local connection.
+        await fetch(`${JUICEREEL_API_BASE}/oauth2/revoke`, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${JUICEREEL_CLIENT_ID}:${JUICEREEL_CLIENT_SECRET}`).toString("base64")}`,
+            "X-OAuth-Client-Id": JUICEREEL_CLIENT_ID,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({ token: connection.refresh_token, token_type_hint: "refresh_token" }),
+        }).catch(() => {});
+      }
+      const { error } = await supabaseAdmin.from("juicereel_connection").delete().eq("id", 1);
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (action === "juicereelSync") {
+      if (!JUICEREEL_CLIENT_ID || !JUICEREEL_CLIENT_SECRET) {
+        res.status(500).json({ error: "JuiceReel client credentials are not configured on the server" });
+        return;
+      }
+      const { data: connection, error: connError } = await supabaseAdmin.from("juicereel_connection").select("*").eq("id", 1).maybeSingle();
+      if (connError) throw connError;
+      if (!connection) {
+        res.status(400).json({ error: "JuiceReel isn't connected yet" });
+        return;
+      }
+      const live = await refreshJuiceReelTokenIfNeeded(supabaseAdmin, connection);
+
+      // /oauth2/bets/changed with updatedAtAfter is the doc-recommended
+      // reconciliation pattern — first sync (no checkpoint yet) omits the
+      // filter and pulls everything available instead.
+      const bets: any[] = [];
+      let cursor: string | null = null;
+      let newestUpdatedAt: string | null = connection.last_sync_checkpoint ?? null;
+      do {
+        const params = new URLSearchParams();
+        if (connection.last_sync_checkpoint) params.set("updatedAtAfter", connection.last_sync_checkpoint);
+        if (cursor) params.set("cursor", cursor);
+        const betsRes = await fetch(`${JUICEREEL_API_BASE}/oauth2/bets/changed?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${live.access_token}`, "X-OAuth-Client-Id": JUICEREEL_CLIENT_ID },
+        });
+        const betsData: any = await betsRes.json();
+        if (!betsRes.ok) throw new Error(betsData.error_description ?? betsData.error ?? "Failed to fetch bets from JuiceReel");
+        bets.push(...(betsData.bets ?? []));
+        cursor = betsData.hasMore ? betsData.nextCursor : null;
+      } while (cursor);
+
+      for (const b of bets) {
+        if (!newestUpdatedAt || new Date(b.updatedAt) > new Date(newestUpdatedAt)) newestUpdatedAt = b.updatedAt;
+      }
+
+      let imported = 0;
+      const skipped: { juicereelBetId: number; reason: string }[] = [];
+
+      for (const bet of bets) {
+        // Parlays/combos have multiple Subbets and don't map to this
+        // site's single-game bet_type/side/line_value shape — same
+        // "ignore parlays" rule Chris gave for the manual reconciliation
+        // pass earlier this season.
+        if (bet.BetType?.typeName !== "Straight" || !Array.isArray(bet.Subbets) || bet.Subbets.length !== 1) {
+          skipped.push({ juicereelBetId: bet.id, reason: "parlay/combo or multi-leg bet — not tracked here" });
+          continue;
+        }
+        const leg = bet.Subbets[0];
+        const league = (leg.League?.name ?? "").toLowerCase();
+        const sport = (leg.Sport?.name ?? "").toLowerCase();
+        if (!league.includes("ncaa") && !league.includes("cfb") && !(sport.includes("football") && league.includes("college"))) {
+          continue; // not college football — silently skip, not an error
+        }
+        const book = JUICEREEL_BOOK_MAP[(bet.Site?.name ?? "").toLowerCase()];
+        if (!book) continue; // a book this site doesn't track — not an error
+        const betType = mapBetType(leg.subbetType);
+        if (!betType) {
+          skipped.push({ juicereelBetId: bet.id, reason: `unrecognized subbetType "${leg.subbetType}"` });
+          continue;
+        }
+
+        const homeTeamName = leg.Event?.HomeTeam?.displayName;
+        const awayTeamName = leg.Event?.AwayTeam?.displayName;
+        if (!homeTeamName || !awayTeamName) {
+          skipped.push({ juicereelBetId: bet.id, reason: "missing home/away team names" });
+          continue;
+        }
+        const eventDate = leg.Event?.startDate ?? leg.startDate ?? bet.datePlaced;
+        const { data: candidates, error: gamesError } = await supabaseAdmin
+          .from("games")
+          .select("id, season, week, home_team, away_team, start_date")
+          .ilike("home_team", homeTeamName)
+          .ilike("away_team", awayTeamName);
+        if (gamesError) throw gamesError;
+        let game = (candidates ?? [])[0];
+        if ((candidates ?? []).length > 1 && eventDate) {
+          const targetMs = new Date(eventDate).getTime();
+          game = candidates.reduce((best: any, g: any) => {
+            const gMs = g.start_date ? new Date(g.start_date).getTime() : Infinity;
+            const bestMs = best.start_date ? new Date(best.start_date).getTime() : Infinity;
+            return Math.abs(gMs - targetMs) < Math.abs(bestMs - targetMs) ? g : best;
+          }, candidates[0]);
+        }
+        if (!game) {
+          skipped.push({ juicereelBetId: bet.id, reason: `no matching game for ${awayTeamName} @ ${homeTeamName}` });
+          continue;
+        }
+
+        let side: string | null = null;
+        let lineValue: number | null = null;
+        if (betType === "moneyline") {
+          side = leg.position === homeTeamName ? game.home_team : leg.position === awayTeamName ? game.away_team : null;
+        } else if (betType === "spread") {
+          side = leg.position === homeTeamName ? game.home_team : leg.position === awayTeamName ? game.away_team : null;
+          lineValue = leg.value ?? null; // assumed already signed from `side`'s own perspective — not yet verified against a real spread bet
+        } else if (betType === "total") {
+          const dir = (leg.position ?? "").toLowerCase();
+          side = dir.startsWith("o") ? "over" : dir.startsWith("u") ? "under" : null;
+          lineValue = leg.value != null ? Math.abs(leg.value) : null;
+        } else if (betType === "team_total") {
+          const dir = (leg.position ?? "").toLowerCase();
+          const dirNorm = dir.startsWith("o") ? "over" : dir.startsWith("u") ? "under" : null;
+          const teamName = leg.TruthTeam?.displayName === homeTeamName ? game.home_team : leg.TruthTeam?.displayName === awayTeamName ? game.away_team : null;
+          side = dirNorm && teamName ? `${teamName}|${dirNorm}` : null;
+          lineValue = leg.value != null ? Math.abs(leg.value) : null;
+        }
+        if (!side) {
+          skipped.push({ juicereelBetId: bet.id, reason: `couldn't resolve side/team from position "${leg.position}"` });
+          continue;
+        }
+
+        const row = {
+          juicereel_bet_id: bet.id,
+          game_id: game.id,
+          season: game.season,
+          week: game.week,
+          away_team: game.away_team,
+          home_team: game.home_team,
+          book,
+          bet_type: betType,
+          side,
+          line_value: lineValue,
+          price: bet.oddsAmerican ?? 0,
+          stake: bet.amountRisked ?? null,
+          to_win: bet.toWin ?? null,
+          result: mapJuicereelResult(bet.result),
+        };
+        const { error: upsertError } = await supabaseAdmin.from("placed_bets").upsert(row, { onConflict: "juicereel_bet_id" });
+        if (upsertError) {
+          skipped.push({ juicereelBetId: bet.id, reason: upsertError.message });
+          continue;
+        }
+        imported++;
+      }
+
+      if (newestUpdatedAt) {
+        await supabaseAdmin.from("juicereel_connection").update({ last_sync_checkpoint: newestUpdatedAt }).eq("id", 1);
+      }
+
+      res.status(200).json({ ok: true, fetched: bets.length, imported, skipped });
       return;
     }
 

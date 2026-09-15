@@ -80,3 +80,47 @@ export const BOOK_LABELS: Record<BetBook, string> = {
   kalshi: "Kalshi",
   dkpredictions: "DK Predictions",
 };
+
+export interface JuicereelStatus {
+  connected: boolean;
+  displayName: string | null;
+  scope: string | null;
+  lastSyncCheckpoint: string | null;
+}
+
+export interface JuicereelSyncResult {
+  ok: true;
+  fetched: number;
+  imported: number;
+  skipped: { juicereelBetId: number; reason: string }[];
+}
+
+function juicereelPost(action: string, body: Record<string, any> = {}) {
+  const password = sessionStorage.getItem("admin_password") ?? "";
+  return fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password, action, ...body }),
+  }).then(async (res) => {
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Request failed");
+    return data;
+  });
+}
+
+/** Starts the OAuth handshake — returns the JuiceReel URL to redirect the browser to. */
+export function fetchJuicereelAuthorizeUrl(): Promise<{ url: string }> {
+  return juicereelPost("juicereelAuthorizeUrl");
+}
+
+export function fetchJuicereelStatus(): Promise<JuicereelStatus> {
+  return juicereelPost("juicereelStatus");
+}
+
+export function disconnectJuicereel(): Promise<{ ok: true }> {
+  return juicereelPost("juicereelDisconnect");
+}
+
+export function syncJuicereel(): Promise<JuicereelSyncResult> {
+  return juicereelPost("juicereelSync");
+}

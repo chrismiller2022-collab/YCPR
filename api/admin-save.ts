@@ -7,10 +7,10 @@ import { createClient } from "@supabase/supabase-js";
 // Also absorbs what used to be admin-auth.ts (action: "checkPassword") and
 // montecarlo-save.ts (action: "saveMonteCarloRun") — Vercel's Hobby plan
 // caps a deployment at 12 serverless functions, and this project was
-// already at that ceiling before adding the JuiceReel OAuth callback.
-// Sending no `action` at all keeps behaving exactly like the original
-// admin-save.ts (saving weekly team stats), so the one existing caller
-// that predates this merge didn't need to change.
+// already at that ceiling before adding the JuiceReel OAuth callback (see
+// admin-bets-save.ts). Sending no `action` at all keeps behaving exactly
+// like the original admin-save.ts (saving weekly team stats), so the one
+// existing caller that predates this merge didn't need to change.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
