@@ -8,6 +8,7 @@ import {
   type PlacedBetRow,
   type BetBook,
   type BetType,
+  type BetResult,
   type NewPlacedBet,
 } from "../lib/api/placedBets";
 import { parsePlacedBetsCsv, PLACED_BETS_CSV_TEMPLATE, type PlacedBetImportError } from "../lib/api/placedBetsImport";
@@ -44,6 +45,59 @@ function displaySide(bet: PlacedBetRow): string {
     return s ? `${s.team} ${s.dir}` : bet.side;
   }
   return bet.side;
+}
+
+// A bet's `result` column is set once at save/import time and never
+// touched again — there's no grading pass anywhere that goes back and
+// compares it to a final score, so every manually- or CSV-imported bet
+// just sits at "pending" forever even once its game is long over. Unlike
+// live power ratings (which really do keep moving and would "drift" if
+// re-derived after the fact), a completed game's final score is fixed
+// the moment it goes final, so grading live against `games` here carries
+// none of that risk — it can only ever resolve pending -> a real result,
+// never flip a settled one. Only ever called when bet.result is still
+// "pending"; an explicitly-set result (e.g. from a CSV that already knew
+// the outcome) is never second-guessed.
+function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined): BetResult {
+  if (!game || !game.completed || game.home_points == null || game.away_points == null) return "pending";
+  const isAway = bet.side === game.away_team;
+
+  if (bet.bet_type === "moneyline") {
+    if (game.away_points === game.home_points) return "push"; // no ties in real CFB, but nothing else to call it
+    const awayWon = game.away_points > game.home_points;
+    return isAway === awayWon ? "win" : "loss";
+  }
+
+  if (bet.bet_type === "spread") {
+    if (bet.line_value == null) return "pending";
+    if (!isAway && bet.side !== game.home_team) return "pending"; // side isn't either team in this game
+    const ownMargin = isAway ? game.away_points - game.home_points : game.home_points - game.away_points;
+    const coverMargin = ownMargin + bet.line_value;
+    return coverMargin > 0 ? "win" : coverMargin < 0 ? "loss" : "push";
+  }
+
+  if (bet.bet_type === "total") {
+    if (bet.line_value == null) return "pending";
+    const actual = game.home_points + game.away_points;
+    if (actual === bet.line_value) return "push";
+    const isOver = bet.side === "over";
+    return isOver === actual > bet.line_value ? "win" : "loss";
+  }
+
+  if (bet.bet_type === "team_total") {
+    if (bet.line_value == null) return "pending";
+    const s = splitTeamTotalSide(bet.side);
+    if (!s) return "pending";
+    const isTeamAway = s.team === game.away_team;
+    const isTeamHome = s.team === game.home_team;
+    if (!isTeamAway && !isTeamHome) return "pending"; // team name mismatch — don't guess
+    const teamScore = isTeamAway ? game.away_points : game.home_points;
+    if (teamScore === bet.line_value) return "push";
+    const isOver = s.dir === "over";
+    return isOver === teamScore > bet.line_value ? "win" : "loss";
+  }
+
+  return "pending";
 }
 
 interface ClvResult {
@@ -449,8 +503,21 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   }, [season, reloadTick]);
 
   const gamesById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
-  const availableWeeks = useMemo(() => Array.from(new Set(bets.map((b) => b.week))).sort((a, b) => a - b), [bets]);
-  const visibleBets = useMemo(() => (week === "all" ? bets : bets.filter((b) => b.week === week)), [bets, week]);
+  // Grades any still-"pending" bet against its game's final score — see
+  // gradeBetAgainstGame for why this is safe to do live (unlike ratings,
+  // a final score never changes once it's in). Everything downstream
+  // (records, P&L, the table, Exposure Tracker) reads from this instead
+  // of the raw fetched rows, so a bet's result/P&L show up the moment its
+  // game syncs as final, with no separate "run grading" step needed.
+  const gradedBets = useMemo(
+    () => bets.map((b) => (b.result === "pending" ? { ...b, result: gradeBetAgainstGame(b, gamesById.get(b.game_id)) } : b)),
+    [bets, gamesById]
+  );
+  const availableWeeks = useMemo(() => Array.from(new Set(gradedBets.map((b) => b.week))).sort((a, b) => a - b), [gradedBets]);
+  const visibleBets = useMemo(
+    () => (week === "all" ? gradedBets : gradedBets.filter((b) => b.week === week)),
+    [gradedBets, week]
+  );
 
   const overall = useMemo(() => {
     const rec = emptyRecord();
