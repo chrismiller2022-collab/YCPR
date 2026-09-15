@@ -106,6 +106,22 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   // handleSyncAll below can run all three back to back and show one
   // combined result instead of the last one silently overwriting the
   // others.
+
+  // Shared "X/X updated, N unchanged" note for every non-CFBD sync path —
+  // the "save" action now returns the same before/after diff per
+  // system_key that the CFBD "sync" action already computed, so a
+  // stale/no-op pull (values fetched and "saved" but identical to what
+  // was already stored) is visible here too instead of only for CFBD.
+  function formatDiffNote(bySystem?: Record<string, { total: number; changed: number; unchanged: number; newTeams: number }>): string {
+    if (!bySystem) return "";
+    const parts = Object.entries(bySystem).map(([key, s]) => {
+      const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
+      const updated = s.changed + s.newTeams;
+      return `${label} ${updated}/${s.total} updated (${s.unchanged} unchanged)`;
+    });
+    return parts.length > 0 ? ` — ${parts.join(", ")}` : "";
+  }
+
   async function syncCfbdCore(): Promise<{ summary: string }> {
     const data = await syncCfbdRatings(year);
     const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
@@ -157,7 +173,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
     const result = await saveRatingRows(rows);
     return {
-      summary: `Sheet pull — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} values.`,
+      summary: `Sheet pull — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} values.${formatDiffNote(result.bySystem)}`,
       unmatchedNames: um.length > 0 ? um.map((r) => r.team) : undefined,
     };
   }
@@ -200,7 +216,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
     const result = await saveRatingRows(rows);
     return {
-      summary: `Sagarin/FEI/F+ — Sagarin ${sagarinRows.length} teams, FEI/F+ ${feiFplusRows.length} teams, matched ${matched.length}, saved ${result.saved} values.`,
+      summary: `Sagarin/FEI/F+ — Sagarin ${sagarinRows.length} teams, FEI/F+ ${feiFplusRows.length} teams, matched ${matched.length}, saved ${result.saved} values.${formatDiffNote(result.bySystem)}`,
       unmatchedNames: um.length > 0 ? um.map((r) => r.team) : undefined,
     };
   }
@@ -267,7 +283,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { mcillece: m.row.value } }));
       const result = await saveRatingRows(rows);
-      setLog(`McIllece upload — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} teams.`);
+      setLog(`McIllece upload — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`);
       if (um.length > 0) setUnmatched({ source: "McIllece CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);
       onDataChanged();
@@ -293,7 +309,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { massey: m.row.value } }));
       const result = await saveRatingRows(rows);
       setLog(
-        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).`
+        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).${formatDiffNote(result.bySystem)}`
       );
       if (um.length > 0) setUnmatched({ source: "Massey CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);
@@ -906,7 +922,7 @@ function PowerRatingsHistorySection() {
 // Top-level panel.
 // ---------------------------------------------------------------------
 export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
-  const [panelTab, setPanelTab] = useState<"manage" | "history">("manage");
+  const [panelTab, setPanelTab] = useState<"manage" | "performance" | "history">("manage");
   const [pulls, setPulls] = useState<RatingPullRow[]>([]);
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -938,6 +954,9 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
         <button className={`mode-btn ${panelTab === "manage" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("manage")}>
           Manage
         </button>
+        <button className={`mode-btn ${panelTab === "performance" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("performance")}>
+          Performance &amp; Weights
+        </button>
         <button className={`mode-btn ${panelTab === "history" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("history")}>
           Power Ratings History
         </button>
@@ -945,6 +964,22 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
 
       {panelTab === "history" ? (
         <PowerRatingsHistorySection />
+      ) : panelTab === "performance" ? (
+        <>
+          <h2 style={{ marginTop: 0 }}>Performance &amp; Weights</h2>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
+            Each system's live win % this season, and the weight editor for YC's customizable weighted average.
+          </p>
+          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {loading ? (
+            <p>Loading…</p>
+          ) : (
+            <>
+              <SystemPerformanceSummary season={new Date().getFullYear()} />
+              <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
+            </>
+          )}
+        </>
       ) : (
         <>
           <h2 style={{ marginTop: 0 }}>Rating Systems</h2>
@@ -960,8 +995,6 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
           ) : (
             <>
               <SyncControls onDataChanged={loadAll} />
-              <SystemPerformanceSummary season={new Date().getFullYear()} />
-              <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
               <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
               <PushYcControl rows={conglomerated} />
               <ConglomeratedTable rows={conglomerated} />

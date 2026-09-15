@@ -32,6 +32,14 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "core", label: "Core", source: "cfbd_api" },
   { key: "elo", label: "Elo", source: "cfbd_api" }, // min-max normalized to [-30, +55] and sign-flipped, same treatment as Massey
 
+  // Scraped directly from each source's own public page (FEI/F+) or
+  // uploaded weekly (McIllece/Massey) — grouped and ordered ahead of the
+  // Google Sheet block per Chris's request.
+  { key: "fei_avg", label: "FEI", source: "scraped" },
+  { key: "f_plus", label: "F+", source: "scraped" },
+  { key: "mcillece", label: "McIllece", source: "csv_upload" },
+  { key: "massey", label: "Massey", source: "csv_upload" },
+
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },
   { key: "harris", label: "Harris Smoothed", source: "google_sheet" },
@@ -43,30 +51,25 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "tr", label: "TR", source: "google_sheet" },
   { key: "win_totals", label: "Win Totals", source: "google_sheet" },
 
-  // Scraped directly from each source's own public page — no manual
-  // CSV/sheet step. FEI and F+ used to come from the Google Sheet;
-  // moved here once a dedicated scraper existed, since bcftoys.com is
-  // the actual source the sheet's own numbers were manually copied from.
+  // Scraped directly from sagarin.com's own public page — no year param,
+  // it's always just "current."
   { key: "sagarin", label: "Sagarin", source: "scraped" },
-  { key: "fei_avg", label: "FEI", source: "scraped" },
-  { key: "f_plus", label: "F+", source: "scraped" },
-
-  // Weekly CSV uploads.
-  { key: "mcillece", label: "McIllece", source: "csv_upload" },
-  { key: "massey", label: "Massey", source: "csv_upload" },
 ];
 
 export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fromEntries(
   RATING_SYSTEMS.map((s) => [s.key, s])
 );
 
-// F+ and Pi aren't fully rated across every team yet — temporarily
-// excluded from both YC and Consensus so a handful of missing/partial
-// pulls don't skew the aggregates, while still showing up as their own
-// column in the systems table (and still saved into a week snapshot) so
-// progress on filling them in stays visible. Remove from this list once
-// they're fully rated to fold them back into both aggregates.
-export const AGGREGATE_EXCLUDED_SYSTEMS = ["f_plus", "pi"];
+// Pi isn't fully rated across every team yet — temporarily excluded from
+// both YC and Consensus so a handful of missing/partial pulls don't skew
+// the aggregates, while still showing up as its own column in the
+// systems table (and still saved into a week snapshot) so progress on
+// filling it in stays visible. Remove from this list once it's fully
+// rated to fold it back into both aggregates. (F+ used to be excluded
+// here too, back when it came from the Google Sheet and wasn't fully
+// rated — the bcftoys.com scraper covers the full FBS field, so it's
+// back in, with its own weight box again.)
+export const AGGREGATE_EXCLUDED_SYSTEMS = ["pi"];
 
 /** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
 export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);

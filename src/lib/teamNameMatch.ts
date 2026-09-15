@@ -99,6 +99,7 @@ const ALIASES: Record<string, string> = {
   "tcu": "TCU",
   "lsu": "LSU",
   "usc": "USC",
+  "southern california": "USC", // Sagarin's own spelling — no "USC"/mascot in its raw text at all
   "ucla": "UCLA",
   "nc state": "NC State",
   "n carolina": "North Carolina",

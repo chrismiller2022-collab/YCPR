@@ -440,6 +440,28 @@ export default async function handler(req: any, res: any) {
 
     const deduped = dedupeByKey(upsertRows, (r) => `${r.system_key}::${r.team}`);
 
+    // Snapshot what's already stored for every system_key in this batch
+    // BEFORE the upsert overwrites it — same "did the value actually
+    // move" signal as the CFBD "sync" action above, generalized to
+    // whatever system_key(s) happen to be in `rows` (Sheet pulls several
+    // at once, Sagarin/FEI/F+ pulls one or two, McIllece/Massey pull one).
+    const systemKeys = Array.from(new Set(deduped.map((r) => r.system_key)));
+    const { data: existingRows } = await supabaseAdmin
+      .from("rating_pulls")
+      .select("system_key, team, value")
+      .in("system_key", systemKeys);
+    const existingByKey = new Map((existingRows ?? []).map((r: any) => [`${r.system_key}::${r.team}`, Number(r.value)]));
+
+    const bySystem: Record<string, { total: number; changed: number; unchanged: number; newTeams: number }> = {};
+    for (const r of deduped) {
+      const stats = (bySystem[r.system_key] ??= { total: 0, changed: 0, unchanged: 0, newTeams: 0 });
+      stats.total++;
+      const old = existingByKey.get(`${r.system_key}::${r.team}`);
+      if (old == null) stats.newTeams++;
+      else if (Math.abs(r.value - old) < 0.005) stats.unchanged++;
+      else stats.changed++;
+    }
+
     const { error, count } = await supabaseAdmin
       .from("rating_pulls")
       .upsert(deduped, { onConflict: "system_key,team", count: "exact" });
@@ -447,7 +469,7 @@ export default async function handler(req: any, res: any) {
       res.status(500).json({ error: error.message });
       return;
     }
-    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length });
+    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length, bySystem });
     return;
   }
 
