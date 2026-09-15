@@ -92,6 +92,112 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // -----------------------------------------------------------------
+  // action: "sagarinProxy" — scrapes sagarin.com's own public ratings
+  // page (no API, no year param — it's always just "current"). The page
+  // is a giant plain-text block inside a <pre> tag, not a real table, so
+  // this parses it the same way a human reads it: one team per line,
+  // "<rank>  <team name>  <A/B letter>  =  <rating>  <W>  <L>  ...".
+  // Team names/classification letter here are NOT yet verified against
+  // every real row this returns (only spot-checked against the visible
+  // top of the list) — a real sync surfaces unmatched names the same way
+  // Sheet/McIllece/Massey uploads already do, rather than guessing.
+  // -----------------------------------------------------------------
+  if (action === "sagarinProxy") {
+    try {
+      const pageRes = await fetch("http://sagarin.com/sports/cfsend.htm");
+      if (!pageRes.ok) throw new Error(`Sagarin fetch failed (${pageRes.status})`);
+      const html = await pageRes.text();
+      const text = html.replace(/<[^>]+>/g, "");
+      const lineRe = /^\s*\d+\s+(.+?)\s{2,}[A-Z]\s*=\s*(-?[\d.]+)\s/;
+      const rows: { team: string; values: Record<string, number> }[] = [];
+      for (const line of text.split("\n")) {
+        const m = lineRe.exec(line);
+        if (!m) continue;
+        const team = m[1].trim();
+        const rating = parseFloat(m[2]);
+        if (!team || Number.isNaN(rating)) continue;
+        // Sign-flipped — Sagarin's own RATING column is higher-is-better,
+        // this site's convention is negative-is-better.
+        rows.push({ team, values: { sagarin: -rating } });
+      }
+      if (rows.length === 0) throw new Error("Parsed 0 rows — sagarin.com's page layout may have changed");
+      res.status(200).json({ ok: true, rows });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Sagarin fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "fplusProxy" — scrapes Brian Fremeau's own bcftoys.com pages
+  // for FEI and F+ (FEI blended with Bill Connelly's SP+), formerly
+  // copied by hand into the published Google Sheet. Both pages share the
+  // same simple <table><tr><td> layout: rank, team, record, FBS record,
+  // then the rating itself as the 5th cell — parsed generically by
+  // parseBcftoysTable below rather than two near-duplicate parsers.
+  // -----------------------------------------------------------------
+  if (action === "fplusProxy") {
+    const { year } = req.body ?? {};
+    if (!year || typeof year !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'year'" });
+      return;
+    }
+    try {
+      const [feiRes, fplusRes] = await Promise.all([
+        fetch(`https://bcftoys.com/${year}-fei`),
+        fetch(`https://bcftoys.com/${year}-fplus`),
+      ]);
+      if (!feiRes.ok || !fplusRes.ok) {
+        throw new Error(`bcftoys.com fetch failed (FEI ${feiRes.status}, F+ ${fplusRes.status}) — check the ${year} pages exist`);
+      }
+      const [feiHtml, fplusHtml] = await Promise.all([feiRes.text(), fplusRes.text()]);
+
+      function parseBcftoysTable(html: string): { team: string; value: number }[] {
+        const out: { team: string; value: number }[] = [];
+        const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+        let trMatch: RegExpExecArray | null;
+        while ((trMatch = trRe.exec(html))) {
+          const cells: string[] = [];
+          const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+          let tdMatch: RegExpExecArray | null;
+          while ((tdMatch = tdRe.exec(trMatch[1]))) {
+            cells.push(
+              tdMatch[1]
+                .replace(/<[^>]+>/g, "")
+                .replace(/&nbsp;/g, " ")
+                .trim()
+            );
+          }
+          if (cells.length < 5 || !/^\d+$/.test(cells[0])) continue; // header/section rows
+          const team = cells[1];
+          const value = parseFloat(cells[4]);
+          if (!team || Number.isNaN(value)) continue;
+          // Sign-flipped — bcftoys.com's own ratings are higher-is-better.
+          out.push({ team, value: -value });
+        }
+        return out;
+      }
+
+      const feiRows = parseBcftoysTable(feiHtml);
+      const fplusRows = parseBcftoysTable(fplusHtml);
+      if (feiRows.length === 0 && fplusRows.length === 0) {
+        throw new Error("Parsed 0 rows from either page — bcftoys.com's table layout may have changed");
+      }
+      const byTeam = new Map<string, { team: string; values: Record<string, number> }>();
+      for (const r of feiRows) byTeam.set(r.team, { team: r.team, values: { fei_avg: r.value } });
+      for (const r of fplusRows) {
+        const existing = byTeam.get(r.team);
+        if (existing) existing.values.f_plus = r.value;
+        else byTeam.set(r.team, { team: r.team, values: { f_plus: r.value } });
+      }
+      res.status(200).json({ ok: true, rows: Array.from(byTeam.values()) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "bcftoys.com fetch failed" });
+    }
+    return;
+  }
+
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
 
   // -----------------------------------------------------------------

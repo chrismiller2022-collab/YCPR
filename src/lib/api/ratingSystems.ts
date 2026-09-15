@@ -140,6 +140,23 @@ export async function fetchPublishedSheetCsv(): Promise<string> {
   return data.csv as string;
 }
 
+export interface ScrapedRatingRow {
+  team: string;
+  values: Record<string, number>;
+}
+
+/** Scrapes sagarin.com directly — no year param, it's always just "current." */
+export async function fetchSagarinRatings(): Promise<ScrapedRatingRow[]> {
+  const data = await authedPost("sagarinProxy", {});
+  return data.rows as ScrapedRatingRow[];
+}
+
+/** Scrapes bcftoys.com's FEI and F+ pages for the given year and merges them by team. */
+export async function fetchFeiFplusRatings(year: number): Promise<ScrapedRatingRow[]> {
+  const data = await authedPost("fplusProxy", { year });
+  return data.rows as ScrapedRatingRow[];
+}
+
 export interface RatingSaveRow {
   team: string;
   conference?: string | null;

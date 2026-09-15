@@ -58,13 +58,16 @@ function findHeaderIdx(headers: string[], name: string): number {
 // API; YC/Consensus are computed by this app; Sagarin/COPE aren't tracked
 // systems for this build).
 // ---------------------------------------------------------------------
+// FEI/F+ deliberately NOT mapped here anymore — they moved to their own
+// scraper (bcftoys.com directly) since the sheet's own numbers were just
+// a manual copy of that same source. If the sheet still has those
+// columns, they're simply ignored now rather than overwriting the
+// scraper's fresher values on the next sheet pull.
 const SHEET_COLUMN_TO_SYSTEM: Record<string, string> = {
   TR: "tr",
   John: "john",
   Harris: "harris",
-  "FEI avg": "fei_avg",
   "Win Totals": "win_totals",
-  "F+": "f_plus",
   Dok: "dok",
   Action: "action",
   Power: "power",

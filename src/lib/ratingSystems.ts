@@ -8,7 +8,7 @@
 // natively use that convention (Massey's raw CSV, e.g.) are transformed at
 // parse time — see massey/mcillece CSV parsers.
 
-export type RatingSource = "cfbd_api" | "google_sheet" | "csv_upload" | "computed";
+export type RatingSource = "cfbd_api" | "google_sheet" | "csv_upload" | "computed" | "scraped";
 
 export interface RatingSystemDef {
   key: string;
@@ -41,9 +41,15 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "drat", label: "DRate", source: "google_sheet" },
   { key: "pi", label: "Pi", source: "google_sheet" },
   { key: "tr", label: "TR", source: "google_sheet" },
-  { key: "fei_avg", label: "FEI", source: "google_sheet" },
-  { key: "f_plus", label: "F+", source: "google_sheet" },
   { key: "win_totals", label: "Win Totals", source: "google_sheet" },
+
+  // Scraped directly from each source's own public page — no manual
+  // CSV/sheet step. FEI and F+ used to come from the Google Sheet;
+  // moved here once a dedicated scraper existed, since bcftoys.com is
+  // the actual source the sheet's own numbers were manually copied from.
+  { key: "sagarin", label: "Sagarin", source: "scraped" },
+  { key: "fei_avg", label: "FEI", source: "scraped" },
+  { key: "f_plus", label: "F+", source: "scraped" },
 
   // Weekly CSV uploads.
   { key: "mcillece", label: "McIllece", source: "csv_upload" },

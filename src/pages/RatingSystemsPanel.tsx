@@ -16,6 +16,8 @@ import {
   saveRatingWeights,
   syncCfbdRatings,
   fetchPublishedSheetCsv,
+  fetchSagarinRatings,
+  fetchFeiFplusRatings,
   saveRatingRows,
   saveRatingWeek,
   fetchSavedRatingWeeks,
@@ -99,34 +101,44 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   const [log, setLog] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<{ source: string; names: string[] } | null>(null);
 
+  // "Core" versions return a summary string (and optional unmatched-name
+  // list) instead of touching busy/log/unmatched state directly, so
+  // handleSyncAll below can run all three back to back and show one
+  // combined result instead of the last one silently overwriting the
+  // others.
+  async function syncCfbdCore(): Promise<{ summary: string }> {
+    const data = await syncCfbdRatings(year);
+    const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
+      const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
+      if (r.error) return `${label}: error (${r.error})`;
+      // yearUsed differs from the requested year whenever the primary
+      // year came back empty and the server fell back to year-1 (e.g.
+      // this year's ratings aren't published by CFBD yet) — surface that
+      // so a stale/wrong-year pull is obvious instead of silent.
+      const yearNote = r.yearUsed != null && r.yearUsed !== year ? ` [fell back to ${r.yearUsed}]` : ` [${r.yearUsed ?? year}]`;
+      // changed/unchanged/newTeams — a pull can "succeed" (fetched N,
+      // saved N, no error) yet be a silent no-op if CFBD served a
+      // cached/stale response. Comparing against what was already
+      // stored, right before this upsert overwrote it, catches that:
+      // 0 changed across a real weekly sync is the loud signal that
+      // nothing actually moved.
+      const diffNote =
+        r.changed != null
+          ? ` — ${r.changed} changed, ${r.unchanged} unchanged${r.newTeams ? `, ${r.newTeams} new` : ""}${
+              r.changed > 0 ? ` (avg Δ${r.avgAbsDelta.toFixed(2)}, max Δ${r.maxAbsDelta.toFixed(2)})` : ""
+            }`
+          : "";
+      return `${label}: ${r.saved}/${r.fetched}${yearNote}${diffNote}`;
+    });
+    return { summary: `CFBD sync — ${parts.join("; ")}` };
+  }
+
   async function handleCfbdSync() {
     setBusy("cfbd");
     setLog(null);
     try {
-      const data = await syncCfbdRatings(year);
-      const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
-        const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
-        if (r.error) return `${label}: error (${r.error})`;
-        // yearUsed differs from the requested year whenever the primary
-        // year came back empty and the server fell back to year-1 (e.g.
-        // this year's ratings aren't published by CFBD yet) — surface that
-        // so a stale/wrong-year pull is obvious instead of silent.
-        const yearNote = r.yearUsed != null && r.yearUsed !== year ? ` [fell back to ${r.yearUsed}]` : ` [${r.yearUsed ?? year}]`;
-        // changed/unchanged/newTeams — a pull can "succeed" (fetched N,
-        // saved N, no error) yet be a silent no-op if CFBD served a
-        // cached/stale response. Comparing against what was already
-        // stored, right before this upsert overwrote it, catches that:
-        // 0 changed across a real weekly sync is the loud signal that
-        // nothing actually moved.
-        const diffNote =
-          r.changed != null
-            ? ` — ${r.changed} changed, ${r.unchanged} unchanged${r.newTeams ? `, ${r.newTeams} new` : ""}${
-                r.changed > 0 ? ` (avg Δ${r.avgAbsDelta.toFixed(2)}, max Δ${r.maxAbsDelta.toFixed(2)})` : ""
-              }`
-            : "";
-        return `${label}: ${r.saved}/${r.fetched}${yearNote}${diffNote}`;
-      });
-      setLog(`CFBD sync — ${parts.join("; ")}`);
+      const { summary } = await syncCfbdCore();
+      setLog(summary);
       onDataChanged();
     } catch (err: any) {
       setLog(err.message ?? "CFBD sync failed");
@@ -135,28 +147,111 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     }
   }
 
+  async function syncSheetCore(): Promise<{ summary: string; unmatchedNames?: string[] }> {
+    const csv = await fetchPublishedSheetCsv();
+    const parsed = parseSheetCsv(csv);
+    if (parsed.length === 0) {
+      return { summary: "Sheet pull — parsed 0 rows; check that it still has Team/Division columns with the expected headers." };
+    }
+    const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
+    const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
+    const result = await saveRatingRows(rows);
+    return {
+      summary: `Sheet pull — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} values.`,
+      unmatchedNames: um.length > 0 ? um.map((r) => r.team) : undefined,
+    };
+  }
+
   async function handleSheetSync() {
     setBusy("sheet");
     setLog(null);
     try {
-      const csv = await fetchPublishedSheetCsv();
-      const parsed = parseSheetCsv(csv);
-      if (parsed.length === 0) {
-        setLog("Parsed 0 rows from the sheet — check that it still has Team/Division columns with the expected headers.");
-        return;
-      }
-      const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
-      const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
-      const result = await saveRatingRows(rows);
-      setLog(`Sheet pull — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} values.`);
-      if (um.length > 0) setUnmatched({ source: "Google Sheet", names: um.map((r) => r.team) });
-      else setUnmatched(null);
+      const { summary, unmatchedNames } = await syncSheetCore();
+      setLog(summary);
+      setUnmatched(unmatchedNames ? { source: "Google Sheet", names: unmatchedNames } : null);
       onDataChanged();
     } catch (err: any) {
       setLog(err.message ?? "Sheet sync failed");
     } finally {
       setBusy(null);
     }
+  }
+
+  // Sagarin has no year param (always "current"); FEI/F+ are year-scoped
+  // (bcftoys.com/{year}-fei, {year}-fplus). Both merged into one button
+  // since they're both "scraped, no manual step" sources now, same as
+  // Chris asked for.
+  async function syncSagarinFeiCore(): Promise<{ summary: string; unmatchedNames?: string[] }> {
+    const [sagarinRows, feiFplusRows] = await Promise.all([fetchSagarinRatings(), fetchFeiFplusRatings(year)]);
+    // Merge by team name — Sagarin and bcftoys.com are two different
+    // sources, so a team present in one but not the other is normal
+    // (e.g. an FCS team Sagarin rates that bcftoys doesn't), not a
+    // mismatch to report.
+    const byTeam = new Map<string, Record<string, number>>();
+    for (const r of [...sagarinRows, ...feiFplusRows]) {
+      const existing = byTeam.get(r.team) ?? {};
+      byTeam.set(r.team, { ...existing, ...r.values });
+    }
+    const merged = Array.from(byTeam.entries()).map(([team, values]) => ({ team, values }));
+    if (merged.length === 0) {
+      return { summary: "Sagarin/FEI/F+ — parsed 0 rows from either source." };
+    }
+    const { matched, unmatched: um } = matchTeamRows(merged, (r) => r.team);
+    const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
+    const result = await saveRatingRows(rows);
+    return {
+      summary: `Sagarin/FEI/F+ — Sagarin ${sagarinRows.length} teams, FEI/F+ ${feiFplusRows.length} teams, matched ${matched.length}, saved ${result.saved} values.`,
+      unmatchedNames: um.length > 0 ? um.map((r) => r.team) : undefined,
+    };
+  }
+
+  async function handleSagarinFeiSync() {
+    setBusy("sagarin");
+    setLog(null);
+    try {
+      const { summary, unmatchedNames } = await syncSagarinFeiCore();
+      setLog(summary);
+      setUnmatched(unmatchedNames ? { source: "Sagarin/FEI/F+", names: unmatchedNames } : null);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "Sagarin/FEI/F+ sync failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleSyncAll() {
+    setBusy("all");
+    setLog(null);
+    setUnmatched(null);
+    const summaries: string[] = [];
+    const allUnmatched: { source: string; names: string[] }[] = [];
+
+    async function runStep(label: string, core: () => Promise<{ summary: string; unmatchedNames?: string[] }>) {
+      try {
+        const result = await core();
+        summaries.push(result.summary);
+        if (result.unmatchedNames && result.unmatchedNames.length > 0) {
+          allUnmatched.push({ source: label, names: result.unmatchedNames });
+        }
+      } catch (err: any) {
+        summaries.push(`${label} sync failed: ${err.message ?? "unknown error"}`);
+      }
+    }
+
+    await runStep("CFBD", syncCfbdCore);
+    await runStep("Sheet", syncSheetCore);
+    await runStep("Sagarin/FEI/F+", syncSagarinFeiCore);
+
+    setLog(summaries.join("\n"));
+    if (allUnmatched.length > 0) {
+      setUnmatched({
+        source: allUnmatched.map((u) => u.source).join(" + "),
+        names: Array.from(new Set(allUnmatched.flatMap((u) => u.names))),
+      });
+    }
+    onDataChanged();
+    setBusy(null);
   }
 
   async function handleMcilleceUpload(file: File) {
@@ -226,6 +321,12 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         <button onClick={handleSheetSync} disabled={busy != null}>
           {busy === "sheet" ? "Pulling…" : "Pull Google Sheet"}
         </button>
+        <button onClick={handleSagarinFeiSync} disabled={busy != null}>
+          {busy === "sagarin" ? "Syncing…" : "Sync Sagarin/FEI/F+"}
+        </button>
+        <button onClick={handleSyncAll} disabled={busy != null} style={{ fontWeight: 700 }}>
+          {busy === "all" ? "Syncing everything…" : "Sync All (CFBD + Sheet + Sagarin/FEI/F+)"}
+        </button>
         <label className="menu-btn" style={{ cursor: "pointer" }}>
           {busy === "mcillece" ? "Uploading…" : "Upload McIllece CSV"}
           <input
@@ -255,7 +356,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
           />
         </label>
       </div>
-      {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0 }}>{log}</p>}
+      {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0, whiteSpace: "pre-line" }}>{log}</p>}
       {unmatched && (
         <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.5rem" }}>
           {unmatched.source}: {unmatched.names.length} team name(s) couldn't be matched and were skipped —{" "}
