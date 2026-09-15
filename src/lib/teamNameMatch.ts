@@ -63,6 +63,7 @@ const ALIASES: Record<string, string> = {
   "mtsu": "Middle Tennessee",
   "middle tenn": "Middle Tennessee",
   "ul monroe": "UL Monroe",
+  "louisianamonroe": "UL Monroe", // Sagarin's own spelling, no space, before the "(ULM)" it appends is stripped by the scraper
   "louisiana monroe": "UL Monroe",
   "ulm": "UL Monroe",
   "louisiana": "Louisiana",

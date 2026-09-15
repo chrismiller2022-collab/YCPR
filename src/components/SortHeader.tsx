@@ -1,8 +1,9 @@
-export default function SortHeader({ label, sortKey, active, dir, onClick, align }: any) {
+export default function SortHeader({ label, sortKey, active, dir, onClick, align, style }: any) {
   return (
     <th
       onClick={() => onClick(sortKey)}
       className={`th ${align === "right" ? "th-right" : ""}`}
+      style={style}
     >
       <span className="th-inner">
         {label}

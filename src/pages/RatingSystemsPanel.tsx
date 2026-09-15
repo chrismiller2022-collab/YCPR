@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { CONFERENCES } from "../data/teams";
@@ -658,6 +659,25 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
 
   const systemCols = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus");
 
+  // Div/Conf/Team stay pinned while scrolling horizontally through the
+  // (many) rating-system columns — Div and Conf get fixed widths so
+  // Team's own left offset (and everything stacked after it) is
+  // predictable; Team itself is left unconstrained so long team names
+  // still display in full.
+  const DIV_COL_WIDTH = 46;
+  const CONF_COL_WIDTH = 150;
+  const TEAM_COL_LEFT = DIV_COL_WIDTH + CONF_COL_WIDTH;
+  const stickyBg = "var(--turf)";
+  const stickyHeaderStyle = (left: number): CSSProperties => ({ position: "sticky", left, zIndex: 21, background: stickyBg });
+  const stickyCellStyle = (left: number): CSSProperties => ({
+    padding: "0.3rem 0.6rem",
+    borderBottom: "1px solid var(--hash)",
+    position: "sticky",
+    left,
+    zIndex: 5,
+    background: "var(--turf-panel)",
+  });
+
   return (
     <div>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
@@ -679,12 +699,33 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
           <thead>
             <tr>
-              <SortHeader label="Div" sortKey="div" active={sortKey === "div"} dir={sortDir} onClick={handleSort} />
-              <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-              <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
+              <SortHeader
+                label="Div"
+                sortKey="div"
+                active={sortKey === "div"}
+                dir={sortDir}
+                onClick={handleSort}
+                style={{ ...stickyHeaderStyle(0), width: DIV_COL_WIDTH, minWidth: DIV_COL_WIDTH }}
+              />
+              <SortHeader
+                label="Conf"
+                sortKey="conf"
+                active={sortKey === "conf"}
+                dir={sortDir}
+                onClick={handleSort}
+                style={{ ...stickyHeaderStyle(DIV_COL_WIDTH), width: CONF_COL_WIDTH, minWidth: CONF_COL_WIDTH }}
+              />
+              <SortHeader
+                label="Team"
+                sortKey="team"
+                active={sortKey === "team"}
+                dir={sortDir}
+                onClick={handleSort}
+                style={stickyHeaderStyle(TEAM_COL_LEFT)}
+              />
               <SortHeader label="YC" sortKey="yc" active={sortKey === "yc"} dir={sortDir} onClick={handleSort} align="right" />
               <SortHeader
-                label="Consensus"
+                label={"Consen­sus"}
                 sortKey="consensus"
                 active={sortKey === "consensus"}
                 dir={sortDir}
@@ -699,9 +740,9 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
           <tbody>
             {sorted.map((r) => (
               <tr key={r.team}>
-                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.div}</td>
-                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
-                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                <td style={{ ...stickyCellStyle(0), width: DIV_COL_WIDTH, minWidth: DIV_COL_WIDTH }}>{r.div}</td>
+                <td style={{ ...stickyCellStyle(DIV_COL_WIDTH), width: CONF_COL_WIDTH, minWidth: CONF_COL_WIDTH }}>{r.conf}</td>
+                <td style={{ ...stickyCellStyle(TEAM_COL_LEFT), whiteSpace: "nowrap" }}>
                   <TeamLink team={r.team} />
                 </td>
                 <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>

@@ -32,13 +32,16 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "core", label: "Core", source: "cfbd_api" },
   { key: "elo", label: "Elo", source: "cfbd_api" }, // min-max normalized to [-30, +55] and sign-flipped, same treatment as Massey
 
-  // Scraped directly from each source's own public page (FEI/F+) or
-  // uploaded weekly (McIllece/Massey) — grouped and ordered ahead of the
-  // Google Sheet block per Chris's request.
+  // Scraped directly from each source's own public page (FEI/F+/Sagarin)
+  // or uploaded weekly (McIllece/Massey) — grouped and ordered ahead of
+  // the Google Sheet block per Chris's request.
   { key: "fei_avg", label: "FEI", source: "scraped" },
   { key: "f_plus", label: "F+", source: "scraped" },
   { key: "mcillece", label: "McIllece", source: "csv_upload" },
   { key: "massey", label: "Massey", source: "csv_upload" },
+  // Scraped directly from sagarin.com's own public page — no year param,
+  // it's always just "current."
+  { key: "sagarin", label: "Sagarin", source: "scraped" },
 
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },
@@ -50,10 +53,6 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "pi", label: "Pi", source: "google_sheet" },
   { key: "tr", label: "TR", source: "google_sheet" },
   { key: "win_totals", label: "Win Totals", source: "google_sheet" },
-
-  // Scraped directly from sagarin.com's own public page — no year param,
-  // it's always just "current."
-  { key: "sagarin", label: "Sagarin", source: "scraped" },
 ];
 
 export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fromEntries(

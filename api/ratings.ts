@@ -136,13 +136,26 @@ export default async function handler(req: any, res: any) {
       if (!pageRes.ok) throw new Error(`Sagarin fetch failed (${pageRes.status})`);
       const html = await pageRes.text();
       const text = html.replace(/<[^>]+>/g, "");
-      const lineRe = /^\s*\d+\s+(.+?)\s{2,}[A-Z]\s*=\s*(-?[\d.]+)\s/;
+      // Two bugs fixed here: (1) the classification field is 1-3 letters
+      // ("A" for FBS, "AA" for FCS) — a single-letter-only match silently
+      // dropped every FCS team (~250 rows) on the page. (2) it requires
+      // 2+ spaces before that field, but a team name ending in its own
+      // parenthetical abbreviation ("Central Florida(UCF)",
+      // "LouisianaMonroe(ULM)") only has ONE space before the class
+      // letter, so those two teams silently vanished entirely rather
+      // than just mismatching. 1+ space (still non-greedy on the name)
+      // fixes both without over-matching, since a real team name is
+      // never itself immediately followed by "<letters> =".
+      const lineRe = /^\s*\d+\s+(.+?)\s+([A-Za-z]+)\s*=\s*(-?[\d.]+)\s/;
       const parsed: { team: string; rawRating: number }[] = [];
       for (const line of text.split("\n")) {
         const m = lineRe.exec(line);
         if (!m) continue;
-        const team = m[1].trim();
-        const rating = parseFloat(m[2]);
+        // Strip a trailing "(ABBR)" Sagarin appends to a couple of team
+        // names right in the name field itself (see above) — the
+        // matcher/alias table works off the plain school name.
+        const team = m[1].replace(/\([A-Za-z]+\)\s*$/, "").trim();
+        const rating = parseFloat(m[3]);
         if (!team || Number.isNaN(rating)) continue;
         parsed.push({ team, rawRating: rating });
       }
