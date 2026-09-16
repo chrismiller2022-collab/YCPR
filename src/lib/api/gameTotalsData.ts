@@ -1,7 +1,7 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
 import { cachedFetch } from "./cache";
-import { type TeamSeasonInputs, type SystemWeights, DEFAULT_SYSTEM_WEIGHTS } from "../gameTotals";
+import { type TeamSeasonInputs, type SystemWeights, type EfficiencyInputs, DEFAULT_SYSTEM_WEIGHTS } from "../gameTotals";
 
 // Every off_*/def_* advanced-stat column in team_season_stats — these are
 // the ones that get carried-over/blended from last season early on (see
@@ -298,4 +298,68 @@ export async function fetchGameTotalsSettings(season: number): Promise<GameTotal
   const { data, error } = await supabase.from("game_totals_settings").select("settings").eq("season", season).maybeSingle();
   if (error) throw error;
   return (data?.settings as GameTotalsSettings) ?? null;
+}
+
+// ---------------------------------------------------------------------
+// Totals week-over-week snapshots — team_season_stats has no week
+// dimension (it's overwritten in place on every CFBD sync), so without
+// this there is no way to see "what did the model actually say last
+// week" once this week's sync has run. Explicit "Save as week" action
+// (mirrors Rating Systems' own weekly_power_ratings pattern) snapshots
+// the model's ALREADY-COMPUTED per-game outputs — efficiency inputs +
+// projected total/team totals — not raw CFBD counting stats.
+// ---------------------------------------------------------------------
+export interface GameTotalSnapshotRow {
+  season: number;
+  week: number;
+  gameId: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeEfficiencyInputs: EfficiencyInputs | null;
+  awayEfficiencyInputs: EfficiencyInputs | null;
+  projectedTotal: number | null;
+  homeTeamTotal: number | null;
+  awayTeamTotal: number | null;
+  vegasTotal: number | null;
+  actualTotal: number | null;
+  homeActualPoints: number | null;
+  awayActualPoints: number | null;
+  savedAt: string;
+}
+
+export async function fetchGameTotalSnapshots(season: number): Promise<GameTotalSnapshotRow[]> {
+  const rows = await fetchAllRows<any>((from, to) =>
+    supabase
+      .from("game_total_snapshots")
+      .select(
+        "season, week, game_id, home_team, away_team, home_efficiency_inputs, away_efficiency_inputs, projected_total, home_team_total, away_team_total, vegas_total, actual_total, home_actual_points, away_actual_points, saved_at"
+      )
+      .eq("season", season)
+      .order("id")
+      .range(from, to)
+  );
+  return rows.map((r) => ({
+    season: r.season,
+    week: r.week,
+    gameId: r.game_id,
+    homeTeam: r.home_team,
+    awayTeam: r.away_team,
+    homeEfficiencyInputs: r.home_efficiency_inputs ?? null,
+    awayEfficiencyInputs: r.away_efficiency_inputs ?? null,
+    projectedTotal: r.projected_total ?? null,
+    homeTeamTotal: r.home_team_total ?? null,
+    awayTeamTotal: r.away_team_total ?? null,
+    vegasTotal: r.vegas_total ?? null,
+    actualTotal: r.actual_total ?? null,
+    homeActualPoints: r.home_actual_points ?? null,
+    awayActualPoints: r.away_actual_points ?? null,
+    savedAt: r.saved_at,
+  }));
+}
+
+/** Distinct saved weeks for this season's Totals snapshots, ascending — for picking "previous" vs "current" and for the willOverwrite check in the save control. */
+export async function fetchSavedGameTotalWeeks(season: number): Promise<number[]> {
+  const { data, error } = await supabase.from("game_total_snapshots").select("week").eq("season", season);
+  if (error) throw error;
+  return Array.from(new Set((data ?? []).map((r: any) => r.week as number))).sort((a, b) => a - b);
 }

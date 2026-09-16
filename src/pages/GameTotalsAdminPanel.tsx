@@ -16,19 +16,30 @@ import {
   type TeamSplitBetRow,
   type AmountOffMetric,
 } from "../lib/gameTotalsEngine";
-import { SYSTEM_KEYS, SYSTEM_LABELS, type SystemKey } from "../lib/gameTotals";
-import { DEFAULT_GAME_TOTALS_SETTINGS, type GameTotalsSettings } from "../lib/api/gameTotalsData";
+import { SYSTEM_KEYS, SYSTEM_LABELS, splitTeamTotal, type SystemKey, type EfficiencyInputs } from "../lib/gameTotals";
+import {
+  DEFAULT_GAME_TOTALS_SETTINGS,
+  fetchGameTotalSnapshots,
+  fetchSavedGameTotalWeeks,
+  type GameTotalsSettings,
+  type GameTotalSnapshotRow,
+} from "../lib/api/gameTotalsData";
 import { invalidateCache } from "../lib/api/cache";
 import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, AmountOffMetricToggle, type ViewMode } from "./PerformanceView";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import { useDefaultToAdminWeek } from "../lib/adminWeek";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
-const TABS = ["totals", "teamtotals"] as const;
+// Team Stats / Games Ahead used to be bolted onto Admin Matchups' tab
+// bar instead of living here — moved back per Chris, since this is the
+// Totals admin page and Matchups is meant for the working views that
+// share its own filter bar, not these one-off drilldowns.
+const TABS = ["teamstats", "gamesahead"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
-  totals: "Totals",
-  teamtotals: "Team Totals",
+  teamstats: "Team Stats",
+  gamesahead: "Games Ahead",
 };
 
 const LEGACY_TABS = ["raw", "inputs", "composites"] as const;
@@ -766,62 +777,133 @@ export function TeamTotalsTab({
 }
 
 // ---------------------------------------------------------------------
-// Team Stats drill-down — pick one FBS team, see its most recent
-// completed game (actual vs. projected, both game-level and team-level)
-// and its next scheduled game's current projection, in one place instead
-// of scanning the full Totals/Team Totals tables for two specific rows.
-// Reuses buildTeamSplitBetRows (same function Team Totals itself uses)
-// filtered down to one team, so the numbers here can never drift from
-// what that tab shows for the same games.
-//
-// NOT built here: pull-over-pull diffing (freezing this once "totals are
-// run" and comparing a later pull against it, per Chris's spec). This
-// engine is entirely live-computed — there's no discrete "run" event to
-// snapshot against today, so that needs a new table plus a decision on
-// what should actually trigger a snapshot before it can be built.
+// Team Stats drill-down — pick one FBS team, see the SAME two games (its
+// most recent completed game, and its next scheduled one) as they looked
+// under two different snapshots: "Previous" (the last saved week before
+// the most recent one) and "Current" (the most recently saved week).
+// This is a diff view, not a live one — its whole point is confirming
+// the model's inputs actually changed week to week (and in the direction
+// the actual result implies), which a live-only view can't show since
+// last week's numbers are gone the moment a new sync overwrites
+// team_season_stats. Requires at least one "Save as week" snapshot above;
+// with only one saved week there's nothing yet to diff against.
 // ---------------------------------------------------------------------
-function TeamGameStatCard({ label, r, team }: { label: string; r: TeamSplitBetRow | undefined; team: string }) {
-  if (!r) {
+const EFFICIENCY_FIELDS: { key: keyof EfficiencyInputs; label: string }[] = [
+  { key: "blendedPlays", label: "Blended Plays" },
+  { key: "blendedDrives", label: "Blended Drives" },
+  { key: "blendedRushAttempts", label: "Blended Rush Att" },
+  { key: "blendedPassAttempts", label: "Blended Pass Att" },
+  { key: "ppaFactor", label: "PPA Factor" },
+  { key: "successRateFactor", label: "Success Rate Factor" },
+  { key: "explosivenessFactor", label: "Explosiveness Factor" },
+  { key: "pointsPerOppFactor", label: "Pts/Opp Factor" },
+  { key: "rushPpaFactor", label: "Rush PPA Factor" },
+  { key: "rushSuccessRateFactor", label: "Rush SR Factor" },
+  { key: "passPpaFactor", label: "Pass PPA Factor" },
+  { key: "passSuccessRateFactor", label: "Pass SR Factor" },
+];
+
+function fmtDelta(cur: number | null, prev: number | null, digits = 2): string {
+  if (cur == null || prev == null) return "";
+  const d = cur - prev;
+  if (Math.abs(d) < 0.5 * Math.pow(10, -digits)) return "";
+  return ` (${d > 0 ? "+" : ""}${d.toFixed(digits)})`;
+}
+
+interface TeamGameRef {
+  gameId: string;
+  week: number;
+  opponent: string;
+  isHome: boolean;
+  completed: boolean;
+}
+
+function SnapshotGameCard({
+  label,
+  gameRef,
+  team,
+  snapshot,
+  compareSnapshot,
+}: {
+  label: string;
+  gameRef: TeamGameRef | undefined;
+  team: string;
+  snapshot: GameTotalSnapshotRow | undefined;
+  compareSnapshot?: GameTotalSnapshotRow | undefined;
+}) {
+  if (!gameRef) {
     return (
-      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", flex: 1, minWidth: 260 }}>
+      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem" }}>
         <div className="section-label" style={{ marginBottom: "0.5rem" }}>{label}</div>
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>No game found.</p>
       </div>
     );
   }
-  const opponent = r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam;
-  const completed = r.row.game.completed;
+  if (!snapshot) {
+    return (
+      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem" }}>
+        <div className="section-label" style={{ marginBottom: "0.5rem" }}>{label}</div>
+        <div style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+          Week {gameRef.week} · {gameRef.isHome ? "vs" : "at"} <TeamLink team={gameRef.opponent} />
+        </div>
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>Not saved for this week yet.</p>
+      </div>
+    );
+  }
+  const teamTotal = gameRef.isHome ? snapshot.homeTeamTotal : snapshot.awayTeamTotal;
+  const teamPoints = gameRef.isHome ? snapshot.homeActualPoints : snapshot.awayActualPoints;
+  const compareTeamTotal = compareSnapshot ? (gameRef.isHome ? compareSnapshot.homeTeamTotal : compareSnapshot.awayTeamTotal) : null;
+  const inputs = gameRef.isHome ? snapshot.homeEfficiencyInputs : snapshot.awayEfficiencyInputs;
+  const compareInputs = compareSnapshot ? (gameRef.isHome ? compareSnapshot.homeEfficiencyInputs : compareSnapshot.awayEfficiencyInputs) : null;
+
   return (
-    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", flex: 1, minWidth: 260 }}>
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem" }}>
       <div className="section-label" style={{ marginBottom: "0.5rem" }}>{label}</div>
       <div style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}>
-        Week {r.row.game.week} · {r.isHome ? "vs" : "at"} <TeamLink team={opponent} />
+        Week {gameRef.week} · {gameRef.isHome ? "vs" : "at"} <TeamLink team={gameRef.opponent} />
       </div>
+      <table style={{ fontSize: "0.78rem", width: "100%", marginBottom: "0.6rem" }}>
+        <tbody>
+          {EFFICIENCY_FIELDS.map(({ key, label: fLabel }) => (
+            <tr key={key}>
+              <td style={{ color: "var(--chalk-dim)", padding: "0.1rem 0" }}>{fLabel}</td>
+              <td style={{ textAlign: "right" }}>
+                {fmt(inputs?.[key] ?? null)}
+                <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}>{fmtDelta(inputs?.[key] ?? null, compareInputs?.[key] ?? null)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       <table style={{ fontSize: "0.82rem", width: "100%" }}>
         <tbody>
           <tr>
             <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas Total (game)</td>
-            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.row.odds.vegasTotal, 1)}</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(snapshot.vegasTotal, 1)}</td>
           </tr>
           <tr>
             <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>My Total (game)</td>
-            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.row.projection?.projectedTotal ?? null, 1)}</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>
+              {fmt(snapshot.projectedTotal, 1)}
+              <span style={{ color: "var(--chalk-dim)", fontWeight: 400, fontSize: "0.72rem" }}>
+                {fmtDelta(snapshot.projectedTotal, compareSnapshot?.projectedTotal ?? null, 1)}
+              </span>
+            </td>
           </tr>
           <tr>
             <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>{team} Proj. Team Total</td>
-            <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(r.myTeamTotal, 1)}</td>
-          </tr>
-          <tr>
-            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas Team Total (derived/actual)</td>
-            <td style={{ textAlign: "right" }}>{fmt(r.actualVegasTeamTotal ?? r.vegasTeamTotal, 1)}</td>
+            <td style={{ textAlign: "right", fontWeight: 700 }}>
+              {fmt(teamTotal, 1)}
+              <span style={{ color: "var(--chalk-dim)", fontWeight: 400, fontSize: "0.72rem" }}>{fmtDelta(teamTotal, compareTeamTotal, 1)}</span>
+            </td>
           </tr>
           <tr>
             <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Actual Game Total</td>
-            <td style={{ textAlign: "right" }}>{completed ? fmt(r.row.actualTotal, 0) : "–"}</td>
+            <td style={{ textAlign: "right" }}>{gameRef.completed ? fmt(snapshot.actualTotal, 0) : "–"}</td>
           </tr>
           <tr>
             <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>{team} Actual Points</td>
-            <td style={{ textAlign: "right" }}>{completed ? fmt(r.actualTeamPoints, 0) : "–"}</td>
+            <td style={{ textAlign: "right" }}>{gameRef.completed ? fmt(teamPoints, 0) : "–"}</td>
           </tr>
         </tbody>
       </table>
@@ -829,11 +911,31 @@ function TeamGameStatCard({ label, r, team }: { label: string; r: TeamSplitBetRo
   );
 }
 
-export function TeamStatsDrilldownTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const teamSplitRows = useMemo(
-    () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier),
-    [rows, settings.filterThresholdMultiplier]
-  );
+export function TeamStatsDrilldownTab({ rows, season }: { rows: EnrichedGameRow[]; season: number }) {
+  const [snapshots, setSnapshots] = useState<GameTotalSnapshotRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchGameTotalSnapshots(season)
+      .then((snaps) => {
+        if (!cancelled) setSnapshots(snaps);
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const savedWeeks = useMemo(() => Array.from(new Set(snapshots.map((s) => s.week))).sort((a, b) => a - b), [snapshots]);
+  const currentWeek = savedWeeks.length > 0 ? savedWeeks[savedWeeks.length - 1] : null;
+  const previousWeek = savedWeeks.length > 1 ? savedWeeks[savedWeeks.length - 2] : null;
+
   const teams = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) {
@@ -844,18 +946,39 @@ export function TeamStatsDrilldownTab({ rows, settings }: { rows: EnrichedGameRo
   }, [rows]);
   const [team, setTeam] = useState<string>("");
 
-  const teamRows = useMemo(
-    () => teamSplitRows.filter((r) => r.team === team).sort((a, b) => a.row.game.week - b.row.game.week),
-    [teamSplitRows, team]
-  );
-  const lastGame = useMemo(() => [...teamRows].reverse().find((r) => r.row.game.completed), [teamRows]);
-  const nextGame = useMemo(() => teamRows.find((r) => !r.row.game.completed), [teamRows]);
+  // Which two games (live, not snapshot-dependent) — a team's most
+  // recent completed game and its next scheduled one never change
+  // identity between snapshots, only the numbers attached to them do.
+  const teamGameRefs = useMemo(() => {
+    const refs: TeamGameRef[] = [];
+    for (const r of rows) {
+      const isHome = r.game.homeTeam === team;
+      const isAway = r.game.awayTeam === team;
+      if (!isHome && !isAway) continue;
+      refs.push({
+        gameId: r.game.id,
+        week: r.game.week,
+        opponent: isHome ? r.game.awayTeam : r.game.homeTeam,
+        isHome,
+        completed: r.game.completed,
+      });
+    }
+    return refs.sort((a, b) => a.week - b.week);
+  }, [rows, team]);
+  const lastGame = useMemo(() => [...teamGameRefs].reverse().find((r) => r.completed), [teamGameRefs]);
+  const nextGame = useMemo(() => teamGameRefs.find((r) => !r.completed), [teamGameRefs]);
+
+  function snapshotFor(gameId: string | undefined, week: number | null): GameTotalSnapshotRow | undefined {
+    if (!gameId || week == null) return undefined;
+    return snapshots.find((s) => s.gameId === gameId && s.week === week);
+  }
 
   return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-        Pick one FBS team to see its most recent game (actual vs. projected) and its next scheduled game's current
-        projection, side by side. Same numbers Team Totals shows for these games, just filtered to one team.
+        Pick one FBS team to see its most recent game and its next scheduled game, side by side under two different
+        weeks' saved snapshots — "Previous" is the last saved week before the most recent one, "Current" is the most
+        recently saved week. Deltas in parentheses show the change between them. Save a week above to populate this.
       </p>
       <select className="filter" value={team} onChange={(e) => setTeam(e.target.value)} style={{ marginBottom: "1rem" }}>
         <option value="">Select a team…</option>
@@ -863,26 +986,84 @@ export function TeamStatsDrilldownTab({ rows, settings }: { rows: EnrichedGameRo
           <option key={t} value={t}>{t}</option>
         ))}
       </select>
-      {team && (
-        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-          <TeamGameStatCard label="Most Recent Game" r={lastGame} team={team} />
-          <TeamGameStatCard label="Next Game" r={nextGame} team={team} />
-        </div>
+      {loading ? (
+        <p style={{ color: "var(--chalk-dim)" }}>Loading snapshots…</p>
+      ) : savedWeeks.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)" }}>No saved Totals snapshots yet for {season} — use "Save as week" above once you've synced.</p>
+      ) : (
+        team && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
+                Previous {previousWeek != null ? `(Week ${previousWeek})` : ""}
+              </div>
+              {previousWeek == null ? (
+                <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>Only one week saved so far — nothing to compare against yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  <SnapshotGameCard label="Most Recent Game (pregame)" gameRef={lastGame} team={team} snapshot={snapshotFor(lastGame?.gameId, previousWeek)} />
+                  <SnapshotGameCard label="Next Game (lookahead)" gameRef={nextGame} team={team} snapshot={snapshotFor(nextGame?.gameId, previousWeek)} />
+                </div>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>Current (Week {currentWeek})</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                <SnapshotGameCard
+                  label="Most Recent Game (post-game re-projection)"
+                  gameRef={lastGame}
+                  team={team}
+                  snapshot={snapshotFor(lastGame?.gameId, currentWeek)}
+                  compareSnapshot={snapshotFor(lastGame?.gameId, previousWeek)}
+                />
+                <SnapshotGameCard
+                  label="Next Game (current projection)"
+                  gameRef={nextGame}
+                  team={team}
+                  snapshot={snapshotFor(nextGame?.gameId, currentWeek)}
+                  compareSnapshot={snapshotFor(nextGame?.gameId, previousWeek)}
+                />
+              </div>
+            </div>
+          </div>
+        )
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------
-// Games Ahead — the following week's slate, shown even before Vegas has
-// posted lines for it (Vegas Total/My TT columns just read "–" until a
-// line syncs). Chris's spec also wants this to show the change from the
-// last time totals were pulled once a new pull runs — same blocker as
-// the Stats tab above: no discrete "run" to snapshot against yet, so
-// this only shows the current live projection, no "New Proj"/"Change"
-// columns yet.
+// Games Ahead — the slate for the week after the most recently SAVED
+// Totals snapshot (not just "whatever's live"), shown even before Vegas
+// has posted lines for it. "Current Proj" is the older of the two most
+// recent saved snapshots for that game, "New Proj"/"Change" are the
+// newer snapshot and the diff — both blank until a second snapshot for
+// that week actually exists (i.e. "totals" have been run at least twice
+// since that game first showed up here). Before ANY snapshot exists yet
+// for this season, falls back to the live projection with those two
+// columns blank, same as the old behavior.
 // ---------------------------------------------------------------------
-export function GamesAheadTab({ rows, nextWeek }: { rows: EnrichedGameRow[]; nextWeek: number }) {
+export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[]; season: number; week: number }) {
+  const [snapshots, setSnapshots] = useState<GameTotalSnapshotRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchGameTotalSnapshots(season)
+      .then((snaps) => {
+        if (!cancelled) setSnapshots(snaps);
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshots([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  const savedWeeks = useMemo(() => Array.from(new Set(snapshots.map((s) => s.week))).sort((a, b) => a - b), [snapshots]);
+  const latestSavedWeek = savedWeeks.length > 0 ? savedWeeks[savedWeeks.length - 1] : null;
+  const priorSavedWeek = savedWeeks.length > 1 ? savedWeeks[savedWeeks.length - 2] : null;
+  const nextWeek = latestSavedWeek != null ? latestSavedWeek + 1 : week;
+
   const nextWeekRows = useMemo(
     () =>
       rows
@@ -891,11 +1072,18 @@ export function GamesAheadTab({ rows, nextWeek }: { rows: EnrichedGameRow[]; nex
     [rows, nextWeek]
   );
 
+  function snapshotFor(gameId: string, w: number | null): GameTotalSnapshotRow | undefined {
+    if (w == null) return undefined;
+    return snapshots.find((s) => s.gameId === gameId && s.week === w);
+  }
+
   return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-        Week {nextWeek} — the week after whatever's currently selected above. Vegas often hasn't posted a total this
-        far out yet, so "Vegas Total" reads "–" until one syncs; "My Total" is my own projection regardless.
+        Week {nextWeek} — the week after the most recently saved Totals snapshot
+        {latestSavedWeek != null ? ` (week ${latestSavedWeek})` : ""}. Vegas often hasn't posted a total this far
+        out yet, so "Vegas Total" reads "–" until one syncs. "New Proj"/"Change" stay blank until this week has been
+        saved twice — the first save is just the baseline.
       </p>
       <div className="table-scroll">
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -906,23 +1094,41 @@ export function GamesAheadTab({ rows, nextWeek }: { rows: EnrichedGameRow[]; nex
               <th style={CP}>Away</th>
               <th style={CP}>Home</th>
               <th style={{ ...CP, textAlign: "right" }}>Vegas Total</th>
-              <th style={{ ...CP, textAlign: "right" }}>My Total</th>
+              <th style={{ ...CP, textAlign: "right" }}>Current Proj</th>
+              <th style={{ ...CP, textAlign: "right" }}>New Proj</th>
+              <th style={{ ...CP, textAlign: "right" }}>Change</th>
             </tr>
           </thead>
           <tbody>
-            {nextWeekRows.map((r) => (
-              <tr key={r.game.id}>
-                <td style={CP}>{dateLabel(r.game.startDate)}</td>
-                <td style={CP}>{kickoffLabel(r.game.startDate)}</td>
-                <td style={CP}><TeamLink team={r.game.awayTeam} /></td>
-                <td style={CP}><TeamLink team={r.game.homeTeam} /></td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmt(r.odds.vegasTotal, 1)}</td>
-                <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(r.projection?.projectedTotal ?? null, 1)}</td>
-              </tr>
-            ))}
+            {nextWeekRows.map((r) => {
+              const priorSnap = snapshotFor(r.game.id, priorSavedWeek);
+              const latestSnap = snapshotFor(r.game.id, latestSavedWeek);
+              const liveProj = r.projection?.projectedTotal ?? null;
+              // "Current" = the older of the two most recent saves (or
+              // the only save there is yet, or the live number if this
+              // season has no saves at all); "New" only appears once a
+              // second save for the same game exists.
+              const current = priorSnap?.projectedTotal ?? latestSnap?.projectedTotal ?? liveProj;
+              const fresh = priorSnap ? latestSnap?.projectedTotal ?? null : null;
+              const change = fresh != null && current != null ? fresh - current : null;
+              return (
+                <tr key={r.game.id}>
+                  <td style={CP}>{dateLabel(r.game.startDate)}</td>
+                  <td style={CP}>{kickoffLabel(r.game.startDate)}</td>
+                  <td style={CP}><TeamLink team={r.game.awayTeam} /></td>
+                  <td style={CP}><TeamLink team={r.game.homeTeam} /></td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(latestSnap?.vegasTotal ?? r.odds.vegasTotal, 1)}</td>
+                  <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(current, 1)}</td>
+                  <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fresh == null ? "–" : fmt(fresh, 1)}</td>
+                  <td style={{ ...CP, textAlign: "right", color: change == null ? undefined : change > 0 ? "var(--pos-green)" : change < 0 ? "var(--neg-red)" : undefined }}>
+                    {change == null ? "–" : `${change > 0 ? "+" : ""}${change.toFixed(1)}`}
+                  </td>
+                </tr>
+              );
+            })}
             {nextWeekRows.length === 0 && (
               <tr>
-                <td colSpan={6} className="empty">No games found for Week {nextWeek} yet.</td>
+                <td colSpan={8} className="empty">No games found for Week {nextWeek} yet.</td>
               </tr>
             )}
           </tbody>
@@ -988,6 +1194,103 @@ export function SyncControl({ season }: { season: number }) {
         stats (heavier — skip if you're importing those via CSV instead)
       </label>
       {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{msg}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Totals "Save as week" — team_season_stats has no week dimension (it's
+// overwritten in place by every CFBD sync above), so without an explicit
+// snapshot there's no way to see "what did the model say last week" once
+// this week's sync has run. Snapshots every row's already-computed
+// ridge-model efficiency inputs + projected total/team totals, keyed by
+// (season, week, game) — same "Save as week" pattern Rating Systems
+// already uses for weekly_power_ratings. Feeds the Totals: Team Stats
+// and Totals: Games Ahead tabs' week-over-week comparisons.
+// ---------------------------------------------------------------------
+async function saveGameTotalSnapshot(season: number, week: number, rows: EnrichedGameRow[]) {
+  const password = window.prompt("Admin password:");
+  if (!password) return null;
+  const payloadRows = rows.map((r) => {
+    const myTotal = r.projection?.projectedTotal ?? null;
+    const split = splitTeamTotal(myTotal, r.myHomeSpread ?? 0);
+    return {
+      gameId: r.game.id,
+      homeTeam: r.game.homeTeam,
+      awayTeam: r.game.awayTeam,
+      homeEfficiencyInputs: r.homeEfficiencyInputs,
+      awayEfficiencyInputs: r.awayEfficiencyInputs,
+      projectedTotal: myTotal,
+      homeTeamTotal: split.home,
+      awayTeamTotal: split.away,
+      vegasTotal: r.odds.vegasTotal,
+      actualTotal: r.actualTotal,
+      homeActualPoints: r.game.homePoints,
+      awayActualPoints: r.game.awayPoints,
+    };
+  });
+  const res = await fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password, action: "saveGameTotalSnapshot", season, week, rows: payloadRows }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Save failed");
+  return data;
+}
+
+function SaveTotalsSnapshotControl({ rows, season }: { rows: EnrichedGameRow[]; season: number }) {
+  const [week, setWeek] = useState(1);
+  const [savedWeeks, setSavedWeeks] = useState<number[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSavedGameTotalWeeks(season)
+      .then(setSavedWeeks)
+      .catch(() => {});
+  }, [season, msg]);
+
+  const willOverwrite = savedWeeks.includes(week);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const result = await saveGameTotalSnapshot(season, week, rows);
+      if (result) setMsg(`Saved ${result.saved} games for ${season} week ${week}.`);
+    } catch (err: any) {
+      setMsg(err.message ?? "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
+        Totals — Save as week
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Snapshots every game's current efficiency inputs and projected total/team totals under this week number, so
+        Team Stats and Games Ahead below can show what changed since the last time this was run. Run this once
+        you're happy with a sync (games/lines + team stats) for the week.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <label>
+          Week{" "}
+          <input type="number" value={week} onChange={(e) => setWeek(parseInt(e.target.value, 10) || 1)} style={{ width: 70 }} />
+        </label>
+        <button className="menu-btn" onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : willOverwrite ? `Overwrite week ${week}` : `Save as week ${week}`}
+        </button>
+        {savedWeeks.length > 0 && (
+          <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+            Weeks already saved for {season}: {savedWeeks.join(", ")}
+          </span>
+        )}
+        {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") || msg === "Save failed" ? "#c45c52" : "#8fd39a" }}>{msg}</span>}
+      </div>
     </div>
   );
 }
@@ -1098,6 +1401,9 @@ export function filterRowsByDivision(rows: EnrichedGameRow[], division: string):
 
 export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
+  const [week, setWeek] = useState(1);
+  useDefaultToAdminWeek(setWeek);
+  const [tab, setTab] = useState<Tab>("teamstats");
   const { rows: rowsRaw, settings, setSettings, error } = useGameTotalsEngine(season);
 
   // Same lock bridge as Matchups/Watchability/etc. — "My Total" in the
@@ -1166,6 +1472,18 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
         </div>
       </details>
       <SettingsBar settings={settings} setSettings={setSettings} season={season} />
+      <SaveTotalsSnapshotControl rows={rows} season={season} />
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        {TABS.map((t) => (
+          <button key={t} className={`mode-btn ${tab === t ? "mode-btn-active" : ""}`} onClick={() => setTab(t)}>
+            {TAB_LABELS[t]}
+          </button>
+        ))}
+      </div>
+      {tab === "teamstats" && <TeamStatsDrilldownTab rows={rows} season={season} />}
+      {tab === "gamesahead" && <GamesAheadTab rows={rows} season={season} week={week} />}
+
       <ShowMore rows={rows} />
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}

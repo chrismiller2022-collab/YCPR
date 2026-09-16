@@ -335,6 +335,50 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Explicit "commit this week's Totals numbers" snapshot — mirrors
+    // Rating Systems' own "Save as week" pattern (weekly_power_ratings).
+    // Snapshots the model's ALREADY-COMPUTED per-game outputs (ridge-model
+    // efficiency inputs + projected total/team totals), not raw CFBD stats
+    // — team_season_stats has no week dimension and gets overwritten in
+    // place on every sync, so this is the only place "what did the model
+    // say as of week N" survives the next sync. Upserts on (season, week,
+    // game_id), so re-saving the same week just overwrites that week's
+    // numbers rather than creating duplicates.
+    if (action === "saveGameTotalSnapshot") {
+      const { season, week, rows } = req.body;
+      if (typeof season !== "number" || typeof week !== "number" || !Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "season, week, and rows are required" });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const upsertRows = rows.map((r: any) => ({
+        season,
+        week,
+        game_id: r.gameId,
+        home_team: r.homeTeam,
+        away_team: r.awayTeam,
+        home_efficiency_inputs: r.homeEfficiencyInputs ?? null,
+        away_efficiency_inputs: r.awayEfficiencyInputs ?? null,
+        projected_total: r.projectedTotal ?? null,
+        home_team_total: r.homeTeamTotal ?? null,
+        away_team_total: r.awayTeamTotal ?? null,
+        vegas_total: r.vegasTotal ?? null,
+        actual_total: r.actualTotal ?? null,
+        home_actual_points: r.homeActualPoints ?? null,
+        away_actual_points: r.awayActualPoints ?? null,
+        saved_at: now,
+      }));
+
+      const { error, count } = await supabaseAdmin
+        .from("game_total_snapshots")
+        .upsert(upsertRows, { onConflict: "season,week,game_id", count: "exact" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true, saved: count ?? upsertRows.length });
+      return;
+    }
+
     if (action === "importTeamStatsCsv") {
       const { rows } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {

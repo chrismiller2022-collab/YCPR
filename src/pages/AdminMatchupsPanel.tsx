@@ -10,7 +10,7 @@ import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal
 import SortHeader from "../components/SortHeader";
 import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
-import { TotalsTab, TeamTotalsTab, TeamStatsDrilldownTab, GamesAheadTab } from "./GameTotalsAdminPanel";
+import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 
@@ -594,8 +594,6 @@ const MATCHUPS_MODES = [
   { key: "moneyline", label: "Moneylines" },
   { key: "totals", label: "Totals" },
   { key: "teamtotals", label: "Team Totals" },
-  { key: "totalsstats", label: "Totals: Team Stats" },
-  { key: "totalsgames", label: "Totals: Games Ahead" },
   { key: "predictions", label: "Predictions" },
 ];
 
@@ -832,17 +830,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     });
     return applyLockedSpreadToRows(applyLockedTotals(filtered, lockedTotalByKey), lockedAwaySpreadByKey);
   }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey]);
-
-  // Team Stats and Games Ahead need the WHOLE season (a team's next game
-  // is rarely in the same week as its most recent one, and "games ahead"
-  // is by definition one week past whatever weekSel has selected) — same
-  // lock application as totalsViewRows above, just not week/matchupType/
-  // query filtered.
-  const totalsAllRows = useMemo(
-    () => applyLockedSpreadToRows(applyLockedTotals(totalsEngineRows, lockedTotalByKey), lockedAwaySpreadByKey),
-    [totalsEngineRows, lockedTotalByKey, lockedAwaySpreadByKey]
-  );
-  const nextWeek = typeof weekSel === "number" ? weekSel + 1 : 2;
 
   useEffect(() => {
     // Guarded against the week selector's own auto-default (see
@@ -1233,10 +1220,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} />
         </>
       )}
-
-      {mode === "totalsstats" && <TeamStatsDrilldownTab rows={totalsAllRows} settings={totalsSettings} />}
-
-      {mode === "totalsgames" && <GamesAheadTab rows={totalsAllRows} nextWeek={nextWeek} />}
 
       {mode === "predictions" && <PredictionsContent />}
 
