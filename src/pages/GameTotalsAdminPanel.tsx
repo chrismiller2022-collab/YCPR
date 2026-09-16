@@ -1033,15 +1033,18 @@ export function TeamStatsDrilldownTab({ rows, season }: { rows: EnrichedGameRow[
 }
 
 // ---------------------------------------------------------------------
-// Games Ahead — the slate for the week after the most recently SAVED
-// Totals snapshot (not just "whatever's live"), shown even before Vegas
-// has posted lines for it. "Current Proj" is the older of the two most
-// recent saved snapshots for that game, "New Proj"/"Change" are the
-// newer snapshot and the diff — both blank until a second snapshot for
-// that week actually exists (i.e. "totals" have been run at least twice
-// since that game first showed up here). Before ANY snapshot exists yet
-// for this season, falls back to the live projection with those two
-// columns blank, same as the old behavior.
+// Games Ahead — always the week after `week` (the site's current admin
+// week — advances when Chris advances it, same as everywhere else this
+// site defaults "current week" from). "Current Proj" is the most recent
+// saved snapshot for that game from BEFORE this week's own label (i.e.
+// whatever the last save said about it — a lookahead from an earlier
+// week, or last week's number carried forward); "New Proj"/"Change" only
+// appear once a snapshot has actually been saved AT this week's own
+// label, and stay blank until then, even if other (earlier) weeks have
+// been saved. This is deliberately NOT "the two most recent saves,
+// whatever weeks those happen to be" — that would make "New Proj"
+// populate as soon as ANY later week gets saved, even for games two or
+// three weeks further out than the one just run.
 // ---------------------------------------------------------------------
 export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[]; season: number; week: number }) {
   const [snapshots, setSnapshots] = useState<GameTotalSnapshotRow[]>([]);
@@ -1059,10 +1062,7 @@ export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[];
     };
   }, [season]);
 
-  const savedWeeks = useMemo(() => Array.from(new Set(snapshots.map((s) => s.week))).sort((a, b) => a - b), [snapshots]);
-  const latestSavedWeek = savedWeeks.length > 0 ? savedWeeks[savedWeeks.length - 1] : null;
-  const priorSavedWeek = savedWeeks.length > 1 ? savedWeeks[savedWeeks.length - 2] : null;
-  const nextWeek = latestSavedWeek != null ? latestSavedWeek + 1 : week;
+  const nextWeek = week + 1;
 
   const nextWeekRows = useMemo(
     () =>
@@ -1072,18 +1072,24 @@ export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[];
     [rows, nextWeek]
   );
 
-  function snapshotFor(gameId: string, w: number | null): GameTotalSnapshotRow | undefined {
-    if (w == null) return undefined;
-    return snapshots.find((s) => s.gameId === gameId && s.week === w);
+  // Latest snapshot strictly before `beforeWeek` — this is "whatever the
+  // model last said," regardless of how many weeks back that save was.
+  function latestSnapshotBefore(gameId: string, beforeWeek: number): GameTotalSnapshotRow | undefined {
+    return snapshots
+      .filter((s) => s.gameId === gameId && s.week < beforeWeek)
+      .sort((a, b) => b.week - a.week)[0];
+  }
+  function snapshotAt(gameId: string, atWeek: number): GameTotalSnapshotRow | undefined {
+    return snapshots.find((s) => s.gameId === gameId && s.week === atWeek);
   }
 
   return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-        Week {nextWeek} — the week after the most recently saved Totals snapshot
-        {latestSavedWeek != null ? ` (week ${latestSavedWeek})` : ""}. Vegas often hasn't posted a total this far
-        out yet, so "Vegas Total" reads "–" until one syncs. "New Proj"/"Change" stay blank until this week has been
-        saved twice — the first save is just the baseline.
+        Week {nextWeek} — the week after Week {week} (the site's current admin week). Vegas often hasn't posted a
+        total this far out yet, so "Vegas Total" reads "–" until one syncs. "Current Proj" is whatever the last save
+        said about this game, from any earlier week. "New Proj"/"Change" only populate once a snapshot has actually
+        been saved as Week {nextWeek} itself — they stay blank until then, even if a later week already has.
       </p>
       <div className="table-scroll">
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1101,15 +1107,11 @@ export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[];
           </thead>
           <tbody>
             {nextWeekRows.map((r) => {
-              const priorSnap = snapshotFor(r.game.id, priorSavedWeek);
-              const latestSnap = snapshotFor(r.game.id, latestSavedWeek);
+              const priorSnap = latestSnapshotBefore(r.game.id, nextWeek);
+              const newSnap = snapshotAt(r.game.id, nextWeek);
               const liveProj = r.projection?.projectedTotal ?? null;
-              // "Current" = the older of the two most recent saves (or
-              // the only save there is yet, or the live number if this
-              // season has no saves at all); "New" only appears once a
-              // second save for the same game exists.
-              const current = priorSnap?.projectedTotal ?? latestSnap?.projectedTotal ?? liveProj;
-              const fresh = priorSnap ? latestSnap?.projectedTotal ?? null : null;
+              const current = priorSnap?.projectedTotal ?? liveProj;
+              const fresh = newSnap?.projectedTotal ?? null;
               const change = fresh != null && current != null ? fresh - current : null;
               return (
                 <tr key={r.game.id}>
@@ -1117,7 +1119,7 @@ export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[];
                   <td style={CP}>{kickoffLabel(r.game.startDate)}</td>
                   <td style={CP}><TeamLink team={r.game.awayTeam} /></td>
                   <td style={CP}><TeamLink team={r.game.homeTeam} /></td>
-                  <td style={{ ...CP, textAlign: "right" }}>{fmt(latestSnap?.vegasTotal ?? r.odds.vegasTotal, 1)}</td>
+                  <td style={{ ...CP, textAlign: "right" }}>{fmt(newSnap?.vegasTotal ?? r.odds.vegasTotal, 1)}</td>
                   <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(current, 1)}</td>
                   <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fresh == null ? "–" : fmt(fresh, 1)}</td>
                   <td style={{ ...CP, textAlign: "right", color: change == null ? undefined : change > 0 ? "var(--pos-green)" : change < 0 ? "var(--neg-red)" : undefined }}>
