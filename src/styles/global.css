@@ -24,6 +24,18 @@
           pointer-events: none;
         }
 
+        /* Opt-in flip for small hover targets (e.g. a rating system's
+           projection dot on a chart) where "below" lands the tooltip
+           right under the cursor tip, which then covers its own first
+           line — there's no sticky header above these to worry about,
+           unlike the default case above. */
+        .cell-tip-above[data-tip]:hover::after {
+          top: auto;
+          bottom: 100%;
+          margin-top: 0;
+          margin-bottom: 4px;
+        }
+
         .page {
           --turf: #1f2041;
           --turf-panel: #292a52;

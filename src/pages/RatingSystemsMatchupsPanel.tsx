@@ -258,7 +258,7 @@ function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: Char
 
       {row.vegasAwaySpread != null && (
         <div
-          className="cell-tip"
+          className="cell-tip cell-tip-above"
           data-tip={`Vegas: ${fmtSpread(row.vegasAwaySpread)}`}
           style={{
             position: "absolute",
@@ -274,7 +274,7 @@ function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: Char
 
       {act != null && (
         <div
-          className="cell-tip"
+          className="cell-tip cell-tip-above"
           data-tip={`Result: ${fmtSpread(act)}`}
           style={{
             position: "absolute",
@@ -296,7 +296,7 @@ function SpreadChartRow({ row, domain }: { row: MultiSystemGameRow; domain: Char
         return (
           <div
             key={s.key}
-            className="cell-tip"
+            className="cell-tip cell-tip-above"
             data-tip={`${s.label}: ${fmtSpread(v)}`}
             style={{
               position: "absolute",
