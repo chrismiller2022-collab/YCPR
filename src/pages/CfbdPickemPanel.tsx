@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import {
   fetchCfbdPickemStats,
   fetchCfbdPickemPredictionDetails,
@@ -172,6 +173,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
   const [statsError, setStatsError] = useState<string | null>(null);
   const [details, setDetails] = useState<CfbdPickemPredictionDetail[]>([]);
   const [showDetails, setShowDetails] = useState(false);
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string; week: number } | null>(null);
   const currentSeason = new Date().getFullYear();
 
   function loadStats() {
@@ -329,7 +331,16 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
                     <tr key={d.game_id}>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{d.week ?? "–"}</td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        {d.away_team} @ {d.home_team}
+                        {d.away_team} @ {d.home_team}{" "}
+                        {d.week != null && (
+                          <button
+                            onClick={() => setHandicapGame({ awayTeam: d.away_team, homeTeam: d.home_team, week: d.week! })}
+                            title="View handicapping preview"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--chalk-dim)", padding: 0, fontSize: "0.85rem" }}
+                          >
+                            ⓘ
+                          </button>
+                        )}
                       </td>
                       <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
                         {d.predicted_margin.toFixed(2)}
@@ -419,6 +430,15 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
           </button>
           {saveMsg && <p style={{ color: saveMsg.startsWith("Saved") ? "#8fd39a" : "crimson", fontSize: "0.82rem" }}>{saveMsg}</p>}
         </>
+      )}
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={currentSeason}
+          week={handicapGame.week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
       )}
     </div>
   );
