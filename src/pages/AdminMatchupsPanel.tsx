@@ -13,6 +13,7 @@ import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotal
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -307,16 +308,16 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
   );
 }
 
-function TeamNameCell({ team, name }: { team: any | null; name: string }) {
+function TeamNameCell({ team, name, onOpenHandicap }: { team: any | null; name: string; onOpenHandicap?: () => void }) {
   if (!team) {
     return (
-      <td className="matchup-team-cell">
+      <td className="matchup-team-cell" style={onOpenHandicap ? { cursor: "pointer" } : undefined} onClick={onOpenHandicap} title={onOpenHandicap ? "View handicapping preview" : undefined}>
         <span style={{ opacity: 0.7 }}>{name}</span>
       </td>
     );
   }
   return (
-    <td className="matchup-team-cell">
+    <td className="matchup-team-cell" style={onOpenHandicap ? { cursor: "pointer" } : undefined} onClick={onOpenHandicap} title={onOpenHandicap ? "View handicapping preview" : undefined}>
       <TeamLogo team={team} />{" "}
       <span className="team-link matchup-team-btn" style={{ cursor: "default" }}>
         {team.team}
@@ -356,6 +357,7 @@ function MatchupsRow({
   onToggleSelect,
   onPlaceBet,
   mlEvThreshold = 0,
+  onOpenHandicap,
 }: {
   computed: MatchupComputed;
   mode: string;
@@ -363,6 +365,7 @@ function MatchupsRow({
   onToggleSelect?: (computed: MatchupComputed) => void;
   onPlaceBet?: (computed: MatchupComputed) => void;
   mlEvThreshold?: number;
+  onOpenHandicap?: (awayTeam: string, homeTeam: string, week: number) => void;
 }) {
   const {
     game,
@@ -428,7 +431,11 @@ function MatchupsRow({
         </td>
         <td style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
         <td style={{ ...CP, color: "var(--chalk-dim)", textAlign: "center" }}>{game.week}</td>
-        <td style={CP}>
+        <td
+          style={onOpenHandicap ? { ...CP, cursor: "pointer" } : CP}
+          onClick={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined}
+          title={onOpenHandicap ? "View handicapping preview" : undefined}
+        >
           {awayTeam ? (
             <>
               {awayTeam.team} <span style={{ color: "var(--chalk-dim)" }}>{awayTeam.rating.toFixed(1)}</span>
@@ -437,7 +444,11 @@ function MatchupsRow({
             game.away_team
           )}
         </td>
-        <td style={CP}>
+        <td
+          style={onOpenHandicap ? { ...CP, cursor: "pointer" } : CP}
+          onClick={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined}
+          title={onOpenHandicap ? "View handicapping preview" : undefined}
+        >
           {homeTeam ? (
             <>
               {homeTeam.team} <span style={{ color: "var(--chalk-dim)" }}>{homeTeam.rating.toFixed(1)}</span>
@@ -532,8 +543,8 @@ function MatchupsRow({
       <tr>
         <td className="game-date-cell">{dateLabel}</td>
         <td className="game-date-cell" style={{ textAlign: "center" }}>{game.week}</td>
-        <TeamNameCell team={awayTeam} name={game.away_team} />
-        <TeamNameCell team={homeTeam} name={game.home_team} />
+        <TeamNameCell team={awayTeam} name={game.away_team} onOpenHandicap={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined} />
+        <TeamNameCell team={homeTeam} name={game.home_team} onOpenHandicap={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined} />
         <td className="matchups-projected-cell" style={{ color: pseudoSpreadColor(vegasWinPct) }}>
           {vegasMoneyline != null ? `${vegasMoneyline > 0 ? "+" : ""}${Math.round(vegasMoneyline)}` : "–"}
         </td>
@@ -577,8 +588,8 @@ function MatchupsRow({
     <tr>
       <td className="game-date-cell">{dateLabel}</td>
       <td className="game-date-cell" style={{ textAlign: "center" }}>{game.week}</td>
-      <TeamNameCell team={awayTeam} name={game.away_team} />
-      <TeamNameCell team={homeTeam} name={game.home_team} />
+      <TeamNameCell team={awayTeam} name={game.away_team} onOpenHandicap={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined} />
+      <TeamNameCell team={homeTeam} name={game.home_team} onOpenHandicap={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined} />
       <td className="matchups-projected-cell">{line?.over_under != null ? line.over_under : "–"}</td>
       <td className="matchups-empty-cell">–</td>
       <td className="matchups-empty-cell">{game.away_points ?? "–"}</td>
@@ -748,6 +759,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
   const [betModalContext, setBetModalContext] = useState<PlaceBetContext | null>(null);
   const [betSavedMessage, setBetSavedMessage] = useState<string | null>(null);
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string; week: number } | null>(null);
 
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
@@ -1158,6 +1170,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       onToggleSelect={toggleSelect}
                       onPlaceBet={(computed) => setBetModalContext(buildPlaceBetContext(computed))}
                       mlEvThreshold={mlEvThreshold}
+                      onOpenHandicap={(away, home, gameWeek) => setHandicapGame({ awayTeam: away, homeTeam: home, week: gameWeek })}
                     />
                   ))}
                 </tbody>
@@ -1244,6 +1257,15 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         <div style={{ position: "fixed", bottom: 20, right: 20, background: "#8fd39a", color: "#1a1b2e", padding: "0.6rem 1rem", borderRadius: 8, fontWeight: 700, zIndex: 1001 }}>
           {betSavedMessage}
         </div>
+      )}
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={handicapGame.week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
       )}
     </div>
   );
