@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
-import { computeRow } from "./matchupsCompute";
+import { computeRow, classOf } from "./matchupsCompute";
 import { useWeekAccurateRatings } from "./weekAccurateRatings";
 import { useGameProjectionLocks } from "./api/gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
+import {
+  spreadCallCategories,
+  computeSeasonCategoryStats,
+  ALL_TIME_CATEGORY_STATS,
+  invertRecord,
+  type SpreadCategory,
+  type CategoryTally,
+} from "./spreadCategoryStats";
+import { useGameTotalsEngine, buildTeamSplitBetRows, poolStdDevForTotal, TOTAL_BET_THRESHOLD_STDDEV } from "./gameTotalsEngine";
+import { filterRowsByDivision } from "../pages/GameTotalsAdminPanel";
+import { isFilteredBet, splitTeamTotal } from "./gameTotals";
 
 // ---------------------------------------------------------------------
 // Shared handicapping data for a matchup popup — situational spots
@@ -47,11 +58,13 @@ export interface RecordSplit {
   su: { w: number; l: number };
   ats: { w: number; l: number; p: number };
   avgAtsMargin: number | null;
+  atsWinPct: number | null; // ats.w / (ats.w + ats.l), null if nothing decided yet
 }
 
 export interface RestInfo {
   byeLastWeek: boolean;
   daysOfRest: number | null;
+  nextWeekIsBye: boolean; // no game at week+1, but the team's season isn't over (has a game at some week beyond that) — distinct from "no more games this season"
 }
 
 export interface SituationalSpots {
@@ -84,11 +97,51 @@ export interface TeamHandicap {
   rest: RestInfo;
   homeAway: RecordSplit; // this team's record in the role (home/away) it has in the current game
   favoriteDog: RecordSplit | null; // this team's record in the role (favorite/dog) it has in the current game, null if the current game has no favorite/dog side (pick'em or no line/projection at all)
+  homeAwayFavDog: RecordSplit | null; // the INTERSECTION of the two above (e.g. "Home Dog" or "Away Favorite") — null under the same condition favoriteDog is
   spots: SituationalSpots;
   currentRating: number | null; // this week's power rating (lower = better)
   ratingChangeFromLastWeek: number | null; // currentRating - previous week's rating; negative = improved
   lastGame: LastGameInfo | null;
   nextGame: NextGameInfo | null;
+}
+
+// Which of Filtered/WFB/NWFB this specific game's spread call qualifies
+// for, and each category's win rate — all-time and this-season, for
+// whichever team the category names AND (via invertRecord) for the
+// other team, since betting the other side of the same call is the
+// complement of the same record, not a second thing to compute.
+export interface SpreadCallCategoryInfo {
+  category: SpreadCategory;
+  team: string; // the team this category's call is actually on
+  allTime: CategoryTally;
+  allTimeInverse: CategoryTally; // the other team's hypothetical record for this same bet
+  thisSeason: CategoryTally;
+  thisSeasonInverse: CategoryTally;
+}
+
+export interface GameTotalsSnapshot {
+  vegasTotal: number | null;
+  myTotal: number | null;
+  myAwayTeamTotal: number | null;
+  myHomeTeamTotal: number | null;
+  vegasAwayTeamTotal: number | null;
+  vegasHomeTeamTotal: number | null;
+  totalCall: "Over" | "Under" | null; // directional lean (myTotal vs vegasTotal), regardless of whether it clears the real bet threshold
+  isTotalBet: boolean; // clears TOTAL_BET_THRESHOLD_STDDEV
+  isAwayTeamTotalBet: boolean;
+  isHomeTeamTotalBet: boolean;
+}
+
+// The "does my total call agree with my side call" check Chris asked
+// for: an underdog I like covering usually means a closer, lower-
+// scoring game (leans Under); a favorite I like covering usually means
+// they pull away (leans Over). Both directions agreeing is "good" —
+// disagreeing isn't necessarily wrong, just a reason to double check.
+export interface QuadrantInfo {
+  verdict: "good" | "hesitate";
+  betTeam: string;
+  betRole: "favorite" | "underdog";
+  totalCall: "Over" | "Under";
 }
 
 export interface MatchupHandicap {
@@ -99,6 +152,9 @@ export interface MatchupHandicap {
   away: TeamHandicap;
   home: TeamHandicap;
   favoriteTeam: string | null; // by Vegas line if one exists, else by our own projection
+  spreadCallCategories: SpreadCallCategoryInfo[]; // empty if this game's edge doesn't clear any category's threshold
+  totals: GameTotalsSnapshot;
+  quadrant: QuadrantInfo | null;
   loading: boolean;
   error: string | null;
 }
@@ -199,7 +255,13 @@ function computeRecordSplit(log: TeamGameLogRow[], week: number, pred: (r: TeamG
       marginCount++;
     }
   }
-  return { su: { w: suW, l: suL }, ats: { w: atsW, l: atsL, p: atsP }, avgAtsMargin: marginCount > 0 ? marginSum / marginCount : null };
+  const atsDecided = atsW + atsL;
+  return {
+    su: { w: suW, l: suL },
+    ats: { w: atsW, l: atsL, p: atsP },
+    avgAtsMargin: marginCount > 0 ? marginSum / marginCount : null,
+    atsWinPct: atsDecided > 0 ? atsW / atsDecided : null,
+  };
 }
 
 function computeRestInfo(log: TeamGameLogRow[], week: number): RestInfo {
@@ -211,7 +273,14 @@ function computeRestInfo(log: TeamGameLogRow[], week: number): RestInfo {
   if (lastGame?.startDate && current?.startDate) {
     daysOfRest = Math.round((new Date(current.startDate).getTime() - new Date(lastGame.startDate).getTime()) / 86400000);
   }
-  return { byeLastWeek, daysOfRest };
+  // No log row at exactly week+1 doesn't necessarily mean the season's
+  // over — check for a game further out to tell "bye" apart from "no
+  // more games scheduled" (the popup should say nothing for the latter,
+  // same as today).
+  const hasNextWeekGame = log.some((r) => r.week === week + 1);
+  const hasAnyLaterGame = log.some((r) => r.week > week);
+  const nextWeekIsBye = !hasNextWeekGame && hasAnyLaterGame;
+  return { byeLastWeek, daysOfRest, nextWeekIsBye };
 }
 
 // "Tougher than this week" — a better-rated opponent (lower rating) or a
@@ -292,6 +361,14 @@ function buildTeamHandicap(
         : computeRecordSplit(log, week, (r) =>
             isFavoriteInCurrentGame ? (r.vegasSpreadForTeam ?? 0) < 0 : (r.vegasSpreadForTeam ?? 0) > 0
           ),
+    homeAwayFavDog:
+      isFavoriteInCurrentGame == null
+        ? null
+        : computeRecordSplit(
+            log,
+            week,
+            (r) => r.isHome === isHomeInCurrentGame && (isFavoriteInCurrentGame ? (r.vegasSpreadForTeam ?? 0) < 0 : (r.vegasSpreadForTeam ?? 0) > 0)
+          ),
     spots: computeSituationalSpots(log, week),
     currentRating,
     ratingChangeFromLastWeek: currentRating != null && prevRating != null ? currentRating - prevRating : null,
@@ -339,15 +416,40 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
   const { byWeek: ratingsByWeek, loading: ratingsLoading } = useWeekAccurateRatings(season, weekNumbers, season);
   const { locks, loading: locksLoading } = useGameProjectionLocks(season, weekNumbers);
 
+  // Totals side — a completely separate model (efficiency inputs, not
+  // power ratings), hence its own hook/fetch rather than reusing
+  // anything above. Pool std dev and team-split "is this a bet" flags
+  // are computed the same way Weekly Betting Report/Totals History do
+  // (FBS-only pool, TOTAL_BET_THRESHOLD_STDDEV), so this popup's "any
+  // bets on any of these" can never disagree with what those pages show.
+  const { rows: totalsRows, loading: totalsLoading } = useGameTotalsEngine(season);
+  const totalsFbsRows = useMemo(() => filterRowsByDivision(totalsRows, "FBS"), [totalsRows]);
+  const totalsPoolStd = useMemo(() => poolStdDevForTotal(totalsFbsRows), [totalsFbsRows]);
+  const teamSplitRows = useMemo(() => buildTeamSplitBetRows(totalsFbsRows, TOTAL_BET_THRESHOLD_STDDEV), [totalsFbsRows]);
+
+  const emptyTotals: GameTotalsSnapshot = {
+    vegasTotal: null,
+    myTotal: null,
+    myAwayTeamTotal: null,
+    myHomeTeamTotal: null,
+    vegasAwayTeamTotal: null,
+    vegasHomeTeamTotal: null,
+    totalCall: null,
+    isTotalBet: false,
+    isAwayTeamTotalBet: false,
+    isHomeTeamTotalBet: false,
+  };
+
   return useMemo(() => {
-    const loading = loadingGames || ratingsLoading || locksLoading;
+    const loading = loadingGames || ratingsLoading || locksLoading || totalsLoading;
     if (loading || allGames.length === 0) {
       const empty: TeamHandicap = {
         team: "",
         log: [],
-        rest: { byeLastWeek: false, daysOfRest: null },
-        homeAway: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null },
+        rest: { byeLastWeek: false, daysOfRest: null, nextWeekIsBye: false },
+        homeAway: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null, atsWinPct: null },
         favoriteDog: null,
+        homeAwayFavDog: null,
         spots: { lookahead: false, sandwich: false, letdown: false, letdownBadBeat: false, nextOpponent: null, prevOpponent: null },
         currentRating: null,
         ratingChangeFromLastWeek: null,
@@ -362,6 +464,9 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         away: { ...empty, team: awayTeam },
         home: { ...empty, team: homeTeam },
         favoriteTeam: null,
+        spreadCallCategories: [],
+        totals: emptyTotals,
+        quadrant: null,
         loading,
         error,
       };
@@ -381,6 +486,102 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
     const awayIsFavorite = favoriteTeam == null ? null : favoriteTeam === awayTeam;
     const homeIsFavorite = favoriteTeam == null ? null : favoriteTeam === homeTeam;
 
+    // Which category(ies) THIS game's spread call qualifies for, and to
+    // which team — straight off computeRow's own fields on the actual
+    // game object, so it can never disagree with the Totals/Matchups
+    // tables that already use those fields directly.
+    const currentGameWithLines = allGames.find((g) => g.week === week && g.away_team === awayTeam && g.home_team === homeTeam);
+    const currentLock = currentGameWithLines ? locks[currentGameWithLines.id] : undefined;
+    const currentComputed = currentGameWithLines
+      ? computeRow(
+          currentGameWithLines,
+          ratingsByWeek[week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          currentLock ? { myAwaySpread: currentLock.my_away_spread, myAwayWinPct: currentLock.my_away_win_pct } : null
+        )
+      : null;
+
+    // This-season Filtered/WFB/NWFB tallies, from the exact same
+    // allGames/ratingsByWeek/locks already fetched above for the spread
+    // side — no second fetch, unlike Weekly Betting Report's own
+    // (independent) copy of this same computation.
+    const seasonComputedRows = allGames
+      .filter((g) => classOf(g, "home") === "fbs" && classOf(g, "away") === "fbs")
+      .map((g) => {
+        const lock = locks[g.id];
+        return computeRow(
+          g,
+          ratingsByWeek[g.week] ?? {},
+          "team",
+          DEFAULT_CUSTOM_PARAMS,
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+        );
+      })
+      .filter((c) => c.vegasAwaySpread != null);
+    const seasonCategoryStats = computeSeasonCategoryStats(seasonComputedRows);
+
+    const spreadCallCategoriesInfo: SpreadCallCategoryInfo[] = currentComputed
+      ? spreadCallCategories(currentComputed).map(({ category, team }) => {
+          const teamName = team === "away" ? awayTeam : homeTeam;
+          const allTime = ALL_TIME_CATEGORY_STATS[category];
+          const thisSeason = seasonCategoryStats[category];
+          return {
+            category,
+            team: teamName,
+            allTime,
+            allTimeInverse: invertRecord(allTime),
+            thisSeason,
+            thisSeasonInverse: invertRecord(thisSeason),
+          };
+        })
+      : [];
+
+    // Totals — my/Vegas game total and each side's team total, "in score
+    // format" (a plain {away, home} split, same splitTeamTotal every
+    // other totals consumer on the site uses), plus whether any of the
+    // three (game total, away team total, home team total) actually
+    // qualify as a real bet.
+    const currentTotalsRow = totalsRows.find((r) => r.game.week === week && r.game.awayTeam === awayTeam && r.game.homeTeam === homeTeam);
+    const myTotal = currentTotalsRow?.projection?.projectedTotal ?? null;
+    const vegasTotal = currentTotalsRow?.odds.vegasTotal ?? null;
+    const mySplit = splitTeamTotal(myTotal, currentTotalsRow?.myHomeSpread ?? null);
+    const vegasSplit = splitTeamTotal(vegasTotal, currentTotalsRow?.game.homeSpread ?? null);
+    const totalAmountOff = myTotal != null && vegasTotal != null ? myTotal - vegasTotal : null;
+    const totalCall: "Over" | "Under" | null = totalAmountOff == null || totalAmountOff === 0 ? null : totalAmountOff > 0 ? "Over" : "Under";
+    const awayTeamSplitRow = teamSplitRows.find(
+      (r) => r.row.game.week === week && r.row.game.awayTeam === awayTeam && r.row.game.homeTeam === homeTeam && r.team === awayTeam
+    );
+    const homeTeamSplitRow = teamSplitRows.find(
+      (r) => r.row.game.week === week && r.row.game.awayTeam === awayTeam && r.row.game.homeTeam === homeTeam && r.team === homeTeam
+    );
+
+    const totals: GameTotalsSnapshot = {
+      vegasTotal,
+      myTotal,
+      myAwayTeamTotal: mySplit.away,
+      myHomeTeamTotal: mySplit.home,
+      vegasAwayTeamTotal: vegasSplit.away,
+      vegasHomeTeamTotal: vegasSplit.home,
+      totalCall,
+      isTotalBet: isFilteredBet(totalAmountOff, totalsPoolStd, TOTAL_BET_THRESHOLD_STDDEV),
+      isAwayTeamTotalBet: awayTeamSplitRow?.isFiltered ?? false,
+      isHomeTeamTotalBet: homeTeamSplitRow?.isFiltered ?? false,
+    };
+
+    // Side-call x total-call agreement (Chris's "4 quadrant" check) —
+    // only meaningful once there's both an actual spread call (favorite
+    // uses "filtered" first, falling back to whichever category did
+    // qualify) and a determinate total lean.
+    const primaryCategoryTeam = spreadCallCategoriesInfo.find((c) => c.category === "filtered")?.team ?? spreadCallCategoriesInfo[0]?.team ?? null;
+    let quadrant: QuadrantInfo | null = null;
+    if (primaryCategoryTeam && favoriteTeam && totalCall) {
+      const betRole: "favorite" | "underdog" = primaryCategoryTeam === favoriteTeam ? "favorite" : "underdog";
+      const verdict: "good" | "hesitate" =
+        (betRole === "underdog" && totalCall === "Under") || (betRole === "favorite" && totalCall === "Over") ? "good" : "hesitate";
+      quadrant = { verdict, betTeam: primaryCategoryTeam, betRole, totalCall };
+    }
+
     return {
       season,
       week,
@@ -389,9 +590,28 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
       away: buildTeamHandicap(awayTeam, false, awayIsFavorite, awayLog, week, ratingsByWeek),
       home: buildTeamHandicap(homeTeam, true, homeIsFavorite, homeLog, week, ratingsByWeek),
       favoriteTeam,
+      spreadCallCategories: spreadCallCategoriesInfo,
+      totals,
+      quadrant,
       loading: false,
       error,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allGames, ratingsByWeek, locks, loadingGames, ratingsLoading, locksLoading, season, week, awayTeam, homeTeam, error]);
+  }, [
+    allGames,
+    ratingsByWeek,
+    locks,
+    loadingGames,
+    ratingsLoading,
+    locksLoading,
+    totalsLoading,
+    totalsRows,
+    totalsPoolStd,
+    teamSplitRows,
+    season,
+    week,
+    awayTeam,
+    homeTeam,
+    error,
+  ]);
 }

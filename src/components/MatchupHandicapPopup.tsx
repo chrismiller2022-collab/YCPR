@@ -1,5 +1,6 @@
 import TeamLogo from "./TeamLogo";
-import { useMatchupHandicap, type RecordSplit, type TeamHandicap } from "../lib/handicapping";
+import { useMatchupHandicap, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
+import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
 
 function fmtRecord(su: { w: number; l: number }): string {
   return `${su.w}-${su.l}`;
@@ -16,6 +17,11 @@ function fmtMargin(v: number | null): string {
 
 function fmtRating(v: number | null): string {
   return v == null ? "–" : v.toFixed(2);
+}
+
+function fmtPct(rec: CategoryTally): string {
+  const pct = winPctOf(rec);
+  return pct == null ? "–" : `${(pct * 100).toFixed(0)}%`;
 }
 
 // Lower rating = better team (site-wide convention) — a negative change
@@ -38,6 +44,10 @@ function fmtSpread(v: number | null): string {
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
+function fmtTotal(v: number | null): string {
+  return v == null ? "–" : v.toFixed(1);
+}
+
 function SplitRow({ label, split }: { label: string; split: RecordSplit | null }) {
   if (!split) return null;
   const decided = split.su.w + split.su.l;
@@ -53,6 +63,39 @@ function SplitRow({ label, split }: { label: string; split: RecordSplit | null }
           </>
         )}
       </span>
+    </div>
+  );
+}
+
+// One line per category this game's spread call qualifies for (Filtered/
+// WFB/NWFB) — for whichever team the call is actually ON, shows that
+// category's real win%; for the OTHER team, shows the complement
+// (betting the other side of the exact same call is definitionally the
+// inverse record, not a second stat to compute — see spreadCategoryStats.ts).
+function CategoryCallRows({ team, categories }: { team: string; categories: SpreadCallCategoryInfo[] }) {
+  if (categories.length === 0) return null;
+  return (
+    <div style={{ marginTop: "0.3rem" }}>
+      {categories.map((c) => {
+        const isOwner = c.team === team;
+        const allTime = isOwner ? c.allTime : c.allTimeInverse;
+        const thisSeason = isOwner ? c.thisSeason : c.thisSeasonInverse;
+        return (
+          <div
+            key={c.category}
+            title={`All-time ${fmtRecord(allTime)}, this season ${fmtRecord(thisSeason)}${isOwner ? "" : " — inverse of the other team's same call, not separately tracked"}`}
+            style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", padding: "0.2rem 0" }}
+          >
+            <span style={{ color: "var(--chalk-dim)" }}>
+              {CATEGORY_LABELS[c.category]}
+              {!isOwner && " (opposite side)"}
+            </span>
+            <span>
+              {fmtPct(allTime)} ({fmtRecord(allTime)})
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -102,11 +145,22 @@ function SpotBadges({ hc }: { hc: TeamHandicap }) {
   );
 }
 
-function TeamColumn({ hc, roleLabel, favLabel }: { hc: TeamHandicap; roleLabel: string; favLabel: string | null }) {
-  const showNextGame = (hc.spots.lookahead || hc.spots.sandwich) && hc.nextGame;
+function TeamColumn({
+  hc,
+  roleLabel,
+  favLabel,
+  categories,
+}: {
+  hc: TeamHandicap;
+  roleLabel: "Home" | "Road";
+  favLabel: "Favorite" | "Underdog" | null;
+  categories: SpreadCallCategoryInfo[];
+}) {
+  const showNextGameSpot = (hc.spots.lookahead || hc.spots.sandwich) && hc.nextGame;
+  const comboLabel = favLabel ? `${roleLabel === "Home" ? "Home" : "Away"} ${favLabel}` : null;
 
   return (
-    <div style={{ flex: 1, minWidth: 220 }}>
+    <div style={{ flex: 1, minWidth: 240 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}>
         <TeamLogo team={hc.team} size={22} />
         <span style={{ fontWeight: 700 }}>{hc.team}</span>
@@ -137,17 +191,126 @@ function TeamColumn({ hc, roleLabel, favLabel }: { hc: TeamHandicap; roleLabel: 
         </div>
       )}
 
-      {showNextGame && hc.nextGame && (
-        <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
-          <span style={{ color: "var(--chalk-dim)" }}>Next week: </span>
-          {hc.nextGame.opponent} (my line {fmtSpread(hc.nextGame.myProjSpreadForTeam)})
-        </div>
-      )}
+      {hc.nextGame ? (
+        showNextGameSpot && (
+          <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
+            <span style={{ color: "var(--chalk-dim)" }}>Next week: </span>
+            {hc.nextGame.opponent} (my line {fmtSpread(hc.nextGame.myProjSpreadForTeam)})
+          </div>
+        )
+      ) : hc.rest.nextWeekIsBye ? (
+        <div style={{ fontSize: "0.78rem", padding: "0.15rem 0", color: "var(--chalk-dim)" }}>Next week: Bye</div>
+      ) : null}
 
       <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.3rem", marginTop: "0.4rem" }}>
-        <SplitRow label={roleLabel} split={hc.homeAway} />
-        {hc.favoriteDog && favLabel && <SplitRow label={favLabel} split={hc.favoriteDog} />}
+        <SplitRow label={roleLabel === "Home" ? "As home team" : "As road team"} split={hc.homeAway} />
+        {hc.favoriteDog && favLabel && <SplitRow label={`As ${favLabel.toLowerCase()}`} split={hc.favoriteDog} />}
+        {hc.homeAwayFavDog && comboLabel && <SplitRow label={comboLabel} split={hc.homeAwayFavDog} />}
+        <CategoryCallRows team={hc.team} categories={categories} />
       </div>
+    </div>
+  );
+}
+
+// "Score format" per Chris — team logo + rounded score either side, same
+// visual shape as ProjScoreCell elsewhere on the site.
+function ScoreLine({
+  awayTeam,
+  homeTeam,
+  awayScore,
+  homeScore,
+}: {
+  awayTeam: string;
+  homeTeam: string;
+  awayScore: number | null;
+  homeScore: number | null;
+}) {
+  if (awayScore == null || homeScore == null) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+      <TeamLogo team={awayTeam} size={14} />
+      {Math.round(awayScore)} – {Math.round(homeScore)}
+      <TeamLogo team={homeTeam} size={14} />
+    </span>
+  );
+}
+
+function BetFlag({ isBet }: { isBet: boolean }) {
+  return (
+    <span style={{ fontWeight: 700, color: isBet ? "var(--pos-green, #8fd39a)" : "var(--chalk-dim)" }}>{isBet ? "Bet" : "No bet"}</span>
+  );
+}
+
+const QUADRANT_COPY: Record<QuadrantInfo["verdict"], { label: string; color: string }> = {
+  good: { label: "Consistent signal", color: "var(--pos-green, #8fd39a)" },
+  hesitate: { label: "Conflicting signal — hesitate", color: "#e0a951" },
+};
+
+function QuadrantNote({ quadrant }: { quadrant: QuadrantInfo | null }) {
+  if (!quadrant) return null;
+  const meta = QUADRANT_COPY[quadrant.verdict];
+  return (
+    <div
+      style={{
+        marginTop: "0.5rem",
+        fontSize: "0.78rem",
+        padding: "0.4rem 0.6rem",
+        borderRadius: 6,
+        background: `${meta.color}1a`,
+        border: `1px solid ${meta.color}55`,
+        color: meta.color,
+      }}
+    >
+      {meta.label}: {quadrant.betTeam} ({quadrant.betRole}) + {quadrant.totalCall}
+    </div>
+  );
+}
+
+function TotalsSection({
+  awayTeam,
+  homeTeam,
+  totals,
+}: {
+  awayTeam: string;
+  homeTeam: string;
+  totals: ReturnType<typeof useMatchupHandicap>["totals"];
+}) {
+  const anyBet = totals.isTotalBet || totals.isAwayTeamTotalBet || totals.isHomeTeamTotalBet;
+  return (
+    <div style={{ borderTop: "1px solid var(--hash)", marginTop: "1rem", paddingTop: "0.75rem" }}>
+      <div style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--chalk-dim)", marginBottom: "0.4rem" }}>
+        Totals
+      </div>
+      <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
+        <tbody>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas total / My total</td>
+            <td style={{ textAlign: "right" }}>
+              {fmtTotal(totals.vegasTotal)} / <strong>{fmtTotal(totals.myTotal)}</strong>{" "}
+              {totals.totalCall && <span style={{ color: "var(--chalk-dim)" }}>({totals.totalCall})</span>} <BetFlag isBet={totals.isTotalBet} />
+            </td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>My team totals (score)</td>
+            <td style={{ textAlign: "right" }}>
+              <ScoreLine awayTeam={awayTeam} homeTeam={homeTeam} awayScore={totals.myAwayTeamTotal} homeScore={totals.myHomeTeamTotal} />
+            </td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Vegas team totals (score, derived)</td>
+            <td style={{ textAlign: "right" }}>
+              <ScoreLine awayTeam={awayTeam} homeTeam={homeTeam} awayScore={totals.vegasAwayTeamTotal} homeScore={totals.vegasHomeTeamTotal} />
+            </td>
+          </tr>
+          <tr>
+            <td style={{ color: "var(--chalk-dim)", padding: "0.15rem 0" }}>Team total bets</td>
+            <td style={{ textAlign: "right" }}>
+              {awayTeam} <BetFlag isBet={totals.isAwayTeamTotalBet} /> · {homeTeam} <BetFlag isBet={totals.isHomeTeamTotalBet} />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {!anyBet && <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", marginTop: "0.3rem", marginBottom: 0 }}>No totals bets on this game.</p>}
     </div>
   );
 }
@@ -187,7 +350,7 @@ export default function MatchupHandicapPopup({
           border: "1px solid var(--hash)",
           borderRadius: 10,
           padding: "1.25rem",
-          width: 560,
+          width: 620,
           maxWidth: "95vw",
           maxHeight: "90vh",
           overflowY: "auto",
@@ -226,23 +389,31 @@ export default function MatchupHandicapPopup({
         ) : hc.error ? (
           <p style={{ color: "crimson" }}>{hc.error}</p>
         ) : (
-          <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
-            <TeamColumn
-              hc={hc.away}
-              roleLabel="As road team"
-              favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === awayTeam ? "As favorite" : "As underdog"}
-            />
-            <TeamColumn
-              hc={hc.home}
-              roleLabel="As home team"
-              favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === homeTeam ? "As favorite" : "As underdog"}
-            />
-          </div>
+          <>
+            <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
+              <TeamColumn
+                hc={hc.away}
+                roleLabel="Road"
+                favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === awayTeam ? "Favorite" : "Underdog"}
+                categories={hc.spreadCallCategories}
+              />
+              <TeamColumn
+                hc={hc.home}
+                roleLabel="Home"
+                favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === homeTeam ? "Favorite" : "Underdog"}
+                categories={hc.spreadCallCategories}
+              />
+            </div>
+            <TotalsSection awayTeam={awayTeam} homeTeam={homeTeam} totals={hc.totals} />
+            <QuadrantNote quadrant={hc.quadrant} />
+          </>
         )}
 
         <p style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "1rem", marginBottom: 0 }}>
           Records are entering this week (games before Week {week} only). SU/ATS margins graded against the synced
-          Vegas line; Lookahead/Sandwich/Letdown compare our own power ratings and projected spreads.
+          Vegas line; Lookahead/Sandwich/Letdown compare our own power ratings and projected spreads. Category win
+          rates (Filtered/WFB/NWFB) are site-wide, not team-specific — the non-favored side of the same call is
+          shown as that same record's inverse, not a separately tracked stat.
         </p>
       </div>
     </div>

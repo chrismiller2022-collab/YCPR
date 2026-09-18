@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import TeamLogo from "../components/TeamLogo";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { computeRow, computeMatchupStats } from "../lib/matchupsCompute";
+import { computeRow } from "../lib/matchupsCompute";
+import { ALL_TIME_CATEGORY_STATS, computeSeasonCategoryStats, pctLabelOf } from "../lib/spreadCategoryStats";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import {
   useGameTotalsEngine,
@@ -20,7 +21,6 @@ import { splitTeamTotal, gradeActualTotal, gradeBetCall, type BetGrade } from ".
 import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylineBetHistory";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
-import { BET_HISTORY } from "../data/betHistory.data";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { unitsRiskedToWinOne } from "../lib/odds";
 import ExportPngButton from "../components/ExportPngButton";
@@ -127,36 +127,11 @@ function projScoreSplit(myTotal: number | null, myAwaySpread: number | null): { 
   return { awayScore: split.away, homeScore: split.home };
 }
 
-// --- Historical category win rates (Filtered / WFB / NWFB), all-time and current season ---
-function categoryRecord(category: "filtered" | "wfb" | "nwfb", season?: number): { w: number; l: number } {
-  let w = 0;
-  let l = 0;
-  for (const r of BET_HISTORY) {
-    if (season != null && r.season !== season) continue;
-    let result: "win" | "loss" | "push" | null = null;
-    if (category === "filtered") result = r.filteredBetResult;
-    else if (category === "wfb") result = r.weightedFilteredBetResult;
-    else if (category === "nwfb") result = r.absAmountOff > NWFB_POINTS_THRESHOLD ? r.filteredBetResult : null;
-    if (result === "win") w++;
-    else if (result === "loss") l++;
-  }
-  return { w, l };
-}
-
-function pctOf(rec: { w: number; l: number }): string {
-  const decided = rec.w + rec.l;
-  return decided === 0 ? "–" : `${((rec.w / decided) * 100).toFixed(0)}%`;
-}
-
-// All-time (2024/2025) never changes — BET_HISTORY is a frozen dataset —
-// but CURRENT_SEASON (2026+) has no BET_HISTORY rows at all, so that half
-// used to always show "–". Computed live instead, below, from the exact
-// same computeRow()/computeMatchupStats() pipeline Admin Matchups uses.
-const ALL_TIME_CATEGORY_STATS = {
-  filtered: categoryRecord("filtered"),
-  wfb: categoryRecord("wfb"),
-  nwfb: categoryRecord("nwfb"),
-};
+// Historical category win rates (Filtered / WFB / NWFB), all-time and
+// current season — the actual computation lives in spreadCategoryStats.ts
+// now, shared with MatchupHandicapPopup's own bucket section, so the two
+// can never quietly disagree with each other.
+const pctOf = pctLabelOf;
 
 function useLiveSeasonCategoryStats(season: number) {
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -192,7 +167,7 @@ function useLiveSeasonCategoryStats(season: number) {
         );
       })
       .filter((c) => c.vegasAwaySpread != null);
-    return computeMatchupStats(rows);
+    return computeSeasonCategoryStats(rows);
   }, [fbsGames, ratingsByWeek, locks]);
 }
 
