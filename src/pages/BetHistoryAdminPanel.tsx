@@ -104,11 +104,11 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
   const rows: { label: string; bucket: KeyNumberBucket }[] = [
     { label: "Underdog +3 (my line 0–3, Vegas at/above +3)", bucket: study.underdog.plus3 },
-    { label: "Underdog +7 (my line 3–7, Vegas at/above +7)", bucket: study.underdog.plus7 },
-    { label: "Underdog Both (my line under 3, Vegas at/above +7)", bucket: study.underdog.both },
-    { label: "Favorite -3 (my line -3 to -7, Vegas at/above -3)", bucket: study.favorite.minus3 },
-    { label: "Favorite -7 (my line -7 or below, Vegas at/above -7)", bucket: study.favorite.minus7 },
-    { label: "Favorite Both (my line below -7, Vegas at/above -3)", bucket: study.favorite.both },
+    { label: "Underdog +7 (my line just over 3–7, Vegas at/above +7)", bucket: study.underdog.plus7 },
+    { label: "Underdog Both (my line 0–3, Vegas at/above +7)", bucket: study.underdog.both },
+    { label: "Favorite -3 (my line -3 to -7, Vegas under -3)", bucket: study.favorite.minus3 },
+    { label: "Favorite -7 (my line -7 or below, Vegas -3 to -7)", bucket: study.favorite.minus7 },
+    { label: "Favorite Both (my line below -7, Vegas under -3)", bucket: study.favorite.both },
   ];
   return (
     <div>
@@ -116,10 +116,14 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
         How the model performs specifically when my line and Vegas's line straddle the 3- and 7-point key numbers —
         the underdog rows are games where my line for the underdog is smaller than Vegas's (I project the underdog
         to cover the extra cushion Vegas is giving them); the favorite rows are the mirror image (my line for the
-        favorite is more negative than Vegas's, so I project the favorite to cover). My own line excludes the exact
-        key number named in each row (landing exactly on it is genuinely undecided, not a lean); Vegas's line counts
-        as clearing the key number if it lands exactly on it. Graded against the real closing line, same cover-margin
-        formula as everywhere else on this page. Click a row to see the actual games behind it.
+        favorite is more negative than Vegas's, so I project the favorite to cover). On my own line, the underdog
+        rows include their own named number (exactly +3 counts as +3) while the favorite rows exclude theirs
+        (exactly -3 does not count as -3) — deliberately asymmetric. On Vegas's line, the underdog rows still count
+        landing exactly on the key number as clearing it; the favorite rows exclude it instead, and "-7"/"Both" no
+        longer overlap — "-7" needs Vegas to already have them as a real favorite too (between -3 and -7), while
+        "Both" needs Vegas to barely favor them at all (same as the "-3" row), just paired with the more extreme
+        "-7 or below" line on my side. Graded against the real closing line, same cover-margin formula as everywhere
+        else on this page. Click a row to see the actual games behind it.
       </p>
       <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", width: "100%", maxWidth: 640 }}>
         <thead>

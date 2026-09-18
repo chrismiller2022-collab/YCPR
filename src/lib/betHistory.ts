@@ -200,27 +200,37 @@ export function computeCustomGrading(r: BetHistoryRecord, params: CustomParams):
 // Underdog (I project the underdog to cover — my dog-side line is
 // smaller than Vegas's, so Vegas is giving the dog more cushion than I
 // think they need):
-//   +3   — my line for the dog is [0, 3), Vegas's is >= 3
-//   +7   — my line for the dog is [3, 7), Vegas's is >= 7
-//   Both — my line for the dog is [0, 3), Vegas's is >= 7
+//   +3   — my line for the dog is [0, 3], Vegas's is >= 3
+//   +7   — my line for the dog is (3, 7], Vegas's is >= 7
+//   Both — my line for the dog is [0, 3], Vegas's is >= 7
 //
 // Favorite (I project the favorite to cover — my favorite-side line is
 // more negative than Vegas's, so I think they deserve to be favored by
 // more than Vegas has them):
-//   -3   — my line for the favorite is [-7, -3), Vegas's is >= -3
-//   -7   — my line for the favorite is < -7, Vegas's is >= -7
-//   Both — my line for the favorite is < -7, Vegas's is >= -3
+//   -3   — my line for the favorite is [-7, -3), Vegas's is in (-3, 0) — Vegas barely favors them at all
+//   -7   — my line for the favorite is < -7, Vegas's is in (-7, -3] — Vegas has them as a real favorite too, just not as big a one as I do
+//   Both — my line for the favorite is < -7, Vegas's is in (-3, 0) — the extreme version of -3: my model's most lopsided calls where Vegas still barely favors them
 //
-// Per Chris: "my line" always excludes the exact key number that names
-// its own bucket (landing exactly on my own +3 doesn't count as being
-// under it — that's genuinely undecided, not a lean either way), while
-// the OTHER boundary of a bucket's range (the one it shares with an
-// adjacent bucket) stays inclusive, so nothing in between falls through
-// a gap or gets double-counted. This is also why +7 reads 3 to 7, not 0
-// to 7 — 0 to 3 already belongs to +3. Vegas's own boundary is the
-// opposite: landing exactly on the key number counts as clearing it
-// (a real Vegas line sitting exactly on 3 or 7 is common and meaningful,
-// unlike totals, so it's treated as having reached that number).
+// Per Chris: on "my line," the dog buckets include their own named
+// number (landing exactly on my own +3 counts as +3) while the favorite
+// buckets exclude theirs (landing exactly on my own -3 does NOT count as
+// -3 — deliberately asymmetric, this is what Chris wants, not a
+// leftover inconsistency). The shared boundary between adjacent dog
+// buckets goes to whichever bucket is named for it (3 belongs to +3, not
+// +7), so nothing falls through a gap or double-counts.
+//
+// On "Vegas's line," the three favorite buckets are now non-overlapping
+// by design (they weren't before this comment was rewritten — "Both"
+// used to also match every "-7" game since -7's vegas condition had no
+// ceiling): -3 and Both both require Vegas to barely favor them at all
+// (further from -3 than that, i.e. in (-3, 0)) and differ only by how
+// extreme my own line is; -7 is the genuinely different case where
+// Vegas already has them as a substantial favorite too. The dog side
+// keeps its original (deliberately overlapping) Vegas conditions — +7's
+// condition is a superset of Both's, so "Both" is a highlighted subset
+// of "+7," not a fourth disjoint bucket. Only the favorite side got
+// restructured into disjoint buckets; the dog side wasn't asked to
+// change on that axis, just its own-number inclusivity above.
 //
 // Grading reuses the exact same cover-margin formula as
 // computeCustomGrading's actualCoverTeam (coverMargin = awayScore -
@@ -299,18 +309,18 @@ export function computeKeyNumberStudy(records: BetHistoryRecord[]): KeyNumberStu
       };
     }
 
-    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 3)
+    if (myDogLine >= 0 && myDogLine <= 3 && vegasDogLine >= 3)
       addToBucket(study.underdog.plus3, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
-    if (myDogLine >= 3 && myDogLine < 7 && vegasDogLine >= 7)
+    if (myDogLine > 3 && myDogLine <= 7 && vegasDogLine >= 7)
       addToBucket(study.underdog.plus7, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
-    if (myDogLine >= 0 && myDogLine < 3 && vegasDogLine >= 7)
+    if (myDogLine >= 0 && myDogLine <= 3 && vegasDogLine >= 7)
       addToBucket(study.underdog.both, resultFor(underdogTeam), baseGame(underdogTeam, myDogLine, vegasDogLine));
 
-    if (myFavLine < -3 && myFavLine >= -7 && vegasFavLine >= -3)
+    if (myFavLine < -3 && myFavLine >= -7 && vegasFavLine > -3)
       addToBucket(study.favorite.minus3, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
-    if (myFavLine < -7 && vegasFavLine >= -7)
+    if (myFavLine < -7 && vegasFavLine > -7 && vegasFavLine <= -3)
       addToBucket(study.favorite.minus7, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
-    if (myFavLine < -7 && vegasFavLine >= -3)
+    if (myFavLine < -7 && vegasFavLine > -3)
       addToBucket(study.favorite.both, resultFor(favoriteTeam), baseGame(favoriteTeam, myFavLine, vegasFavLine));
   }
 
