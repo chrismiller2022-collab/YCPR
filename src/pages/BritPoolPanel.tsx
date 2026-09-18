@@ -3,6 +3,7 @@ import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
@@ -346,6 +347,7 @@ function PickingStep({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const { rows: totalsRowsRaw } = useGameTotalsEngine(season);
   const { locks } = useGameProjectionLocks(season, [week]);
@@ -481,7 +483,14 @@ function PickingStep({
               return (
                 <tr key={p.id} style={{ background: p.is_special ? "var(--gold-dim)" : undefined }}>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />
+                    <TeamLink team={g.away_team} /> @ <TeamLink team={g.home_team} />{" "}
+                    <button
+                      onClick={() => setHandicapGame({ awayTeam: g.away_team, homeTeam: g.home_team })}
+                      title="View handicapping preview"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--chalk-dim)", padding: 0, fontSize: "0.85rem" }}
+                    >
+                      ⓘ
+                    </button>
                     {p.is_special && (
                       <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
                         Special game{line?.over_under != null ? ` · Vegas Total ${line.over_under}` : ""}
@@ -589,6 +598,15 @@ function PickingStep({
         {saving ? "Saving…" : "Save picks"}
       </button>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
+      )}
     </div>
   );
 }

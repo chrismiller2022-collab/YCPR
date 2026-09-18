@@ -4,6 +4,7 @@ import { useLoadToken } from "../lib/staleGuard";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchWestgateWeek, fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints, WESTGATE_PICK_LIMIT, type WestgateRow } from "../lib/api/westgatePool";
@@ -468,6 +469,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
+  const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
@@ -774,7 +776,14 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                         <TeamLink team={r.game.away_team} />
                       </td>
                       <td style={cellStyle}>
-                        <TeamLink team={r.game.home_team} />
+                        <TeamLink team={r.game.home_team} />{" "}
+                        <button
+                          onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                          title="View handicapping preview"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--chalk-dim)", padding: 0, fontSize: "0.85rem" }}
+                        >
+                          ⓘ
+                        </button>
                       </td>
                       <td
                         style={{
@@ -883,6 +892,15 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
         count as half a win toward Points, same as the real contest. Results grade automatically once
         CFBD marks a game complete with a final score.
       </div>
+      {handicapGame && (
+        <MatchupHandicapPopup
+          season={season}
+          week={week}
+          awayTeam={handicapGame.awayTeam}
+          homeTeam={handicapGame.homeTeam}
+          onClose={() => setHandicapGame(null)}
+        />
+      )}
     </div>
   );
 }
