@@ -5,7 +5,10 @@
 // risk, and this is where the canonical team roster + fuzzy matcher
 // already live.
 
-function parseCsvLine(line: string): string[] {
+// Exported so src/lib/cbbRatingsCsv.ts (College Basketball's own CSV
+// parsers) can reuse these — pure generic CSV utilities, nothing
+// CFB-specific in any of the three.
+export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -34,7 +37,7 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-function splitCsvLines(text: string): string[] {
+export function splitCsvLines(text: string): string[] {
   // Handle all three line-ending conventions (CRLF, LF, and bare CR — old
   // Mac / some Excel exports use CR-only, which previously made the whole
   // file read as a single "line" and silently return 0 parsed rows).
@@ -44,7 +47,7 @@ function splitCsvLines(text: string): string[] {
 // Trim + case-insensitive header match — tolerates stray whitespace or
 // case drift in an export without weakening the "must have this column"
 // check itself.
-function findHeaderIdx(headers: string[], name: string): number {
+export function findHeaderIdx(headers: string[], name: string): number {
   const target = name.trim().toLowerCase();
   return headers.findIndex((h) => h.trim().toLowerCase() === target);
 }
