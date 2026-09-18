@@ -38,8 +38,6 @@ import PmAdminPanel from "./PmAdminPanel";
 import RatingSystemsPanel from "./RatingSystemsPanel";
 import SosAdminPanel from "./SosAdminPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
-import CbbMenuPanel from "./CbbMenuPanel";
-import CbbPowerRatingsPanel from "./CbbPowerRatingsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
 import { CHECKLIST_ITEMS } from "../lib/checklistItems";
@@ -264,9 +262,7 @@ type AdminView =
   | "ratingsystems"
   | "ratingmatchups"
   | "sos"
-  | "checklist"
-  | "cbb"
-  | "cbbpowerratings";
+  | "checklist";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-save (action: "checkPassword")
@@ -561,10 +557,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Archived",
     collapsible: true,
     items: [{ key: "upload", label: "Data Upload" }],
-  },
-  {
-    label: "Other Sports",
-    items: [{ key: "cbb", label: "College Basketball" }],
   },
 ];
 
@@ -884,15 +876,9 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       </p>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem", margin: "0 0 1.25rem" }}>
         <h1 style={{ fontSize: "1.4rem", margin: 0 }}>Admin</h1>
-        {view !== "cbb" && view !== "cbbpowerratings" && <AdminWeekSelector />}
+        <AdminWeekSelector />
       </div>
 
-      {view === "cbb" || view === "cbbpowerratings" ? (
-        <div>
-          {view === "cbb" && <CbbMenuPanel onBack={() => setView("home")} onSelectPowerRatings={() => setView("cbbpowerratings")} />}
-          {view === "cbbpowerratings" && <CbbPowerRatingsPanel onBack={() => setView("cbb")} />}
-        </div>
-      ) : (
       <div style={{ display: "flex", gap: "1.75rem", alignItems: "flex-start" }}>
         <AdminSidebar view={view} onNavigate={setView} />
 
@@ -974,7 +960,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "imagedump" && <WeeklyImageDumpAdminPanel onBack={() => setView("home")} />}
         </div>
       </div>
-      )}
     </div>
     </AdminWeekProvider>
   );
