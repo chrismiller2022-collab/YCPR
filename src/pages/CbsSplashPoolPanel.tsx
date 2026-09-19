@@ -53,6 +53,7 @@ async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {
         is_key_pick: r.cbsIsKeyPick,
         kelly_selected: r.kellySelected,
         kelly_picked_side: r.kellyPickedSide,
+        kelly_is_possible: r.kellyIsPossible,
       })),
     }),
   });
@@ -84,6 +85,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [showPickedOnly, setShowPickedOnly] = useState(false);
+  const [showPossibleOnly, setShowPossibleOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [cbsEligibleOnly, setCbsEligibleOnly] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
@@ -105,6 +107,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         ck: r.cbsIsKeyPick,
         ks: r.kellySelected,
         kp: r.kellyPickedSide,
+        kpp: r.kellyIsPossible,
       }))
     );
   }
@@ -255,7 +258,13 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   };
 
   const visibleRows = useMemo(() => {
-    let list = showPickedOnly ? rows.filter((r) => r.cbsPickedSide != null || r.kellyPickedSide != null) : rows;
+    let list = rows;
+    if (showPickedOnly || showPossibleOnly) {
+      list = list.filter(
+        (r) =>
+          (showPickedOnly && (r.cbsPickedSide != null || r.kellyPickedSide != null)) || (showPossibleOnly && r.kellyIsPossible)
+      );
+    }
     if (hideCompleted) list = list.filter((r) => !r.game.completed);
     if (cbsEligibleOnly) list = list.filter(isCbsEligible);
     if (gameSearch.trim() !== "") {
@@ -284,8 +293,9 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, hideCompleted, cbsEligibleOnly, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, cbsEligibleOnly, sortKey, sortDir, gameSearch, sortMode]);
 
+  const kellyPossibleCount = rows.filter((r) => r.kellyIsPossible).length;
   const cbsSelectedCount = rows.filter((r) => r.cbsSelected).length;
   const cbsKeyCount = rows.filter((r) => r.cbsIsKeyPick).length;
   const cbsPickedCount = rows.filter((r) => r.cbsSelected && r.cbsPickedSide != null).length;
@@ -376,10 +386,15 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={showPickedOnly} onChange={(e) => setShowPickedOnly(e.target.checked)} />
           Show picked games only
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }} title="Games flagged as a possible Kelly pick">
+          <input type="checkbox" checked={showPossibleOnly} onChange={(e) => setShowPossibleOnly(e.target.checked)} />
+          Show possible picks only
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
+        <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Kelly possible: {kellyPossibleCount}</span>
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <input type="checkbox" checked={cbsEligibleOnly} onChange={(e) => setCbsEligibleOnly(e.target.checked)} />
           CBS: eligible conferences only
@@ -506,6 +521,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                   <th className="th">Kelly?</th>
                   <th className="th">Kelly Pick</th>
+                  <th className="th">Kelly Possible</th>
                   <th className="th">Kelly Result</th>
                   <th className="th">CBS?</th>
                   <th className="th">CBS Pick</th>
@@ -519,7 +535,10 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   const kellyGrade = gradeKellyPick(r);
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
-                    <tr key={r.game_id} style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : undefined }}>
+                    <tr
+                      key={r.game_id}
+                      style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : r.kellyIsPossible ? "rgba(255,255,255,0.04)" : undefined }}
+                    >
                       <td
                         style={{ ...cellStyle, cursor: "pointer" }}
                         title="View handicapping preview"
@@ -629,6 +648,13 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                             </button>
                           </div>
                         )}
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={r.kellyIsPossible}
+                          onChange={(e) => updateRow(r.game_id, { kellyIsPossible: e.target.checked })}
+                        />
                       </td>
                       <td style={cellStyle}>
                         {r.kellySelected ? (kellyGrade === "pending" ? "–" : kellyGrade === "win" ? "✅ Win" : kellyGrade === "push" ? "Push" : "❌ Loss") : ""}

@@ -11,6 +11,10 @@ export interface PeayRow {
   peay_line: number | null;
   picked_side: "home" | "away" | null;
   is_key_pick: boolean;
+  // A game Chris is still weighing but hasn't committed to picking yet —
+  // purely a scratchpad flag, doesn't affect grading/PICK_LIMIT/pick
+  // buttons at all, just lets the list be filtered down to candidates.
+  is_possible_pick: boolean;
   myProjAwaySpread: number | null;
   vegasAwaySpread: number | null;
   // The opening line CFBD had before any movement, away-perspective
@@ -105,6 +109,7 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
       peay_line: peayLine,
       picked_side: saved?.picked_side ?? null,
       is_key_pick: saved?.is_key_pick ?? false,
+      is_possible_pick: saved?.is_possible_pick ?? false,
       myProjAwaySpread: computed.projAwaySpread,
       vegasAwaySpread: computed.vegasAwaySpread,
       openingAwaySpread: computed.line?.opening_spread != null ? -computed.line.opening_spread : null,

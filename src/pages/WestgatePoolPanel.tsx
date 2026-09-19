@@ -39,7 +39,12 @@ async function westgateSave(season: number, week: number, rows: WestgateRow[]) {
       action: "saveWeek",
       season,
       week,
-      rows: rows.map((r) => ({ game_id: r.game_id, westgate_line: r.westgate_line, picked_side: r.picked_side })),
+      rows: rows.map((r) => ({
+        game_id: r.game_id,
+        westgate_line: r.westgate_line,
+        picked_side: r.picked_side,
+        is_possible_pick: r.is_possible_pick,
+      })),
     }),
   });
   const data = await res.json();
@@ -464,6 +469,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
   const [showPickedOnly, setShowPickedOnly] = useState(false);
+  const [showPossibleOnly, setShowPossibleOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -474,7 +480,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   function snapshotOf(list: WestgateRow[]): string {
-    return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.westgate_line, p: r.picked_side })));
+    return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.westgate_line, p: r.picked_side, pp: r.is_possible_pick })));
   }
 
   const { next, isCurrent } = useLoadToken();
@@ -589,7 +595,10 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
   };
 
   const visibleRows = useMemo(() => {
-    let list = showPickedOnly ? rows.filter((r) => r.picked_side != null) : rows;
+    let list = rows;
+    if (showPickedOnly || showPossibleOnly) {
+      list = list.filter((r) => (showPickedOnly && r.picked_side != null) || (showPossibleOnly && r.is_possible_pick));
+    }
     if (hideCompleted) list = list.filter((r) => !r.game.completed);
     if (gameSearch.trim() !== "") {
       const q = gameSearch.trim().toLowerCase();
@@ -617,8 +626,9 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
       });
     }
     return list;
-  }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
 
+  const possibleCount = rows.filter((r) => r.is_possible_pick).length;
   const record = rows.reduce(
     (acc, r) => {
       const g = gradeWestgatePick(r);
@@ -653,9 +663,14 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
           Show picked games only
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <input type="checkbox" checked={showPossibleOnly} onChange={(e) => setShowPossibleOnly(e.target.checked)} />
+          Show possible picks only
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
+        <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Possible: {possibleCount}</span>
         <span style={{ fontSize: "0.82rem", color: pickedCount === WESTGATE_PICK_LIMIT ? "green" : "#a15c00" }}>
           Picked: {pickedCount}/{WESTGATE_PICK_LIMIT} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""} · Points: {westgatePoints(record).toFixed(1)}
@@ -763,6 +778,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                   <th className="th">Actual Cover</th>
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                   <th className="th">Pick</th>
+                  <th className="th">Possible</th>
                   <th className="th">Result</th>
                 </tr>
               </thead>
@@ -771,7 +787,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                   const grade = gradeWestgatePick(r);
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
-                    <tr key={r.game_id}>
+                    <tr key={r.game_id} style={r.is_possible_pick ? { background: "rgba(255,255,255,0.04)" } : undefined}>
                       <td style={cellStyle}>
                         <TeamLink team={r.game.away_team} />
                       </td>
@@ -863,6 +879,13 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                             <TeamLogo team={r.game.home_team} size={16} /> {fmt(r.westgate_line != null ? -r.westgate_line : null)}
                           </button>
                         </div>
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={r.is_possible_pick}
+                          onChange={(e) => updateRow(r.game_id, { is_possible_pick: e.target.checked })}
+                        />
                       </td>
                       <td style={cellStyle}>
                         {grade === "pending" ? "–" : grade === "win" ? "✅ Win" : grade === "push" ? "Push" : "❌ Loss"}

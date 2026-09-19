@@ -29,6 +29,7 @@ async function peaySave(season: number, week: number, rows: PeayRow[]) {
         peay_line: r.peay_line,
         picked_side: r.picked_side,
         is_key_pick: r.is_key_pick,
+        is_possible_pick: r.is_possible_pick,
       })),
     }),
   });
@@ -69,6 +70,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
   const [showPickedOnly, setShowPickedOnly] = useState(false);
+  const [showPossibleOnly, setShowPossibleOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -79,7 +81,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
   function snapshotOf(list: PeayRow[]): string {
-    return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.peay_line, p: r.picked_side, k: r.is_key_pick })));
+    return JSON.stringify(list.map((r) => ({ g: r.game_id, l: r.peay_line, p: r.picked_side, k: r.is_key_pick, pp: r.is_possible_pick })));
   }
 
   const { next, isCurrent } = useLoadToken();
@@ -213,7 +215,10 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   };
 
   const visibleRows = useMemo(() => {
-    let list = showPickedOnly ? rows.filter((r) => r.picked_side != null) : rows;
+    let list = rows;
+    if (showPickedOnly || showPossibleOnly) {
+      list = list.filter((r) => (showPickedOnly && r.picked_side != null) || (showPossibleOnly && r.is_possible_pick));
+    }
     if (hideCompleted) list = list.filter((r) => !r.game.completed);
     if (gameSearch.trim() !== "") {
       const q = gameSearch.trim().toLowerCase();
@@ -241,9 +246,10 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
 
   const keyPickCount = rows.filter((r) => r.is_key_pick).length;
+  const possibleCount = rows.filter((r) => r.is_possible_pick).length;
   const record = rows.reduce(
     (acc, r) => {
       const g = gradePeayPick(r);
@@ -305,12 +311,17 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           Show picked games only
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <input type="checkbox" checked={showPossibleOnly} onChange={(e) => setShowPossibleOnly(e.target.checked)} />
+          Show possible picks only
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
         <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
           Key Picks: {keyPickCount}/{KEY_PICKS_TARGET}
         </span>
+        <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Possible: {possibleCount}</span>
         <span style={{ fontSize: "0.82rem", color: pickedCount === PICK_LIMIT ? "green" : "#a15c00" }}>
           Picked: {pickedCount}/{PICK_LIMIT} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""}
@@ -418,6 +429,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                   <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
                   <th className="th">Pick</th>
                   <th className="th">Key Pick</th>
+                  <th className="th">Possible</th>
                   <th className="th">Result</th>
                 </tr>
               </thead>
@@ -426,7 +438,10 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                   const grade = gradePeayPick(r);
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
-                    <tr key={r.game_id} style={{ background: r.is_key_pick ? "var(--gold-dim)" : undefined }}>
+                    <tr
+                      key={r.game_id}
+                      style={{ background: r.is_key_pick ? "var(--gold-dim)" : r.is_possible_pick ? "rgba(255,255,255,0.04)" : undefined }}
+                    >
                       <td
                         style={{ ...cellStyle, cursor: "pointer" }}
                         title="View handicapping preview"
@@ -525,6 +540,13 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           type="checkbox"
                           checked={r.is_key_pick}
                           onChange={(e) => updateRow(r.game_id, { is_key_pick: e.target.checked })}
+                        />
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={r.is_possible_pick}
+                          onChange={(e) => updateRow(r.game_id, { is_possible_pick: e.target.checked })}
                         />
                       </td>
                       <td style={cellStyle}>

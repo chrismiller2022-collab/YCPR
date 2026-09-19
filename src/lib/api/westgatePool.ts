@@ -19,6 +19,9 @@ export interface WestgateRow {
   game: GameRow;
   westgate_line: number | null;
   picked_side: "home" | "away" | null;
+  // Scratchpad flag — a game Chris is still weighing, not yet committed
+  // to as one of the 7 — doesn't affect grading/points/pick buttons.
+  is_possible_pick: boolean;
   myProjAwaySpread: number | null;
   vegasAwaySpread: number | null;
   openingAwaySpread: number | null;
@@ -92,6 +95,7 @@ export async function fetchWestgateWeek(season: number, week: number, liveByTeam
       game: gwl,
       westgate_line: westgateLine,
       picked_side: saved?.picked_side ?? null,
+      is_possible_pick: saved?.is_possible_pick ?? false,
       myProjAwaySpread: computed.projAwaySpread,
       vegasAwaySpread: computed.vegasAwaySpread,
       openingAwaySpread: computed.line?.opening_spread != null ? -computed.line.opening_spread : null,
@@ -128,6 +132,7 @@ export async function fetchWestgateSeasonRows(season: number, liveByTeam: Record
         game: gwl,
         westgate_line: w.westgate_line ?? null,
         picked_side: w.picked_side ?? null,
+        is_possible_pick: false,
         myProjAwaySpread: computed.projAwaySpread,
         vegasAwaySpread: computed.vegasAwaySpread,
         openingAwaySpread: null,

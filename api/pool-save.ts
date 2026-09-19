@@ -77,6 +77,7 @@ export default async function handler(req: any, res: any) {
         peay_line: r.peay_line ?? null,
         picked_side: r.picked_side ?? null,
         is_key_pick: !!r.is_key_pick,
+        is_possible_pick: !!r.is_possible_pick,
         updated_at: new Date().toISOString(),
       }));
       const { error } = await supabaseAdmin.from("peay_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
@@ -107,6 +108,7 @@ export default async function handler(req: any, res: any) {
         is_key_pick: !!r.is_key_pick,
         kelly_selected: !!r.kelly_selected,
         kelly_picked_side: r.kelly_picked_side ?? null,
+        kelly_is_possible: !!r.kelly_is_possible,
         updated_at: new Date().toISOString(),
       }));
       const { error } = await supabaseAdmin.from("cbs_splash_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });
@@ -129,6 +131,7 @@ export default async function handler(req: any, res: any) {
           game_id: r.game_id,
           westgate_line: r.westgate_line ?? null,
           picked_side: r.picked_side ?? null,
+          is_possible_pick: !!r.is_possible_pick,
           updated_at: new Date().toISOString(),
         }));
         const { error } = await supabaseAdmin.from("westgate_picks").upsert(cleanRows, { onConflict: "season,week,game_id" });

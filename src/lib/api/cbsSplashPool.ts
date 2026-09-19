@@ -23,6 +23,10 @@ export interface CbsSplashRow {
   cbsIsKeyPick: boolean;
   kellySelected: boolean;
   kellyPickedSide: "home" | "away" | null;
+  // Scratchpad flag for a game Chris is still weighing for Kelly — CBS
+  // has no equivalent (not asked for), doesn't affect kellySelected/
+  // grading/the 7-game target at all.
+  kellyIsPossible: boolean;
   myProjAwaySpread: number | null;
   vegasAwaySpread: number | null;
   // The opening line CFBD had before any movement, away-perspective —
@@ -123,6 +127,7 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
       cbsIsKeyPick: saved?.is_key_pick ?? false,
       kellySelected: saved?.kelly_selected ?? false,
       kellyPickedSide: saved?.kelly_picked_side ?? null,
+      kellyIsPossible: saved?.kelly_is_possible ?? false,
       myProjAwaySpread: computed.projAwaySpread,
       vegasAwaySpread: computed.vegasAwaySpread,
       openingAwaySpread: computed.line?.opening_spread != null ? -computed.line.opening_spread : null,
