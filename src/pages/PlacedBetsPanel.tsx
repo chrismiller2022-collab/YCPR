@@ -4,12 +4,15 @@ import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
   importPlacedBets,
+  fetchPlacedParlays,
   BOOK_LABELS,
   fetchJuicereelAuthorizeUrl,
   fetchJuicereelStatus,
   disconnectJuicereel,
   syncJuicereel,
   type PlacedBetRow,
+  type PlacedParlayRow,
+  type PlacedParlayLeg,
   type BetBook,
   type BetType,
   type BetResult,
@@ -22,6 +25,8 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { pickLine } from "../lib/matchupsCompute";
 import { moneylineToImpliedWinPct } from "../lib/odds";
 import { fetchPoolBalanceSummary, type PoolBalanceSummary } from "../lib/api/poolBalanceSummary";
+import { useGameTotalsEngine, type EnrichedGameRow } from "../lib/gameTotalsEngine";
+import { splitTeamTotal } from "../lib/gameTotals";
 
 function fmtPrice(v: number | null): string {
   if (v == null) return "–";
@@ -64,27 +69,36 @@ function displaySide(bet: PlacedBetRow): string {
 // never flip a settled one. Only ever called when bet.result is still
 // "pending"; an explicitly-set result (e.g. from a CSV that already knew
 // the outcome) is never second-guessed.
-function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined): BetResult {
-  if (!game || !game.completed || game.home_points == null || game.away_points == null) return "pending";
+// Core win/loss/push comparison against a score — factored out so both
+// final grading (gated on the game actually being over) and live
+// grading (evaluated against whatever score is currently synced, final
+// or not) share one implementation and can never disagree on the
+// boundary between a win and a loss.
+function gradeAgainstScore(
+  bet: { bet_type: BetType; side: string; line_value: number | null },
+  game: { home_team: string; away_team: string },
+  homePoints: number,
+  awayPoints: number
+): BetResult {
   const isAway = bet.side === game.away_team;
 
   if (bet.bet_type === "moneyline") {
-    if (game.away_points === game.home_points) return "push"; // no ties in real CFB, but nothing else to call it
-    const awayWon = game.away_points > game.home_points;
+    if (awayPoints === homePoints) return "push"; // no ties in real CFB, but nothing else to call it
+    const awayWon = awayPoints > homePoints;
     return isAway === awayWon ? "win" : "loss";
   }
 
   if (bet.bet_type === "spread") {
     if (bet.line_value == null) return "pending";
     if (!isAway && bet.side !== game.home_team) return "pending"; // side isn't either team in this game
-    const ownMargin = isAway ? game.away_points - game.home_points : game.home_points - game.away_points;
+    const ownMargin = isAway ? awayPoints - homePoints : homePoints - awayPoints;
     const coverMargin = ownMargin + bet.line_value;
     return coverMargin > 0 ? "win" : coverMargin < 0 ? "loss" : "push";
   }
 
   if (bet.bet_type === "total") {
     if (bet.line_value == null) return "pending";
-    const actual = game.home_points + game.away_points;
+    const actual = homePoints + awayPoints;
     if (actual === bet.line_value) return "push";
     const isOver = bet.side === "over";
     return isOver === actual > bet.line_value ? "win" : "loss";
@@ -97,13 +111,18 @@ function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined)
     const isTeamAway = s.team === game.away_team;
     const isTeamHome = s.team === game.home_team;
     if (!isTeamAway && !isTeamHome) return "pending"; // team name mismatch — don't guess
-    const teamScore = isTeamAway ? game.away_points : game.home_points;
+    const teamScore = isTeamAway ? awayPoints : homePoints;
     if (teamScore === bet.line_value) return "push";
     const isOver = s.dir === "over";
     return isOver === teamScore > bet.line_value ? "win" : "loss";
   }
 
   return "pending";
+}
+
+function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined): BetResult {
+  if (!game || !game.completed || game.home_points == null || game.away_points == null) return "pending";
+  return gradeAgainstScore(bet, game, game.home_points, game.away_points);
 }
 
 interface ClvResult {
@@ -163,12 +182,15 @@ function computeClv(bet: PlacedBetRow, game: GameWithLines | undefined): ClvResu
 // bets logged from Admin Matchups' checkbox before this had a stake
 // column) — null is excluded from every record/ROI total below, not
 // treated as a zero.
-function betProfit(bet: PlacedBetRow): number | null {
-  if (bet.result === "pending" || bet.stake == null) return null;
-  if (bet.result === "push") return 0;
-  if (bet.result === "loss") return -bet.stake;
+function betProfitForResult(bet: { stake: number | null; to_win: number | null; price: number }, result: BetResult): number | null {
+  if (result === "pending" || bet.stake == null) return null;
+  if (result === "push") return 0;
+  if (result === "loss") return -bet.stake;
   if (bet.to_win != null) return bet.to_win;
   return bet.price > 0 ? bet.stake * (bet.price / 100) : bet.stake * (100 / Math.abs(bet.price));
+}
+function betProfit(bet: PlacedBetRow): number | null {
+  return betProfitForResult(bet, bet.result);
 }
 
 interface Record_ {
@@ -229,44 +251,393 @@ function rootingInterest(bet: PlacedBetRow): string {
   return `Game ${bet.side} ${fmtLineAbs(bet.line_value)}`;
 }
 
+type GameStatus = "not_started" | "in_progress" | "final";
+
+function gameStatus(game: GameWithLines): GameStatus {
+  if (game.completed) return "final";
+  if (game.home_points != null || game.away_points != null) return "in_progress";
+  return "not_started";
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+// 0 (red) .. 1 (green), how well a bet is trending against whatever
+// score is currently synced — smooth rather than a coin flip, so an
+// in-progress game reads as a gradient. Spread/moneyline use a 28-point
+// span (two scores either way) to go fully saturated; totals/team
+// totals instead track literal progress toward the number, exactly per
+// Chris's own framing: an Over starts red at 0-0 and turns green as the
+// score climbs toward the total; an Under is the mirror image.
+function betGoodness(
+  bet: { bet_type: BetType; side: string; line_value: number | null },
+  homeTeam: string,
+  awayTeam: string,
+  homePoints: number,
+  awayPoints: number
+): number | null {
+  const isAway = bet.side === awayTeam;
+  if (bet.bet_type === "moneyline") {
+    const margin = isAway ? awayPoints - homePoints : homePoints - awayPoints;
+    return clamp01(0.5 + margin / 28);
+  }
+  if (bet.bet_type === "spread") {
+    if (bet.line_value == null || (!isAway && bet.side !== homeTeam)) return null;
+    const ownMargin = isAway ? awayPoints - homePoints : homePoints - awayPoints;
+    return clamp01(0.5 + (ownMargin + bet.line_value) / 28);
+  }
+  if (bet.bet_type === "total") {
+    if (!bet.line_value) return null;
+    const actual = homePoints + awayPoints;
+    return bet.side === "over" ? clamp01(actual / bet.line_value) : clamp01(1 - actual / bet.line_value);
+  }
+  if (bet.bet_type === "team_total") {
+    if (!bet.line_value) return null;
+    const s = splitTeamTotalSide(bet.side);
+    if (!s) return null;
+    const teamScore = s.team === awayTeam ? awayPoints : s.team === homeTeam ? homePoints : null;
+    if (teamScore == null) return null;
+    return s.dir === "over" ? clamp01(teamScore / bet.line_value) : clamp01(1 - teamScore / bet.line_value);
+  }
+  return null;
+}
+
+function trendColor(result: BetResult, goodness: number | null): string {
+  if (result === "win") return "hsl(122, 55%, 45%)";
+  if (result === "loss") return "hsl(0, 62%, 52%)";
+  if (result === "push") return "var(--chalk-dim)";
+  if (goodness == null) return "var(--chalk-dim)"; // game hasn't started, or this bet's own line is missing
+  return `hsl(${Math.round(goodness * 122)}, 60%, 48%)`;
+}
+
+function TrendDot({ result, goodness, title }: { result: BetResult; goodness: number | null; title: string }) {
+  return (
+    <span
+      title={title}
+      style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: trendColor(result, goodness), flexShrink: 0 }}
+    />
+  );
+}
+
+function fmtScore(game: GameWithLines): string {
+  const status = gameStatus(game);
+  if (status === "not_started") return "Not started";
+  const ap = game.away_points ?? 0;
+  const hp = game.home_points ?? 0;
+  return `${ap}-${hp}${status === "final" ? " Final" : " live"}`;
+}
+
+// Full comparison against a hypothetical/current score, same boundary
+// as gradeAgainstScore but usable for a placed_bets row OR a bare
+// parlay leg (which has no id/stake/created_at of its own to satisfy
+// PlacedBetRow) — anything with bet_type/side/line_value qualifies.
+function liveResultForBet(bet: { bet_type: BetType; side: string; line_value: number | null }, game: GameWithLines | undefined): BetResult {
+  if (!game || game.home_points == null || game.away_points == null) return "pending";
+  return gradeAgainstScore(bet, game, game.home_points, game.away_points);
+}
+
+function computeLivePnlForBet(bet: PlacedBetRow, game: GameWithLines | undefined): number {
+  if (bet.stake == null) return 0;
+  if (bet.result !== "pending") return betProfit(bet) ?? 0;
+  return betProfitForResult(bet, liveResultForBet(bet, game)) ?? 0;
+}
+
+// A parlay's live P&L can't be a smooth blend of its legs' goodness —
+// one leg losing kills the whole ticket regardless of how the others
+// are trending, so this only ever resolves to "lost" (any leg already a
+// live loss), "won" (every leg currently winning/final-won), or "still
+// live" (counted as $0 rather than guessing at a fractional value).
+function computeLivePnlForParlay(parlay: PlacedParlayRow, gamesById: Map<string, GameWithLines>): number {
+  if (parlay.stake == null) return 0;
+  if (parlay.result !== "pending") return betProfitForResult(parlay, parlay.result) ?? 0;
+  let anyLoss = false;
+  let allWin = true;
+  for (const leg of parlay.legs) {
+    const r = liveResultForBet(leg, gamesById.get(leg.game_id));
+    if (r === "loss") anyLoss = true;
+    if (r !== "win") allWin = false;
+  }
+  if (anyLoss) return -parlay.stake;
+  if (allWin) return parlay.to_win ?? 0;
+  return 0;
+}
+
 interface GameExposure {
   gameId: string;
   game: GameWithLines;
   bets: PlacedBetRow[];
+  parlayLegs: { leg: PlacedParlayLeg; parlay: PlacedParlayRow }[];
   totalStake: number;
+  bestCase: number;
+  worstCase: number;
+  status: GameStatus;
 }
 
-function buildExposure(bets: PlacedBetRow[], gamesById: Map<string, GameWithLines>): GameExposure[] {
-  const byGame = new Map<string, PlacedBetRow[]>();
+function buildExposure(bets: PlacedBetRow[], parlays: PlacedParlayRow[], gamesById: Map<string, GameWithLines>): GameExposure[] {
+  const byGame = new Map<string, { bets: PlacedBetRow[]; parlayLegs: { leg: PlacedParlayLeg; parlay: PlacedParlayRow }[] }>();
+  function bucket(gameId: string) {
+    if (!byGame.has(gameId)) byGame.set(gameId, { bets: [], parlayLegs: [] });
+    return byGame.get(gameId)!;
+  }
   bets.forEach((b) => {
     if (b.stake == null || b.stake === 0) return;
-    if (!byGame.has(b.game_id)) byGame.set(b.game_id, []);
-    byGame.get(b.game_id)!.push(b);
+    bucket(b.game_id).bets.push(b);
   });
+  parlays.forEach((p) => p.legs.forEach((leg) => bucket(leg.game_id).parlayLegs.push({ leg, parlay: p })));
+
   const out: GameExposure[] = [];
-  byGame.forEach((gameBets, gameId) => {
+  byGame.forEach((entry, gameId) => {
     const game = gamesById.get(gameId);
     if (!game) return;
-    const totalStake = gameBets.reduce((sum, b) => sum + (b.stake ?? 0), 0);
-    out.push({ gameId, game, bets: gameBets, totalStake });
+
+    let totalStake = 0;
+    let best = 0;
+    let worst = 0;
+    entry.bets.forEach((b) => {
+      if (b.stake == null) return;
+      totalStake += b.stake;
+      const win = b.to_win ?? (b.price > 0 ? b.stake * (b.price / 100) : b.stake * (100 / Math.abs(b.price)));
+      best += win;
+      worst -= b.stake;
+    });
+    // A parlay leg puts the WHOLE parlay's stake at risk on this one
+    // game (a loss here loses the whole ticket), so it's counted in
+    // full here — not divided by leg count. That means the same parlay
+    // stake shows up again on every other game it touches too; the top
+    // summary bar counts each parlay exactly once instead.
+    const seenParlayIds = new Set<number>();
+    entry.parlayLegs.forEach(({ parlay }) => {
+      if (seenParlayIds.has(parlay.id)) return;
+      seenParlayIds.add(parlay.id);
+      if (parlay.stake != null) {
+        totalStake += parlay.stake;
+        worst -= parlay.stake;
+      }
+      if (parlay.to_win != null) best += parlay.to_win;
+    });
+
+    out.push({ gameId, game, bets: entry.bets, parlayLegs: entry.parlayLegs, totalStake, bestCase: best, worstCase: worst, status: gameStatus(game) });
   });
   return out;
 }
 
+function SummaryChip({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style={{ padding: "0.5rem 0.8rem", border: "1px solid var(--hash)", borderRadius: 8, minWidth: 150 }}>
+      <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+      <div style={{ fontSize: "1rem", fontWeight: 700, color }}>{value}</div>
+    </div>
+  );
+}
+
+function ExposureSummaryBar({ bets, parlays, gamesById }: { bets: PlacedBetRow[]; parlays: PlacedParlayRow[]; gamesById: Map<string, GameWithLines> }) {
+  const totalStake = bets.reduce((s, b) => s + (b.stake ?? 0), 0) + parlays.reduce((s, p) => s + (p.stake ?? 0), 0);
+  const totalToWin = bets.reduce((s, b) => s + (b.to_win ?? 0), 0) + parlays.reduce((s, p) => s + (p.to_win ?? 0), 0);
+  const livePnl =
+    bets.reduce((s, b) => s + computeLivePnlForBet(b, gamesById.get(b.game_id)), 0) +
+    parlays.reduce((s, p) => s + computeLivePnlForParlay(p, gamesById), 0);
+
+  const gameIds = new Set<string>();
+  bets.forEach((b) => gameIds.add(b.game_id));
+  parlays.forEach((p) => p.legs.forEach((l) => gameIds.add(l.game_id)));
+  let completed = 0;
+  let inProgress = 0;
+  let notStarted = 0;
+  gameIds.forEach((id) => {
+    const g = gamesById.get(id);
+    if (!g) return;
+    const st = gameStatus(g);
+    if (st === "final") completed++;
+    else if (st === "in_progress") inProgress++;
+    else notStarted++;
+  });
+
+  return (
+    <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+      <SummaryChip label="Total Staked" value={fmtStake(totalStake)} />
+      <SummaryChip label="Total To Win" value={fmtStake(totalToWin)} />
+      <SummaryChip label="Live P&L" value={fmtMoney(livePnl)} color={livePnl > 0 ? "#8fd39a" : livePnl < 0 ? "#e07a7a" : undefined} />
+      <SummaryChip label="Games" value={`${completed} final · ${inProgress} live · ${notStarted} upcoming`} />
+    </div>
+  );
+}
+
+// My model's spread/total/team-total projections for this game, next to
+// the currently-synced Vegas line for the same three — reuses the exact
+// numbers the Totals engine already computes (myHomeSpread/
+// projectedTotal), so this can never disagree with what the Totals tool
+// itself shows for the same game.
+function GamePredictions({ enriched }: { enriched: EnrichedGameRow | undefined }) {
+  if (!enriched) return <p style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", margin: "0 0 0.5rem" }}>No model projection for this game yet.</p>;
+  const myTotal = enriched.projection?.projectedTotal ?? null;
+  const myHomeSpread = enriched.myHomeSpread;
+  const myTeamTotals = splitTeamTotal(myTotal, myHomeSpread);
+  const vegasTotal = enriched.odds.vegasTotal;
+  const vegasHomeSpread = enriched.game.homeSpread;
+  const vegasTeamTotals = splitTeamTotal(vegasTotal, vegasHomeSpread);
+  const cell = { padding: "0.1rem 0" };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr", gap: "0.1rem 0.9rem", fontSize: "0.78rem", marginBottom: "0.7rem" }}>
+      <span />
+      <span style={{ color: "var(--chalk-dim)" }}>Mine</span>
+      <span style={{ color: "var(--chalk-dim)" }}>Vegas (current)</span>
+      <span style={{ color: "var(--chalk-dim)", ...cell }}>Spread (home)</span>
+      <span style={cell}>{fmtLine(myHomeSpread)}</span>
+      <span style={cell}>{fmtLine(vegasHomeSpread)}</span>
+      <span style={{ color: "var(--chalk-dim)", ...cell }}>Total</span>
+      <span style={cell}>{myTotal != null ? myTotal.toFixed(1) : "–"}</span>
+      <span style={cell}>{vegasTotal != null ? vegasTotal.toFixed(1) : "–"}</span>
+      <span style={{ color: "var(--chalk-dim)", ...cell }}>Team totals (away–home)</span>
+      <span style={cell}>{myTeamTotals.away != null && myTeamTotals.home != null ? `${myTeamTotals.away.toFixed(1)}–${myTeamTotals.home.toFixed(1)}` : "–"}</span>
+      <span style={cell}>
+        {vegasTeamTotals.away != null && vegasTeamTotals.home != null ? `${vegasTeamTotals.away.toFixed(1)}–${vegasTeamTotals.home.toFixed(1)}` : "–"}
+      </span>
+    </div>
+  );
+}
+
+function ParlayLegList({ parlay, currentLegGameId }: { parlay: PlacedParlayRow; currentLegGameId: string }) {
+  return (
+    <div style={{ marginTop: "0.3rem", paddingLeft: "0.9rem", borderLeft: "2px solid var(--hash)", display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+      {parlay.legs.map((leg) => (
+        <div key={leg.id} style={{ fontSize: "0.76rem", fontWeight: leg.game_id === currentLegGameId ? 700 : 400 }}>
+          {leg.away_team} @ {leg.home_team} — {rootingInterest({ bet_type: leg.bet_type, side: leg.side, line_value: leg.line_value } as PlacedBetRow)}
+          {fmtPrice(leg.price) !== "–" ? ` (${fmtPrice(leg.price)})` : ""}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Bets grouped by which parlay they belong to (undefined key for the
+// single game-and-leg parlay this game happens to appear in more than
+// once) — a game can have legs from more than one parlay, so this
+// dedupes by parlay id and expands on click to show that parlay's OTHER
+// legs (elsewhere) inline, per Chris's ask.
+function GameParlayLegs({ legs }: { legs: { leg: PlacedParlayLeg; parlay: PlacedParlayRow }[] }) {
+  const [openParlayId, setOpenParlayId] = useState<number | null>(null);
+  const byParlay = new Map<number, { parlay: PlacedParlayRow; legs: PlacedParlayLeg[] }>();
+  legs.forEach(({ leg, parlay }) => {
+    if (!byParlay.has(parlay.id)) byParlay.set(parlay.id, { parlay, legs: [] });
+    byParlay.get(parlay.id)!.legs.push(leg);
+  });
+  if (byParlay.size === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginTop: "0.3rem" }}>
+      {Array.from(byParlay.values()).map(({ parlay, legs: theseLegs }) => {
+        const isOpen = openParlayId === parlay.id;
+        return (
+          <div key={parlay.id}>
+            <div
+              onClick={() => setOpenParlayId(isOpen ? null : parlay.id)}
+              style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem", cursor: "pointer", color: "var(--gold, #d9a441)" }}
+            >
+              <span>
+                {BOOK_LABELS[parlay.book] ?? parlay.book}: part of a {parlay.legs.length}-leg parlay
+                {theseLegs.length > 1 ? ` (${theseLegs.length} legs here)` : ""} — {fmtPrice(parlay.price)} {isOpen ? "▲" : "▼"}
+              </span>
+              <span style={{ flexShrink: 0 }}>{fmtStake(parlay.stake)} to win {fmtStake(parlay.to_win)}</span>
+            </div>
+            {isOpen && <ParlayLegList parlay={parlay} currentLegGameId={theseLegs[0].game_id} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GameExposureCard({ ex, enriched }: { ex: GameExposure; enriched: EnrichedGameRow | undefined }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ padding: "0.7rem 0.9rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem", cursor: "pointer" }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+          <TeamLink team={ex.game.away_team} size={16} /> @ <TeamLink team={ex.game.home_team} size={16} />
+        </div>
+        <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{fmtKickoff(ex.game.start_date)}</div>
+        <div
+          style={{
+            fontSize: "0.8rem",
+            fontWeight: 700,
+            color: ex.status === "final" ? "var(--chalk-dim)" : ex.status === "in_progress" ? "#f2c94c" : "var(--chalk-dim)",
+          }}
+        >
+          {fmtScore(ex.game)}
+        </div>
+        <div style={{ fontSize: "0.78rem" }}>
+          Best <span style={{ color: "#8fd39a", fontWeight: 700 }}>{fmtMoney(ex.bestCase)}</span> · Worst{" "}
+          <span style={{ color: "#e07a7a", fontWeight: 700 }}>{fmtMoney(ex.worstCase)}</span>
+        </div>
+        <div style={{ fontWeight: 700, color: "var(--gold, #d9a441)" }}>{fmtStake(ex.totalStake)} total {open ? "▲" : "▼"}</div>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: "0.6rem" }}>
+          <GamePredictions enriched={enriched} />
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            {ex.bets.map((bet) => {
+              const clv = computeClv(bet, ex.game);
+              const goodness =
+                ex.game.home_points != null && ex.game.away_points != null
+                  ? betGoodness(bet, ex.game.home_team, ex.game.away_team, ex.game.home_points, ex.game.away_points)
+                  : null;
+              return (
+                <div key={bet.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <TrendDot result={bet.result} goodness={goodness} title={`${bet.result === "pending" ? "Live trend" : bet.result}`} />
+                    <span>
+                      <span style={{ color: "var(--chalk-dim)" }}>{BOOK_LABELS[bet.book] ?? bet.book}:</span> {rootingInterest(bet)}
+                      {clv.currentLine != null && (
+                        <span style={{ color: "var(--chalk-dim)" }}>
+                          {" "}
+                          (closing {bet.bet_type === "moneyline" ? fmtPrice(clv.currentLine) : fmtLine(clv.currentLine)}
+                          {clv.clv != null ? `, CLV ${clv.clv > 0 ? "+" : ""}${clv.clv.toFixed(1)}${bet.bet_type === "moneyline" ? "%" : ""}` : ""})
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <span style={{ flexShrink: 0 }}>
+                    {fmtStake(bet.stake)} → {fmtStake(bet.to_win)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <GameParlayLegs legs={ex.parlayLegs} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 type ExposureSortKey = "kickoff" | "stake";
 
-function ExposureTrackerSection({ bets, gamesById }: { bets: PlacedBetRow[]; gamesById: Map<string, GameWithLines> }) {
+function ExposureTrackerSection({
+  bets,
+  parlays,
+  gamesById,
+  totalsByGameId,
+}: {
+  bets: PlacedBetRow[];
+  parlays: PlacedParlayRow[];
+  gamesById: Map<string, GameWithLines>;
+  totalsByGameId: Map<string, EnrichedGameRow>;
+}) {
   const [sortKey, setSortKey] = useState<ExposureSortKey>("kickoff");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const exposures = useMemo(() => {
-    const list = buildExposure(bets, gamesById);
+    const list = buildExposure(bets, parlays, gamesById);
     return [...list].sort((a, b) => {
       const av = sortKey === "kickoff" ? new Date(a.game.start_date ?? 0).getTime() : a.totalStake;
       const bv = sortKey === "kickoff" ? new Date(b.game.start_date ?? 0).getTime() : b.totalStake;
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [bets, gamesById, sortKey, sortDir]);
+  }, [bets, parlays, gamesById, sortKey, sortDir]);
 
   function toggleSort(key: ExposureSortKey) {
     if (sortKey === key) {
@@ -277,14 +648,14 @@ function ExposureTrackerSection({ bets, gamesById }: { bets: PlacedBetRow[]; gam
     }
   }
 
-  const totalAcrossGames = useMemo(() => exposures.reduce((sum, ex) => sum + ex.totalStake, 0), [exposures]);
-
-  if (exposures.length === 0) {
+  if (exposures.length === 0 && parlays.length === 0) {
     return <p style={{ color: "var(--chalk-dim)" }}>No games with a stake in view.</p>;
   }
 
   return (
     <div>
+      <ExposureSummaryBar bets={bets} parlays={parlays} gamesById={gamesById} />
+
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Sort by:</span>
         <button className="menu-btn" onClick={() => toggleSort("kickoff")} style={{ fontWeight: sortKey === "kickoff" ? 700 : 400 }}>
@@ -293,37 +664,37 @@ function ExposureTrackerSection({ bets, gamesById }: { bets: PlacedBetRow[]; gam
         <button className="menu-btn" onClick={() => toggleSort("stake")} style={{ fontWeight: sortKey === "stake" ? 700 : 400 }}>
           Total Stake {sortKey === "stake" ? (sortDir === "asc" ? "▲" : "▼") : ""}
         </button>
-        <span style={{ marginLeft: "auto", fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-          {exposures.length} game{exposures.length === 1 ? "" : "s"} · {fmtStake(totalAcrossGames)} total across all books
-        </span>
+        <span style={{ marginLeft: "auto", fontSize: "0.82rem", color: "var(--chalk-dim)" }}>{exposures.length} game{exposures.length === 1 ? "" : "s"}</span>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
         {exposures.map((ex) => (
-          <div
-            key={ex.gameId}
-            style={{ padding: "0.7rem 0.9rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.4rem" }}>
-              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-                <TeamLink team={ex.game.away_team} size={16} /> @ <TeamLink team={ex.game.home_team} size={16} />
-              </div>
-              <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{fmtKickoff(ex.game.start_date)}</div>
-              <div style={{ fontWeight: 700, color: "var(--gold, #d9a441)" }}>{fmtStake(ex.totalStake)} total</div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-              {ex.bets.map((bet) => (
-                <div key={bet.id} style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", fontSize: "0.8rem" }}>
-                  <span>
-                    <span style={{ color: "var(--chalk-dim)" }}>{BOOK_LABELS[bet.book] ?? bet.book}:</span> {rootingInterest(bet)}
-                  </span>
-                  <span style={{ flexShrink: 0 }}>{fmtStake(bet.stake)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <GameExposureCard key={ex.gameId} ex={ex} enriched={totalsByGameId.get(ex.gameId)} />
         ))}
       </div>
+
+      {parlays.length > 0 && (
+        <div style={{ marginTop: "1.5rem" }}>
+          <div className="section-label" style={{ marginBottom: "0.5rem" }}>
+            Parlays
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {parlays.map((p) => (
+              <div key={p.id} style={{ padding: "0.6rem 0.8rem", background: "var(--turf-panel)", border: "1px solid var(--hash)", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", fontWeight: 700 }}>
+                  <span>
+                    {BOOK_LABELS[p.book] ?? p.book} · {p.legs.length}-leg parlay · {fmtPrice(p.price)}
+                  </span>
+                  <span>
+                    {fmtStake(p.stake)} → {fmtStake(p.to_win)}
+                  </span>
+                </div>
+                <ParlayLegList parlay={p} currentLegGameId="" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -641,6 +1012,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   const [week, setWeek] = useState<number | "all">("all");
   useDefaultToAdminWeek(setWeek);
   const [bets, setBets] = useState<PlacedBetRow[]>([]);
+  const [parlays, setParlays] = useState<PlacedParlayRow[]>([]);
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [poolSummary, setPoolSummary] = useState<PoolBalanceSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -650,15 +1022,22 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchPlacedBets(season), fetchGamesWithLines(season), fetchPoolBalanceSummary(season)])
-      .then(([betRows, gameRows, summary]) => {
+    Promise.all([fetchPlacedBets(season), fetchPlacedParlays(season), fetchGamesWithLines(season), fetchPoolBalanceSummary(season)])
+      .then(([betRows, parlayRows, gameRows, summary]) => {
         setBets(betRows);
+        setParlays(parlayRows);
         setGames(gameRows);
         setPoolSummary(summary);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [season, reloadTick]);
+
+  // Same model projections the Totals tool itself uses, keyed by game id
+  // so the Exposure Tracker's per-game "Mine vs Vegas" row can never
+  // drift from what that page shows for the same game.
+  const { rows: totalsRows } = useGameTotalsEngine(season);
+  const totalsByGameId = useMemo(() => new Map(totalsRows.map((r) => [r.game.id, r])), [totalsRows]);
 
   const gamesById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
   // Grades any still-"pending" bet against its game's final score — see
@@ -675,6 +1054,41 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   const visibleBets = useMemo(
     () => (week === "all" ? gradedBets : gradedBets.filter((b) => b.week === week)),
     [gradedBets, week]
+  );
+
+  // Same "grade once every leg's game is final" idea as gradedBets — a
+  // push leg with no losing legs still counts the parlay as a win
+  // (the real payout would reduce to the remaining legs' price, which
+  // isn't recomputed here, but it never turns a non-losing ticket into
+  // a loss).
+  const gradedParlays = useMemo(
+    () =>
+      parlays.map((p) => {
+        if (p.result !== "pending") return p;
+        let allDecided = true;
+        let anyLoss = false;
+        let anyWin = false;
+        for (const leg of p.legs) {
+          const game = gamesById.get(leg.game_id);
+          const r = game && game.completed && game.home_points != null && game.away_points != null
+            ? gradeAgainstScore(leg, game, game.home_points, game.away_points)
+            : "pending";
+          if (r === "pending") {
+            allDecided = false;
+            break;
+          }
+          if (r === "loss") anyLoss = true;
+          if (r === "win") anyWin = true;
+        }
+        if (!allDecided) return p;
+        const result: BetResult = anyLoss ? "loss" : anyWin ? "win" : "push";
+        return { ...p, result };
+      }),
+    [parlays, gamesById]
+  );
+  const visibleParlays = useMemo(
+    () => (week === "all" ? gradedParlays : gradedParlays.filter((p) => p.week === week)),
+    [gradedParlays, week]
   );
 
   const overall = useMemo(() => {
@@ -771,7 +1185,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
             Every game in view with a stake on it, across all books, with what you're actually rooting for.
           </p>
           <div style={{ marginBottom: "1.75rem" }}>
-            <ExposureTrackerSection bets={visibleBets} gamesById={gamesById} />
+            <ExposureTrackerSection bets={visibleBets} parlays={visibleParlays} gamesById={gamesById} totalsByGameId={totalsByGameId} />
           </div>
 
           <h3 style={{ marginBottom: "0.5rem" }}>Bets</h3>
