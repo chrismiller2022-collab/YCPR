@@ -618,7 +618,7 @@ type ExposureSortKey = "kickoff" | "stake";
 
 function ExposureTrackerSection({
   bets,
-  parlays,
+  parlays: allParlays,
   gamesById,
   totalsByGameId,
 }: {
@@ -629,6 +629,10 @@ function ExposureTrackerSection({
 }) {
   const [sortKey, setSortKey] = useState<ExposureSortKey>("kickoff");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Teasers are already stored as independent spread bets (see the
+  // import), so hiding parlays leaves them in.
+  const [hideParlays, setHideParlays] = useState(false);
+  const parlays = useMemo(() => (hideParlays ? [] : allParlays), [hideParlays, allParlays]);
 
   const exposures = useMemo(() => {
     const list = buildExposure(bets, parlays, gamesById);
@@ -648,7 +652,7 @@ function ExposureTrackerSection({
     }
   }
 
-  if (exposures.length === 0 && parlays.length === 0) {
+  if (exposures.length === 0 && allParlays.length === 0) {
     return <p style={{ color: "var(--chalk-dim)" }}>No games with a stake in view.</p>;
   }
 
@@ -664,6 +668,10 @@ function ExposureTrackerSection({
         <button className="menu-btn" onClick={() => toggleSort("stake")} style={{ fontWeight: sortKey === "stake" ? 700 : 400 }}>
           Total Stake {sortKey === "stake" ? (sortDir === "asc" ? "▲" : "▼") : ""}
         </button>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.82rem", marginLeft: "0.5rem" }}>
+          <input type="checkbox" checked={hideParlays} onChange={(e) => setHideParlays(e.target.checked)} />
+          Without parlays
+        </label>
         <span style={{ marginLeft: "auto", fontSize: "0.82rem", color: "var(--chalk-dim)" }}>{exposures.length} game{exposures.length === 1 ? "" : "s"}</span>
       </div>
 
