@@ -156,7 +156,6 @@ function TeamColumn({
   favLabel: "Favorite" | "Underdog" | null;
   categories: SpreadCallCategoryInfo[];
 }) {
-  const showNextGameSpot = (hc.spots.lookahead || hc.spots.sandwich) && hc.nextGame;
   const comboLabel = favLabel ? `${roleLabel === "Home" ? "Home" : "Away"} ${favLabel}` : null;
 
   return (
@@ -192,12 +191,10 @@ function TeamColumn({
       )}
 
       {hc.nextGame ? (
-        showNextGameSpot && (
-          <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
-            <span style={{ color: "var(--chalk-dim)" }}>Next week: </span>
-            {hc.nextGame.opponent} (my line {fmtSpread(hc.nextGame.myProjSpreadForTeam)})
-          </div>
-        )
+        <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Next week: </span>
+          {hc.nextGame.opponent} (my line {fmtSpread(hc.nextGame.myProjSpreadForTeam)})
+        </div>
       ) : hc.rest.nextWeekIsBye ? (
         <div style={{ fontSize: "0.78rem", padding: "0.15rem 0", color: "var(--chalk-dim)" }}>Next week: Bye</div>
       ) : null}
