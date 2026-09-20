@@ -22,6 +22,31 @@ const CP: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+// Date/Time, Away, Home and Vegas Spread stay pinned while the per-system
+// columns scroll horizontally. Fixed widths make each column's left
+// offset (the sum of the ones before it) predictable.
+const STICKY_COLS = [
+  { width: 118, left: 0 },
+  { width: 160, left: 118 },
+  { width: 160, left: 278 },
+  { width: 84, left: 438 },
+];
+function stickyStyle(i: number, isHeader: boolean): React.CSSProperties {
+  const { width, left } = STICKY_COLS[i];
+  return {
+    position: "sticky",
+    left,
+    width,
+    minWidth: width,
+    maxWidth: width,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    zIndex: isHeader ? 21 : 5,
+    background: isHeader ? "var(--turf)" : "var(--turf-panel)",
+    ...(i === STICKY_COLS.length - 1 ? { borderRight: "1px solid var(--hash)" } : {}),
+  };
+}
+
 function fmtSpread(v: number | null) {
   if (v == null) return "–";
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
@@ -100,10 +125,10 @@ function GamesTable({
       <table style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
-            <th className="th" style={CP}>Date/Time</th>
-            <th className="th" style={CP}>Away</th>
-            <th className="th" style={CP}>Home</th>
-            <th className="th th-right" style={CP}>Vegas Spread</th>
+            <th className="th" style={{ ...CP, ...stickyStyle(0, true) }}>Date/Time</th>
+            <th className="th" style={{ ...CP, ...stickyStyle(1, true) }}>Away</th>
+            <th className="th" style={{ ...CP, ...stickyStyle(2, true) }}>Home</th>
+            <th className="th th-right" style={{ ...CP, ...stickyStyle(3, true) }}>Vegas Spread</th>
             <th className="th th-right" style={CP}>Away Score</th>
             <th className="th th-right" style={CP}>Home Score</th>
             <th className="th th-right" style={CP}>Final Diff</th>
@@ -122,14 +147,14 @@ function GamesTable({
                 : null;
             return (
               <tr key={r.game.id}>
-                <td style={CP}>{fmtDateTime(r.game.start_date)}</td>
-                <td style={CP}>
+                <td style={{ ...CP, ...stickyStyle(0, false) }}>{fmtDateTime(r.game.start_date)}</td>
+                <td style={{ ...CP, ...stickyStyle(1, false) }}>
                   <TeamLink team={r.game.away_team} />
                 </td>
-                <td style={CP}>
+                <td style={{ ...CP, ...stickyStyle(2, false) }}>
                   <TeamLink team={r.game.home_team} />
                 </td>
-                <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.vegasAwaySpread)}</td>
+                <td style={{ ...CP, ...stickyStyle(3, false), textAlign: "right" }}>{fmtSpread(r.vegasAwaySpread)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{r.game.away_points ?? "–"}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{r.game.home_points ?? "–"}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{finalDiff != null ? finalDiff : "–"}</td>
