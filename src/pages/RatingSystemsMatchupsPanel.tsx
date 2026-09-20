@@ -47,6 +47,17 @@ function stickyStyle(i: number, isHeader: boolean): React.CSSProperties {
   };
 }
 
+// How far a system's projected spread is from the Vegas line, in
+// points (absolute — direction is what the Cover Team tab is for).
+function amountOff(row: MultiSystemGameRow, systemKey: string): number | null {
+  const proj = row.systems[systemKey]?.projAwaySpread;
+  if (proj == null || row.vegasAwaySpread == null) return null;
+  return Math.abs(proj - row.vegasAwaySpread);
+}
+function fmtAmountOff(v: number | null) {
+  return v == null ? "–" : v.toFixed(1);
+}
+
 function fmtSpread(v: number | null) {
   if (v == null) return "–";
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
@@ -114,12 +125,36 @@ function FilterBar({
 // cell differs (projected spread vs projected cover team name).
 // ---------------------------------------------------------------------
 function GamesTable({
-  rows,
+  rows: rawRows,
   cell,
+  sortValue,
 }: {
   rows: MultiSystemGameRow[];
   cell: (row: MultiSystemGameRow, systemKey: string) => string;
+  // When provided, system column headers become clickable sorts on this
+  // numeric value (click again to flip direction).
+  sortValue?: (row: MultiSystemGameRow, systemKey: string) => number | null;
 }) {
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const rows = useMemo(() => {
+    if (!sortKey || !sortValue) return rawRows;
+    return [...rawRows].sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [rawRows, sortKey, sortDir, sortValue]);
+  function toggleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
   return (
     <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
       <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -133,8 +168,14 @@ function GamesTable({
             <th className="th th-right" style={CP}>Home Score</th>
             <th className="th th-right" style={CP}>Final Diff</th>
             {RATING_SYSTEMS.map((s) => (
-              <th key={s.key} className="th th-right" style={CP}>
+              <th
+                key={s.key}
+                className="th th-right"
+                style={{ ...CP, cursor: sortValue ? "pointer" : undefined }}
+                onClick={sortValue ? () => toggleSort(s.key) : undefined}
+              >
                 {s.label}
+                {sortValue && sortKey === s.key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
               </th>
             ))}
           </tr>
@@ -485,7 +526,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
   useDefaultToAdminWeek(setWeek);
-  const [tab, setTab] = useState<"spreads" | "spreadchart" | "cover" | "filtered" | "nwfb" | "results">("spreads");
+  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results">("spreads");
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
   const [confFilter, setConfFilter] = useState("");
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -601,6 +642,9 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <button className={`mode-btn ${tab === "spreadchart" ? "mode-btn-active" : ""}`} onClick={() => setTab("spreadchart")}>
           Spread Chart
         </button>
+        <button className={`mode-btn ${tab === "amountoff" ? "mode-btn-active" : ""}`} onClick={() => setTab("amountoff")}>
+          Amount Off
+        </button>
         <button className={`mode-btn ${tab === "cover" ? "mode-btn-active" : ""}`} onClick={() => setTab("cover")}>
           Proj Cover Team
         </button>
@@ -632,8 +676,15 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <p>Loading…</p>
       ) : (
         <>
-          {tab === "spreads" && <GamesTable rows={weekRows} cell={(r, key) => fmtSpread(r.systems[key]?.projAwaySpread ?? null)} />}
+          {tab === "spreads" && <GamesTable rows={weekRows} cell={(r, key) => fmtSpread(r.systems[key]?.projAwaySpread ?? null)} sortValue={(r, key) => r.systems[key]?.projAwaySpread ?? null} />}
           {tab === "spreadchart" && <SpreadChartTab rows={weekRows} />}
+          {tab === "amountoff" && (
+            <GamesTable
+              rows={weekRows}
+              cell={(r, key) => fmtAmountOff(amountOff(r, key))}
+              sortValue={amountOff}
+            />
+          )}
           {tab === "cover" && (
             <GamesTable rows={weekRows} cell={(r, key) => teamName(r.game, r.systems[key]?.projCoverTeam ?? null)} />
           )}
