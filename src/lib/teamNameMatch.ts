@@ -76,6 +76,7 @@ const ALIASES: Record<string, string> = {
   "san josé st": "San José State",
   "san jose state": "San José State",
   "uconn": "UConn",
+  "ul-monroe": "UL Monroe",
   "connecticut": "UConn",
   "hawaii": "Hawai'i",
   "hawai i": "Hawai'i",

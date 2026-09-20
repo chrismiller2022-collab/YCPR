@@ -6,7 +6,7 @@ import { CONFERENCES } from "../data/teams";
 import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
-import { parseSheetCsv, parseMcilleceCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
+import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, type ConglomeratedRow } from "../lib/ratingConglomerate";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
@@ -295,6 +295,30 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     }
   }
 
+  async function handleSpPlusUpload(file: File) {
+    setBusy("spplus");
+    setLog(null);
+    try {
+      const text = await file.text();
+      const parsed = parseSpPlusCsv(text);
+      if (parsed.length === 0) {
+        setLog("Parsed 0 rows from this file — expected a \"Team\" column (O) and an \"SP+\" column (R).");
+        return;
+      }
+      const { matched, unmatched: um } = matchTeamRows(parsed, (r) => r.team);
+      const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { sp: m.row.value } }));
+      const result = await saveRatingRows(rows);
+      setLog(`SP+ upload — parsed ${parsed.length}, matched ${matched.length}, saved ${result.saved} teams (sign-flipped).${formatDiffNote(result.bySystem)}`);
+      if (um.length > 0) setUnmatched({ source: "SP+ CSV", names: um.map((r) => r.team) });
+      else setUnmatched(null);
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "SP+ upload failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleMasseyUpload(file: File) {
     setBusy("massey");
     setLog(null);
@@ -354,6 +378,20 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) handleMcilleceUpload(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <label className="menu-btn" style={{ cursor: "pointer" }}>
+          {busy === "spplus" ? "Uploading…" : "Upload SP+ CSV"}
+          <input
+            type="file"
+            accept=".csv"
+            style={{ display: "none" }}
+            disabled={busy != null}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleSpPlusUpload(f);
               e.target.value = "";
             }}
           />

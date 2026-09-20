@@ -214,3 +214,39 @@ export function normalizeMasseyRows(rows: MasseyRawRow[]): MasseyRow[] {
     return { team: r.team, value: -normalized }; // sign-flip: best -> -30ish, worst -> +55ish
   });
 }
+
+// ---------------------------------------------------------------------
+// Manual SP+ CSV (bill connelly's weekly ratings export, used while the
+// CFBD /ratings/sp feed is stale/missing). The export is a wide sheet:
+// the ratings table sits to the right of a games table, with "Team" and
+// "SP+" as the headers of its own columns (O and R in the file Chris
+// uploads) — "Rk" repeats, so only Team/SP+ are looked up by name, with
+// the fixed column positions as a fallback. Sign-flipped to this site's
+// negative-is-better convention, same as the CFBD-sourced SP+.
+// ---------------------------------------------------------------------
+export interface SpPlusRow {
+  team: string;
+  value: number;
+}
+
+export function parseSpPlusCsv(text: string): SpPlusRow[] {
+  const lines = splitCsvLines(text);
+  if (lines.length === 0) return [];
+  const headers = parseCsvLine(lines[0]);
+  let teamIdx = findHeaderIdx(headers, "Team");
+  let spIdx = findHeaderIdx(headers, "SP+");
+  if (teamIdx === -1) teamIdx = 14; // column O
+  if (spIdx === -1) spIdx = 17; // column R
+
+  const out: SpPlusRow[] = [];
+  for (const line of lines.slice(1)) {
+    const fields = parseCsvLine(line);
+    const team = (fields[teamIdx] ?? "").trim();
+    const raw = (fields[spIdx] ?? "").trim();
+    if (!team || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isNaN(n)) continue;
+    out.push({ team, value: -n });
+  }
+  return out;
+}

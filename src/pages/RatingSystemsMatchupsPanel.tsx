@@ -522,7 +522,37 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
     return out;
   }, [games, ratingsByWeek, divFilter, confFilter, liveByTeam]);
 
+  // A week with lines synced but no saved ratings snapshot yet (the
+  // usual state early in a week) used to vanish from every tab entirely
+  // — no Vegas line, no proj cover, no bets — because a game was only
+  // shown if its own week had a snapshot. Preview those weeks against
+  // the most recent saved snapshot instead. Deliberately kept out of
+  // the Results tab (allGradedRows), which must only ever grade a game
+  // against the snapshot that was actually live for it.
+  const latestSavedWeek = savedWeeks.length > 0 ? savedWeeks[savedWeeks.length - 1] : null;
+  const previewRows = useMemo(() => {
+    if (latestSavedWeek == null) return [];
+    const ratingsByTeam = ratingsByWeek.get(latestSavedWeek);
+    if (!ratingsByTeam) return [];
+    const out: MultiSystemGameRow[] = [];
+    for (const g of games) {
+      if (g.week <= latestSavedWeek || !passesFilters(g)) continue;
+      out.push(computeMultiSystemRow(g, ratingsByTeam, liveByTeam));
+    }
+    return out;
+  }, [games, ratingsByWeek, latestSavedWeek, divFilter, confFilter, liveByTeam]);
+  const previewWeeks = useMemo(
+    () =>
+      Array.from(new Set(previewRows.filter((r) => r.vegasAwaySpread != null).map((r) => r.game.week))).sort((a, b) => a - b),
+    [previewRows]
+  );
+  const displayRows = useMemo(() => [...allGradedRows, ...previewRows], [allGradedRows, previewRows]);
+
   const weekRows = useMemo(
+    () => (week === "all" ? displayRows : displayRows.filter((r) => r.game.week === week)),
+    [displayRows, week]
+  );
+  const resultsWeekRows = useMemo(
     () => (week === "all" ? allGradedRows : allGradedRows.filter((r) => r.game.week === week)),
     [allGradedRows, week]
   );
@@ -565,7 +595,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         setSeason={setSeason}
         week={week}
         setWeek={setWeek}
-        weeks={savedWeeks}
+        weeks={[...savedWeeks, ...previewWeeks]}
         divFilter={divFilter}
         setDivFilter={setDivFilter}
         confFilter={confFilter}
@@ -588,7 +618,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
           {tab === "nwfb" && (
             <GamesTable rows={weekRows} cell={(r, key) => teamName(r.game, r.systems[key]?.nwfbTeam ?? null)} />
           )}
-          {tab === "results" && <ResultsTable weekRows={weekRows} seasonRows={allGradedRows} />}
+          {tab === "results" && <ResultsTable weekRows={resultsWeekRows} seasonRows={allGradedRows} />}
         </>
       )}
     </div>
