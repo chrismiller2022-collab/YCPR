@@ -67,12 +67,16 @@ export async function fetchGamesWithLines(season: number, week?: number): Promis
       fetchAllRows<GameRow>((from, to) => {
         let q = supabase.from("games").select(GAME_COLUMNS).eq("season", season);
         if (week != null) q = q.eq("week", week);
-        return q.order("start_date", { ascending: true }).range(from, to);
+        return q.order("start_date", { ascending: true }).order("id").range(from, to);
       }),
       fetchAllRows<BettingLineRow>((from, to) => {
         let q = supabase.from("betting_lines").select(LINE_COLUMNS).eq("season", season);
         if (week != null) q = q.eq("week", week);
-        return q.range(from, to);
+        // Explicit ORDER BY is load-bearing: betting_lines is past the
+        // 1000-row page size this season, and without it PostgREST can
+        // return overlapping/skipped rows across pages, so a game's lines
+        // (e.g. every week-4 spread) silently went missing.
+        return q.order("id").range(from, to);
       }),
     ]);
 
