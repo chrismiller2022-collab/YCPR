@@ -54,8 +54,17 @@ function amountOff(row: MultiSystemGameRow, systemKey: string): number | null {
   if (proj == null || row.vegasAwaySpread == null) return null;
   return Math.abs(proj - row.vegasAwaySpread);
 }
-function fmtAmountOff(v: number | null) {
-  return v == null ? "–" : v.toFixed(1);
+// One cell per system: who that system is on (its projected cover
+// team), the spread it projects for that team, and how far that is from
+// Vegas — "Kansas -3.2 · off 2.3". Sorting the tab by a system column
+// orders games by that last number.
+function betCell(row: MultiSystemGameRow, systemKey: string): string {
+  const sys = row.systems[systemKey];
+  const off = amountOff(row, systemKey);
+  if (!sys || sys.projAwaySpread == null || sys.projCoverTeam == null || off == null) return "–";
+  const team = sys.projCoverTeam === "away" ? row.game.away_team : row.game.home_team;
+  const teamSpread = sys.projCoverTeam === "away" ? sys.projAwaySpread : -sys.projAwaySpread;
+  return `${team} ${fmtSpread(teamSpread)} · off ${off.toFixed(1)}`;
 }
 
 function fmtSpread(v: number | null) {
@@ -643,7 +652,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
           Spread Chart
         </button>
         <button className={`mode-btn ${tab === "amountoff" ? "mode-btn-active" : ""}`} onClick={() => setTab("amountoff")}>
-          Amount Off
+          Bets + Amount Off
         </button>
         <button className={`mode-btn ${tab === "cover" ? "mode-btn-active" : ""}`} onClick={() => setTab("cover")}>
           Proj Cover Team
@@ -681,7 +690,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
           {tab === "amountoff" && (
             <GamesTable
               rows={weekRows}
-              cell={(r, key) => fmtAmountOff(amountOff(r, key))}
+              cell={(r, key) => betCell(r, key)}
               sortValue={amountOff}
             />
           )}
