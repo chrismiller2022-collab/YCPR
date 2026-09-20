@@ -204,10 +204,15 @@ export async function fetchWeeklyPowerRatings(season: number, week?: number): Pr
 
 /** Distinct (season, week) pairs that have a saved snapshot — for the Save-As-Week picker and the Matchups page's week filter. */
 export async function fetchSavedRatingWeeks(season: number): Promise<number[]> {
-  const { data, error } = await supabase
-    .from("weekly_power_ratings")
-    .select("week")
-    .eq("season", season);
-  if (error) throw error;
-  return Array.from(new Set((data ?? []).map((r: any) => r.week as number))).sort((a, b) => a - b);
+  // A plain select("week") is capped at PostgREST's 1000-row page, and
+  // each saved week is ~5,000 rows — so only the first week or two ever
+  // came back and later weeks looked unsaved. Probe each week with a
+  // one-row query instead.
+  const found: number[] = [];
+  for (let w = 1; w <= 20; w++) {
+    const { data, error } = await supabase.from("weekly_power_ratings").select("id").eq("season", season).eq("week", w).limit(1);
+    if (error) throw error;
+    if ((data ?? []).length > 0) found.push(w);
+  }
+  return found;
 }

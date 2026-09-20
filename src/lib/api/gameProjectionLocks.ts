@@ -1,3 +1,4 @@
+import { fetchAllRows } from "./fetchAll";
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
@@ -125,12 +126,16 @@ export async function lockGameProjections(candidates: LockCandidate[]): Promise<
  */
 export async function fetchGameLockCoverageByWeek(season: number): Promise<Record<number, { kickedOff: number; locked: number }>> {
   const now = new Date().toISOString();
-  const [{ data: games, error: gamesErr }, { data: locks, error: locksErr }] = await Promise.all([
-    supabase.from("games").select("week, start_date").eq("season", season).lte("start_date", now),
-    supabase.from("game_projection_locks").select("week").eq("season", season),
+  // Both tables grow past PostgREST's 1000-row page over a season, so
+  // page through them (ordered by id so pages stay stable).
+  const [games, locks] = await Promise.all([
+    fetchAllRows<{ week: number }>((from, to) =>
+      supabase.from("games").select("week, start_date").eq("season", season).lte("start_date", now).order("id").range(from, to)
+    ),
+    fetchAllRows<{ week: number }>((from, to) =>
+      supabase.from("game_projection_locks").select("week").eq("season", season).order("game_id").range(from, to)
+    ),
   ]);
-  if (gamesErr) throw gamesErr;
-  if (locksErr) throw locksErr;
 
   const result: Record<number, { kickedOff: number; locked: number }> = {};
   for (const g of (games ?? []) as { week: number }[]) {
