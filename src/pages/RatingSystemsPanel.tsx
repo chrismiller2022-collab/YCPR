@@ -838,51 +838,25 @@ function pivotHistoryRows(rows: WeeklyPowerRatingRow[]): { rows: HistoryRow[]; s
   return { rows: Array.from(byTeam.values()), systemKeys: [...known, ...unknown] };
 }
 
-function PowerRatingsHistorySection() {
-  const [season, setSeason] = useState(new Date().getFullYear());
-  const [savedWeeks, setSavedWeeks] = useState<number[]>([]);
-  const [week, setWeek] = useState<number | null>(null);
-  const [raw, setRaw] = useState<WeeklyPowerRatingRow[]>([]);
-  const [loadingWeeks, setLoadingWeeks] = useState(false);
-  const [loadingWeek, setLoadingWeek] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState("team");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-
-  useEffect(() => {
-    setLoadingWeeks(true);
-    setError(null);
-    setWeek(null);
-    setRaw([]);
-    fetchSavedRatingWeeks(season)
-      .then((weeks) => {
-        setSavedWeeks(weeks);
-        if (weeks.length > 0) setWeek(weeks[weeks.length - 1]); // default to the most recent saved week
-      })
-      .catch((err) => setError(err.message ?? "Failed to load saved weeks"))
-      .finally(() => setLoadingWeeks(false));
-  }, [season]);
-
-  useEffect(() => {
-    if (week == null) return;
-    setLoadingWeek(true);
-    setError(null);
-    fetchWeeklyPowerRatings(season, week)
-      .then(setRaw)
-      .catch((err) => setError(err.message ?? "Failed to load week"))
-      .finally(() => setLoadingWeek(false));
-  }, [season, week]);
-
-  const { rows, systemKeys } = useMemo(() => pivotHistoryRows(raw), [raw]);
-
-  function handleSort(key: string) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
+function HistoryTable({
+  title,
+  subtitle,
+  rows,
+  systemKeys,
+  sortKey,
+  sortDir,
+  onSort,
+  isDiff,
+}: {
+  title: string;
+  subtitle?: string;
+  rows: HistoryRow[];
+  systemKeys: string[];
+  sortKey: string;
+  sortDir: "asc" | "desc";
+  onSort: (key: string) => void;
+  isDiff?: boolean;
+}) {
   const sorted = useMemo(() => {
     return [...rows].sort((a: any, b: any) => {
       const av = sortKey === "team" || sortKey === "conference" ? a[sortKey] : a.values[sortKey];
@@ -895,40 +869,177 @@ function PowerRatingsHistorySection() {
     });
   }, [rows, sortKey, sortDir]);
 
+  // Ratings are negative-is-better, so in the change table a negative
+  // number means the team improved.
+  function diffColor(v: number | null): string | undefined {
+    if (!isDiff || v == null || v === 0) return undefined;
+    return v < 0 ? "#8fd39a" : "#e07a7a";
+  }
+
+  return (
+    <div style={{ marginBottom: "1.5rem" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "0.6rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700 }}>{title}</div>
+        {subtitle && <div style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{subtitle}</div>}
+      </div>
+      {rows.length === 0 ? (
+        <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No rows.</p>
+      ) : (
+        <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+            <thead>
+              <tr>
+                <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={onSort} />
+                <SortHeader label="Conf" sortKey="conference" active={sortKey === "conference"} dir={sortDir} onClick={onSort} />
+                {systemKeys.map((key) => (
+                  <SortHeader
+                    key={key}
+                    label={RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
+                    sortKey={key}
+                    active={sortKey === key}
+                    dir={sortDir}
+                    onClick={onSort}
+                    align="right"
+                  />
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => (
+                <tr key={r.team}>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
+                    <TeamLink team={r.team} />
+                  </td>
+                  <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
+                  {systemKeys.map((key) => {
+                    const v = r.values[key] ?? null;
+                    return (
+                      <td
+                        key={key}
+                        style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", color: diffColor(v) }}
+                      >
+                        {isDiff && v != null && v > 0 ? `+${fmtNum(v)}` : fmtNum(v)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PowerRatingsHistorySection() {
+  const [season, setSeason] = useState(new Date().getFullYear());
+  const [savedWeeks, setSavedWeeks] = useState<number[]>([]);
+  const [weekA, setWeekA] = useState<number | null>(null); // earlier week (middle table)
+  const [weekB, setWeekB] = useState<number | null>(null); // later week (bottom table)
+  const [rawA, setRawA] = useState<WeeklyPowerRatingRow[]>([]);
+  const [rawB, setRawB] = useState<WeeklyPowerRatingRow[]>([]);
+  const [loadingWeeks, setLoadingWeeks] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState("team");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  useEffect(() => {
+    setLoadingWeeks(true);
+    setError(null);
+    setWeekA(null);
+    setWeekB(null);
+    setRawA([]);
+    setRawB([]);
+    fetchSavedRatingWeeks(season)
+      .then((weeks) => {
+        setSavedWeeks(weeks);
+        if (weeks.length > 0) {
+          setWeekB(weeks[weeks.length - 1]); // most recent saved week
+          setWeekA(weeks[0]); // first saved week
+        }
+      })
+      .catch((err) => setError(err.message ?? "Failed to load saved weeks"))
+      .finally(() => setLoadingWeeks(false));
+  }, [season]);
+
+  useEffect(() => {
+    if (weekA == null || weekB == null) return;
+    setLoadingData(true);
+    setError(null);
+    Promise.all([fetchWeeklyPowerRatings(season, weekA), fetchWeeklyPowerRatings(season, weekB)])
+      .then(([a, b]) => {
+        setRawA(a);
+        setRawB(b);
+      })
+      .catch((err) => setError(err.message ?? "Failed to load weeks"))
+      .finally(() => setLoadingData(false));
+  }, [season, weekA, weekB]);
+
+  const pivotA = useMemo(() => pivotHistoryRows(rawA), [rawA]);
+  const pivotB = useMemo(() => pivotHistoryRows(rawB), [rawB]);
+
+  // Change = later week minus earlier week, per team per system, only
+  // where both weeks have a value.
+  const diff = useMemo(() => {
+    const aByTeam = new Map(pivotA.rows.map((r) => [r.team, r]));
+    const keys = new Set<string>();
+    const out: HistoryRow[] = [];
+    for (const b of pivotB.rows) {
+      const a = aByTeam.get(b.team);
+      if (!a) continue;
+      const values: Record<string, number> = {};
+      for (const k of Object.keys(b.values)) {
+        if (a.values[k] == null) continue;
+        values[k] = b.values[k] - a.values[k];
+        keys.add(k);
+      }
+      out.push({ team: b.team, conference: b.conference, division: b.division, values });
+    }
+    const known = RATING_SYSTEMS.map((s) => s.key).filter((k) => keys.has(k));
+    const unknown = Array.from(keys).filter((k) => !RATING_SYSTEMS_BY_KEY[k]).sort();
+    return { rows: out, systemKeys: [...known, ...unknown] };
+  }, [pivotA, pivotB]);
+
+  function handleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  const weekSelect = (value: number | null, onChange: (w: number | null) => void) => (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value === "" ? null : parseInt(e.target.value, 10))}
+      disabled={savedWeeks.length === 0}
+    >
+      {savedWeeks.length === 0 && <option value="">No saved weeks</option>}
+      {savedWeeks.map((w) => (
+        <option key={w} value={w}>
+          Week {w}
+        </option>
+      ))}
+    </select>
+  );
+
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>Power Ratings History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        Read-only — a way to confirm each week's "Save as week" snapshot actually landed. Pick a
-        season and one of its saved weeks to see every rating system's value for every team that
-        week, straight from what's stored.
+        Pick any two saved weeks. The bottom two tables show each week's stored ratings; the top table is the change
+        from the first to the second (ratings are negative-is-better, so a negative change means the team improved).
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
         <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
           Season{" "}
-          <input
-            type="number"
-            value={season}
-            onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)}
-            style={{ width: 90 }}
-          />
+          <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
         </label>
-        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-          Week{" "}
-          <select
-            value={week ?? ""}
-            onChange={(e) => setWeek(e.target.value === "" ? null : parseInt(e.target.value, 10))}
-            disabled={savedWeeks.length === 0}
-          >
-            {savedWeeks.length === 0 && <option value="">No saved weeks</option>}
-            {savedWeeks.map((w) => (
-              <option key={w} value={w}>
-                Week {w}
-              </option>
-            ))}
-          </select>
-        </label>
+        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>From {weekSelect(weekA, setWeekA)}</label>
+        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>To {weekSelect(weekB, setWeekB)}</label>
         {loadingWeeks && <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Loading weeks…</span>}
       </div>
 
@@ -936,63 +1047,43 @@ function PowerRatingsHistorySection() {
 
       {!loadingWeeks && savedWeeks.length === 0 && (
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-          No saved snapshots for {season} yet — use "Save as week" on the Manage tab once ratings
-          look right for a given week.
+          No saved snapshots for {season} yet — use "Save as week" on the Manage tab once ratings look right for a given week.
         </p>
       )}
 
-      {week != null && (
-        <>
-          {loadingWeek ? (
-            <p>Loading…</p>
-          ) : rows.length === 0 ? (
-            <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>No rows saved for week {week}.</p>
-          ) : (
-            <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650 }}>
-              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
-                <thead>
-                  <tr>
-                    <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
-                    <SortHeader
-                      label="Conf"
-                      sortKey="conference"
-                      active={sortKey === "conference"}
-                      dir={sortDir}
-                      onClick={handleSort}
-                    />
-                    {systemKeys.map((key) => (
-                      <SortHeader
-                        key={key}
-                        label={RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
-                        sortKey={key}
-                        active={sortKey === key}
-                        dir={sortDir}
-                        onClick={handleSort}
-                        align="right"
-                      />
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((r) => (
-                    <tr key={r.team}>
-                      <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
-                        <TeamLink team={r.team} />
-                      </td>
-                      <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conference ?? "–"}</td>
-                      {systemKeys.map((key) => (
-                        <td key={key} style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                          {fmtNum(r.values[key] ?? null)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
+      {weekA != null && weekB != null &&
+        (loadingData ? (
+          <p>Loading…</p>
+        ) : (
+          <>
+            <HistoryTable
+              title={`Change: Week ${weekA} → Week ${weekB}`}
+              subtitle="later minus earlier · green = improved"
+              rows={diff.rows}
+              systemKeys={diff.systemKeys}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+              isDiff
+            />
+            <HistoryTable
+              title={`Week ${weekA}`}
+              rows={pivotA.rows}
+              systemKeys={pivotA.systemKeys}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+            />
+            <HistoryTable
+              title={`Week ${weekB}`}
+              rows={pivotB.rows}
+              systemKeys={pivotB.systemKeys}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={handleSort}
+            />
+          </>
+        ))}
     </div>
   );
 }
