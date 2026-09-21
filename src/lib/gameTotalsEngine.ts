@@ -367,8 +367,13 @@ export interface BetRow {
   grade: ReturnType<typeof gradeBetCall>;
 }
 
-export function buildBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number): BetRow[] {
-  const poolStd = poolStdDevForTotal(rows);
+// poolRows: the set the std-dev pool is measured over. Defaults to the rows
+// being graded, but a filtered view (one week, a team search) has a much
+// smaller/different spread than the season-wide FBS pool the Weekly
+// Betting Report uses — pass that pool in so "std dev off" means the same
+// number on every page.
+export function buildBetRows(rows: EnrichedGameRow[], filterThresholdMultiplier: number, poolRows: EnrichedGameRow[] = rows): BetRow[] {
+  const poolStd = poolStdDevForTotal(poolRows);
   return rows.map((row) => {
     const pv = projectedTotal(row);
     const vegasTotal = row.odds.vegasTotal;
@@ -585,7 +590,8 @@ function gradingLineFor(vegasTeamTotal: number | null, actualVegasTeamTotal: num
 export function buildTeamSplitBetRows(
   rows: EnrichedGameRow[],
   filterThresholdMultiplier: number,
-  actualVegasTTByKey?: Map<string, number>
+  actualVegasTTByKey?: Map<string, number>,
+  poolRows: EnrichedGameRow[] = rows // see buildBetRows
 ): TeamSplitBetRow[] {
   const perTeamRows: {
     row: EnrichedGameRow;
@@ -621,9 +627,18 @@ export function buildTeamSplitBetRows(
   }
 
   const diffs: number[] = [];
-  for (const r of perTeamRows) {
-    const gradingLine = gradingLineFor(r.vegasTeamTotal, r.actualVegasTeamTotal);
-    if (r.myTeamTotal != null && gradingLine != null) diffs.push(r.myTeamTotal - gradingLine);
+  for (const row of poolRows) {
+    const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
+    const vegasSplit = splitTeamTotal(row.odds.vegasTotal, row.game.homeSpread);
+    const sides = [
+      { team: row.game.homeTeam, my: mySplit.home, vegas: vegasSplit.home },
+      { team: row.game.awayTeam, my: mySplit.away, vegas: vegasSplit.away },
+    ];
+    for (const s of sides) {
+      const actual = actualVegasTTByKey?.get(`${row.game.week}|${s.team}`) ?? null;
+      const gradingLine = gradingLineFor(s.vegas, actual);
+      if (s.my != null && gradingLine != null) diffs.push(s.my - gradingLine);
+    }
   }
   const poolStd = stdDev(diffs);
 

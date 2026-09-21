@@ -10,7 +10,7 @@ import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal
 import SortHeader from "../components/SortHeader";
 import { useGameTotalsEngine, applyOpeningLine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
-import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
+import { TotalsTab, TeamTotalsTab, filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
@@ -845,6 +845,15 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     return applyLockedSpreadToRows(applyLockedTotals(graded, lockedTotalByKey), lockedAwaySpreadByKey);
   }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey, gradeLine]);
 
+  // "Std dev off" is measured against the season-wide FBS-vs-FBS pool —
+  // the same one the Weekly Betting Report uses — not just whatever week/
+  // matchup type/team search is currently on screen, so the same game
+  // shows the same number on both pages.
+  const totalsPoolRows = useMemo(
+    () => filterRowsByDivision(gradeLine === "open" ? applyOpeningLine(totalsEngineRows) : totalsEngineRows, "FBS"),
+    [totalsEngineRows, gradeLine]
+  );
+
   useEffect(() => {
     // Guarded against the week selector's own auto-default (see
     // useDefaultToAdminWeek): mounting with weekSel="all" kicks off a
@@ -1223,26 +1232,26 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       {mode === "totals" && (
         <>
           {(() => {
-            const betRows = buildBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier);
+            const betRows = buildBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, totalsPoolRows);
             const filtered = betRows.filter((r) => r.isFiltered);
             const w = filtered.filter((r) => r.grade === "win").length;
             const l = filtered.filter((r) => r.grade === "loss").length;
             return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
           })()}
-          <TotalsTab rows={totalsViewRows} settings={totalsSettings} />
+          <TotalsTab rows={totalsViewRows} settings={totalsSettings} poolRows={totalsPoolRows} />
         </>
       )}
 
       {mode === "teamtotals" && (
         <>
           {(() => {
-            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, actualVegasTTByKey);
+            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, actualVegasTTByKey, totalsPoolRows);
             const filtered = betRows.filter((r) => r.isFiltered);
             const w = filtered.filter((r) => r.grade === "win").length;
             const l = filtered.filter((r) => r.grade === "loss").length;
             return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
           })()}
-          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} />
+          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} poolRows={totalsPoolRows} />
         </>
       )}
 

@@ -343,8 +343,8 @@ function sortValue(b: BetRow, key: SortKey, absMode: boolean): number | string {
 
 const GRADE_COLOR: Record<string, string> = { win: "#8fd39a", loss: "#e07a7a", push: "var(--chalk-dim)" };
 
-export function TotalsTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+export function TotalsTab({ rows, settings, poolRows }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[] }) {
+  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
   const [absMode, setAbsMode] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("week");
@@ -741,14 +741,16 @@ export function TeamTotalsTab({
   rows,
   settings,
   actualVegasTTByKey,
+  poolRows,
 }: {
   rows: EnrichedGameRow[];
   settings: GameTotalsSettings;
   actualVegasTTByKey?: Map<string, number>;
+  poolRows?: EnrichedGameRow[];
 }) {
   const betRows = useMemo(
-    () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier, actualVegasTTByKey),
-    [rows, settings.filterThresholdMultiplier, actualVegasTTByKey]
+    () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier, actualVegasTTByKey, poolRows),
+    [rows, settings.filterThresholdMultiplier, actualVegasTTByKey, poolRows]
   );
   const combined = useMemo(() => combineByGame(betRows), [betRows]);
   const [absMode, setAbsMode] = useState(false);
