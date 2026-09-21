@@ -19,6 +19,9 @@ import {
   computeAmountOffPoints,
   buildAmountOffMatrix,
   buildNwfbSigmaMatrix,
+  computeWfbPoints,
+  buildWfbMatrix,
+  type WfbPoint,
   tallyAmountOffCustom,
   buildLiveBetHistoryRecords,
   computeKeyNumberStudy,
@@ -991,6 +994,86 @@ function nwfbCellBg(t: RecordTally, view: NwfbMatrixView, maxCount: number): str
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+function WfbMatrixSection({ points, params }: { points: WfbPoint[]; params: CustomParams }) {
+  const [mode, setMode] = useState<"cumulative" | "band">("cumulative");
+  const rows = useMemo(() => buildWfbMatrix(points, mode), [points, mode]);
+  const cell = { padding: "0.25rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" as const, whiteSpace: "nowrap" as const };
+  const groups: { label: string; key: "all" | "pos" | "neg" }[] = [
+    { label: "All WFB bets", key: "all" },
+    { label: `Positive side (live cutoff ${params.posThreshold})`, key: "pos" },
+    { label: `Negative side (live cutoff ${Math.abs(params.negThreshold)})`, key: "neg" },
+  ];
+  function pctColor(t: RecordTally): string | undefined {
+    const n = t.w + t.l;
+    if (n < 10) return undefined;
+    const p = winPct(t);
+    return p >= 55 ? "#8fd39a" : p < 50 ? "#e07a7a" : undefined;
+  }
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Hypothetical Weighted Filtered Bet performance at every 0.1 of |relative off| (amount off ÷ |Vegas line|) — same games
+        and filters as the rest of this page, with the same minimum-line rule as the live WFB ({params.minAbsLine}). The live
+        signal only fires past {params.posThreshold} (positive side) / {Math.abs(params.negThreshold)} (negative side); this shows
+        what a looser or tighter cutoff would have done. Green/red need at least 10 decided bets.
+      </p>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <button className={`mode-btn ${mode === "cumulative" ? "mode-btn-active" : ""}`} onClick={() => setMode("cumulative")}>
+          At or above
+        </button>
+        <button className={`mode-btn ${mode === "band" ? "mode-btn-active" : ""}`} onClick={() => setMode("band")}>
+          This 0.1 band only
+        </button>
+      </div>
+      <div className="table-scroll" style={{ overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 700 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+          <thead>
+            <tr>
+              <th className="th" rowSpan={2} style={{ position: "sticky", left: 0, zIndex: 21, background: "var(--turf)" }}>
+                |Rel. off| {mode === "cumulative" ? "≥" : "band from"}
+              </th>
+              {groups.map((g) => (
+                <th key={g.key} className="th" colSpan={3} style={{ textAlign: "center" }}>
+                  {g.label}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              {groups.map((g) => (
+                <Fragment key={g.key}>
+                  <th className="th th-right">Games</th>
+                  <th className="th th-right">Record</th>
+                  <th className="th th-right">Win %</th>
+                </Fragment>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.threshold}>
+                <td style={{ ...cell, textAlign: "left", position: "sticky", left: 0, background: "var(--turf-panel)", fontWeight: 600 }}>
+                  {r.threshold.toFixed(1)}
+                </td>
+                {groups.map((g) => {
+                  const t = r[g.key];
+                  const n = t.w + t.l + t.push;
+                  return (
+                    <Fragment key={g.key}>
+                      <td style={cell}>{n}</td>
+                      <td style={cell}>{n === 0 ? "–" : fmtRecord(t)}</td>
+                      <td style={{ ...cell, color: pctColor(t) }}>{t.w + t.l === 0 ? "–" : fmtPct(t)}</td>
+                    </Fragment>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function NwfbSigmaMatrixSection({ points }: { points: AmountOffPoint[] }) {
   const [view, setView] = useState<NwfbMatrixView>("pct");
   const matrix = useMemo(() => buildNwfbSigmaMatrix(points), [points]);
@@ -1178,7 +1261,7 @@ function FilterBar({
 
 export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void }) {
   const allConfs = useMemo(() => availableConferences(), []);
-  const [tab, setTab] = useState<"plain" | "custom" | "keynumbers">("custom");
+  const [tab, setTab] = useState<"plain" | "custom" | "wfb" | "keynumbers">("custom");
 
   const [years, setYears] = useState<Set<number>>(new Set(SEASONS));
   const [week, setWeek] = useState<number | "all">("all");
@@ -1319,6 +1402,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const plainSplits = useMemo(() => computeSplitsPlain(filtered), [filtered]);
   const customSplits = useMemo(() => computeSplitsCustom(filtered, params), [filtered, params]);
   const amountOffPoints = useMemo(() => computeAmountOffPoints(filtered, params), [filtered, params]);
+  const wfbPoints = useMemo(() => computeWfbPoints(filtered, params), [filtered, params]);
 
   const plainByConf = useMemo(() => breakdownByConference(filtered, "plain"), [filtered]);
   const plainByTeam = useMemo(() => breakdownByTeam(filtered, "plain"), [filtered]);
@@ -1364,6 +1448,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </button>
         <button className={`mode-btn ${tab === "custom" ? "mode-btn-active" : ""}`} onClick={() => setTab("custom")}>
           Custom
+        </button>
+        <button className={`mode-btn ${tab === "wfb" ? "mode-btn-active" : ""}`} onClick={() => setTab("wfb")}>
+          WFB
         </button>
         <button className={`mode-btn ${tab === "keynumbers" ? "mode-btn-active" : ""}`} onClick={() => setTab("keynumbers")}>
           Key Numbers
@@ -1433,6 +1520,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
         </>
+      ) : tab === "wfb" ? (
+        <WfbMatrixSection points={wfbPoints} params={params} />
       ) : tab === "keynumbers" ? (
         <KeyNumbersSection study={keyNumberStudy} />
       ) : (

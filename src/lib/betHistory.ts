@@ -927,6 +927,60 @@ export function buildNwfbSigmaMatrix(points: AmountOffPoint[]): NwfbSigmaMatrix 
 }
 
 // ---------------------------------------------------------------------
+// WFB matrix — how a Weighted Filtered Bet would have performed at every
+// 0.1 step of |relative off| (absAmountOff / |Vegas line|, the number the
+// live WFB signal thresholds on), instead of only at the two fixed cutoffs
+// (posThreshold/negThreshold). Uses the same games as everything else on
+// the page (all header filters apply) and the same min-line rule, so a
+// row's numbers match the live WFB record when its threshold equals the
+// live one. "Positive side" = relative off > 0 (Vegas has the home team
+// as an underdog), "negative side" = < 0 (home favorite) — the two sides
+// have different live cutoffs, which is why they're split.
+// ---------------------------------------------------------------------
+export interface WfbPoint {
+  rel: number; // signed, same convention as computeCustomGrading's relativeAmountOff
+  result: BetPick;
+}
+
+export function computeWfbPoints(records: BetHistoryRecord[], params: CustomParams): WfbPoint[] {
+  const out: WfbPoint[] = [];
+  for (const r of records) {
+    const g = computeCustomGrading(r, params);
+    if (!(g.absBettingLine > params.minAbsLine)) continue; // same line gate the live WFB uses
+    out.push({ rel: g.relativeAmountOff, result: g.everyBetResult });
+  }
+  return out;
+}
+
+export interface WfbMatrixRow {
+  threshold: number;
+  all: RecordTally;
+  pos: RecordTally;
+  neg: RecordTally;
+}
+
+// "cumulative": every bet with |rel| >= threshold (what a WFB set at that
+// cutoff would have taken). "band": only bets with |rel| in
+// [threshold, threshold + step) — isolates what each extra 0.1 adds.
+export function buildWfbMatrix(points: WfbPoint[], mode: "cumulative" | "band", step = 0.1, max = 4): WfbMatrixRow[] {
+  const n = Math.round(max / step);
+  const rows: WfbMatrixRow[] = [];
+  for (let i = 0; i <= n; i++) {
+    rows.push({ threshold: Math.round(i * step * 100) / 100, all: emptyTally(), pos: emptyTally(), neg: emptyTally() });
+  }
+  for (const p of points) {
+    const idx = Math.min(n, Math.floor(Math.abs(p.rel) / step + 1e-9));
+    const from = mode === "cumulative" ? 0 : idx;
+    for (let i = from; i <= idx; i++) {
+      tallyAdd(rows[i].all, p.result);
+      if (p.rel > 0) tallyAdd(rows[i].pos, p.result);
+      else if (p.rel < 0) tallyAdd(rows[i].neg, p.result);
+    }
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
 // Error metrics (Abs Error, Median Abs Error, MSE, "over Vegas" deltas) —
 // same underlying math as the Matchups pages, but this dataset's `spread`
 // and `prediction` use the OPPOSITE sign convention (negative = home
