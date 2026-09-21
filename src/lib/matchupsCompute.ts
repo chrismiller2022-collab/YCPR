@@ -306,7 +306,11 @@ export function computeRow(
   liveByTeam: Record<string, any>,
   hfaMode: "team" | "flat" = "team",
   customParams: CustomParams = DEFAULT_CUSTOM_PARAMS,
-  lock?: GameProjectionLock | null
+  lock?: GameProjectionLock | null,
+  // "open" grades against the opening line instead; a game with no
+  // opening line then has no Vegas number at all (not graded), rather
+  // than silently falling back to the closing line.
+  lineMode: "open" | "close" = "close"
 ): MatchupComputed {
   const line = pickLine(game.lines);
   const staticAwayTeam = TEAMS_BY_NAME[game.away_team] ?? null;
@@ -333,7 +337,9 @@ export function computeRow(
   // computation below for any game with no lock yet (hasn't kicked off).
   const projAwaySpread = lock?.myAwaySpread != null ? lock.myAwaySpread : awayTeam && homeTeam ? awayTeam.rating - homeTeam.rating + hfa : null;
 
-  const vegasAwaySpread = line?.spread != null ? -line.spread : null;
+  const spreadField = lineMode === "open" ? line?.opening_spread : line?.spread;
+  const vegasAwaySpread = spreadField != null ? -spreadField : null;
+  const totalLine = lineMode === "open" ? line?.opening_over_under ?? null : line?.over_under ?? null;
 
   const amountOff = projAwaySpread != null && vegasAwaySpread != null ? projAwaySpread - vegasAwaySpread : null;
 
@@ -425,9 +431,9 @@ export function computeRow(
   }
 
   let totalResult: "Over" | "Under" | "Push" | null = null;
-  if (game.completed && game.away_points != null && game.home_points != null && line?.over_under != null) {
+  if (game.completed && game.away_points != null && game.home_points != null && totalLine != null) {
     const actualTotal = game.away_points + game.home_points;
-    totalResult = actualTotal > line.over_under ? "Over" : actualTotal < line.over_under ? "Under" : "Push";
+    totalResult = actualTotal > totalLine ? "Over" : actualTotal < totalLine ? "Under" : "Push";
   }
 
   const betCategory = resolveBetCategory(filteredBetTeam, weightedFilteredBetTeam, nwfbTeam);

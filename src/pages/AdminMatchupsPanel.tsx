@@ -8,7 +8,7 @@ import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats,
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
-import { useGameTotalsEngine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyOpeningLine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
 import { TotalsTab, TeamTotalsTab } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
@@ -745,6 +745,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState("spreads");
   const [mlEvThreshold, setMlEvThreshold] = useState(0);
   const [hideNoLine, setHideNoLine] = useState(false);
+  const [gradeLine, setGradeLine] = useState<"close" | "open">("close");
   const [completedFilter, setCompletedFilter] = useState<"all" | "hideCompleted" | "completedOnly">("all");
   const [sortKey, setSortKey] = useState<string | null>("betSize");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -840,8 +841,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       }
       return true;
     });
-    return applyLockedSpreadToRows(applyLockedTotals(filtered, lockedTotalByKey), lockedAwaySpreadByKey);
-  }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey]);
+    const graded = gradeLine === "open" ? applyOpeningLine(filtered) : filtered;
+    return applyLockedSpreadToRows(applyLockedTotals(graded, lockedTotalByKey), lockedAwaySpreadByKey);
+  }, [totalsEngineRows, weekSel, matchupType, query, lockedTotalByKey, lockedAwaySpreadByKey, gradeLine]);
 
   useEffect(() => {
     // Guarded against the week selector's own auto-default (see
@@ -901,10 +903,11 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           ratingsByWeek[g.week] ?? {},
           "team",
           DEFAULT_CUSTOM_PARAMS,
-          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null
+          lock ? { myAwaySpread: lock.my_away_spread, myAwayWinPct: lock.my_away_win_pct } : null,
+          gradeLine
         );
       }),
-    [filteredGames, ratingsByWeek, locks]
+    [filteredGames, ratingsByWeek, locks, gradeLine]
   );
 
   const visibleRows = useMemo(() => {
@@ -1030,6 +1033,15 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           ))}
         </select>
         <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {(mode === "spreads" || mode === "totals" || mode === "teamtotals") && (
+          <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }} title="Opening: only games with an opening line are graded — no fallback to the closing line">
+            Grade vs:
+            <select className="filter" value={gradeLine} onChange={(e) => setGradeLine(e.target.value as "close" | "open")}>
+              <option value="close">Closing line</option>
+              <option value="open">Opening line</option>
+            </select>
+          </label>
+        )}
         <select className="filter" value={matchupType} onChange={(e) => setMatchupType(e.target.value)}>
           <option value="All">All matchups</option>
           <option value="FBSvFBS">FBS vs FBS</option>

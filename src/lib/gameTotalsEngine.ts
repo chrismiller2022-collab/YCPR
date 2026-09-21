@@ -290,6 +290,25 @@ function projectedTotal(row: EnrichedGameRow): number | null {
 // this engine's own game ids are CFBD ids, a different id space than
 // game_projection_locks' Vegas-lines game id (see MatchupsPage.tsx for
 // the same id-bridging note).
+// "Grade vs opening line": swaps every row's Vegas total/spread for its
+// opening one, so all the existing bet/grade math runs unchanged against
+// the opening number. A game with no opening line ends up with a null
+// Vegas total (and null spread), which every downstream grade already
+// treats as "no line -> don't grade" — nothing falls back to the
+// closing line.
+export function applyOpeningLine(rows: EnrichedGameRow[]): EnrichedGameRow[] {
+  return rows.map((row) => ({
+    ...row,
+    odds: {
+      vegasTotal: row.odds.openingTotal,
+      vegasTotalIsOpeningFallback: false,
+      openingTotal: row.odds.openingTotal,
+      closingTotal: row.odds.closingTotal,
+    },
+    game: { ...row.game, homeSpread: row.game.openingSpread },
+  }));
+}
+
 export function applyLockedTotals(rows: EnrichedGameRow[], lockedTotalByKey: Map<string, number>): EnrichedGameRow[] {
   if (lockedTotalByKey.size === 0) return rows;
   return rows.map((row) => {

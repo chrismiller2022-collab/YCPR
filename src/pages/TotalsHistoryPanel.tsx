@@ -9,6 +9,7 @@ import {
 } from "./GameTotalsAdminPanel";
 import {
   useMultiSeasonGameTotalsEngine,
+  applyOpeningLine,
   computeTotalsKeyNumberStudy,
   TOTALS_KEY_NUMBER_TIERS,
   TOTAL_BET_THRESHOLD_STDDEV,
@@ -322,7 +323,9 @@ function MultiSeasonPicker({ seasons, setSeasons }: { seasons: number[]; setSeas
 export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
   const [seasons, setSeasons] = useState<number[]>([new Date().getFullYear()]);
   const [division, setDivision] = useState("FBS");
-  const { rows: allRows, settings: liveSettings, loading, error } = useMultiSeasonGameTotalsEngine(seasons);
+  const [gradeLine, setGradeLine] = useState<"close" | "open">("close");
+  const { rows: allRowsRaw, settings: liveSettings, loading, error } = useMultiSeasonGameTotalsEngine(seasons);
+  const allRows = useMemo(() => (gradeLine === "open" ? applyOpeningLine(allRowsRaw) : allRowsRaw), [allRowsRaw, gradeLine]);
   const rows = filterRowsByDivision(allRows, division);
   // "Filtered bets" here should mean the same thing it does in the Weekly
   // Betting Report — Chris's own fixed 1.5 std-dev bar — not whatever the
@@ -347,7 +350,8 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
   // rows after the fact (EnrichedGameRow doesn't carry a season field to
   // filter on once seasons are merged).
   const keyNumberSeasons = useMemo(() => seasons.filter((s) => s >= KEY_NUMBER_MIN_SEASON), [seasons]);
-  const { rows: keyNumberAllRows, loading: keyNumberLoading } = useMultiSeasonGameTotalsEngine(keyNumberSeasons);
+  const { rows: keyNumberAllRowsRaw, loading: keyNumberLoading } = useMultiSeasonGameTotalsEngine(keyNumberSeasons);
+  const keyNumberAllRows = useMemo(() => (gradeLine === "open" ? applyOpeningLine(keyNumberAllRowsRaw) : keyNumberAllRowsRaw), [keyNumberAllRowsRaw, gradeLine]);
   const keyNumberRows = useMemo(() => filterRowsByDivision(keyNumberAllRows, division), [keyNumberAllRows, division]);
 
   return (
@@ -365,6 +369,13 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
       <MultiSeasonPicker seasons={seasons} setSeasons={setSeasons} />
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <DivisionPicker division={division} setDivision={setDivision} />
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }} title="Opening: only games with an opening line are graded — no fallback to the closing line">
+          Grade vs:
+          <select value={gradeLine} onChange={(e) => setGradeLine(e.target.value as "close" | "open")}>
+            <option value="close">Closing line</option>
+            <option value="open">Opening line</option>
+          </select>
+        </label>
       </div>
 
       {singleSeason && tab !== "keynumbers" && (

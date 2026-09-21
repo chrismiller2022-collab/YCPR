@@ -1243,7 +1243,10 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
     return all;
   }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
 
-  const allRecords = useMemo(() => [...BET_HISTORY, ...liveRecords], [liveRecords]);
+  // The uploaded 2024/25 history only ever carried the closing line, so
+  // under "Opening line" it has nothing to grade against and is left out
+  // entirely rather than quietly graded on closing numbers.
+  const allRecords = useMemo(() => (lineMode === "open" ? liveRecords : [...BET_HISTORY, ...liveRecords]), [liveRecords, lineMode]);
 
   function toggleYear(y: number) {
     setYears((prev) => {
