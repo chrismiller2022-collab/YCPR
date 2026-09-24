@@ -187,6 +187,38 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Freezes a week's period (1H/2H/quarter) projections. Same rule as
+    // lockProjections above: INSERT ... ON CONFLICT DO NOTHING, so a game
+    // that's already locked is never rewritten — retraining the ridge
+    // model later can't change a past week's numbers.
+    if (action === "lockPeriodProjections") {
+      const { candidates } = req.body;
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        res.status(200).json({ locked: 0, alreadyLocked: [] });
+        return;
+      }
+      const gameIds = candidates.map((c: any) => c.game_id);
+      const { data: existing, error: existingError } = await supabaseAdmin
+        .from("period_projection_locks")
+        .select("game_id")
+        .in("game_id", gameIds);
+      if (existingError) throw existingError;
+      const alreadyLockedIds = new Set((existing ?? []).map((r: any) => r.game_id));
+      const cols = [
+        "game_id", "season", "week", "home_team", "away_team", "neutral_site", "game_home_spread", "game_total", "ridge_model_version",
+        "h1_away_spread", "h1_total", "h2_away_spread", "h2_total",
+        "q1_away_spread", "q1_total", "q2_away_spread", "q2_total", "q3_away_spread", "q3_total", "q4_away_spread", "q4_total",
+      ];
+      const rows = candidates.map((c: any) => Object.fromEntries(cols.map((k) => [k, c[k] ?? null])));
+      const { error } = await supabaseAdmin
+        .from("period_projection_locks")
+        .upsert(rows, { onConflict: "game_id", ignoreDuplicates: true });
+      if (error) throw error;
+      const newlyLocked = candidates.filter((c: any) => !alreadyLockedIds.has(c.game_id));
+      res.status(200).json({ locked: newlyLocked.length, alreadyLocked: Array.from(alreadyLockedIds) });
+      return;
+    }
+
     if (action === "syncTeamTotals") {
       const { rows } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {
