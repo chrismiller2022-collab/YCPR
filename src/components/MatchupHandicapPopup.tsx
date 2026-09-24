@@ -1,6 +1,8 @@
 import TeamLogo from "./TeamLogo";
 import { useMatchupHandicap, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
 import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
+import { useMemo } from "react";
+import { altSpreadRows, altTotalRows, buildPeriodDistribution, gameOutcomes, type AltRow } from "../lib/periodSim";
 
 function fmtRecord(su: { w: number; l: number }): string {
   return `${su.w}-${su.l}`;
@@ -263,6 +265,124 @@ function QuadrantNote({ quadrant }: { quadrant: QuadrantInfo | null }) {
   );
 }
 
+function fmtFair(v: number | null): string {
+  if (v == null) return "–";
+  return `${v > 0 ? "+" : ""}${v}`;
+}
+
+function AltCell({ p, price, strong }: { p: number; price: number | null; strong?: boolean }) {
+  return (
+    <td style={{ padding: "0.15rem 0.5rem", textAlign: "right", whiteSpace: "nowrap", fontWeight: strong ? 700 : 400 }}>
+      <span style={{ color: "var(--chalk-dim)" }}>{(p * 100).toFixed(1)}%</span> {fmtFair(price)}
+    </td>
+  );
+}
+
+// Alternate spreads and totals priced from the week simulation: the game's
+// scoreboard distribution (regulation, with overtime resolving regulation
+// ties) built from MY projected spread and total. Each row is the fair
+// (no-vig) American price for that side at that line. Five points either
+// side of the Vegas number in half-point steps (my own number when there's
+// no Vegas line); the Vegas row is bold, the row nearest my number is shaded.
+function AltLinesSection({ awayTeam, homeTeam, inputs }: { awayTeam: string; homeTeam: string; inputs: NonNullable<ReturnType<typeof useMatchupHandicap>["altInputs"]> }) {
+  const data = useMemo(() => {
+    const spread = inputs.myHomeSpread ?? inputs.vegasHomeSpread;
+    const total = inputs.myTotal ?? inputs.vegasTotal;
+    if (spread == null || total == null) return null;
+    const outcomes = gameOutcomes(buildPeriodDistribution({ homeSpread: spread, total, neutralSite: inputs.neutralSite }));
+    const refSpread = inputs.vegasHomeSpread ?? spread; // favorite/center by Vegas when it exists
+    const favIsHome = refSpread <= 0;
+    const spreadRows = altSpreadRows(outcomes, favIsHome, Math.abs(refSpread));
+    const totalRows = altTotalRows(outcomes, inputs.vegasTotal ?? total);
+    return {
+      favTeam: favIsHome ? homeTeam : awayTeam,
+      dogTeam: favIsHome ? awayTeam : homeTeam,
+      spreadRows,
+      totalRows,
+      vegasSpread: inputs.vegasHomeSpread != null ? Math.abs(inputs.vegasHomeSpread) : null,
+      mySpread: Math.abs(spread),
+      vegasTotal: inputs.vegasTotal,
+      myTotal: total,
+      usedMine: { spread: inputs.myHomeSpread != null, total: inputs.myTotal != null },
+    };
+  }, [inputs, awayTeam, homeTeam]);
+
+  if (!data) return null;
+  const nearest = (rows: AltRow[], target: number | null) =>
+    target == null ? null : rows.reduce((best, r) => (Math.abs(r.line - target) < Math.abs(best.line - target) ? r : best), rows[0]).line;
+  const mySpreadRow = nearest(data.spreadRows, data.mySpread);
+  const myTotalRow = nearest(data.totalRows, data.myTotal);
+  const th = { padding: "0.2rem 0.5rem", textAlign: "right" as const, fontSize: "0.7rem", color: "var(--chalk-dim)", fontWeight: 600 };
+
+  return (
+    <div style={{ marginTop: "1.1rem", borderTop: "1px solid var(--hash)", paddingTop: "0.7rem" }}>
+      <div style={{ fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--chalk-dim)", marginBottom: "0.4rem" }}>
+        Alternate lines — fair prices from my simulation
+      </div>
+      <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: "0.76rem" }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: "left" }}>Spread</th>
+              <th style={th}>{data.favTeam} (fav)</th>
+              <th style={th}>{data.dogTeam}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.spreadRows.map((r) => {
+              const isVegas = data.vegasSpread != null && r.line === data.vegasSpread;
+              return (
+                <tr key={r.line} style={{ background: r.line === mySpreadRow ? "rgba(255,255,255,0.06)" : undefined }}>
+                  <td style={{ padding: "0.15rem 0.5rem", fontWeight: isVegas ? 700 : 400, whiteSpace: "nowrap" }}>
+                    -{r.line} / +{r.line}
+                    {isVegas ? " · Vegas" : ""}
+                    {r.line === mySpreadRow && !isVegas ? " · mine" : ""}
+                  </td>
+                  <AltCell p={r.pOver} price={r.fairOver} strong={isVegas} />
+                  <AltCell p={r.pUnder} price={r.fairUnder} strong={isVegas} />
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <table style={{ borderCollapse: "collapse", fontSize: "0.76rem" }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: "left" }}>Total</th>
+              <th style={th}>Over</th>
+              <th style={th}>Under</th>
+              <th style={th}>Push</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.totalRows.map((r) => {
+              const isVegas = data.vegasTotal != null && r.line === data.vegasTotal;
+              return (
+                <tr key={r.line} style={{ background: r.line === myTotalRow ? "rgba(255,255,255,0.06)" : undefined }}>
+                  <td style={{ padding: "0.15rem 0.5rem", fontWeight: isVegas ? 700 : 400, whiteSpace: "nowrap" }}>
+                    {r.line}
+                    {isVegas ? " · Vegas" : ""}
+                    {r.line === myTotalRow && !isVegas ? " · mine" : ""}
+                  </td>
+                  <AltCell p={r.pOver} price={r.fairOver} strong={isVegas} />
+                  <AltCell p={r.pUnder} price={r.fairUnder} strong={isVegas} />
+                  <td style={{ padding: "0.15rem 0.5rem", textAlign: "right", color: "var(--chalk-dim)" }}>{r.pPush > 0.0005 ? `${(r.pPush * 100).toFixed(1)}%` : ""}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: "0.68rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0" }}>
+        Prices are no-vig fair odds (push excluded). Built from my projected spread ({data.usedMine.spread ? "" : "Vegas, no projection — "}
+        {data.mySpread.toFixed(1)}) and total ({data.usedMine.total ? "" : "Vegas, no projection — "}
+        {data.myTotal.toFixed(1)}), including overtime.
+      </p>
+    </div>
+  );
+}
+
 function TotalsSection({
   awayTeam,
   homeTeam,
@@ -347,7 +467,7 @@ export default function MatchupHandicapPopup({
           border: "1px solid var(--hash)",
           borderRadius: 10,
           padding: "1.25rem",
-          width: 620,
+          width: 780,
           maxWidth: "95vw",
           maxHeight: "90vh",
           overflowY: "auto",
@@ -403,6 +523,7 @@ export default function MatchupHandicapPopup({
             </div>
             <TotalsSection awayTeam={awayTeam} homeTeam={homeTeam} totals={hc.totals} />
             <QuadrantNote quadrant={hc.quadrant} />
+            {hc.altInputs && <AltLinesSection awayTeam={awayTeam} homeTeam={homeTeam} inputs={hc.altInputs} />}
           </>
         )}
 

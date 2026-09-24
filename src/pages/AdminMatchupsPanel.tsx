@@ -9,7 +9,7 @@ import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
 import { useGameTotalsEngine, applyOpeningLine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
-import { fetchTeamTotalLines, useAutoSyncTeamTotals } from "../lib/api/teamTotalLines";
+import { fetchTeamTotalLines } from "../lib/api/teamTotalLines";
 import { TotalsTab, TeamTotalsTab, filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
@@ -776,7 +776,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   // rather than showing a second, separate filter bar.
   const { rows: totalsEngineRows, settings: totalsSettings } = useGameTotalsEngine(season);
 
-  useAutoSyncTeamTotals(games, season);
   const [actualVegasTTByKey, setActualVegasTTByKey] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     let cancelled = false;

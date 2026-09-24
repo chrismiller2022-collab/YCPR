@@ -144,6 +144,14 @@ export interface QuadrantInfo {
   totalCall: "Over" | "Under";
 }
 
+export interface AltLineInputs {
+  myHomeSpread: number | null;
+  vegasHomeSpread: number | null;
+  myTotal: number | null;
+  vegasTotal: number | null;
+  neutralSite: boolean;
+}
+
 export interface MatchupHandicap {
   season: number;
   week: number;
@@ -155,6 +163,8 @@ export interface MatchupHandicap {
   spreadCallCategories: SpreadCallCategoryInfo[]; // empty if this game's edge doesn't clear any category's threshold
   totals: GameTotalsSnapshot;
   quadrant: QuadrantInfo | null;
+  // Raw spread/total numbers (home-relation, negative = home favored) for pricing alternate lines.
+  altInputs: AltLineInputs | null;
   loading: boolean;
   error: string | null;
 }
@@ -466,6 +476,7 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         favoriteTeam: null,
         spreadCallCategories: [],
         totals: emptyTotals,
+        altInputs: null,
         quadrant: null,
         loading,
         error,
@@ -593,6 +604,15 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
       spreadCallCategories: spreadCallCategoriesInfo,
       totals,
       quadrant,
+      altInputs: currentGameWithLines
+        ? {
+            myHomeSpread: currentComputed?.projAwaySpread != null ? -currentComputed.projAwaySpread : null,
+            vegasHomeSpread: currentComputed?.vegasAwaySpread != null ? -currentComputed.vegasAwaySpread : null,
+            myTotal: totals.myTotal,
+            vegasTotal: totals.vegasTotal,
+            neutralSite: currentGameWithLines.neutral_site,
+          }
+        : null,
       loading: false,
       error,
     };

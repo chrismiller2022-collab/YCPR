@@ -6,6 +6,7 @@ import {
   PERIOD_POOL,
   PERIOD_SCALE,
 } from "./periodModelData";
+import { OT_POOL } from "./periodOtPool";
 
 // Period (quarter/half) scoring model for a single game.
 //
@@ -20,9 +21,10 @@ import {
 // (no sampling noise); sampleScoreboards() is there for anything that needs
 // actual draws (e.g. correlating games later).
 //
-// Regulation only: overtime points are excluded, same as period markets.
-// Full-game numbers here are therefore regulation (~0.4 pts/game lower
-// total than final scores that include OT).
+// Period distributions are regulation only (overtime is excluded, same as
+// period markets); gameOutcomes() below adds real overtime resolutions for
+// full-game (alt spread / alt total) pricing. The distribution is centered so
+// the MEDIAN margin and total equal the projected spread and total.
 
 export { PERIOD_MODEL_VERSION };
 
@@ -153,7 +155,35 @@ export function buildPeriodDistribution(input: PeriodInput): PeriodDistribution 
   scored.sort((a, b) => a.d - b.d);
   const near = scored.slice(0, NEIGHBORS).map((s) => PERIOD_POOL[s.i].slice(2)); // [fav Q1..4, dog Q1..4]
 
-  const w = tiltWeights(near, targetFavDog);
+  // Beyond the eight quarter means, pin the MEDIAN margin and MEDIAN total to
+  // the projected spread and total (P(favorite covers my line) = P(over my
+  // total) = 50%). A projection is used like a market line — the number you'd
+  // split the action on — and without this the re-weighted history came out
+  // ~0.8 points light on margin, so "my line" priced below 50%. Mid-CDF
+  // indicators (half credit for an exact hit); regulation ties count their
+  // overtime resolution.
+  const indicators = near.map((b) => {
+    const f = b[0] + b[1] + b[2] + b[3];
+    const d = b[4] + b[5] + b[6] + b[7];
+    const m = f - d;
+    const t = f + d;
+    const mid = (gt: boolean, eq: boolean) => (gt ? 1 : 0) + (eq ? 0.5 : 0);
+    let im: number;
+    let it: number;
+    if (m !== 0) {
+      im = mid(m > absSpread, m === absSpread);
+      it = mid(t > input.total, t === input.total);
+    } else {
+      // Tied after four quarters: winner is either side equally, margin and extra points from real OT games.
+      im = OT_POOL.reduce((acc, [om]) => acc + 0.5 * mid(om > absSpread, om === absSpread), 0) / OT_POOL.length;
+      it = OT_POOL.reduce((acc, [, added]) => acc + mid(t + added > input.total, t + added === input.total), 0) / OT_POOL.length;
+    }
+    return [im, it];
+  });
+  const w = tiltWeights(
+    near.map((b, i) => [...b, ...indicators[i]]),
+    [...targetFavDog, 0.5, 0.5]
+  );
 
   // Re-orient to [away Q1..Q4, home Q1..Q4].
   const boards = near.map((b) => {
@@ -257,7 +287,7 @@ export interface LinePrice {
   fairUnder: number | null;
 }
 
-function fairAmerican(p: number): number | null {
+export function fairAmerican(p: number): number | null {
   if (!(p > 0 && p < 1)) return null;
   return p >= 0.5 ? Math.round((-100 * p) / (1 - p)) : Math.round((100 * (1 - p)) / p);
 }
@@ -312,4 +342,110 @@ export function sampleScoreboards(dist: PeriodDistribution, n: number): number[]
     out.push(dist.boards[lo]);
   }
   return out;
+}
+
+// ---- full-game outcomes (regulation + overtime) and alternate lines ---------
+
+export interface GameOutcomes {
+  /** Home margin (home - away), final including overtime. */
+  margin: number[];
+  /** Final total including overtime. */
+  total: number[];
+  weight: number[];
+}
+
+/**
+ * Full-game results from the scoreboard distribution. A board tied after
+ * four quarters is resolved with a real overtime outcome (winning margin and
+ * points added, drawn from every FBS-vs-FBS game that went to overtime since
+ * 2021; either team equally likely to win), so alt spreads and totals price
+ * what the game's final result — not just regulation — would be.
+ */
+export function gameOutcomes(dist: PeriodDistribution): GameOutcomes {
+  const margin: number[] = [];
+  const total: number[] = [];
+  const weight: number[] = [];
+  dist.boards.forEach((b, i) => {
+    const away = b[0] + b[1] + b[2] + b[3];
+    const home = b[4] + b[5] + b[6] + b[7];
+    const w = dist.weights[i];
+    if (home !== away) {
+      margin.push(home - away);
+      total.push(home + away);
+      weight.push(w);
+      return;
+    }
+    const share = w / (OT_POOL.length * 2);
+    for (const [m, added] of OT_POOL) {
+      for (const sign of [1, -1]) {
+        margin.push(sign * m);
+        total.push(home + away + added);
+        weight.push(share);
+      }
+    }
+  });
+  return { margin, total, weight };
+}
+
+export interface AltRow {
+  line: number;
+  pOver: number;
+  pUnder: number;
+  pPush: number;
+  fairOver: number | null;
+  fairUnder: number | null;
+}
+
+function rowFor(line: number, pOver: number, pUnder: number, pPush: number): AltRow {
+  const decided = pOver + pUnder;
+  return {
+    line,
+    pOver,
+    pUnder,
+    pPush,
+    fairOver: decided > 0 ? fairAmerican(pOver / decided) : null,
+    fairUnder: decided > 0 ? fairAmerican(pUnder / decided) : null,
+  };
+}
+
+function linesAround(center: number, span = 5, step = 0.5, min = 0.5): number[] {
+  const out: number[] = [];
+  const start = Math.max(min, center - span);
+  for (let x = start; x <= center + span + 1e-9; x += step) out.push(Math.round(x * 2) / 2);
+  return out;
+}
+
+/**
+ * Alternate spreads. `favIsHome` = which side is the favorite (by the Vegas
+ * line when there is one). Row `line` X means favorite -X / underdog +X;
+ * pOver = favorite covers -X, pUnder = underdog covers +X. Covers X - span
+ * through X + span in half points, where X is `center`.
+ */
+export function altSpreadRows(o: GameOutcomes, favIsHome: boolean, center: number): AltRow[] {
+  return linesAround(center).map((x) => {
+    let pFav = 0;
+    let pDog = 0;
+    let pPush = 0;
+    for (let i = 0; i < o.margin.length; i++) {
+      const favMargin = favIsHome ? o.margin[i] : -o.margin[i];
+      if (favMargin > x) pFav += o.weight[i];
+      else if (favMargin < x) pDog += o.weight[i];
+      else pPush += o.weight[i];
+    }
+    return rowFor(x, pFav, pDog, pPush);
+  });
+}
+
+export function altTotalRows(o: GameOutcomes, center: number): AltRow[] {
+  return linesAround(center, 5, 0.5, 0).map((x) => {
+    let pOver = 0;
+    let pUnder = 0;
+    let pPush = 0;
+    for (let i = 0; i < o.total.length; i++) {
+      if (o.total[i] > x) pOver += o.weight[i];
+      else if (o.total[i] < x) pUnder += o.weight[i];
+      else pPush += o.weight[i];
+    }
+    return rowFor(x, pOver, pUnder, pPush);
+  });
 }
