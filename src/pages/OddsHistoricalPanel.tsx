@@ -205,11 +205,11 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
       </div>
 
       <div style={{ marginBottom: "0.8rem", fontSize: "0.82rem" }}>
-        <div style={{ color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>Markets (max {MAX_MARKETS}):</div>
+        <div style={{ color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>Markets — {marketList.length} of {MAX_MARKETS} selected{marketList.length >= MAX_MARKETS ? " (uncheck one to pick another; extra markets can go in a second pull)" : ""}:</div>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
           {MARKET_OPTIONS.map((m) => (
             <label key={m.key} style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-              <input type="checkbox" checked={markets.has(m.key)} onChange={() => toggleMarket(m.key)} />
+              <input type="checkbox" checked={markets.has(m.key)} disabled={!markets.has(m.key) && marketList.length >= MAX_MARKETS} onChange={() => toggleMarket(m.key)} />
               {m.label}
             </label>
           ))}
