@@ -35,6 +35,7 @@ import PlacedBetsPanel from "./PlacedBetsPanel";
 import MoneylineBetHistoryPanel from "./MoneylineBetHistoryPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
 import PeriodProjectionsPanel from "./PeriodProjectionsPanel";
+import OddsHistoricalPanel from "./OddsHistoricalPanel";
 import PmAdminPanel from "./PmAdminPanel";
 import RatingSystemsPanel from "./RatingSystemsPanel";
 import SosAdminPanel from "./SosAdminPanel";
@@ -229,6 +230,7 @@ type AdminView =
   | "bettingreport"
   | "montecarlo"
   | "periodproj"
+  | "oddshistorical"
   | "pm"
   | "gametotals"
   | "totalshistory"
@@ -530,6 +532,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "sos", label: "Strength of Schedule" },
       { key: "gametotals", label: "Totals" },
       { key: "periodproj", label: "Period Projections" },
+      { key: "oddshistorical", label: "Historical Odds Pull" },
       { key: "totalshistory", label: "Totals History" },
       { key: "bethistory", label: "Bet History" },
       { key: "mlbethistory", label: "Moneyline Bet History" },
@@ -959,6 +962,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
 
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
+
+          {view === "oddshistorical" && <OddsHistoricalPanel onBack={() => setView("home")} />}
           {view === "totalshistory" && <TotalsHistoryPanel onBack={() => setView("home")} />}
           {view === "linemovement" && <LineMovementAdminPanel onBack={() => setView("home")} />}
           {view === "odds" && <OddsDashboardAdminPanel onBack={() => setView("home")} />}

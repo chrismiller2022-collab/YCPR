@@ -281,6 +281,94 @@ async function handleTeamTotals(req: any, res: any) {
   res.status(200).json({ results });
 }
 
+
+// ---------------------------------------------------------------------
+// Historical pulls (manual, password-gated — these cost REAL credits).
+//
+//   - mode=historical-events&date=ISO&from=ISO&to=ISO: event ids that
+//     existed at that snapshot (1 credit total, not per event). Needed
+//     because a past game's Odds API event id has to come from the
+//     historical listing at that date.
+//   - mode=historical-event-odds&eventId=..&date=ISO&markets=a,b: one
+//     event's additional markets (team_totals, period markets) at that
+//     snapshot. Cost = 10 x markets x regions (region is fixed to "us"
+//     here) PER EVENT — see the caps below. Period/additional-market
+//     history only exists from 2023-05-03 onward.
+//
+// The caller (an admin panel) shows the cost estimate and asks first;
+// nothing here ever loops on its own. Returns The Odds API's own
+// x-requests-* headers so the actual spend is visible after each call.
+// ---------------------------------------------------------------------
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const MAX_HISTORICAL_MARKETS = 4;
+
+function creditHeaders(upstream: Response) {
+  return {
+    remaining: upstream.headers.get("x-requests-remaining"),
+    used: upstream.headers.get("x-requests-used"),
+    last: upstream.headers.get("x-requests-last"),
+  };
+}
+
+async function handleHistoricalEvents(req: any, res: any) {
+  const date = String(req.query?.date ?? "");
+  if (!date) {
+    res.status(400).json({ error: "date is required (ISO 8601)" });
+    return;
+  }
+  const qs = new URLSearchParams({ apiKey: ODDS_API_KEY!, date });
+  if (req.query?.from) qs.set("commenceTimeFrom", String(req.query.from));
+  if (req.query?.to) qs.set("commenceTimeTo", String(req.query.to));
+  const upstream = await fetch(`${ODDS_API_BASE}/historical/sports/americanfootball_ncaaf/events?${qs.toString()}`);
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`Historical events request failed (${upstream.status}): ${text || upstream.statusText}`);
+  }
+  const body = (await upstream.json()) as { timestamp?: string; data?: OddsApiEvent[] };
+  res.status(200).json({
+    timestamp: body.timestamp ?? null,
+    events: (body.data ?? []).map((e) => ({ id: e.id, homeTeam: e.home_team, awayTeam: e.away_team, commenceTime: e.commence_time })),
+    quota: creditHeaders(upstream),
+  });
+}
+
+async function handleHistoricalEventOdds(req: any, res: any) {
+  const eventId = String(req.query?.eventId ?? "");
+  const date = String(req.query?.date ?? "");
+  const markets = String(req.query?.markets ?? "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  if (!eventId || !date || markets.length === 0) {
+    res.status(400).json({ error: "eventId, date and markets are required" });
+    return;
+  }
+  if (markets.length > MAX_HISTORICAL_MARKETS) {
+    res.status(400).json({ error: `At most ${MAX_HISTORICAL_MARKETS} markets per call (cost is 10 credits per market)` });
+    return;
+  }
+  const qs = new URLSearchParams({ apiKey: ODDS_API_KEY!, regions: "us", markets: markets.join(","), oddsFormat: "american", dateFormat: "iso", date });
+  const upstream = await fetch(`${ODDS_API_BASE}/historical/sports/americanfootball_ncaaf/events/${eventId}/odds?${qs.toString()}`);
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`Historical event odds request failed (${upstream.status}): ${text || upstream.statusText}`);
+  }
+  const body = (await upstream.json()) as { timestamp?: string; data?: any };
+  const ev = body.data ?? {};
+  res.status(200).json({
+    timestamp: body.timestamp ?? null,
+    homeTeam: ev.home_team ?? null,
+    awayTeam: ev.away_team ?? null,
+    commenceTime: ev.commence_time ?? null,
+    bookmakers: (ev.bookmakers ?? []).map((b: any) => ({
+      key: b.key,
+      lastUpdate: b.last_update,
+      markets: (b.markets ?? []).map((m: any) => ({ key: m.key, outcomes: m.outcomes })),
+    })),
+    quota: creditHeaders(upstream),
+  });
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -295,6 +383,16 @@ export default async function handler(req: any, res: any) {
 
     if (!ODDS_API_KEY) {
       res.status(500).json({ error: "ODDS_API_KEY is not configured on the server" });
+      return;
+    }
+
+    if (req.query?.mode === "historical-events" || req.query?.mode === "historical-event-odds") {
+      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+        res.status(401).json({ error: "Incorrect password" });
+        return;
+      }
+      if (req.query.mode === "historical-events") await handleHistoricalEvents(req, res);
+      else await handleHistoricalEventOdds(req, res);
       return;
     }
 

@@ -219,6 +219,63 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // One-time historical pulls (Odds API historical endpoint, real credits).
+    // INSERT ... ON CONFLICT DO NOTHING: an already-saved historical line is
+    // never overwritten, so re-running a pull can't change it.
+    if (action === "savePeriodMarketLines") {
+      const { rows } = req.body;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(200).json({ saved: 0 });
+        return;
+      }
+      const saveRows = rows.map((r: any) => ({
+        game_id: r.game_id,
+        season: r.season,
+        week: r.week,
+        period: r.period,
+        market_type: r.market_type,
+        provider: r.provider ?? null,
+        point: r.point ?? null,
+        home_price: r.home_price ?? null,
+        away_price: r.away_price ?? null,
+        over_price: r.over_price ?? null,
+        under_price: r.under_price ?? null,
+        is_historical: !!r.is_historical,
+        pulled_at: r.pulled_at ?? new Date().toISOString(),
+      }));
+      const { error, count } = await supabaseAdmin
+        .from("period_market_lines")
+        .upsert(saveRows, { onConflict: "game_id,period,market_type,provider", ignoreDuplicates: true, count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ saved: count ?? saveRows.length });
+      return;
+    }
+
+    if (action === "saveHistoricalTeamTotals") {
+      const { rows } = req.body;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(200).json({ saved: 0 });
+        return;
+      }
+      const saveRows = rows.map((r: any) => ({
+        game_id: r.game_id,
+        season: r.season,
+        week: r.week,
+        team: r.team,
+        provider: r.provider ?? null,
+        point: r.point ?? null,
+        over_price: r.over_price ?? null,
+        under_price: r.under_price ?? null,
+        pulled_at: r.pulled_at ?? new Date().toISOString(),
+      }));
+      const { error, count } = await supabaseAdmin
+        .from("team_total_lines")
+        .upsert(saveRows, { onConflict: "game_id,team", ignoreDuplicates: true, count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "syncTeamTotals") {
       const { rows } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {
