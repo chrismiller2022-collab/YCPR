@@ -88,6 +88,9 @@ export function parseEventOdds(odds: HistoricalEventOdds, game: GameRef, isHisto
   const period: PeriodLineRow[] = [];
   const teamTotals: TeamTotalRow[] = [];
   const pulledAt = odds.timestamp ?? new Date().toISOString();
+  // Game-level team totals are stored as ONE consensus row per team (median
+  // point; prices averaged over the books on that median), not one per book.
+  const ttByTeam = new Map<string, { point: number; over: number | null; under: number | null }[]>();
   const canon = (name: string | null | undefined) => (name ? matchSchoolMascotName(name) ?? name : null);
 
   for (const book of odds.bookmakers) {
@@ -137,29 +140,53 @@ export function parseEventOdds(odds: HistoricalEventOdds, game: GameRef, isHisto
           if (team !== game.home_team && team !== game.away_team) continue;
           if (per) {
             period.push({ game_id: game.id, season: game.season, week: game.week, period: per as PeriodCode, market_type: team === game.home_team ? "team_total_home" : "team_total_away", provider: book.key, point: e.point, home_price: null, away_price: null, over_price: e.over, under_price: e.under, is_historical: isHistorical, pulled_at: pulledAt });
-          } else {
-            teamTotals.push({ game_id: game.id, season: game.season, week: game.week, team, provider: book.key, point: e.point, over_price: e.over, under_price: e.under, pulled_at: pulledAt });
+          } else if (e.point != null) {
+            const list = ttByTeam.get(team) ?? [];
+            list.push({ point: e.point, over: e.over, under: e.under });
+            ttByTeam.set(team, list);
           }
         }
       }
     }
   }
+  for (const [team, entries] of ttByTeam) {
+    const pts = entries.map((e) => e.point).sort((a, b) => a - b);
+    const mid = pts.length % 2 ? pts[(pts.length - 1) / 2] : (pts[pts.length / 2 - 1] + pts[pts.length / 2]) / 2;
+    const pool = entries.filter((e) => e.point === mid);
+    const use = pool.length ? pool : entries;
+    const avg = (xs: (number | null)[]) => {
+      const v = xs.filter((x): x is number => x != null);
+      return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+    };
+    teamTotals.push({
+      game_id: game.id,
+      season: game.season,
+      week: game.week,
+      team,
+      provider: "hist_median",
+      point: mid,
+      over_price: avg(use.map((e) => e.over)),
+      under_price: avg(use.map((e) => e.under)),
+      book_count: entries.length,
+      pulled_at: pulledAt,
+    });
+  }
   return { period, teamTotals };
 }
 
-async function savePost(action: string, rows: unknown[]): Promise<{ saved: number }> {
+async function savePost(action: string, rows: unknown[], extra: Record<string, unknown> = {}): Promise<{ saved: number }> {
   const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password, action, rows }),
+    body: JSON.stringify({ password, action, rows, ...extra }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Save failed");
   return data;
 }
-export const savePeriodMarketLines = (rows: PeriodLineRow[]) => savePost("savePeriodMarketLines", rows);
-export const saveHistoricalTeamTotals = (rows: TeamTotalRow[]) => savePost("saveHistoricalTeamTotals", rows);
+export const savePeriodMarketLines = (rows: PeriodLineRow[], overwrite = false) => savePost("savePeriodMarketLines", rows, { overwrite });
+export const saveHistoricalTeamTotals = (rows: TeamTotalRow[], overwrite = false) => savePost("saveHistoricalTeamTotals", rows, { overwrite });
 
 export function matchEventToGame(events: HistoricalEvent[], game: GameRef): HistoricalEvent | null {
   const key = [game.home_team, game.away_team].sort().join("|");
@@ -169,4 +196,29 @@ export function matchEventToGame(events: HistoricalEvent[], game: GameRef): Hist
     if (h && a && [h, a].sort().join("|") === key) return e;
   }
   return null;
+}
+
+export interface LivePeriodLines {
+  eventId: string;
+  homeTeam: string;
+  awayTeam: string;
+  bookmakers: { key: string; lastUpdate: string; markets: { key: string; outcomes: any[] }[] }[];
+  error?: string;
+}
+
+/** Current (not historical) period lines for specific Odds API event ids — 1 credit per market per event. */
+export async function fetchLivePeriodLines(eventIds: string[], markets: string[]): Promise<{ results: LivePeriodLines[]; quota: Quota }> {
+  const qs = new URLSearchParams({ mode: "period-lines", eventIds: eventIds.join(","), markets: markets.join(",") });
+  const res = await fetch(`/api/odds-feed?${qs.toString()}`, { headers: pw() });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Period lines request failed");
+  return data;
+}
+
+/** Odds API's current upcoming-events list (free) — used to find event ids for this week's games. */
+export async function fetchUpcomingEvents(): Promise<HistoricalEvent[]> {
+  const res = await fetch("/api/odds-feed?mode=team-totals-events");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "events request failed");
+  return data.events as HistoricalEvent[];
 }

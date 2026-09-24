@@ -223,7 +223,9 @@ export default async function handler(req: any, res: any) {
     // INSERT ... ON CONFLICT DO NOTHING: an already-saved historical line is
     // never overwritten, so re-running a pull can't change it.
     if (action === "savePeriodMarketLines") {
-      const { rows } = req.body;
+      // overwrite=true is for refreshing CURRENT-week lines (they move until
+      // kickoff); historical pulls never pass it.
+      const { rows, overwrite } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {
         res.status(200).json({ saved: 0 });
         return;
@@ -245,14 +247,17 @@ export default async function handler(req: any, res: any) {
       }));
       const { error, count } = await supabaseAdmin
         .from("period_market_lines")
-        .upsert(saveRows, { onConflict: "game_id,period,market_type,provider", ignoreDuplicates: true, count: "exact" });
+        .upsert(saveRows, { onConflict: "game_id,period,market_type,provider", ignoreDuplicates: !overwrite, count: "exact" });
       if (error) throw error;
       res.status(200).json({ saved: count ?? saveRows.length });
       return;
     }
 
     if (action === "saveHistoricalTeamTotals") {
-      const { rows } = req.body;
+      // `overwrite` is for replacing an earlier LIVE snapshot (a week-1 line
+      // captured days before kickoff) with the pulled closing consensus;
+      // otherwise a saved line is never rewritten.
+      const { rows, overwrite } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {
         res.status(200).json({ saved: 0 });
         return;
@@ -266,11 +271,12 @@ export default async function handler(req: any, res: any) {
         point: r.point ?? null,
         over_price: r.over_price ?? null,
         under_price: r.under_price ?? null,
+        book_count: r.book_count ?? null,
         pulled_at: r.pulled_at ?? new Date().toISOString(),
       }));
       const { error, count } = await supabaseAdmin
         .from("team_total_lines")
-        .upsert(saveRows, { onConflict: "game_id,team", ignoreDuplicates: true, count: "exact" });
+        .upsert(saveRows, { onConflict: "game_id,team", ignoreDuplicates: !overwrite, count: "exact" });
       if (error) throw error;
       res.status(200).json({ saved: count ?? saveRows.length });
       return;

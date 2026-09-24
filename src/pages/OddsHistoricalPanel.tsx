@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -26,11 +26,17 @@ const MARKET_OPTIONS: { key: string; label: string }[] = [
   { key: "team_totals_h1", label: "1H team totals" },
   { key: "spreads_h2", label: "2H spread" },
   { key: "totals_h2", label: "2H total" },
-  { key: "totals_q1", label: "Q1 total" },
   { key: "spreads_q1", label: "Q1 spread" },
+  { key: "totals_q1", label: "Q1 total" },
+  { key: "spreads_q2", label: "Q2 spread" },
+  { key: "totals_q2", label: "Q2 total" },
+  { key: "spreads_q3", label: "Q3 spread" },
+  { key: "totals_q3", label: "Q3 total" },
+  { key: "spreads_q4", label: "Q4 spread" },
+  { key: "totals_q4", label: "Q4 total" },
 ];
 const MAX_MARKETS = 4;
-const MAX_GAMES = 60;
+const MAX_GAMES = 400;
 
 function fmtKick(iso: string | null): string {
   if (!iso) return "TBD";
@@ -46,31 +52,43 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [markets, setMarkets] = useState<Set<string>>(new Set(["spreads_h1", "totals_h1"]));
   const [minutesBefore, setMinutesBefore] = useState(5);
+  const [budget, setBudget] = useState(500);
+  const [sampleN, setSampleN] = useState(30);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [spent, setSpent] = useState(0);
   const [remaining, setRemaining] = useState<string | null>(null);
+  const spentRef = useRef(0);
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setPicked(new Set());
     (async () => {
-      const g = (await fetchGamesWithLines(season, week)).filter((x) => x.home_classification === "fbs" && x.away_classification === "fbs");
+      const g = (await fetchGamesWithLines(season, week === 0 ? undefined : week)).filter(
+        (x) => x.home_classification === "fbs" && x.away_classification === "fbs" && (week !== 0 || x.completed)
+      );
       g.sort((a, b) => new Date(a.start_date ?? 0).getTime() - new Date(b.start_date ?? 0).getTime());
       const ids = g.map((x) => x.id);
-      const [pl, tt] = ids.length
-        ? await Promise.all([
-            supabase.from("period_market_lines").select("game_id, period, market_type").in("game_id", ids),
-            supabase.from("team_total_lines").select("game_id").in("game_id", ids),
-          ])
-        : [{ data: [] }, { data: [] }];
+      const plRows: any[] = [];
+      const ttRows: any[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        const [pl, tt] = await Promise.all([
+          supabase.from("period_market_lines").select("game_id, period, market_type").in("game_id", chunk),
+          supabase.from("team_total_lines").select("game_id, provider").in("game_id", chunk),
+        ]);
+        plRows.push(...(pl.data ?? []));
+        ttRows.push(...(tt.data ?? []));
+      }
+      const pl = { data: plRows };
+      const tt = { data: ttRows };
       if (cancelled) return;
       setGames(g);
       setPulled(
         new Set([
           ...(pl.data ?? []).map((r: any) => `${r.game_id}|${r.period}|${r.market_type}`),
-          ...(tt.data ?? []).map((r: any) => `${r.game_id}|tt`),
+          ...(tt.data ?? []).filter((r: any) => String(r.provider ?? "").startsWith("hist")).map((r: any) => `${r.game_id}|tt`),
         ])
       );
     })().catch(() => !cancelled && setGames([]));
@@ -123,6 +141,7 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
     setRunning(true);
     setLog([]);
     setSpent(0);
+    spentRef.current = 0;
     const lines: string[] = [];
     const push = (l: string) => {
       lines.push(l);
@@ -141,6 +160,10 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
           push(`${label}: already saved, skipped`);
           continue;
         }
+        if (spentRef.current + 1 + 10 * need.length > budget) {
+          push(`Stopped: next game could pass the ${budget}-credit cap for this run (spent ${spentRef.current}).`);
+          break;
+        }
         const kick = new Date(g.start_date).getTime();
         // The Odds API rejects milliseconds: it wants YYYY-MM-DDTHH:MM:SSZ exactly.
         const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -151,7 +174,8 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
 
         const ev = await fetchHistoricalEvents(snap, from, to);
         setRemaining(ev.quota.remaining);
-        setSpent((s) => s + Number(ev.quota.last ?? 0));
+        spentRef.current += Number(ev.quota.last ?? 0);
+        setSpent(spentRef.current);
         const match = matchEventToGame(ev.events, ref);
         if (!match) {
           push(`${label}: no matching Odds API event at that time (${ev.events.length} events listed)`);
@@ -159,14 +183,15 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
         }
         const odds = await fetchHistoricalEventOdds(match.id, snap, need);
         setRemaining(odds.quota.remaining);
-        setSpent((s) => s + Number(odds.quota.last ?? 0));
+        spentRef.current += Number(odds.quota.last ?? 0);
+        setSpent(spentRef.current);
         const parsed = parseEventOdds(odds, ref, true);
         const books = new Set([...parsed.period.map((r) => r.provider), ...parsed.teamTotals.map((r) => r.provider)]);
         let savedNote = "nothing posted";
         if (parsed.period.length > 0 || parsed.teamTotals.length > 0) {
           const [a, b] = await Promise.all([
             parsed.period.length ? savePeriodMarketLines(parsed.period) : Promise.resolve({ saved: 0 }),
-            parsed.teamTotals.length ? saveHistoricalTeamTotals(parsed.teamTotals) : Promise.resolve({ saved: 0 }),
+            parsed.teamTotals.length ? saveHistoricalTeamTotals(parsed.teamTotals, true) : Promise.resolve({ saved: 0 }),
           ]);
           savedNote = `saved ${a.saved} period + ${b.saved} team-total rows`;
         }
@@ -201,6 +226,10 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
         <label>
           Week <input type="number" min={1} max={16} value={week} onChange={(e) => setWeek(parseInt(e.target.value, 10) || week)} style={{ width: 60 }} />
         </label>
+        <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>(week 0 = every completed game in the season)</span>
+        <label title="Stops the run before the next game would push spend past this number">
+          Max credits this run <input type="number" min={50} step={50} value={budget} onChange={(e) => setBudget(parseInt(e.target.value, 10) || 500)} style={{ width: 70 }} />
+        </label>
         <label title="Snapshot taken this many minutes before kickoff (a proxy for the closing line)">
           Snapshot <input type="number" min={1} max={120} value={minutesBefore} onChange={(e) => setMinutesBefore(parseInt(e.target.value, 10) || 5)} style={{ width: 55 }} /> min before kickoff
         </label>
@@ -216,6 +245,28 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
             </label>
           ))}
         </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem", flexWrap: "wrap", fontSize: "0.82rem" }}>
+        <button
+          className="menu-btn"
+          disabled={running}
+          onClick={() => {
+            // Evenly spaced sample of the games that still need at least one chosen market.
+            const open = games.filter((g) => !isDone(g.id));
+            const n = Math.min(sampleN, open.length);
+            const next = new Set<string>();
+            for (let i = 0; i < n; i++) next.add(open[Math.floor((i * open.length) / n)].id);
+            setPicked(next);
+          }}
+        >
+          Pick
+        </button>
+        <input type="number" min={1} max={MAX_GAMES} value={sampleN} onChange={(e) => setSampleN(parseInt(e.target.value, 10) || 1)} style={{ width: 60 }} />
+        <span style={{ color: "var(--chalk-dim)" }}>evenly spaced unsaved games</span>
+        <button className="menu-btn" disabled={running} onClick={() => setPicked(new Set())}>
+          Clear
+        </button>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", marginBottom: "0.8rem", flexWrap: "wrap" }}>

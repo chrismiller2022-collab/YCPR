@@ -16,6 +16,9 @@ export interface GameRow {
   home_conference: string | null;
   home_points: number | null;
   home_postgame_win_probability: number | null;
+  // Per-quarter regulation scores (+ OT entries) from CFBD; null until a sync stores them.
+  home_line_scores?: number[] | null;
+  away_line_scores?: number[] | null;
   away_team: string;
   away_classification: string | null;
   away_conference: string | null;
@@ -50,7 +53,7 @@ export interface GameWithLines extends GameRow {
 // multiplied by every one of those. Matches GameRow/BettingLineRow above
 // exactly, field for field.
 const GAME_COLUMNS =
-  "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, away_team, away_classification, away_conference, away_points, away_postgame_win_probability, tv_outlet, media_type";
+  "id, season, week, season_type, start_date, neutral_site, conference_game, completed, home_team, home_classification, home_conference, home_points, home_postgame_win_probability, home_line_scores, away_line_scores, away_team, away_classification, away_conference, away_points, away_postgame_win_probability, tv_outlet, media_type";
 const LINE_COLUMNS = "id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under";
 
 /**

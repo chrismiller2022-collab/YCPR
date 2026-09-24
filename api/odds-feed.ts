@@ -58,7 +58,7 @@ interface OddsApiOutcome {
   point?: number;
 }
 interface OddsApiMarket {
-  key: "spreads" | "h2h" | "totals" | "outrights";
+  key: "spreads" | "h2h" | "totals" | "outrights" | "team_totals";
   outcomes: OddsApiOutcome[];
 }
 interface OddsApiBookmaker {
@@ -245,35 +245,46 @@ async function handleTeamTotals(req: any, res: any) {
       if (!r.ok) return { eventId, error: `${r.status} ${await r.text().catch(() => "")}` };
       const body = await r.json();
       const bookmakers = (body.bookmakers ?? []) as OddsApiBookmaker[];
-      // Prefer whichever wanted book has it, else take whatever's there —
-      // team_totals isn't consistently on Bovada/BetOnline/Novig (this
-      // site's usual three) for NCAAF, confirmed live 2026-09-04: only
-      // FanDuel carried it in a spot check, so this can't insist on the
-      // same WANTED_BOOKMAKERS set the featured-markets fetch above uses.
-      const book =
-        bookmakers.find((b) => WANTED_BOOKMAKERS.has(b.key) && b.markets.some((m) => m.key === "team_totals")) ??
-        bookmakers.find((b) => b.markets.some((m) => m.key === "team_totals"));
-      const market = book?.markets.find((m) => m.key === "team_totals");
-      if (!market) return { eventId, homeTeam: body.home_team, awayTeam: body.away_team, teams: [] };
-
-      // Outcomes come as {name: "Over"|"Under", description: "<team name>",
-      // point, price} — one Over and one Under per team, same point.
-      const byTeam = new Map<string, { point: number; overPrice: number | null; underPrice: number | null }>();
-      for (const o of market.outcomes as any[]) {
-        const team = o.description as string;
-        const entry = byTeam.get(team) ?? { point: o.point, overPrice: null, underPrice: null };
-        entry.point = o.point;
-        if (o.name === "Over") entry.overPrice = o.price;
-        if (o.name === "Under") entry.underPrice = o.price;
-        byTeam.set(team, entry);
+      // Consensus across EVERY book that posts team_totals (median point;
+      // prices averaged over the books sitting on that median) instead of
+      // one arbitrary book — Chris only wants a median/average, and one
+      // book's number can be a stale outlier.
+      const perTeam = new Map<string, { point: number; over: number | null; under: number | null }[]>();
+      let bookCount = 0;
+      for (const b of bookmakers) {
+        const mk = b.markets.find((m) => m.key === "team_totals");
+        if (!mk) continue;
+        bookCount++;
+        const local = new Map<string, { point: number; over: number | null; under: number | null }>();
+        for (const oc of mk.outcomes as any[]) {
+          const team = oc.description as string;
+          const e = local.get(team) ?? { point: oc.point, over: null, under: null };
+          e.point = oc.point;
+          if (oc.name === "Over") e.over = oc.price;
+          if (oc.name === "Under") e.under = oc.price;
+          local.set(team, e);
+        }
+        for (const [team, e] of local) perTeam.set(team, [...(perTeam.get(team) ?? []), e]);
       }
+      if (perTeam.size === 0) return { eventId, homeTeam: body.home_team, awayTeam: body.away_team, teams: [] };
 
       return {
         eventId,
         homeTeam: body.home_team,
         awayTeam: body.away_team,
-        provider: book?.key ?? null,
-        teams: Array.from(byTeam.entries()).map(([team, v]) => ({ team, ...v })),
+        provider: `median:${bookCount}`,
+        bookCount,
+        teams: Array.from(perTeam.entries()).map(([team, entries]) => {
+          const pts = entries.map((e) => e.point).sort((a, b) => a - b);
+          const mid = pts.length % 2 ? pts[(pts.length - 1) / 2] : (pts[pts.length / 2 - 1] + pts[pts.length / 2]) / 2;
+          const at = entries.filter((e) => e.point === mid);
+          const pool = at.length ? at : entries;
+          const avg = (xs: (number | null)[]) => {
+            const v = xs.filter((x): x is number => x != null);
+            return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+          };
+          return { team, point: mid, overPrice: avg(pool.map((e) => e.over)), underPrice: avg(pool.map((e) => e.under)) };
+        }),
       };
     })
   );
@@ -369,6 +380,50 @@ async function handleHistoricalEventOdds(req: any, res: any) {
   });
 }
 
+
+// Live (current-week) period lines: /events/{id}/odds with period markets.
+// Cheap compared to the historical endpoint (1 credit per market per event),
+// still real spend, so password-gated and capped.
+async function handlePeriodLines(req: any, res: any) {
+  const eventIds = String(req.query?.eventIds ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 90);
+  const markets = String(req.query?.markets ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  if (eventIds.length === 0 || markets.length === 0) {
+    res.status(400).json({ error: "eventIds and markets are required" });
+    return;
+  }
+  let last: string | null = null;
+  let remaining: string | null = null;
+  const results = await Promise.all(
+    eventIds.map(async (eventId) => {
+      const qs = new URLSearchParams({ apiKey: ODDS_API_KEY!, regions: "us", markets: markets.join(","), oddsFormat: "american", dateFormat: "iso" });
+      const r = await fetch(`${ODDS_API_BASE}/sports/americanfootball_ncaaf/events/${eventId}/odds?${qs.toString()}`);
+      if (!r.ok) return { eventId, error: `${r.status} ${await r.text().catch(() => "")}` };
+      last = r.headers.get("x-requests-last") ?? last;
+      remaining = r.headers.get("x-requests-remaining") ?? remaining;
+      const body = await r.json();
+      return {
+        eventId,
+        homeTeam: body.home_team,
+        awayTeam: body.away_team,
+        bookmakers: (body.bookmakers ?? []).map((b: any) => ({
+          key: b.key,
+          lastUpdate: b.last_update,
+          markets: (b.markets ?? []).map((m: any) => ({ key: m.key, outcomes: m.outcomes })),
+        })),
+      };
+    })
+  );
+  res.status(200).json({ results, quota: { remaining, last } });
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -383,6 +438,15 @@ export default async function handler(req: any, res: any) {
 
     if (!ODDS_API_KEY) {
       res.status(500).json({ error: "ODDS_API_KEY is not configured on the server" });
+      return;
+    }
+
+    if (req.query?.mode === "period-lines") {
+      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+        res.status(401).json({ error: "Incorrect password" });
+        return;
+      }
+      await handlePeriodLines(req, res);
       return;
     }
 
