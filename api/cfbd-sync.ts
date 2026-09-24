@@ -251,6 +251,12 @@ export default async function handler(req: any, res: any) {
         home_conference: g.homeConference ?? null,
         home_points: g.homePoints ?? null,
         home_postgame_win_probability: g.homePostgameWinProbability ?? null,
+        // Per-quarter (and OT) scores — CFBD returns these on the same
+        // /games payload already being synced, no extra request. Feeds
+        // the period (1H/2H/quarter) projection work; null for games
+        // CFBD hasn't backfilled line scores for.
+        home_line_scores: g.homeLineScores ?? null,
+        away_line_scores: g.awayLineScores ?? null,
         away_team: g.awayTeam,
         away_classification: g.awayClassification ?? null,
         away_conference: g.awayConference ?? null,
