@@ -142,9 +142,11 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
           continue;
         }
         const kick = new Date(g.start_date).getTime();
-        const snap = new Date(kick - minutesBefore * 60000).toISOString();
-        const from = new Date(kick - 30 * 60000).toISOString();
-        const to = new Date(kick + 30 * 60000).toISOString();
+        // The Odds API rejects milliseconds: it wants YYYY-MM-DDTHH:MM:SSZ exactly.
+        const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+        const snap = iso(kick - minutesBefore * 60000);
+        const from = iso(kick - 30 * 60000);
+        const to = iso(kick + 30 * 60000);
         const ref: GameRef = { id: g.id, season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team };
 
         const ev = await fetchHistoricalEvents(snap, from, to);
