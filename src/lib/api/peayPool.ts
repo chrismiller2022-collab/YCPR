@@ -32,6 +32,9 @@ export interface PeayRow {
   // see how close a non-bet game was. wfbTeam (not this) is what marks
   // whether it's an actual bet.
   wfbAmountOff: number | null;
+  // The WFB value itself (computeRow's absRelativeOff = |amount off| / |Vegas line|) — what
+  // Admin Matchups' "Relative Off" column shows and what WFB's thresholds test.
+  wfbRelativeOff: number | null;
   // Which side my model likes against the Peay line specifically (not
   // Vegas) — informational only, doesn't drive picked_side/Pick
   // buttons, which stay fully manual per Chris's request.
@@ -117,6 +120,7 @@ export async function fetchPeayWeek(season: number, week: number, liveByTeam: Re
       peayVsVegas: peayLine != null && computed.vegasAwaySpread != null ? peayLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
       wfbAmountOff: computed.absAmountOff,
+      wfbRelativeOff: computed.absRelativeOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, peayLine),
     };

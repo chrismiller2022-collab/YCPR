@@ -8,6 +8,7 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
 
 const POOL_URL =
   "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
@@ -44,7 +45,7 @@ function fmt(v: number | null, decimals = 1) {
 }
 
 // No sign prefix — used for values that are already a magnitude
-// (absolute-value diffs, WFB's amount off), where a "+" in front of
+// (absolute-value diffs, WFB's relative off), where a "+" in front of
 // every number would just be visual noise.
 function fmtAbs(v: number | null, decimals = 2) {
   if (v == null) return "–";
@@ -208,7 +209,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       case "peayVsVegas":
         return peayVsVegasLive(r);
       case "wfb":
-        return r.wfbTeam ? 1 : 0;
+        return (r.wfbTeam ? 1000 : 0) + (r.wfbRelativeOff ?? 0);
       default:
         return null;
     }
@@ -477,6 +478,17 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           }
                           style={{ width: 55, textAlign: "right" }}
                         />
+                        {(() => {
+                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.peay_line);
+                          return crossed.length > 0 ? (
+                            <span
+                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.peay_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
+                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
+                            >
+                              🔑{keyCrossLabel(crossed)}
+                            </span>
+                          ) : null;
+                        })()}
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(peayVsMineLive(r))}</td>
@@ -511,7 +523,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                             <span style={{ color: "var(--chalk-dim)" }}>–</span>
                           )}
                           <span style={{ fontSize: "0.72rem", color: r.wfbTeam != null ? undefined : "var(--chalk-dim)", fontWeight: r.wfbTeam != null ? 700 : 400 }}>
-                            {fmtAbs(r.wfbAmountOff)}
+                            {fmtAbs(r.wfbRelativeOff)}
                           </span>
                         </div>
                       </td>

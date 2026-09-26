@@ -40,6 +40,8 @@ export interface CbsSplashRow {
   // Magnitude behind that WFB signal (computeRow's absAmountOff) — see
   // peayPool.ts's fetchPeayWeek for the reasoning.
   wfbAmountOff: number | null;
+  // The WFB value (computeRow's absRelativeOff) — see peayPool.ts.
+  wfbRelativeOff: number | null;
   // Which side my model likes against the Splash line specifically (not
   // Vegas) — informational only, doesn't drive either contest's pick
   // buttons, which stay fully manual per Chris's request.
@@ -135,6 +137,7 @@ export async function fetchCbsSplashWeek(season: number, week: number, liveByTea
       splashVsVegas: splashLine != null && computed.vegasAwaySpread != null ? splashLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
       wfbAmountOff: computed.absAmountOff,
+      wfbRelativeOff: computed.absRelativeOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, splashLine),
     };

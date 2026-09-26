@@ -5,6 +5,7 @@ import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchWestgateWeek, fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints, WESTGATE_PICK_LIMIT, type WestgateRow } from "../lib/api/westgatePool";
@@ -588,7 +589,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
       case "westgateVsVegas":
         return westgateVsVegasLive(r);
       case "wfb":
-        return r.wfbTeam ? 1 : 0;
+        return (r.wfbTeam ? 1000 : 0) + (r.wfbRelativeOff ?? 0);
       default:
         return null;
     }
@@ -822,6 +823,17 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                           }
                           style={{ width: 55, textAlign: "right" }}
                         />
+                        {(() => {
+                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.westgate_line);
+                          return crossed.length > 0 ? (
+                            <span
+                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.westgate_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
+                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
+                            >
+                              🔑{keyCrossLabel(crossed)}
+                            </span>
+                          ) : null;
+                        })()}
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(westgateVsMineLive(r))}</td>
@@ -856,7 +868,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                             <span style={{ color: "var(--chalk-dim)" }}>–</span>
                           )}
                           <span style={{ fontSize: "0.72rem", color: r.wfbTeam != null ? undefined : "var(--chalk-dim)", fontWeight: r.wfbTeam != null ? 700 : 400 }}>
-                            {fmtAbs(r.wfbAmountOff)}
+                            {fmtAbs(r.wfbRelativeOff)}
                           </span>
                         </div>
                       </td>

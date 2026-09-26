@@ -29,6 +29,7 @@ export interface WestgateRow {
   westgateVsVegas: number | null;
   wfbTeam: "away" | "home" | null;
   wfbAmountOff: number | null;
+  wfbRelativeOff: number | null;
   projCoverTeam: "away" | "home" | null;
   actualCoverTeam: "away" | "home" | "push" | null;
 }
@@ -103,6 +104,7 @@ export async function fetchWestgateWeek(season: number, week: number, liveByTeam
       westgateVsVegas: westgateLine != null && computed.vegasAwaySpread != null ? westgateLine - computed.vegasAwaySpread : null,
       wfbTeam: computed.weightedFilteredBetTeam,
       wfbAmountOff: computed.absAmountOff,
+      wfbRelativeOff: computed.absRelativeOff,
       projCoverTeam,
       actualCoverTeam: actualCoverSide(gwl, westgateLine),
     };
@@ -140,6 +142,7 @@ export async function fetchWestgateSeasonRows(season: number, liveByTeam: Record
         westgateVsVegas: null,
         wfbTeam: null,
         wfbAmountOff: null,
+        wfbRelativeOff: null,
         projCoverTeam: null,
         actualCoverTeam: actualCoverSide(gwl, w.westgate_line ?? null),
       };
