@@ -58,6 +58,7 @@ export interface RecordSplit {
   su: { w: number; l: number };
   ats: { w: number; l: number; p: number };
   avgAtsMargin: number | null;
+  totalAtsMargin: number | null; // sum of every game's ATS cover margin (the running "how much have they beaten the number by" total)
   atsWinPct: number | null; // ats.w / (ats.w + ats.l), null if nothing decided yet
 }
 
@@ -95,6 +96,7 @@ export interface TeamHandicap {
   team: string;
   log: TeamGameLogRow[];
   rest: RestInfo;
+  overall: RecordSplit; // full season to date (every completed game before this week), no role filter
   homeAway: RecordSplit; // this team's record in the role (home/away) it has in the current game
   favoriteDog: RecordSplit | null; // this team's record in the role (favorite/dog) it has in the current game, null if the current game has no favorite/dog side (pick'em or no line/projection at all)
   homeAwayFavDog: RecordSplit | null; // the INTERSECTION of the two above (e.g. "Home Dog" or "Away Favorite") — null under the same condition favoriteDog is
@@ -270,6 +272,7 @@ function computeRecordSplit(log: TeamGameLogRow[], week: number, pred: (r: TeamG
     su: { w: suW, l: suL },
     ats: { w: atsW, l: atsL, p: atsP },
     avgAtsMargin: marginCount > 0 ? marginSum / marginCount : null,
+    totalAtsMargin: marginCount > 0 ? marginSum : null,
     atsWinPct: atsDecided > 0 ? atsW / atsDecided : null,
   };
 }
@@ -364,6 +367,7 @@ function buildTeamHandicap(
     team,
     log,
     rest: computeRestInfo(log, week),
+    overall: computeRecordSplit(log, week, () => true),
     homeAway: computeRecordSplit(log, week, (r) => r.isHome === isHomeInCurrentGame),
     favoriteDog:
       isFavoriteInCurrentGame == null
@@ -457,7 +461,8 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         team: "",
         log: [],
         rest: { byeLastWeek: false, daysOfRest: null, nextWeekIsBye: false },
-        homeAway: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null, atsWinPct: null },
+        overall: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null, totalAtsMargin: null, atsWinPct: null },
+        homeAway: { su: { w: 0, l: 0 }, ats: { w: 0, l: 0, p: 0 }, avgAtsMargin: null, totalAtsMargin: null, atsWinPct: null },
         favoriteDog: null,
         homeAwayFavDog: null,
         spots: { lookahead: false, sandwich: false, letdown: false, letdownBadBeat: false, nextOpponent: null, prevOpponent: null },

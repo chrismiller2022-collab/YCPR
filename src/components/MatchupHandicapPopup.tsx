@@ -182,6 +182,23 @@ function TeamColumn({
         <SpotBadges hc={hc} />
       </div>
 
+      <div style={{ borderTop: "1px solid var(--hash)", borderBottom: "1px solid var(--hash)", padding: "0.3rem 0", margin: "0.2rem 0 0.4rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Season record (SU)</span>
+          <b>{hc.overall.su.w + hc.overall.su.l === 0 ? "–" : fmtRecord(hc.overall.su)}</b>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Season ATS</span>
+          <b>{hc.overall.ats.w + hc.overall.ats.l + hc.overall.ats.p === 0 ? "–" : fmtAts(hc.overall.ats)}</b>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Total ATS margin</span>
+          <b style={{ color: hc.overall.totalAtsMargin == null ? undefined : hc.overall.totalAtsMargin > 0 ? "#8fd39a" : hc.overall.totalAtsMargin < 0 ? "#c45c52" : undefined }}>
+            {fmtMargin(hc.overall.totalAtsMargin)}
+          </b>
+        </div>
+      </div>
+
       {hc.lastGame && (
         <div style={{ fontSize: "0.78rem", padding: "0.15rem 0" }}>
           <span style={{ color: "var(--chalk-dim)" }}>Last week: </span>
@@ -261,6 +278,45 @@ function QuadrantNote({ quadrant }: { quadrant: QuadrantInfo | null }) {
       }}
     >
       {meta.label}: {quadrant.betTeam} ({quadrant.betRole}) + {quadrant.totalCall}
+    </div>
+  );
+}
+
+function ProjectedSpreadBanner({ awayTeam, homeTeam, inputs }: { awayTeam: string; homeTeam: string; inputs: NonNullable<ReturnType<typeof useMatchupHandicap>["altInputs"]> }) {
+  const line = (homeSpread: number | null): string => {
+    if (homeSpread == null) return "–";
+    if (homeSpread === 0) return "Pick'em";
+    const fav = homeSpread < 0 ? homeTeam : awayTeam;
+    return `${fav} -${Math.abs(homeSpread).toFixed(1)}`;
+  };
+  const edge = inputs.myHomeSpread != null && inputs.vegasHomeSpread != null ? inputs.myHomeSpread - inputs.vegasHomeSpread : null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "1.25rem",
+        flexWrap: "wrap",
+        padding: "0.6rem 0.8rem",
+        marginBottom: "1rem",
+        border: "1px solid var(--hash)",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.04)",
+      }}
+    >
+      <div>
+        <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--chalk-dim)" }}>My projected spread</div>
+        <div style={{ fontSize: "1.45rem", fontWeight: 800, color: "var(--gold, #d9a441)" }}>{line(inputs.myHomeSpread)}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--chalk-dim)" }}>Vegas</div>
+        <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>{line(inputs.vegasHomeSpread)}</div>
+      </div>
+      {edge != null && (
+        <div style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+          {Math.abs(edge) < 0.05 ? "Same as Vegas" : `${Math.abs(edge).toFixed(1)} pts ${edge < 0 ? `more on ${homeTeam}` : `more on ${awayTeam}`} than Vegas`}
+        </div>
+      )}
     </div>
   );
 }
@@ -507,6 +563,7 @@ export default function MatchupHandicapPopup({
           <p style={{ color: "crimson" }}>{hc.error}</p>
         ) : (
           <>
+            {hc.altInputs && <ProjectedSpreadBanner awayTeam={awayTeam} homeTeam={homeTeam} inputs={hc.altInputs} />}
             <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
               <TeamColumn
                 hc={hc.away}
