@@ -1,4 +1,6 @@
 import { supabase } from "../supabaseClient";
+import { fetchAllRows } from "./fetchAll";
+import type { WeekSaveInfo } from "./ratingSystems";
 
 export async function fetchResumeWeights(season: number): Promise<Record<string, number> | null> {
   const { data, error } = await supabase
@@ -46,15 +48,20 @@ export async function fetchResumeRatingsForWeek(season: number, week: number): P
   return out;
 }
 
-export async function fetchResumeRatingsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
-  const { data, error } = await supabase.from("team_resume_ratings").select("week, team, score").eq("season", season);
-  if (error) throw error;
-  const weekSet = new Set<number>();
+export async function fetchResumeRatingsByWeeks(
+  season: number
+): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {
+  // Paginated — 266 teams x several weeks passes PostgREST's 1000-row cap.
+  const data = await fetchAllRows<{ week: number; team: string; score: number | null; updated_at: string }>((from, to) =>
+    supabase.from("team_resume_ratings").select("week, team, score, updated_at").eq("season", season).order("id").range(from, to)
+  );
   const byWeek: Record<number, Record<string, number | null>> = {};
-  for (const r of (data ?? []) as { week: number; team: string; score: number | null }[]) {
-    weekSet.add(r.week);
-    if (!byWeek[r.week]) byWeek[r.week] = {};
-    byWeek[r.week][r.team] = r.score;
+  const weekInfo: Record<number, WeekSaveInfo> = {};
+  for (const r of data) {
+    (byWeek[r.week] ??= {})[r.team] = r.score;
+    const info = (weekInfo[r.week] ??= { teams: 0, updatedAt: "" });
+    info.teams += 1;
+    if (r.updated_at > info.updatedAt) info.updatedAt = r.updated_at;
   }
-  return { weeks: Array.from(weekSet).sort((a, b) => a - b), byWeek };
+  return { weeks: Object.keys(byWeek).map(Number).sort((a, b) => a - b), byWeek, weekInfo };
 }

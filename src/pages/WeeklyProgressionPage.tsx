@@ -40,7 +40,7 @@ const WEEKLY_PROGRESSION_META = {
   sor: {
     eyebrow: "Strength of Schedule",
     title: "WEEKLY PROGRESSION",
-    metricLabel: "SOR",
+    metricLabel: "SOS Blend",
     filterTeams: (t) => SOS_BY_TEAM[t.team] != null,
     baseline: (t) => SOS_BY_TEAM[t.team] ?? null,
     fetchByWeeks: fetchTeamSosByWeeks,

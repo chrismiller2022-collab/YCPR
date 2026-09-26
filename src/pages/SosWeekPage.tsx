@@ -16,7 +16,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
   const [query, setQuery] = useState("");
   const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
-  const [sortKey, setSortKey] = useState("sosSrsTotal");
+  const [sortKey, setSortKey] = useState("blend");
   const [sortDir, setSortDir] = useState("asc");
   const [sosByTeam, setSosByTeam] = useState<Record<string, TeamSosRow>>({});
   const [loading, setLoading] = useState(true);
@@ -54,6 +54,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
         const s = sosByTeam[t.team];
         return {
           ...t,
+          blend: s?.blend_score ?? null,
           sosSrsTotal: s?.sos_srs_total ?? null,
           sosSrsConf: s?.sos_srs_conference ?? null,
           avgOppTotal: s?.avg_opp_pr_total ?? null,
@@ -132,6 +133,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
                 <tr>
                   <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                   <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
+                  <SortHeader label="SOS Blend" sortKey="blend" active={sortKey === "blend"} dir={sortDir} onClick={handleSort} align="right" />
                   <SortHeader label="SOS (SRS)" sortKey="sosSrsTotal" active={sortKey === "sosSrsTotal"} dir={sortDir} onClick={handleSort} align="right" />
                   <SortHeader
                     label="In-Conf SOS (SRS)"
@@ -166,6 +168,7 @@ export default function SosWeekPage({ weekNum, subLabel, defaultDivision, onNavi
                     <td className="conf-cell">
                       <ConfLink conf={t.conf} onNavigateConference={onNavigateConference} />
                     </td>
+                    <td className="wintotals-total-cell">{t.blend != null ? `${t.blend > 0 ? "+" : ""}${t.blend.toFixed(2)}` : "–"}</td>
                     <td className="wintotals-total-cell">{t.sosSrsTotal != null ? t.sosSrsTotal.toFixed(2) : "–"}</td>
                     <td className="wintotals-total-cell">{t.sosSrsConf != null ? t.sosSrsConf.toFixed(2) : "–"}</td>
                     <td className="wintotals-total-cell">{t.avgOppTotal != null ? t.avgOppTotal.toFixed(2) : "–"}</td>

@@ -96,3 +96,30 @@ export function computeSosBlendScore(normalizedFactors: Partial<Record<keyof Raw
   if (weightTotal === 0) return null;
   return weightedSum / weightTotal;
 }
+
+/**
+ * The SOS Blend for a set of teams, normalized WITHIN each division (FBS vs
+ * FCS pools are scaled separately, same as Resume Rating) — the one
+ * calculation both the admin blend table and "Save to Site" use, so what's
+ * shown is exactly what gets saved regardless of the table's filters.
+ */
+export function computeSosBlendByTeam(
+  teams: { team: string; div: string; factors: RawSosFactors }[],
+  weights: SosWeights
+): Map<string, { score: number | null; norm: Partial<Record<keyof RawSosFactors, number | null>> }> {
+  const out = new Map<string, { score: number | null; norm: Partial<Record<keyof RawSosFactors, number | null>> }>();
+  const divisions = Array.from(new Set(teams.map((t) => t.div)));
+  for (const div of divisions) {
+    const pool = teams.filter((t) => t.div === div);
+    const pools: Partial<Record<keyof RawSosFactors, (number | null)[]>> = {};
+    for (const key of SOS_FACTOR_KEYS) pools[key] = pool.map((t) => t.factors[key]);
+    for (const t of pool) {
+      const norm: Partial<Record<keyof RawSosFactors, number | null>> = {};
+      for (const key of SOS_FACTOR_KEYS) {
+        norm[key] = normalizeSosFactor(t.factors[key], pools[key]!, SOS_FACTOR_HIGHER_IS_EASIER[key]);
+      }
+      out.set(t.team, { score: computeSosBlendScore(norm, weights), norm });
+    }
+  }
+  return out;
+}

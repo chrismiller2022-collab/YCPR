@@ -6,7 +6,8 @@ import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
 import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchResumeWeights, saveResumeRatingsToSite } from "../lib/api/resumeWeights";
+import { fetchResumeWeights, saveResumeRatingsToSite, fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
+import SavedWeekProgression from "../components/SavedWeekProgression";
 import { fetchRatingPulls } from "../lib/api/ratingSystems";
 import {
   computeRawResumeMetrics,
@@ -168,6 +169,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   useDefaultToAdminWeek(setSaveWeek);
   const [savingToSite, setSavingToSite] = useState(false);
   const [saveToSiteMsg, setSaveToSiteMsg] = useState<string | null>(null);
+  const [progressionRefresh, setProgressionRefresh] = useState(0);
 
   async function handleSaveToSite() {
     setSavingToSite(true);
@@ -180,7 +182,8 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         losses: r.raw.losses,
       }));
       await saveResumeRatingsToSite(season, saveWeek, saveRows);
-      setSaveToSiteMsg(`Saved ${saveRows.length} teams for week ${saveWeek}.`);
+      setSaveToSiteMsg(`Saved ${saveRows.length} teams for week ${saveWeek}. See the progression below.`);
+      setProgressionRefresh((n) => n + 1);
     } catch (err: any) {
       setSaveToSiteMsg(`Error: ${err.message ?? "Save failed"}`);
     } finally {
@@ -338,6 +341,15 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
           </table>
         </div>
       )}
+
+      <SavedWeekProgression
+        title="Resume Rating Week Progressions"
+        description="Every saved week's Resume Rating score per team — what Save to Site wrote and what the public Resume progression reads."
+        fetchByWeeks={fetchResumeRatingsByWeeks}
+        refreshKey={progressionRefresh}
+        digits={2}
+        higherIsBetter={true}
+      />
 
       <div className="footer-note">
         Best Win/Best Loss/Worst Loss use PROJECTED results (not actual) for now — opponent's

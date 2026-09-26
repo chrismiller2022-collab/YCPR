@@ -100,6 +100,11 @@ export interface TeamSosRow {
   worst_loss_pr_total_opp: string | null;
   worst_loss_pr_conference: number | null;
   worst_loss_pr_conference_opp: string | null;
+  // Added with the SOS Blend save — null on weeks saved before then.
+  blend_score: number | null;
+  hypo_wins: number | null;
+  top7_avg_pr: number | null;
+  blend_weights: Record<string, number> | null;
 }
 
 /** Public read of the SOS admin page's last saved snapshot for a season — team -> row. */
@@ -128,18 +133,47 @@ export async function fetchTeamSosForWeek(season: number, week: number): Promise
   return out;
 }
 
-export async function fetchTeamSosByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
+/**
+ * Weekly SOS values for the progression views. Each week uses the saved
+ * normalized SOS Blend when that week has one; weeks saved before the blend
+ * existed fall back to SOS (SRS) so they don't vanish (different scale —
+ * `weekInfo[w].legacy` marks them). `blendOnly` drops those legacy weeks'
+ * values (admin view), keeping them in `weekInfo` so the gap is visible.
+ */
+export async function fetchTeamSosByWeeks(
+  season: number,
+  opts: { blendOnly?: boolean } = {}
+): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {
   const rows = await fetchAllRows<TeamSosRow>((from, to) =>
     supabase.from("team_sos").select("*").eq("season", season).order("id").range(from, to)
   );
-  const weekSet = new Set<number>();
+  const rowsByWeek: Record<number, TeamSosRow[]> = {};
+  for (const r of rows) (rowsByWeek[r.week] ??= []).push(r);
   const byWeek: Record<number, Record<string, number | null>> = {};
-  for (const r of rows) {
-    weekSet.add(r.week);
-    if (!byWeek[r.week]) byWeek[r.week] = {};
-    byWeek[r.week][r.team] = r.sos_srs_total ?? null;
+  const weekInfo: Record<number, WeekSaveInfo> = {};
+  for (const [wk, list] of Object.entries(rowsByWeek)) {
+    const w = Number(wk);
+    const hasBlend = list.some((r) => r.blend_score != null);
+    byWeek[w] = {};
+    for (const r of list) {
+      const v = hasBlend ? r.blend_score : opts.blendOnly ? null : r.sos_srs_total;
+      byWeek[w][r.team] = v ?? null;
+    }
+    weekInfo[w] = {
+      teams: list.length,
+      updatedAt: list.reduce((m, r) => (r.updated_at > m ? r.updated_at : m), ""),
+      legacy: !hasBlend,
+    };
   }
-  return { weeks: Array.from(weekSet).sort((a, b) => a - b), byWeek };
+  return { weeks: Object.keys(rowsByWeek).map(Number).sort((a, b) => a - b), byWeek, weekInfo };
+}
+
+/** What a saved week's snapshot contains — for the admin progression views' "did my save land" chips. */
+export interface WeekSaveInfo {
+  teams: number;
+  updatedAt: string;
+  // SOS only: this week was saved before the blend existed (no blend_score).
+  legacy?: boolean;
 }
 
 export async function fetchPublishedSheetCsv(): Promise<string> {

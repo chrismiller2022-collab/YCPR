@@ -745,6 +745,12 @@ export default async function handler(req: any, res: any) {
       worst_loss_pr_total_opp: r.worstLossTotal?.opp ?? null,
       worst_loss_pr_conference: r.worstLossConf?.rating ?? null,
       worst_loss_pr_conference_opp: r.worstLossConf?.opp ?? null,
+      // Normalized SOS Blend (per-division -10..+10, weighted) + the raw
+      // factors that feed it that used to be dropped, + the weights used.
+      blend_score: r.blendScore ?? null,
+      hypo_wins: r.hypoWins ?? null,
+      top7_avg_pr: r.top7 ?? null,
+      blend_weights: r.blendWeights ?? null,
     }));
 
     const { error, count } = await supabaseAdmin

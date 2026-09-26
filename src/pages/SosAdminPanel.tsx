@@ -6,20 +6,19 @@ import { CONFERENCES, TEAMS, TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, spreadToWinPct } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchRatingPulls, fetchRatingWeights, saveSosToSite, type RatingPullRow } from "../lib/api/ratingSystems";
+import { fetchRatingPulls, fetchRatingWeights, saveSosToSite, fetchTeamSosByWeeks, type RatingPullRow } from "../lib/api/ratingSystems";
 import { computeConglomeratedTable } from "../lib/ratingConglomerate";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { getYcByTeam, conferenceOnly, computeAvgOppYc, computeAveragedSrsSos, type SrsSosRow } from "../lib/sos";
 import {
   SOS_FACTOR_KEYS,
   SOS_FACTOR_LABELS,
-  SOS_FACTOR_HIGHER_IS_EASIER,
-  normalizeSosFactor,
-  computeSosBlendScore,
+  computeSosBlendByTeam,
   DEFAULT_SOS_WEIGHTS,
   type RawSosFactors,
   type SosWeights,
 } from "../lib/sosBlend";
+import SavedWeekProgression from "../components/SavedWeekProgression";
 
 function fmtNum(v: number | null | undefined, digits = 2) {
   if (v == null) return "–";
@@ -165,6 +164,7 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
   const [runsUsedForSrs, setRunsUsedForSrs] = useState<number | null>(null);
   const [computingSrs, setComputingSrs] = useState(false);
 
+  const [progressionRefresh, setProgressionRefresh] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -174,7 +174,7 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc"); // negative-is-better -> ascending shows toughest first
 
   const [sosWeights, setSosWeights] = useState<SosWeights>({ ...DEFAULT_SOS_WEIGHTS });
-  const [sosValueMode, setSosValueMode] = useState<"raw" | "normalized">("raw");
+  const [sosValueMode, setSosValueMode] = useState<"raw" | "normalized">("normalized");
   const [blendSortKey, setBlendSortKey] = useState<string>("score");
   const [blendSortDir, setBlendSortDir] = useState<"asc" | "desc">("asc"); // negative-is-harder -> ascending shows hardest first
 
@@ -243,8 +243,19 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
     setSaving(true);
     setSaveMsg(null);
     try {
-      await saveSosToSite(season, saveWeek, rows);
-      setSaveMsg(`Saved ${rows.length} teams to the site for week ${saveWeek}.`);
+      if (!srsSos && !window.confirm("SOS (SRS) hasn't been computed, so the blend would be saved WITHOUT that factor. Save anyway?")) {
+        setSaving(false);
+        return;
+      }
+      const saveRows = rows.map((r) => ({
+        ...r,
+        blendScore: blendByTeam.get(r.team)?.score ?? null,
+        blendWeights: sosWeights,
+      }));
+      await saveSosToSite(season, saveWeek, saveRows);
+      const withBlend = saveRows.filter((r) => r.blendScore != null).length;
+      setSaveMsg(`Saved ${saveRows.length} teams for week ${saveWeek} (${withBlend} with a blend score). See the progression below.`);
+      setProgressionRefresh((n) => n + 1);
     } catch (err: any) {
       setSaveMsg(err.message ?? "Save failed");
     } finally {
@@ -316,44 +327,30 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
   }, [filtered, sortKey, sortDir]);
 
   // SOS Blend — same normalize-then-weight pattern as Resume Rating,
-  // applied to this page's own four schedule-strength numbers instead
-  // of resume-quality metrics. Normalized against whichever teams are
-  // currently shown (`filtered`), so switching the division/conference
-  // filter re-scales -10..+10 to that pool, same as Resume's own
-  // per-division normalization.
-  const blendRawByTeam = useMemo(() => {
-    const map = new Map<string, RawSosFactors>();
-    for (const r of filtered) {
-      map.set(r.team, { avgOppPR: r.avgOppYcTotal, sosSrs: r.sosSrsTotal, hypoWins: r.hypoWins, top7: r.top7 });
-    }
-    return map;
-  }, [filtered]);
-
-  const blendNormalizedByTeam = useMemo(() => {
-    const pools: Partial<Record<keyof RawSosFactors, (number | null)[]>> = {};
-    for (const key of SOS_FACTOR_KEYS) {
-      pools[key] = filtered.map((r) => blendRawByTeam.get(r.team)?.[key] ?? null);
-    }
-    const result = new Map<string, Partial<Record<keyof RawSosFactors, number | null>>>();
-    for (const r of filtered) {
-      const raw = blendRawByTeam.get(r.team);
-      const norm: Partial<Record<keyof RawSosFactors, number | null>> = {};
-      for (const key of SOS_FACTOR_KEYS) {
-        norm[key] = normalizeSosFactor(raw?.[key] ?? null, pools[key]!, SOS_FACTOR_HIGHER_IS_EASIER[key]);
-      }
-      result.set(r.team, norm);
-    }
-    return result;
-  }, [filtered, blendRawByTeam]);
+  // applied to this page's own four schedule-strength numbers. Normalized
+  // within each division (FBS / FCS pools separately) over ALL teams, NOT
+  // the filtered view — so the number shown here is exactly the number
+  // "Save to Site" stores; the filters only hide rows.
+  const blendByTeam = useMemo(
+    () =>
+      computeSosBlendByTeam(
+        rows.map((r) => ({
+          team: r.team,
+          div: r.div,
+          factors: { avgOppPR: r.avgOppYcTotal, sosSrs: r.sosSrsTotal, hypoWins: r.hypoWins, top7: r.top7 } as RawSosFactors,
+        })),
+        sosWeights
+      ),
+    [rows, sosWeights]
+  );
 
   const blendRows = useMemo(() => {
     return filtered.map((r) => {
-      const raw = blendRawByTeam.get(r.team)!;
-      const norm = blendNormalizedByTeam.get(r.team) ?? {};
-      const score = computeSosBlendScore(norm, sosWeights);
-      return { team: r.team, conf: r.conf, raw, norm, score };
+      const raw: RawSosFactors = { avgOppPR: r.avgOppYcTotal, sosSrs: r.sosSrsTotal, hypoWins: r.hypoWins, top7: r.top7 };
+      const b = blendByTeam.get(r.team);
+      return { team: r.team, conf: r.conf, raw, norm: b?.norm ?? {}, score: b?.score ?? null };
     });
-  }, [filtered, blendRawByTeam, blendNormalizedByTeam, sosWeights]);
+  }, [filtered, blendByTeam]);
 
   const sortedBlendRows = useMemo(() => {
     return [...blendRows].sort((a, b) => {
@@ -516,13 +513,12 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
 
           <h2 style={{ marginTop: "2rem" }}>SOS Blend</h2>
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-            Each factor is normalized -10 (hardest of the {filtered.length} teams currently shown by the filters
-            above) to +10 (easiest), min-max — switching the Division/Conference filter re-normalizes against that
-            narrower pool. The blend score is a weighted average of whichever normalized factors have a non-zero
+            Each factor is normalized -10 (hardest in its division) to +10 (easiest), min-max, FBS and FCS scaled
+            separately — the filters above only hide rows, they don't change the scale, so these numbers are exactly
+            what "Save to Site" stores as the week's SOS Blend (and what the public SOS progression shows). The blend score is a weighted average of whichever normalized factors have a non-zero
             weight — it stays on the same -10..+10 scale as the inputs, so a team weighting only Avg Opp PR would
             score identically to that factor's own normalized value. Set a weight to 0 to drop a factor entirely.
-            Weights here are local to this browser session — they don't persist to the site the way Resume's weights
-            do (yet).
+            Weights are local to this browser session; the weights used are stored alongside each saved week.
           </p>
 
           <div
@@ -612,6 +608,14 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
               </tbody>
             </table>
           </div>
+
+          <SavedWeekProgression
+            title="SOS Week Progressions"
+            description="Every saved week's SOS Blend (-10 hardest .. +10 easiest) per team — this is what Save to Site wrote and what the public SOS progression reads. Weeks saved before the blend existed show no values here."
+            fetchByWeeks={(s) => fetchTeamSosByWeeks(s, { blendOnly: true })}
+            refreshKey={progressionRefresh}
+            higherIsBetter={true}
+          />
         </>
       )}
     </div>
