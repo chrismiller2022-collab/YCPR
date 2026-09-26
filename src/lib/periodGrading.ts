@@ -106,19 +106,34 @@ export interface GradeSummaryRow {
   l: number;
   p: number;
   pending: number;
+  /** Same tally restricted to bets at least `minOff` points off the line. */
+  fw: number;
+  fl: number;
+  fp: number;
+  fpending: number;
 }
 
 export function summarizeGrades(bets: GradedBet[], minOff: number): GradeSummaryRow[] {
   const rows: GradeSummaryRow[] = [];
   for (const period of GRADE_PERIODS) {
     for (const market of ["spread", "total"] as GradeMarket[]) {
-      const r: GradeSummaryRow = { period, market, w: 0, l: 0, p: 0, pending: 0 };
+      const r: GradeSummaryRow = { period, market, w: 0, l: 0, p: 0, pending: 0, fw: 0, fl: 0, fp: 0, fpending: 0 };
       for (const b of bets) {
-        if (b.period !== period || b.market !== market || b.off < minOff) continue;
-        if (b.result === "win") r.w++;
-        else if (b.result === "loss") r.l++;
-        else if (b.result === "push") r.p++;
-        else r.pending++;
+        if (b.period !== period || b.market !== market) continue;
+        const f = b.off >= minOff;
+        if (b.result === "win") {
+          r.w++;
+          if (f) r.fw++;
+        } else if (b.result === "loss") {
+          r.l++;
+          if (f) r.fl++;
+        } else if (b.result === "push") {
+          r.p++;
+          if (f) r.fp++;
+        } else {
+          r.pending++;
+          if (f) r.fpending++;
+        }
       }
       if (r.w + r.l + r.p + r.pending > 0) rows.push(r);
     }

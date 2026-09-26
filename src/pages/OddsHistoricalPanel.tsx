@@ -216,7 +216,7 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Manual, one-time pull of PAST games' game-level team totals and 1H/2H/quarter markets from The Odds API's historical endpoint.
         Costs 10 credits per market per game (+1 for the event lookup); a game already saved is disabled so it can't be pulled twice.
-        History for these markets only exists from May 2023 onward. Start with a few games to see which books post what.
+        Pulled lines are graded against my projections in Admin → Period Grading. History for these markets only exists from May 2023 onward. Start with a few games to see which books post what.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.8rem" }}>

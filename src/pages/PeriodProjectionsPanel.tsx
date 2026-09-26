@@ -147,8 +147,8 @@ function pctStr(w: number, l: number): string {
   return w + l === 0 ? "–" : `${((w / (w + l)) * 100).toFixed(1)}%`;
 }
 
-function GradeSection({ title, items, note }: { title: string; items: GradeItem[]; note?: string }) {
-  const [minOff, setMinOff] = useState(0);
+export function GradeSection({ title, items, note }: { title: string; items: GradeItem[]; note?: string }) {
+  const [minOff, setMinOff] = useState(1.5);
   const [showBets, setShowBets] = useState(false);
   const bets: GradedBet[] = useMemo(() => gradeItems(items), [items]);
   const rows = useMemo(() => summarizeGrades(bets, minOff), [bets, minOff]);
@@ -165,7 +165,7 @@ function GradeSection({ title, items, note }: { title: string; items: GradeItem[
       ) : (
         <>
           <label style={{ fontSize: "0.8rem" }}>
-            Only bets at least{" "}
+            Filtered = bets at least{" "}
             <input type="number" min={0} step={0.5} value={minOff} onChange={(e) => setMinOff(parseFloat(e.target.value) || 0)} style={{ width: 60 }} /> points off the line
           </label>
           <table style={{ borderCollapse: "collapse", marginTop: "0.5rem" }}>
@@ -173,7 +173,9 @@ function GradeSection({ title, items, note }: { title: string; items: GradeItem[
               <tr>
                 <th style={{ ...cell, textAlign: "left" }}>Period</th>
                 <th style={{ ...cell, textAlign: "left" }}>Market</th>
-                <th style={{ ...cell, textAlign: "right" }}>Record</th>
+                <th style={{ ...cell, textAlign: "right" }}>All bets</th>
+                <th style={{ ...cell, textAlign: "right" }}>Win %</th>
+                <th style={{ ...cell, textAlign: "right" }}>Filtered</th>
                 <th style={{ ...cell, textAlign: "right" }}>Win %</th>
                 <th style={{ ...cell, textAlign: "right" }}>Pending</th>
               </tr>
@@ -188,6 +190,11 @@ function GradeSection({ title, items, note }: { title: string; items: GradeItem[
                     {r.p ? `-${r.p}` : ""}
                   </td>
                   <td style={{ ...cell, textAlign: "right" }}>{pctStr(r.w, r.l)}</td>
+                  <td style={{ ...cell, textAlign: "right" }}>
+                    {r.fw}-{r.fl}
+                    {r.fp ? `-${r.fp}` : ""}
+                  </td>
+                  <td style={{ ...cell, textAlign: "right" }}>{pctStr(r.fw, r.fl)}</td>
                   <td style={{ ...cell, textAlign: "right" }}>{r.pending || ""}</td>
                 </tr>
               ))}
@@ -238,8 +245,8 @@ function GradeSection({ title, items, note }: { title: string; items: GradeItem[
 // the uploaded spread projection + the market's closing total, since totals
 // weren't being projected; 2026: the locked spread/total), graded against
 // the saved period lines and the real quarter scores.
-function HistoryGrading() {
-  const [season, setSeason] = useState(2024);
+export function HistoryGrading() {
+  const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(0);
   const [items, setItems] = useState<GradeItem[] | null>(null);
   const [status, setStatus] = useState("");
@@ -690,7 +697,9 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
         note="Lines are the median across books. Games that haven't finished stay 'pending'; use Lock week first so the numbers being graded can't change."
       />
 
-      <HistoryGrading />
+      <p style={{ marginTop: "2rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+        Results across past weeks and seasons (including everything pulled in Historical Odds Pull) are in Admin → Period Grading.
+      </p>
     </div>
   );
 }
