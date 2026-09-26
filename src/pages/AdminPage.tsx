@@ -41,6 +41,7 @@ import PmAdminPanel from "./PmAdminPanel";
 import RatingSystemsPanel from "./RatingSystemsPanel";
 import SosAdminPanel from "./SosAdminPanel";
 import MatchupHistoryPanel from "./MatchupHistoryPanel";
+import TeamInfoPanel from "./TeamInfoPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
@@ -233,6 +234,7 @@ type AdminView =
   | "montecarlo"
   | "periodproj"
   | "matchuphistory"
+  | "teaminfo"
   | "oddshistorical"
   | "periodgrading"
   | "pm"
@@ -569,6 +571,7 @@ const NAV_GROUPS: NavGroup[] = [
     collapsible: true,
     items: [
       { key: "matchuphistory", label: "Matchup History" },
+      { key: "teaminfo", label: "Team Info" },
       { key: "upload", label: "Data Upload" },
     ],
   },
@@ -971,6 +974,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}
+          {view === "teaminfo" && <TeamInfoPanel onBack={() => setView("home")} />}
 
           {view === "oddshistorical" && <OddsHistoricalPanel onBack={() => setView("home")} />}
 

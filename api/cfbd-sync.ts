@@ -158,6 +158,153 @@ async function cfbdFetch(path: string) {
   return res.json();
 }
 
+
+// Team Info pull (admin Team Info page): three independent CFBD pulls, each
+// one request — postgame win expectancy (PGWE, the postgame win probability
+// CFBD attaches to every /games row), per-game advanced stats (net success
+// rate = a team's offensive success rate minus the success rate its defense
+// allowed), and head coaches with tenure at their school. `parts` picks
+// which to run so a pull costs only what was asked for.
+async function syncTeamInfo(res: any, year: number, week: number | null, parts: string[]) {
+  const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+  const weekParam = week != null ? `&week=${week}` : "";
+  const out: any = { ok: true, year, week: week ?? "all", parts };
+  const warnings: string[] = [];
+
+  if (parts.includes("pgwe")) {
+    const cfbdGames = await cfbdFetch(`/games?year=${year}${weekParam}&seasonType=regular`);
+    const now = new Date().toISOString();
+    const rows = (cfbdGames ?? []).filter(isTrackedGame).map((g: any) => ({
+      id: String(g.id),
+      season: g.season,
+      week: g.week,
+      season_type: g.seasonType ?? "regular",
+      home_team: g.homeTeam,
+      away_team: g.awayTeam,
+      completed: !!g.completed,
+      home_points: g.homePoints ?? null,
+      away_points: g.awayPoints ?? null,
+      home_postgame_win_probability: g.homePostgameWinProbability ?? null,
+      away_postgame_win_probability: g.awayPostgameWinProbability ?? null,
+      home_line_scores: g.homeLineScores ?? null,
+      away_line_scores: g.awayLineScores ?? null,
+      updated_at: now,
+    }));
+    if (rows.length > 0) {
+      const { error } = await supabaseAdmin.from("games").upsert(rows, { onConflict: "id" });
+      if (error) throw new Error(`Saving PGWE failed: ${error.message}`);
+    }
+    out.pgwe = {
+      games: rows.length,
+      withPgwe: rows.filter((r: any) => r.home_postgame_win_probability != null).length,
+    };
+  }
+
+  if (parts.includes("netsr")) {
+    const adv = await cfbdFetch(`/stats/game/advanced?year=${year}${weekParam}&seasonType=regular`);
+    const now = new Date().toISOString();
+    const round = (v: number | null) => (v == null ? null : Math.round(v * 10000) / 10000);
+    const rows: any[] = [];
+    for (const r of adv ?? []) {
+      const off = r.offense?.successRate;
+      const def = r.defense?.successRate;
+      if (r.gameId == null || !r.team) continue;
+      rows.push({
+        game_id: String(r.gameId),
+        team: r.team,
+        season: r.season ?? year,
+        week: r.week ?? null,
+        season_type: r.seasonType ?? "regular",
+        opponent: r.opponent ?? null,
+        off_success_rate: round(off ?? null),
+        def_success_rate: round(def ?? null),
+        net_success_rate: off != null && def != null ? round(off - def) : null,
+        updated_at: now,
+      });
+    }
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error, count } = await supabaseAdmin
+        .from("team_game_advanced")
+        .upsert(rows.slice(i, i + 500), { onConflict: "game_id,team", count: "exact" });
+      if (error) throw new Error(`Saving net success rate failed: ${error.message}`);
+      saved += count ?? 0;
+    }
+    out.netSr = { fetched: (adv ?? []).length, saved, sample: rows[0] ?? null };
+    if (rows.length === 0) warnings.push("CFBD returned no advanced game stats for that year/week (games may not have been played yet).");
+  }
+
+  if (parts.includes("coaches")) {
+    // One request: every coach with a season in the window; tenure is derived
+    // by counting the coach's consecutive seasons at the school.
+    const coaches = await cfbdFetch(`/coaches?minYear=${year - 30}&maxYear=${year}`);
+    // team -> year -> candidates
+    const byTeam = new Map<string, Map<number, { key: string; name: string; games: number; hireDate: string | null }[]>>();
+    const yearsByCoachTeam = new Map<string, Set<number>>();
+    for (const c of coaches ?? []) {
+      const key = String(c.id ?? `${c.firstName}|${c.lastName}`);
+      const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
+      for (const cs of c.seasons ?? []) {
+        if (!cs.school || cs.year == null) continue;
+        const ty = byTeam.get(cs.school) ?? new Map();
+        const list = ty.get(cs.year) ?? [];
+        list.push({ key, name, games: cs.games ?? 0, hireDate: c.hireDate ?? null });
+        ty.set(cs.year, list);
+        byTeam.set(cs.school, ty);
+        const ck = `${key}|${cs.school}`;
+        const ys = yearsByCoachTeam.get(ck) ?? new Set();
+        ys.add(cs.year);
+        yearsByCoachTeam.set(ck, ys);
+      }
+    }
+    const now = new Date().toISOString();
+    const rows: any[] = [];
+    for (const [team, ty] of byTeam) {
+      const years = Array.from(ty.keys()).filter((y) => y <= year);
+      if (years.length === 0) continue;
+      const latest = Math.max(...years);
+      if (latest < year - 1) continue; // program not active recently
+      const head = [...(ty.get(latest) ?? [])].sort((a, b) => b.games - a.games)[0];
+      if (!head) continue;
+      const ys = yearsByCoachTeam.get(`${head.key}|${team}`) ?? new Set<number>();
+      let tenure = 0;
+      let first = latest;
+      for (let y = latest; ys.has(y); y--) {
+        tenure += 1;
+        first = y;
+      }
+      rows.push({
+        season: year,
+        team,
+        coach_name: head.name,
+        hire_date: head.hireDate,
+        tenure_seasons: tenure,
+        first_year_at_school: first,
+        latest_year_with_data: latest,
+        updated_at: now,
+      });
+    }
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error, count } = await supabaseAdmin
+        .from("team_coaches")
+        .upsert(rows.slice(i, i + 500), { onConflict: "season,team", count: "exact" });
+      if (error) throw new Error(`Saving coaches failed: ${error.message}`);
+      saved += count ?? 0;
+    }
+    out.coaches = {
+      fetched: (coaches ?? []).length,
+      teams: saved,
+      staleTeams: rows.filter((r) => r.latest_year_with_data < year).length,
+      sample: rows[0] ?? null,
+    };
+    if (rows.length === 0) warnings.push("CFBD returned no coach seasons — check the response shape.");
+  }
+
+  if (warnings.length) out.warnings = warnings;
+  res.status(200).json(out);
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -187,6 +334,29 @@ export default async function handler(req: any, res: any) {
       await syncPredictions(res);
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Predictions sync failed" });
+    }
+    return;
+  }
+
+  if (req.body?.mode === "teaminfo") {
+    const { password, year, week, parts } = req.body ?? {};
+    if (password !== ADMIN_PASSWORD) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_API_KEY) {
+      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+      return;
+    }
+    if (!year || typeof year !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'year'" });
+      return;
+    }
+    const wanted = (Array.isArray(parts) ? parts : ["pgwe", "netsr", "coaches"]).filter((p: string) => ["pgwe", "netsr", "coaches"].includes(p));
+    try {
+      await syncTeamInfo(res, year, typeof week === "number" ? week : null, wanted);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Team info pull failed" });
     }
     return;
   }
