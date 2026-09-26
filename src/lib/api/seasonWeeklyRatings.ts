@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { fetchAllRows } from "./fetchAll";
 
 export interface SeasonWeeklyRatingRow {
   season: number;
@@ -15,13 +16,12 @@ export interface SeasonWeeklyRatingRow {
 
 /** Every distinct week_number archived for a season, ascending. */
 export async function fetchSeasonAvailableWeeks(season: number): Promise<number[]> {
-  const { data, error } = await supabase
-    .from("season_weekly_ratings")
-    .select("week_number")
-    .eq("season", season);
-  if (error) throw error;
+  // Paginated: one row per team per week, so a full season is thousands of rows.
+  const data = await fetchAllRows<{ week_number: number | null }>((from, to) =>
+    supabase.from("season_weekly_ratings").select("week_number").eq("season", season).order("id").range(from, to)
+  );
   const set = new Set<number>();
-  for (const row of (data ?? []) as { week_number: number | null }[]) {
+  for (const row of data) {
     if (row.week_number != null) set.add(row.week_number);
   }
   return Array.from(set).sort((a, b) => a - b);
@@ -29,8 +29,10 @@ export async function fetchSeasonAvailableWeeks(season: number): Promise<number[
 
 /** Every saved week's rating for every team, indexed by week then team — for Weekly Progression, reading the immutable archive directly rather than fetchSeasonWeeklyRatingsForWeeks' "closest saved week <= target" resolution (every week here already IS an exact saved week, so that resolution logic would just be redundant work). */
 export async function fetchSeasonRatingsByWeeks(season: number): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>> }> {
-  const { data, error } = await supabase.from("season_weekly_ratings").select("week_number, team, rating").eq("season", season);
-  if (error) throw error;
+  // Paginated — 266 teams x 5+ weeks is past the 1000-row cap (the old unpaginated read silently dropped teams).
+  const data = await fetchAllRows<{ week_number: number; team: string; rating: number | null }>((from, to) =>
+    supabase.from("season_weekly_ratings").select("week_number, team, rating").eq("season", season).order("id").range(from, to)
+  );
   const weekSet = new Set<number>();
   const byWeek: Record<number, Record<string, number | null>> = {};
   for (const r of (data ?? []) as { week_number: number; team: string; rating: number | null }[]) {
@@ -67,13 +69,17 @@ export async function fetchSeasonWeeklyRatingsForWeeks(
 
   const byActualWeek: Record<number, Record<string, { rating: number | null }>> = {};
   if (neededActualWeeks.size > 0) {
-    const { data, error } = await supabase
-      .from("season_weekly_ratings")
-      .select("week_number, team, rating")
-      .eq("season", season)
-      .in("week_number", Array.from(neededActualWeeks));
-    if (error) throw error;
-    for (const row of (data ?? []) as { week_number: number; team: string; rating: number | null }[]) {
+    // Paginated: several weeks x 266 teams passes the 1000-row cap.
+    const data = await fetchAllRows<{ week_number: number; team: string; rating: number | null }>((from, to) =>
+      supabase
+        .from("season_weekly_ratings")
+        .select("week_number, team, rating")
+        .eq("season", season)
+        .in("week_number", Array.from(neededActualWeeks))
+        .order("id")
+        .range(from, to)
+    );
+    for (const row of data) {
       if (!byActualWeek[row.week_number]) byActualWeek[row.week_number] = {};
       byActualWeek[row.week_number][row.team] = { rating: row.rating };
     }
