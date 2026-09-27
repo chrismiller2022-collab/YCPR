@@ -67,9 +67,26 @@ function DistributionDetail({ result, colSpan, showMore }: { result: TeamSimResu
     <tr>
       <td colSpan={colSpan} style={{ padding: "0.5rem 0.75rem", background: "rgba(255,255,255,0.03)", fontSize: "0.75rem" }}>
         <div>
-          <strong>{result.team} win-total distribution:</strong>{" "}
+          <strong>{result.team} win-total distribution (final record):</strong>{" "}
           {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
         </div>
+        {(() => {
+          const cW = result.currentWins ?? 0;
+          const cL = result.currentLosses ?? 0;
+          const left = result.totalGames - cW - cL;
+          const dist = result.winDistribution.reduce((sum, c) => sum + c, 0);
+          if (dist === 0 || left < 0) return null;
+          const rest = result.winDistribution
+            .map((count, w) => ({ w: w - cW, pct: (count / dist) * 100 }))
+            .filter((b) => b.w >= 0 && b.w <= left && b.pct > 0.05)
+            .sort((a, b) => b.pct - a.pct);
+          return (
+            <div style={{ marginTop: "0.3rem" }}>
+              <strong>Rest of season ({left} game{left === 1 ? "" : "s"} left, starting from {cW}-{cL}):</strong>{" "}
+              {rest.map((b) => `${b.w}-${left - b.w}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
+            </div>
+          );
+        })()}
         {showMore && seedBuckets.length > 0 && (
           <div style={{ marginTop: "0.3rem" }}>
             <strong>Seed distribution:</strong>{" "}
@@ -86,7 +103,7 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
-  const colSpan = showMore ? 15 : 10;
+  const colSpan = showMore ? 18 : 13;
 
   function handleSort(key: string) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -101,6 +118,11 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
       ...r,
       bowlPct: winsAtLeastPct(r, numTrials, 6),
       undefeatedPct: undefeatedPct(r, numTrials),
+      // Played games are fixed at their actual result in every trial; only
+      // the games left are simulated. Rest-of-season mean wins = total mean
+      // minus the wins already banked.
+      gamesLeft: r.totalGames - (r.currentWins ?? 0) - (r.currentLosses ?? 0),
+      restMeanWins: r.meanWins - (r.currentWins ?? 0),
     }));
   }, [results, numTrials]);
 
@@ -118,8 +140,12 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.4rem" }}>
-        <button className="menu-btn" style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem" }} onClick={() => setShowMore((s) => !s)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", marginBottom: "0.4rem" }}>
+        <span style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>
+          Completed games are counted at their actual result in every trial — only the games left are simulated. Rest of Season is the
+          simulated record over those games alone; Total Record adds the current record back in.
+        </span>
+        <button className="menu-btn" style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem", flexShrink: 0 }} onClick={() => setShowMore((s) => !s)}>
           {showMore ? "Show fewer stats" : "Show more stats"}
         </button>
       </div>
@@ -129,7 +155,10 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
           <tr>
             <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
             <SortHeader label="Conf" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-            <th className="th th-right">Reg. Season Record</th>
+            <SortHeader label="Current" sortKey="currentWins" active={sortKey === "currentWins"} dir={sortDir} onClick={handleSort} align="right" />
+            <SortHeader label="Left" sortKey="gamesLeft" active={sortKey === "gamesLeft"} dir={sortDir} onClick={handleSort} align="right" />
+            <SortHeader label="Rest of Season (sim)" sortKey="restMeanWins" active={sortKey === "restMeanWins"} dir={sortDir} onClick={handleSort} align="right" />
+            <SortHeader label="Total Record (current + sim)" sortKey="meanWins" active={sortKey === "meanWins"} dir={sortDir} onClick={handleSort} align="right" />
             <th className="th th-right">95% CI</th>
             <SortHeader
               label="Make Champ %"
@@ -216,6 +245,13 @@ function ResultsTable({ results, numTrials }: { results: TeamSimResult[]; numTri
                     <TeamLink team={r.team} />
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{r.conf}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }} title="Actual results so far — these games are never simulated">
+                    {r.currentWins ?? 0}-{r.currentLosses ?? 0}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{r.gamesLeft}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }} title="Mean wins / losses across the trials, over the games left only">
+                    {r.restMeanWins.toFixed(1)}-{(r.gamesLeft - r.restMeanWins).toFixed(1)}
+                  </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {projWins}-{projLosses}{" "}
                     <span style={{ color: "var(--chalk-dim)", fontSize: "0.72rem" }}>({r.meanWins.toFixed(1)})</span>

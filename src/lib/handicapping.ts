@@ -3,6 +3,7 @@ import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
 import { computeRow, classOf } from "./matchupsCompute";
 import { useWeekAccurateRatings } from "./weekAccurateRatings";
 import { useGameProjectionLocks } from "./api/gameProjectionLocks";
+import { fetchTeamGameAdvanced } from "./api/teamInfo";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
 import {
   spreadCallCategories,
@@ -52,6 +53,8 @@ export interface TeamGameLogRow {
   suResult: "win" | "loss" | null;
   atsResult: "win" | "loss" | "push" | null; // graded against vegasSpreadForTeam
   atsMargin: number | null; // cover margin, signed — positive means covered by that many points
+  pgwe: number | null; // this team's postgame win probability for that game (CFBD), 0..1
+  netSr: number | null; // this team's net success rate in that game (offense SR minus SR its defense allowed), fraction
 }
 
 export interface RecordSplit {
@@ -199,7 +202,8 @@ function buildTeamGameLog(
   allGames: GameWithLines[],
   team: string,
   ratingsByWeek: Record<number, Record<string, any>>,
-  locksByGameId: Record<string, { my_away_spread: number | null; my_away_win_pct: number | null } | undefined>
+  locksByGameId: Record<string, { my_away_spread: number | null; my_away_win_pct: number | null } | undefined>,
+  netSrByGameTeam: Map<string, number | null> = new Map()
 ): TeamGameLogRow[] {
   const teamGames = allGames.filter((g) => g.home_team === team || g.away_team === team).sort((a, b) => a.week - b.week);
 
@@ -243,6 +247,8 @@ function buildTeamGameLog(
       suResult,
       atsResult,
       atsMargin,
+      pgwe: g.completed ? (isHome ? g.home_postgame_win_probability : g.away_postgame_win_probability) ?? null : null,
+      netSr: netSrByGameTeam.get(`${g.id}|${team}`) ?? null,
     };
   });
 }
@@ -426,6 +432,23 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
     };
   }, [season]);
 
+  // Per-game net success rate (Team Info pull) — optional context, an empty
+  // map just leaves that column blank.
+  const [netSrByGameTeam, setNetSrByGameTeam] = useState<Map<string, number | null>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    fetchTeamGameAdvanced(season)
+      .then((rows) => {
+        if (!cancelled) setNetSrByGameTeam(new Map(rows.map((r) => [`${r.game_id}|${r.team}`, r.net_success_rate])));
+      })
+      .catch(() => {
+        if (!cancelled) setNetSrByGameTeam(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
   const weekNumbers = useMemo(() => Array.from(new Set(allGames.map((g) => g.week))), [allGames]);
   const { byWeek: ratingsByWeek, loading: ratingsLoading } = useWeekAccurateRatings(season, weekNumbers, season);
   const { locks, loading: locksLoading } = useGameProjectionLocks(season, weekNumbers);
@@ -488,8 +511,8 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
       };
     }
 
-    const awayLog = buildTeamGameLog(allGames, awayTeam, ratingsByWeek, locks);
-    const homeLog = buildTeamGameLog(allGames, homeTeam, ratingsByWeek, locks);
+    const awayLog = buildTeamGameLog(allGames, awayTeam, ratingsByWeek, locks, netSrByGameTeam);
+    const homeLog = buildTeamGameLog(allGames, homeTeam, ratingsByWeek, locks, netSrByGameTeam);
 
     const currentAwayRow = awayLog.find((r) => r.week === week);
     // Favorite/dog for THIS game — Vegas line first, our own projection if no line has synced yet.
@@ -626,6 +649,7 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
     allGames,
     ratingsByWeek,
     locks,
+    netSrByGameTeam,
     loadingGames,
     ratingsLoading,
     locksLoading,

@@ -9,8 +9,13 @@ export interface RawResumeMetrics {
   expWins: number | null;
   actWins: number;
   losses: number;
+  // Rest of season only — the games not yet played, at each game's win
+  // probability. Total = real record so far + that (a played game counts as
+  // 1 or 0, never a probability).
   projWins: number;
   projLosses: number;
+  totalProjWins: number;
+  totalProjLosses: number;
   winLossDiff: number;
   confChampWinPct: number | null;
   powerRating: number;
@@ -20,6 +25,9 @@ export interface RawResumeMetrics {
   avgActLine: number | null;
   mov: number | null;
   atsMargin: number | null;
+  // Season-long net success rate, in percentage points: mean over played
+  // games of (offense success rate - success rate its defense allowed).
+  netSr: number | null;
   avgOppPR: number | null;
   sos: number | null;
   bestWin: number | null;
@@ -33,6 +41,8 @@ export const METRIC_KEYS: (keyof RawResumeMetrics)[] = [
   "losses",
   "projWins",
   "projLosses",
+  "totalProjWins",
+  "totalProjLosses",
   "winLossDiff",
   "confChampWinPct",
   "powerRating",
@@ -42,6 +52,7 @@ export const METRIC_KEYS: (keyof RawResumeMetrics)[] = [
   "avgActLine",
   "mov",
   "atsMargin",
+  "netSr",
   "avgOppPR",
   "sos",
   "bestWin",
@@ -55,6 +66,8 @@ export const METRIC_LABELS: Record<keyof RawResumeMetrics, string> = {
   losses: "Losses",
   projWins: "Projected Wins (Rest of Season)",
   projLosses: "Projected Losses (Rest of Season)",
+  totalProjWins: "Total Projected Wins",
+  totalProjLosses: "Total Projected Losses",
   winLossDiff: "W-L",
   confChampWinPct: "Conf. Champ Win %",
   powerRating: "Power Rating",
@@ -64,6 +77,7 @@ export const METRIC_LABELS: Record<keyof RawResumeMetrics, string> = {
   avgActLine: "Avg. Actual (Vegas) Line",
   mov: "Margin of Victory",
   atsMargin: "ATS Margin",
+  netSr: "Net Success Rate",
   avgOppPR: "Avg. Opponent PR",
   sos: "Strength of Schedule",
   bestWin: "Best Win (Opp. PR)",
@@ -83,6 +97,8 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
   losses: false,
   projWins: true,
   projLosses: false,
+  totalProjWins: true,
+  totalProjLosses: false,
   winLossDiff: true,
   confChampWinPct: true,
   powerRating: false,
@@ -92,8 +108,12 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
   avgActLine: false,
   mov: true,
   atsMargin: true,
+  netSr: true,
   avgOppPR: false,
-  sos: true, // SOS uses the OPPOSITE sign convention from power rating: positive = harder. A harder schedule is the better resume trait, so higher scores better here.
+  // SOS now comes from the saved SOS admin snapshot (blend, else SOS via SRS):
+  // negative = tougher schedule, and a tougher schedule is the better resume
+  // trait, so LOWER scores better here (same direction as Avg. Opponent PR).
+  sos: false,
   bestWin: false,
   bestLoss: false,
   worstLoss: false,
@@ -104,7 +124,7 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
 // needs a CFBD sync change to pull postgame win probability (not built
 // yet). SRS/VSRS now pull from the "YC SRS" snapshot in rating_pulls (see
 // srsByTeam/vsrsByTeam below) — no longer stubbed.
-export const STUBBED_METRICS: (keyof RawResumeMetrics)[] = ["expWins"];
+export const STUBBED_METRICS: (keyof RawResumeMetrics)[] = [];
 
 export function computeRawResumeMetrics(
   team: any,
@@ -124,7 +144,12 @@ export function computeRawResumeMetrics(
   // in. Per Chris: a simpler, no-forward-looking view of the resume as it
   // stands today. actWins/losses/avgActLine/atsMargin were already
   // completed-only in both modes, so those are unaffected.
-  completedOnly = false
+  completedOnly = false,
+  // team -> season net success rate (percentage points), from the per-game
+  // advanced stats pull (Team Info).
+  netSrByTeam: Record<string, number | null> = {},
+  // team -> latest saved SOS value from the SOS admin page's Save to Site.
+  sosByTeam: Record<string, number | null> = {}
 ): RawResumeMetrics {
   const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
@@ -152,8 +177,10 @@ export function computeRawResumeMetrics(
   let sumOppPR = 0;
   let oppPRN = 0;
   let sumProjMov = 0;
-  let projWins = 0;
-  let projLosses = 0;
+  let restProjWins = 0;
+  let restProjLosses = 0;
+  let expWins = 0;
+  let pgweGames = 0;
 
   for (const g of seasonWideGames) {
     const isHome = g.home_team === team.team;
@@ -172,15 +199,10 @@ export function computeRawResumeMetrics(
     sumProjMov += -projLine; // negative spread = favored, so -projLine = this game's expected margin
 
     const isCompleted = g.completed && g.home_points != null && g.away_points != null;
-    if (isCompleted) {
-      const teamScore = isHome ? g.home_points! : g.away_points!;
-      const oppScore = isHome ? g.away_points! : g.home_points!;
-      if (teamScore > oppScore) projWins += 1;
-      else if (teamScore < oppScore) projLosses += 1;
-    } else {
+    if (!isCompleted) {
       const winPct = spreadToWinPct(projLine);
-      projWins += winPct;
-      projLosses += 1 - winPct;
+      restProjWins += winPct;
+      restProjLosses += 1 - winPct;
     }
   }
 
@@ -205,6 +227,15 @@ export function computeRawResumeMetrics(
     // return that as `mov` instead of the projected-sum stand-in above.
     const mov = teamScore - oppScore;
 
+    // Postgame win expectancy (CFBD): the team's win probability given how
+    // the game actually played out — summed over played games it's the wins
+    // the season "deserved", vs. the real actWins.
+    const pgwe = isHome ? g.home_postgame_win_probability : g.away_postgame_win_probability;
+    if (pgwe != null) {
+      expWins += pgwe;
+      pgweGames++;
+    }
+
     const line = pickLine(g.lines ?? []);
     if (line?.spread != null) {
       const teamLine = isHome ? line.spread : -line.spread;
@@ -224,11 +255,13 @@ export function computeRawResumeMetrics(
   const bwWorstLoss = completedOnly ? bw.worstLoss.actual : bw.worstLoss.proj;
 
   return {
-    expWins: null,
+    expWins: pgweGames > 0 ? expWins : null,
     actWins,
     losses,
-    projWins,
-    projLosses,
+    projWins: restProjWins,
+    projLosses: restProjLosses,
+    totalProjWins: actWins + restProjWins,
+    totalProjLosses: losses + restProjLosses,
     winLossDiff: actWins - losses,
     confChampWinPct: liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null,
     powerRating: teamRating,
@@ -238,8 +271,9 @@ export function computeRawResumeMetrics(
     avgActLine: actLineN > 0 ? sumActLine / actLineN : null,
     mov: sumProjMov, // TEMPORARY: sum of projected margins for now — swap to real completed-games average margin once games start
     atsMargin: atsN > 0 ? sumAts / atsN : null,
+    netSr: netSrByTeam[team.team] ?? null,
     avgOppPR: oppPRN > 0 ? sumOppPR / oppPRN : null,
-    sos: liveByTeam[team.team]?.sor ?? null,
+    sos: sosByTeam[team.team] ?? null,
     bestWin: bwBestWin?.oppCurrentRating ?? null,
     bestLoss: bwBestLoss?.oppCurrentRating ?? null,
     worstLoss: bwWorstLoss?.oppCurrentRating ?? null,

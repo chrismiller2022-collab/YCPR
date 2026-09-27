@@ -1,7 +1,7 @@
 import TeamLogo from "./TeamLogo";
 import { useMatchupHandicap, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
 import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { altSpreadRows, altTotalRows, buildPeriodDistribution, gameOutcomes, type AltRow } from "../lib/periodSim";
 
 function fmtRecord(su: { w: number; l: number }): string {
@@ -230,6 +230,61 @@ function TeamColumn({
 
 // "Score format" per Chris — team logo + rounded score either side, same
 // visual shape as ProjScoreCell elsewhere on the site.
+// Every game this team has already played: the number I had, what
+// actually happened, and how the game graded on the advanced side (CFBD's
+// postgame win probability and net success rate). Spreads are the team's own
+// perspective (negative = favored); actual margin is points for minus points
+// against (positive = won by that much).
+function CompletedGamesSection({ hc }: { hc: TeamHandicap }) {
+  const games = hc.log.filter((r) => r.completed && r.teamPoints != null && r.oppPoints != null).sort((a, b) => a.week - b.week);
+  const th: CSSProperties = { textAlign: "right", padding: "0.2rem 0.4rem", color: "var(--chalk-dim)", fontWeight: 600, whiteSpace: "nowrap" };
+  const td: CSSProperties = { textAlign: "right", padding: "0.2rem 0.4rem", whiteSpace: "nowrap" };
+  return (
+    <div style={{ marginTop: "0.9rem" }}>
+      <div style={{ fontWeight: 700, fontSize: "0.82rem", marginBottom: "0.25rem" }}>{hc.team} — completed games</div>
+      {games.length === 0 ? (
+        <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>No completed games yet.</div>
+      ) : (
+        <table style={{ width: "100%", fontSize: "0.74rem", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: "left" }}>Wk</th>
+              <th style={{ ...th, textAlign: "left" }}>Opponent</th>
+              <th style={th}>Vegas</th>
+              <th style={th}>My proj</th>
+              <th style={th}>Actual margin</th>
+              <th style={th}>PGWP</th>
+              <th style={th}>Net SR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {games.map((r) => {
+              const margin = (r.teamPoints as number) - (r.oppPoints as number);
+              return (
+                <tr key={r.gameId} style={{ borderTop: "1px solid var(--hash)" }}>
+                  <td style={{ ...td, textAlign: "left" }}>{r.week}</td>
+                  <td style={{ ...td, textAlign: "left" }}>
+                    {r.isHome ? "vs" : "@"} {r.opponent}
+                  </td>
+                  <td style={td}>{fmtSpread(r.vegasSpreadForTeam)}</td>
+                  <td style={td}>{fmtSpread(r.myProjSpreadForTeam)}</td>
+                  <td style={{ ...td, color: margin > 0 ? "#8fd39a" : margin < 0 ? "#c45c52" : undefined, fontWeight: 600 }}>
+                    {margin > 0 ? "W +" : margin < 0 ? "L " : "T "}
+                    {margin}
+                    <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }}> ({r.teamPoints}-{r.oppPoints})</span>
+                  </td>
+                  <td style={td}>{r.pgwe != null ? `${(r.pgwe * 100).toFixed(1)}%` : "–"}</td>
+                  <td style={td}>{r.netSr != null ? `${r.netSr > 0 ? "+" : ""}${(r.netSr * 100).toFixed(1)}` : "–"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function ScoreLine({
   awayTeam,
   homeTeam,
@@ -579,6 +634,8 @@ export default function MatchupHandicapPopup({
               />
             </div>
             <TotalsSection awayTeam={awayTeam} homeTeam={homeTeam} totals={hc.totals} />
+            <CompletedGamesSection hc={hc.away} />
+            <CompletedGamesSection hc={hc.home} />
             <QuadrantNote quadrant={hc.quadrant} />
             {hc.altInputs && <AltLinesSection awayTeam={awayTeam} homeTeam={homeTeam} inputs={hc.altInputs} />}
           </>

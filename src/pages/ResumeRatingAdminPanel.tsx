@@ -8,7 +8,8 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { fetchResumeWeights, saveResumeRatingsToSite, fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
 import SavedWeekProgression from "../components/SavedWeekProgression";
-import { fetchRatingPulls } from "../lib/api/ratingSystems";
+import { fetchRatingPulls, fetchTeamSos } from "../lib/api/ratingSystems";
+import { fetchTeamGameAdvanced } from "../lib/api/teamInfo";
 import {
   computeRawResumeMetrics,
   normalizeMetric,
@@ -32,6 +33,9 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [srsByTeam, setSrsByTeam] = useState<Record<string, number | null>>({});
   const [vsrsByTeam, setVsrsByTeam] = useState<Record<string, number | null>>({});
+  // Season net success rate per team (percentage points) and the latest saved SOS value.
+  const [netSrByTeam, setNetSrByTeam] = useState<Record<string, number | null>>({});
+  const [sosByTeam, setSosByTeam] = useState<Record<string, number | null>>({});
 
   const [weights, setWeights] = useState<ResumeWeights>({ ...DEFAULT_RESUME_WEIGHTS });
   const [weightsLoaded, setWeightsLoaded] = useState(false);
@@ -51,11 +55,48 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
-    Promise.all([fetchGamesWithLines(season), fetchResumeWeights(season), fetchRatingPulls()])
-      .then(([gamesData, savedWeights, pulls]) => {
+    Promise.all([
+      fetchGamesWithLines(season),
+      fetchResumeWeights(season),
+      fetchRatingPulls(),
+      fetchTeamGameAdvanced(season).catch(() => []),
+      fetchTeamSos(season).catch(() => ({})),
+    ])
+      .then(([gamesData, savedWeights, pulls, advRows, sosRows]) => {
         setGames(gamesData);
-        if (savedWeights) setWeights({ ...DEFAULT_RESUME_WEIGHTS, ...savedWeights });
+        if (savedWeights) {
+          const merged: Record<string, number> = { ...DEFAULT_RESUME_WEIGHTS, ...savedWeights };
+          // Projected Wins/Losses used to mean the whole season; they now mean
+          // rest of season only. Weights saved before the split carry over to
+          // the new Total metrics (same meaning as before) and the rest-only
+          // ones start at 0 so existing scores don't shift.
+          if (savedWeights.totalProjWins == null) {
+            merged.totalProjWins = savedWeights.projWins ?? 1;
+            merged.totalProjLosses = savedWeights.projLosses ?? 1;
+            merged.projWins = 0;
+            merged.projLosses = 0;
+          }
+          setWeights(merged);
+        }
         setWeightsLoaded(true);
+
+        // Net success rate: mean over each team's played games, in points.
+        const netAcc = new Map<string, number[]>();
+        for (const r of advRows) {
+          if (r.net_success_rate == null) continue;
+          const list = netAcc.get(r.team) ?? [];
+          list.push(r.net_success_rate * 100);
+          netAcc.set(r.team, list);
+        }
+        const netMap: Record<string, number | null> = {};
+        for (const [team, vals] of netAcc) netMap[team] = vals.reduce((a, b) => a + b, 0) / vals.length;
+        setNetSrByTeam(netMap);
+
+        // SOS: the blend from the SOS admin page's last Save to Site (weeks saved
+        // before the blend existed fall back to SOS via SRS).
+        const sosMap: Record<string, number | null> = {};
+        for (const [team, row] of Object.entries(sosRows as Record<string, any>)) sosMap[team] = row.blend_score ?? row.sos_srs_total ?? null;
+        setSosByTeam(sosMap);
 
         const srsMap: Record<string, number | null> = {};
         const vsrsMap: Record<string, number | null> = {};
@@ -78,10 +119,10 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const rawByTeam = useMemo(() => {
     const map = new Map<string, RawResumeMetrics>();
     for (const t of teams) {
-      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly));
+      map.set(t.team, computeRawResumeMetrics(t, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly, netSrByTeam, sosByTeam));
     }
     return map;
-  }, [teams, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly]);
+  }, [teams, games, liveByTeam, srsByTeam, vsrsByTeam, completedOnly, netSrByTeam, sosByTeam]);
 
   const normalizedByTeam = useMemo(() => {
     const pools: Partial<Record<keyof RawResumeMetrics, (number | null)[]>> = {};
@@ -358,7 +399,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         real result (Actual Wins, Losses, MOV, Avg. Actual Line, ATS Margin) is completed games
         only. Lower opponent rating (a better team) always scores higher for Best/Best/Worst
         Loss — beating or nearly-losing-respectably-to a good team is the better outcome either
-        way. SOS pulls from the site's existing Strength of Schedule field. SRS/VSRS pull from
+        way. Strength of Schedule pulls the latest SOS saved from the Strength of Schedule page (the normalized blend; SOS via SRS for a week saved before the blend existed) — a tougher schedule is more negative and scores higher. Projected Wins/Losses are the games left only; Total Projected Wins/Losses add the real record back in. Exp. Wins (PGWE) is the sum of each played game's postgame win probability; Net Success Rate is the season average of offense success rate minus the success rate its defense allowed, in points (both need the Team Info pull). SRS/VSRS pull from
         the "YC SRS" snapshot in Rating Systems — hit "Send to Rating Systems (YC SRS)" on the
         Monte Carlo SRS tab to refresh both; they won't change on their own between refreshes.
         Weights persist to Supabase per season, ready for a future public Resume Ratings page to
