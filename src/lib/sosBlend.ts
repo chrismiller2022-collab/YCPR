@@ -39,16 +39,21 @@ export const SOS_FACTOR_LABELS: Record<keyof RawSosFactors, string> = {
 
 // true = a HIGHER raw value means an EASIER schedule (so it should
 // normalize toward +10); false = a higher raw value means HARDER
-// (normalize toward -10). avgOppPR/sosSrs/top7 are all "more negative
-// opponent rating = tougher" (this site's usual convention), so a
+// (normalize toward -10). avgOppPR/top7 are "more negative opponent
+// rating = tougher" (this site's usual power-rating convention), so a
 // higher (less negative) value there is easier. hypoWins is easier at
-// the high end too (more hypothetical wins = weaker schedule) — every
-// current factor happens to agree, but this stays explicit per-factor
-// rather than assumed, the same way resumeRating.ts's
-// METRIC_HIGHER_IS_BETTER does, in case a future factor disagrees.
+// the high end too (more hypothetical wins = weaker schedule). sosSrs is
+// the ODD ONE OUT: it comes from the Monte Carlo SRS engine's own SOS
+// component (SRS = SOS + Total MOV), which runs the OPPOSITE sign
+// convention from power ratings — a higher (more positive) SOS-via-SRS
+// means opponents outperformed more, i.e. a HARDER schedule. Treating it
+// as "higher = easier" (the bug this comment used to describe as
+// deliberate) silently flipped it against every other factor, which is
+// why a team like Texas could show the toughest Avg Opp PR alongside the
+// "easiest" SOS (SRS) in the same blend.
 export const SOS_FACTOR_HIGHER_IS_EASIER: Record<keyof RawSosFactors, boolean> = {
   avgOppPR: true,
-  sosSrs: true,
+  sosSrs: false,
   hypoWins: true,
   top7: true,
 };
