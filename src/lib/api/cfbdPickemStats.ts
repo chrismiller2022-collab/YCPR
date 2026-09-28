@@ -50,11 +50,18 @@ function emptyStats(total: number): CfbdPickemStats {
 /**
  * Grades every saved CFBD Pick'em prediction against actual results —
  * optionally narrowed to one week (a game's week is read off the joined
- * `games` row, not stored on the prediction itself). predicted_margin
- * uses CFBD's own convention (negative = home favored, positive = away
- * favored), which is the same sign convention `betting_lines.spread`
- * already uses site-wide — see peayPool.ts's actualCoverSide, reused
- * here unchanged for the ATS grade.
+ * `games` row, not stored on the prediction itself). predicted_margin is
+ * HOME-perspective (negative = home favored), the exact convention
+ * cfbd-sync.ts's syncPredictions computes it in and the same one
+ * `betting_lines.spread` uses — this is also what's submitted to CFBD's
+ * contest, and that submission is confirmed correct, so predicted_margin
+ * itself must NOT change. But actualCoverSide (from peayPool.ts, reused
+ * here for the ATS grade) takes an AWAY-perspective spread, matching
+ * vegasAwaySpread below (`-line.spread`) — so predicted_margin needs the
+ * same negation before it's compared against vegasAwaySpread or passed
+ * anywhere an away-perspective number is expected. Grading it un-negated
+ * (as this function used to) silently picks the OPPOSITE side of every
+ * game, which is why the ATS record came out exactly inverted.
  */
 export async function fetchCfbdPickemStats(season: number, week?: number): Promise<CfbdPickemStats> {
   const predictions = await fetchCfbdPickemPredictions(season);
@@ -88,7 +95,10 @@ export async function fetchCfbdPickemStats(season: number, week?: number): Promi
     const line = pickLine(g.lines);
     const vegasAwaySpread = line?.spread != null ? -line.spread : null;
     if (vegasAwaySpread != null) {
-      const predictedAwaySpread = p.predicted_margin;
+      // Flip home-perspective predicted_margin to away-perspective before
+      // comparing against vegasAwaySpread/actualCoverSide (bug fix — see
+      // this function's doc comment).
+      const predictedAwaySpread = -p.predicted_margin;
       const pickedSide: "away" | "home" | null =
         predictedAwaySpread < vegasAwaySpread ? "away" : predictedAwaySpread > vegasAwaySpread ? "home" : null;
       const cover = actualCoverSide(g, vegasAwaySpread);
@@ -163,8 +173,11 @@ export async function fetchCfbdPickemPredictionDetails(season: number): Promise<
       const line = pickLine(g.lines);
       const vegasAwaySpread = line?.spread != null ? -line.spread : null;
       if (vegasAwaySpread != null) {
+        // Same flip as fetchCfbdPickemStats — predicted_margin is home-
+        // perspective, vegasAwaySpread/actualCoverSide need away-perspective.
+        const predictedAwaySpread = -p.predicted_margin;
         const pickedSide: "away" | "home" | null =
-          p.predicted_margin < vegasAwaySpread ? "away" : p.predicted_margin > vegasAwaySpread ? "home" : null;
+          predictedAwaySpread < vegasAwaySpread ? "away" : predictedAwaySpread > vegasAwaySpread ? "home" : null;
         const cover = actualCoverSide(g, vegasAwaySpread);
         if (pickedSide && cover) {
           atsGrade = cover === "push" ? "push" : pickedSide === cover ? "win" : "loss";
