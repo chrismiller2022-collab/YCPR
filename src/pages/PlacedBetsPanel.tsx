@@ -36,8 +36,18 @@ function fmtLine(v: number | null): string {
   if (v == null) return "–";
   return `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }
+// A CSV row's placed_at with no real time in it (just "2026-09-19") is
+// stored as that date at exact UTC midnight — showing a clock time for
+// that (e.g. "Sep 18, 8:00 PM" in US Eastern) fabricates a precision that
+// was never actually recorded, and reads as more wrong than it is. Only
+// show a time when the stored instant isn't exact UTC midnight (a real
+// JuiceReel-synced placement time almost never lands exactly there).
 function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const d = new Date(iso);
+  const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0;
+  return dateOnly
+    ? d.toLocaleString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
+    : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function fmtMoney(v: number | null): string {
   if (v == null) return "–";
