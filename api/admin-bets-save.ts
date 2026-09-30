@@ -512,6 +512,8 @@ export default async function handler(req: any, res: any) {
         stake: bet.stake ?? null,
         to_win: bet.toWin ?? null,
         result: bet.result ?? "pending",
+        placed_at: bet.placedAt ?? null,
+        market: bet.market ?? null,
       });
       if (error) throw error;
 
@@ -538,15 +540,31 @@ export default async function handler(req: any, res: any) {
         return;
       }
 
-      const betKey = (b: { game_id: string; book: string; bet_type: string; side: string; line_value: number | null; price: number; stake: number | null }) =>
-        [b.game_id, b.book, b.bet_type, b.side, b.line_value ?? "∅", b.price, b.stake ?? "∅"].join("|");
+      // Futures/season-long props have no game_id to key off (see
+      // parsePlacedBetsCsv's betIdentityKey, which this mirrors exactly) —
+      // matched by team + market + side instead.
+      type RowLike = {
+        game_id: string | null;
+        book: string;
+        bet_type: string;
+        side: string;
+        line_value: number | null;
+        price: number;
+        stake: number | null;
+        away_team: string;
+        market: string | null;
+      };
+      const betKey = (b: RowLike) =>
+        b.bet_type === "futures"
+          ? ["futures", b.away_team, b.market ?? "∅", b.book, b.side, b.line_value ?? "∅", b.price, b.stake ?? "∅"].join("|")
+          : [b.game_id, b.book, b.bet_type, b.side, b.line_value ?? "∅", b.price, b.stake ?? "∅"].join("|");
 
       const rows = bets.map((bet: any) => ({
-        game_id: bet.gameId,
+        game_id: bet.gameId ?? null,
         season: bet.season,
-        week: bet.week,
+        week: bet.week ?? null,
         away_team: bet.awayTeam,
-        home_team: bet.homeTeam,
+        home_team: bet.homeTeam ?? null,
         book: bet.book,
         bet_type: bet.betType,
         side: bet.side,
@@ -555,14 +573,27 @@ export default async function handler(req: any, res: any) {
         stake: bet.stake ?? null,
         to_win: bet.toWin ?? null,
         result: bet.result ?? "pending",
+        placed_at: bet.placedAt ?? null,
+        market: bet.market ?? null,
       }));
 
-      const gameIds = Array.from(new Set(rows.map((r) => r.game_id)));
-      const { data: existing, error: fetchError } = await supabaseAdmin
-        .from("placed_bets")
-        .select("id, game_id, book, bet_type, side, line_value, price, stake, to_win")
-        .in("game_id", gameIds);
-      if (fetchError) throw fetchError;
+      // Postgres's IN never matches NULL, so a futures row's null game_id
+      // needs its own lookup (by bet_type='futures') rather than being
+      // folded into the game_id.in(...) query below.
+      const gameIds = Array.from(new Set(rows.filter((r) => r.game_id != null).map((r) => r.game_id as string)));
+      const hasFutures = rows.some((r) => r.bet_type === "futures");
+      const existingCols = "id, game_id, book, bet_type, side, line_value, price, stake, to_win, away_team, market, placed_at";
+      const [byGame, byFutures] = await Promise.all([
+        gameIds.length > 0
+          ? supabaseAdmin.from("placed_bets").select(existingCols).in("game_id", gameIds)
+          : Promise.resolve({ data: [], error: null }),
+        hasFutures
+          ? supabaseAdmin.from("placed_bets").select(existingCols).eq("bet_type", "futures")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (byGame.error) throw byGame.error;
+      if (byFutures.error) throw byFutures.error;
+      const existing = [...(byGame.data ?? []), ...(byFutures.data ?? [])];
 
       // A key already saved under more than one row (a duplicate from
       // before this fix existed) just updates the first one found — it
@@ -589,10 +620,16 @@ export default async function handler(req: any, res: any) {
       for (const { id, row } of toUpdate) {
         // Keep whichever to_win is non-null rather than blanking a
         // previously-computed value with an unfilled re-export column.
-        const existingToWin = (existing ?? []).find((e) => e.id === id) as any;
+        const existingRow = existing.find((e) => e.id === id) as any;
         const { error } = await supabaseAdmin
           .from("placed_bets")
-          .update({ result: row.result, to_win: row.to_win ?? existingToWin?.to_win ?? null, price: row.price, stake: row.stake })
+          .update({
+            result: row.result,
+            to_win: row.to_win ?? existingRow?.to_win ?? null,
+            price: row.price,
+            stake: row.stake,
+            placed_at: row.placed_at ?? existingRow?.placed_at ?? null,
+          })
           .eq("id", id);
         if (error) throw error;
       }

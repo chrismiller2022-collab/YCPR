@@ -9,33 +9,45 @@ import { supabase } from "../supabaseClient";
 // whatever text was imported instead of a mapped label.
 export type BetBook = string;
 export type KnownBetBook = "bovada" | "betonlineag" | "novig" | "kalshi" | "dkpredictions" | "polymarket" | "other";
-export type BetType = "spread" | "moneyline" | "total" | "team_total";
+// "futures" is a season-long/prop bet with no single scheduled game
+// behind it (a win total, a playoff-qualification prop, a natty-winner
+// future) — everything else is graded against one specific game.
+export type BetType = "spread" | "moneyline" | "total" | "team_total" | "futures";
 export type BetResult = "win" | "loss" | "push" | "pending";
 
 export interface PlacedBetRow {
   id: number;
   created_at: string;
-  game_id: string;
+  // null only for a futures bet — every other bet_type is tied to one
+  // real scheduled game and always has these three.
+  game_id: string | null;
   season: number;
-  week: number;
-  away_team: string;
-  home_team: string;
+  week: number | null;
+  away_team: string; // for futures: the one team the prop is about
+  home_team: string | null; // null for futures
   book: BetBook;
   bet_type: BetType;
-  side: string; // team name for spread/moneyline/team_total, "over"/"under" for total/team_total
+  side: string; // team name for spread/moneyline/team_total, "over"/"under" for total/team_total, "yes"/"no"/team for futures
   line_value: number | null;
   price: number;
   stake: number | null;
   to_win: number | null;
   result: BetResult;
+  // When the bet was actually placed (from the sportsbook's own "Placed"
+  // timestamp) — distinct from `created_at` (when this row was saved to
+  // the site, which can be much later on a backdated import).
+  placed_at: string | null;
+  // Futures only: the free-text question ("Will Baylor win at least 6
+  // games this season?"). Null for every other bet_type.
+  market: string | null;
 }
 
 export interface NewPlacedBet {
-  gameId: string;
+  gameId: string | null;
   season: number;
-  week: number;
+  week: number | null;
   awayTeam: string;
-  homeTeam: string;
+  homeTeam: string | null;
   book: BetBook;
   betType: BetType;
   side: string;
@@ -44,6 +56,8 @@ export interface NewPlacedBet {
   stake?: number | null;
   toWin?: number | null;
   result?: BetResult;
+  placedAt?: string | null;
+  market?: string | null;
 }
 
 export async function fetchPlacedBets(season?: number): Promise<PlacedBetRow[]> {

@@ -5,11 +5,18 @@ import { fetchGamesWithLines, type GameWithLines } from "./gamesLines";
 import type { BetBook, BetType, BetResult, NewPlacedBet } from "./placedBets";
 
 // Expected columns (header names are case-insensitive, order doesn't
-// matter): date, book, away_team, home_team, bet_type, side, line_value,
-// price, stake, to_win, result.
+// matter): placed_at, date, book, away_team, home_team, bet_type, side,
+// line_value, price, stake, to_win, result, market.
 //
+// - placed_at: when the bet was actually placed (anything Date.parse can
+//   read, ideally with a time — e.g. "2026-09-27 13:14", "Sep 27 2026
+//   1:14 PM"). Optional; stored as-is, shown wherever the bet's placed
+//   time matters (the report tab's sort/filter). Distinct from `date`
+//   below, which is only a season-lookup hint.
 // - date: anything Date.parse can read (e.g. 2026-08-15, 8/15/2026) —
-//   used only to narrow which season's games to search, not stored.
+//   used only to narrow which season's games to search, not stored. Not
+//   used at all for a futures row (see below) — falls back to placed_at,
+//   then today.
 // - book: bovada | betonline | novig | kalshi | dkpredictions | polymarket
 //   (case-insensitive, "bet online"/"betonlineag" and "dk predictions"/"dk"
 //   all accepted) — or ANY other name, which is remembered as a new book
@@ -18,20 +25,29 @@ import type { BetBook, BetType, BetResult, NewPlacedBet } from "./placedBets";
 //   matched against the site's canonical roster the same way The Odds
 //   API's "School Mascot" names are (see teamNameMatch.ts). A row that
 //   doesn't confidently match a real scheduled game is reported as an
-//   error, never silently guessed.
-// - bet_type: spread | moneyline | total | team_total (ml/ou/tt accepted
-//   as shorthand).
-// - side: team name for spread/moneyline/team_total, over/under (o/u)
-//   for total/team_total.
+//   error, never silently guessed. For a futures row, away_team is the
+//   ONE team the prop is about and home_team is left blank.
+// - bet_type: spread | moneyline | total | team_total | futures (ml/ou/tt
+//   accepted as shorthand). futures is for anything not tied to one
+//   scheduled game — a win total, a playoff/championship prop, a
+//   conference-winner future.
+// - side: team name for spread/moneyline/team_total, over/under (o/u) for
+//   total/team_total, or free text for futures (e.g. "yes", "no", "over
+//   7.5 wins" — whatever the prop's own answer/side is).
+// - line_value: optional for futures (e.g. the win-total number, if the
+//   prop has one — leave blank for a yes/no prop like "make the playoff").
 // - price: American odds ("-110", "+230") OR a win% ("53%", "53") —
 //   percentages are converted to a fair moneyline so CLV math has one
 //   consistent unit regardless of which book quoted it.
 // - stake: dollars risked.
 // - to_win: dollars profit if it wins — optional, blank is fine.
 // - result: win | loss | push | pending — optional, defaults to pending.
+// - market: futures only — the free-text question itself ("Will Baylor
+//   win at least 6 games this season?"). Ignored for every other bet_type.
 export const PLACED_BETS_CSV_TEMPLATE =
-  "date,book,away_team,home_team,bet_type,side,line_value,price,stake,to_win,result\n" +
-  "2026-08-15,bovada,Toledo,Michigan State,spread,Toledo,10.5,-110,1,0.91,win\n";
+  "placed_at,date,book,away_team,home_team,bet_type,side,line_value,price,stake,to_win,result,market\n" +
+  "2026-08-15 09:03,2026-08-15,bovada,Toledo,Michigan State,spread,Toledo,10.5,-110,1,0.91,win,\n" +
+  "2026-08-15 09:05,2026-08-15,kalshi,Baylor,,futures,yes,6.5,-188,9.99,5.30,pending,Will Baylor win at least 6 games this season?\n";
 
 export interface PlacedBetImportError {
   line: number;
@@ -51,8 +67,16 @@ export interface PlacedBetImportResult {
   duplicatesInFile: number;
 }
 
-/** Same identity importPlacedBets (api/admin-bets-save.ts) matches against bets already saved from a previous import. */
+/**
+ * Same identity importPlacedBets (api/admin-bets-save.ts) matches against
+ * bets already saved from a previous import. A futures bet has no gameId
+ * to key off, so it's matched by team + market + side instead — those
+ * three together are what actually identify "the same prop."
+ */
 function betIdentityKey(b: NewPlacedBet): string {
+  if (b.betType === "futures") {
+    return ["futures", b.awayTeam, b.market ?? "∅", b.book, b.side, b.lineValue ?? "∅", b.price, b.stake ?? "∅"].join("|");
+  }
   return [b.gameId, b.book, b.betType, b.side, b.lineValue ?? "∅", b.price, b.stake ?? "∅"].join("|");
 }
 
@@ -86,6 +110,9 @@ const BET_TYPE_ALIASES: Record<string, BetType> = {
   ou: "total",
   teamtotal: "team_total",
   tt: "team_total",
+  futures: "futures",
+  future: "futures",
+  prop: "futures",
 };
 
 // A book with no fixed alias isn't an error — it's a new book to remember
@@ -198,6 +225,61 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
       errors.push({ line: lineNum, raw: row, reason: `Unrecognized bet_type "${get("bet_type")}"` });
       return;
     }
+    const priceRaw = get("price");
+    const price = normalizePrice(priceRaw);
+    if (price == null) {
+      errors.push({ line: lineNum, raw: row, reason: `Couldn't read price "${priceRaw}"` });
+      return;
+    }
+    const lineValueRaw = get("line_value");
+    const lineValue = lineValueRaw === "" ? null : parseFloat(lineValueRaw);
+    const stakeRaw = get("stake");
+    const stake = stakeRaw === "" ? null : parseFloat(stakeRaw);
+    const toWinRaw = get("to_win");
+    const toWin = toWinRaw === "" ? null : parseFloat(toWinRaw);
+    const placedAtRaw = get("placed_at");
+    const placedAtMs = placedAtRaw === "" ? null : Date.parse(placedAtRaw);
+    const placedAt = placedAtMs != null && !Number.isNaN(placedAtMs) ? new Date(placedAtMs).toISOString() : null;
+
+    // Futures/season-long props aren't tied to one scheduled game — no
+    // home_team, no findGame, no week. away_team is the one team the prop
+    // is about (still matched against the roster, so team filters work);
+    // side and market are free text, since a prop's own wording varies too
+    // much to force through the spread/total/team_total parsing below.
+    if (betType === "futures") {
+      const awayRaw = get("away_team");
+      const teamCanonical = matchSchoolMascotName(awayRaw) ?? matchTeamName(awayRaw).matched;
+      if (!teamCanonical) {
+        errors.push({ line: lineNum, raw: row, reason: `Couldn't match futures team "${awayRaw}" — use a more complete school name` });
+        return;
+      }
+      const side = get("side");
+      if (side === "") {
+        errors.push({ line: lineNum, raw: row, reason: "Futures rows need a side (e.g. \"yes\", \"no\", or the prop's own answer)" });
+        return;
+      }
+      const dateMs = parsedDates[i] ?? placedAtMs;
+      const season = dateMs != null && !Number.isNaN(dateMs) ? new Date(dateMs).getFullYear() : new Date().getFullYear();
+      resolved.push({
+        gameId: null,
+        season,
+        week: null,
+        awayTeam: teamCanonical,
+        homeTeam: null,
+        book,
+        betType,
+        side,
+        lineValue: Number.isNaN(lineValue as number) ? null : lineValue,
+        price,
+        stake: stake != null && Number.isNaN(stake) ? null : stake,
+        toWin: toWin != null && Number.isNaN(toWin) ? null : toWin,
+        result: normalizeResult(get("result")),
+        placedAt,
+        market: get("market") || null,
+      });
+      return;
+    }
+
     const awayRaw = get("away_team");
     const homeRaw = get("home_team");
     const awayCanonical = matchSchoolMascotName(awayRaw) ?? matchTeamName(awayRaw).matched;
@@ -214,13 +296,6 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
     const game = findGame(awayCanonical, homeCanonical, allCandidateGames, parsedDates[i]);
     if (!game) {
       errors.push({ line: lineNum, raw: row, reason: `No scheduled game found for ${awayCanonical} @ ${homeCanonical}` });
-      return;
-    }
-
-    const priceRaw = get("price");
-    const price = normalizePrice(priceRaw);
-    if (price == null) {
-      errors.push({ line: lineNum, raw: row, reason: `Couldn't read price "${priceRaw}"` });
       return;
     }
 
@@ -256,13 +331,6 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
       side = teamSide;
     }
 
-    const lineValueRaw = get("line_value");
-    const lineValue = lineValueRaw === "" ? null : parseFloat(lineValueRaw);
-    const stakeRaw = get("stake");
-    const stake = stakeRaw === "" ? null : parseFloat(stakeRaw);
-    const toWinRaw = get("to_win");
-    const toWin = toWinRaw === "" ? null : parseFloat(toWinRaw);
-
     resolved.push({
       gameId: game.id,
       season: game.season,
@@ -277,6 +345,8 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
       stake: stake != null && Number.isNaN(stake) ? null : stake,
       toWin: toWin != null && Number.isNaN(toWin) ? null : toWin,
       result: normalizeResult(get("result")),
+      placedAt,
+      market: null,
     });
   });
 

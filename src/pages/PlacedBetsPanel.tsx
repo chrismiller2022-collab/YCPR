@@ -374,7 +374,13 @@ interface GameExposure {
   status: GameStatus;
 }
 
-function buildExposure(bets: PlacedBetRow[], parlays: PlacedParlayRow[], gamesById: Map<string, GameWithLines>): GameExposure[] {
+function buildExposure(allBets: PlacedBetRow[], parlays: PlacedParlayRow[], gamesById: Map<string, GameWithLines>): GameExposure[] {
+  // Futures/season-long props have no game_id to expose against (they
+  // aren't decided by any one game's score) and don't belong in the
+  // exposure tracker at all, per Chris — filtered out here rather than at
+  // every call site, and before `bucket()` so a futures row never creates
+  // a game_id-less bucket that would crash trying to read `ex.game...`.
+  const bets = allBets.filter((b) => b.bet_type !== "futures" && b.game_id != null);
   const byGame = new Map<string, { bets: PlacedBetRow[]; parlayLegs: { leg: PlacedParlayLeg; parlay: PlacedParlayRow }[] }>();
   function bucket(gameId: string) {
     if (!byGame.has(gameId)) byGame.set(gameId, { bets: [], parlayLegs: [] });
@@ -617,7 +623,7 @@ function GameExposureCard({ ex, enriched }: { ex: GameExposure; enriched: Enrich
 type ExposureSortKey = "kickoff" | "stake";
 
 function ExposureTrackerSection({
-  bets,
+  bets: betsWithFutures,
   parlays: allParlays,
   gamesById,
   totalsByGameId,
@@ -633,6 +639,11 @@ function ExposureTrackerSection({
   // import), so hiding parlays leaves them in.
   const [hideParlays, setHideParlays] = useState(false);
   const parlays = useMemo(() => (hideParlays ? [] : allParlays), [hideParlays, allParlays]);
+  // Futures/season-long props aren't decided by any one game, so the whole
+  // exposure tracker (this section, its summary bar, per-game cards)
+  // excludes them entirely, per Chris — they still show in the plain
+  // season-long bets list below.
+  const bets = useMemo(() => betsWithFutures.filter((b) => b.bet_type !== "futures"), [betsWithFutures]);
 
   const exposures = useMemo(() => {
     const list = buildExposure(bets, parlays, gamesById);
@@ -963,8 +974,10 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
         <summary style={{ cursor: "pointer", fontSize: "0.82rem" }}>CSV import format</summary>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.4rem" }}>
           <p style={{ margin: "0 0 0.4rem" }}>
-            <strong>Columns:</strong> date, book, away_team, home_team, bet_type, side, line_value, price, stake,
-            to_win, result. date is only used to narrow which season's games to search — it isn't stored.
+            <strong>Columns:</strong> placed_at, date, book, away_team, home_team, bet_type, side, line_value, price,
+            stake, to_win, result, market. date is only used to narrow which season's games to search — it isn't
+            stored. placed_at is the actual time the bet went in (include a time if you have it, e.g. "2026-09-27
+            13:14") — that's what the report tab sorts/filters by, separately from when this row was saved here.
           </p>
           <p style={{ margin: "0 0 0.4rem" }}>
             <strong>book:</strong> any name works. A known one (Bovada, BetOnline, Novig, Kalshi, DK Predictions,
@@ -974,13 +987,19 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
             book attached — those are grouped under "Other / Unspecified".
           </p>
           <p style={{ margin: "0 0 0.4rem" }}>
-            <strong>bet_type:</strong> spread, moneyline, total or team_total only (ats/ml/ou/tt accepted as
+            <strong>bet_type:</strong> spread, moneyline, total, team_total or futures only (ats/ml/ou/tt accepted as
             shorthand, and spacing doesn't matter — "team total", "team-total" and "team_total" all work). Unlike
-            book, this can't auto-add a new value — every bet on the site is graded as one of these four.
+            book, this can't auto-add a new value — every bet on the site is graded as one of these five.
           </p>
           <p style={{ margin: "0 0 0.4rem" }}>
             <strong>side:</strong> a team name for spread/moneyline, over/under for total, "&lt;team&gt; over" or
-            "&lt;team&gt; under" for team_total.
+            "&lt;team&gt; under" for team_total, or free text for futures (e.g. "yes", "no").
+          </p>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>futures:</strong> for a win total, playoff/championship prop or conference-winner future — no
+            single scheduled game decides it. Put the ONE team it's about in away_team and leave home_team blank;
+            put the prop's own question in market (e.g. "Will Baylor win at least 6 games this season?"); line_value
+            is optional (the win-total number, if there is one).
           </p>
           <p style={{ margin: "0 0 0.4rem" }}>
             <strong>price:</strong> American odds ("-110", "+230") or a win% ("53%") — required for every row, even
@@ -993,7 +1012,8 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
             week (to pick up newly graded results, plus whatever new open bets you appended) is safe. Two rows
             within the same file that match each other the same way are merged before saving, keeping the last one.
             A bet that differs in any of those terms — even just a different price at a different book — is treated
-            as a separate bet, not an update.
+            as a separate bet, not an update. A futures row has no game, so it's matched by team + market + side
+            instead.
           </p>
         </div>
       </details>
@@ -1107,7 +1127,12 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
     () => bets.map((b) => (b.result === "pending" ? { ...b, result: gradeBetAgainstGame(b, gamesById.get(b.game_id)) } : b)),
     [bets, gamesById]
   );
-  const availableWeeks = useMemo(() => Array.from(new Set(gradedBets.map((b) => b.week))).sort((a, b) => a - b), [gradedBets]);
+  // Futures have no week (null) — excluded here rather than sorting a
+  // stray "week 0" into the dropdown; they still show up under "all".
+  const availableWeeks = useMemo(
+    () => Array.from(new Set(gradedBets.map((b) => b.week).filter((w): w is number => w != null))).sort((a, b) => a - b),
+    [gradedBets]
+  );
   const visibleBets = useMemo(
     () => (week === "all" ? gradedBets : gradedBets.filter((b) => b.week === week)),
     [gradedBets, week]
@@ -1298,10 +1323,18 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                   const profit = betProfit(bet);
                   return (
                     <tr key={bet.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                      <td style={{ padding: "0.35rem 0.6rem", color: "var(--chalk-dim)" }}>{fmtDate(bet.created_at)}</td>
-                      <td style={{ padding: "0.35rem 0.6rem" }}>{bet.week}</td>
+                      <td style={{ padding: "0.35rem 0.6rem", color: "var(--chalk-dim)" }}>{fmtDate(bet.placed_at ?? bet.created_at)}</td>
+                      <td style={{ padding: "0.35rem 0.6rem" }}>{bet.week ?? "–"}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>
-                        <TeamLink team={bet.away_team} size={16} /> @ <TeamLink team={bet.home_team} size={16} />
+                        {bet.bet_type === "futures" ? (
+                          <span title={bet.market ?? undefined}>
+                            <TeamLink team={bet.away_team} size={16} /> — {bet.market ?? "Futures"}
+                          </span>
+                        ) : (
+                          <>
+                            <TeamLink team={bet.away_team} size={16} /> @ <TeamLink team={bet.home_team as string} size={16} />
+                          </>
+                        )}
                       </td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>{BOOK_LABELS[bet.book] ?? bet.book}</td>
                       <td style={{ padding: "0.35rem 0.6rem", textTransform: "capitalize" }}>{bet.bet_type.replace("_", " ")}</td>
