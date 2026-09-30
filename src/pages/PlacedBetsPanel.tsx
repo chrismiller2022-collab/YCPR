@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
@@ -1086,8 +1086,12 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
 
 export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
-  const [week, setWeek] = useState<number | "all">("all");
-  useDefaultToAdminWeek(setWeek);
+  // The Bets list below has its own season/week filter — defaults to the
+  // whole season (per Chris), never the site-wide admin week. Exposure
+  // Tracker is separate: it always shows the CURRENT admin week and has
+  // no filter control of its own (see weekBets/weekParlays below).
+  const [listWeek, setListWeek] = useState<number | "all">("all");
+  const { week: adminWeek } = useAdminWeek();
   const [bets, setBets] = useState<PlacedBetRow[]>([]);
   const [parlays, setParlays] = useState<PlacedParlayRow[]>([]);
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -1133,10 +1137,18 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
     () => Array.from(new Set(gradedBets.map((b) => b.week).filter((w): w is number => w != null))).sort((a, b) => a - b),
     [gradedBets]
   );
-  const visibleBets = useMemo(
-    () => (week === "all" ? gradedBets : gradedBets.filter((b) => b.week === week)),
-    [gradedBets, week]
-  );
+  // Bets list filter (its own season/week control, rendered below Exposure
+  // Tracker) — sorted most-recent-placed-first, since a backdated CSV
+  // import's created_at (when the row was saved here) isn't what "recent"
+  // means for a season-long sheet; placed_at (falls back to created_at for
+  // rows saved before that column existed) is.
+  const visibleBets = useMemo(() => {
+    const filtered = listWeek === "all" ? gradedBets : gradedBets.filter((b) => b.week === listWeek);
+    return [...filtered].sort((a, b) => new Date(b.placed_at ?? b.created_at).getTime() - new Date(a.placed_at ?? a.created_at).getTime());
+  }, [gradedBets, listWeek]);
+  // Exposure Tracker is always the current admin week, independent of the
+  // Bets list filter above and with no filter control of its own.
+  const weekBets = useMemo(() => gradedBets.filter((b) => b.week === adminWeek), [gradedBets, adminWeek]);
 
   // Same "grade once every leg's game is final" idea as gradedBets — a
   // push leg with no losing legs still counts the parlay as a win
@@ -1169,9 +1181,10 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
     [parlays, gamesById]
   );
   const visibleParlays = useMemo(
-    () => (week === "all" ? gradedParlays : gradedParlays.filter((p) => p.week === week)),
-    [gradedParlays, week]
+    () => (listWeek === "all" ? gradedParlays : gradedParlays.filter((p) => p.week === listWeek)),
+    [gradedParlays, listWeek]
   );
+  const weekParlays = useMemo(() => gradedParlays.filter((p) => p.week === adminWeek), [gradedParlays, adminWeek]);
 
   const overall = useMemo(() => {
     const rec = emptyRecord();
@@ -1221,54 +1234,52 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
       <JuicereelConnectControl onImported={() => setReloadTick((n) => n + 1)} />
       <CsvImportControl onImported={() => setReloadTick((n) => n + 1)} />
 
-      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", alignItems: "center" }}>
-        <label>
-          Season <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
-        </label>
-        <label>
-          Week{" "}
-          <select value={week} onChange={(e) => setWeek(e.target.value === "all" ? "all" : parseInt(e.target.value, 10))}>
-            <option value="all">Whole season</option>
-            {availableWeeks.map((w) => (
-              <option key={w} value={w}>
-                Week {w}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
       {loading && <p>Loading…</p>}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
       {!loading && bets.length === 0 && <p style={{ color: "var(--chalk-dim)" }}>No bets logged for {season} yet.</p>}
 
-      {/* This page defaults its week filter to the site-wide Admin week
-          selector (useDefaultToAdminWeek above), which advances once a
-          week's games are done — so as soon as that happens, this filter
-          can silently mismatch every bet actually logged. Before this,
-          that produced a totally blank page below the filters with no
-          "whole season" escape hatch, which read as "my bets are gone"
-          (they weren't — see the week filter). */}
-      {!loading && bets.length > 0 && visibleBets.length === 0 && (
-        <p style={{ color: "var(--chalk-dim)" }}>
-          No bets logged for {week === "all" ? "the whole season" : `Week ${week}`} — {bets.length} bet{bets.length === 1 ? "" : "s"}{" "}
-          logged this season across week{availableWeeks.length === 1 ? "" : "s"} {availableWeeks.join(", ")}.{" "}
-          <button className="menu-btn" onClick={() => setWeek("all")} style={{ padding: "0.15rem 0.6rem", fontSize: "0.8rem" }}>
-            Show whole season
-          </button>
-        </p>
-      )}
-
-      {!loading && visibleBets.length > 0 && (
+      {!loading && bets.length > 0 && (
         <>
-          <h3 style={{ marginBottom: "0.5rem" }}>Exposure Tracker</h3>
+          <h3 style={{ marginBottom: "0.5rem" }}>Exposure Tracker — Week {adminWeek}</h3>
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-            Every game in view with a stake on it, across all books, with what you're actually rooting for.
+            Every game this week with a stake on it, across all books, with what you're actually rooting for. Always this week
+            only — the season/week picker below is for the Bets list, not this.
           </p>
           <div style={{ marginBottom: "1.75rem" }}>
-            <ExposureTrackerSection bets={visibleBets} parlays={visibleParlays} gamesById={gamesById} totalsByGameId={totalsByGameId} />
+            {weekBets.length === 0 ? (
+              <p style={{ color: "var(--chalk-dim)" }}>No bets logged for week {adminWeek}.</p>
+            ) : (
+              <ExposureTrackerSection bets={weekBets} parlays={weekParlays} gamesById={gamesById} totalsByGameId={totalsByGameId} />
+            )}
           </div>
+
+          <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", alignItems: "center" }}>
+            <label>
+              Season <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
+            </label>
+            <label>
+              Week{" "}
+              <select value={listWeek} onChange={(e) => setListWeek(e.target.value === "all" ? "all" : parseInt(e.target.value, 10))}>
+                <option value="all">Whole season</option>
+                {availableWeeks.map((w) => (
+                  <option key={w} value={w}>
+                    Week {w}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {visibleBets.length === 0 && (
+            <p style={{ color: "var(--chalk-dim)" }}>
+              No bets logged for {listWeek === "all" ? "the whole season" : `Week ${listWeek}`} — {bets.length} bet{bets.length === 1 ? "" : "s"}{" "}
+              logged this season across week{availableWeeks.length === 1 ? "" : "s"} {availableWeeks.join(", ")}.{" "}
+              <button className="menu-btn" onClick={() => setListWeek("all")} style={{ padding: "0.15rem 0.6rem", fontSize: "0.8rem" }}>
+                Show whole season
+              </button>
+            </p>
+          )}
 
           <h3 style={{ marginBottom: "0.5rem" }}>Bets</h3>
 
