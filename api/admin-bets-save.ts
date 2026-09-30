@@ -521,13 +521,26 @@ export default async function handler(req: any, res: any) {
 
     // Bulk version of savePlacedBet for the CSV importer — team-name
     // matching and game resolution already happened client-side
-    // (parsePlacedBetsCsv), this just inserts whatever it resolved.
+    // (parsePlacedBetsCsv). A row is matched against an already-saved bet
+    // by (game_id, book, bet_type, side, line_value, price, stake) — the
+    // terms of the wager itself — and UPDATES that bet's result/stake/
+    // to_win/price instead of inserting a duplicate; only a row with no
+    // match gets inserted. This is what makes re-uploading the same
+    // season-long sheet every week (to pick up newly graded results, plus
+    // whatever new bets were appended) safe rather than piling up
+    // duplicate rows on every upload — see placedBetsImport.ts's own
+    // in-file dedupe for the companion half of this (two rows in the SAME
+    // file that already match each other).
     if (action === "importPlacedBets") {
       const { bets } = req.body;
       if (!Array.isArray(bets) || bets.length === 0) {
         res.status(400).json({ error: "No bets to import" });
         return;
       }
+
+      const betKey = (b: { game_id: string; book: string; bet_type: string; side: string; line_value: number | null; price: number; stake: number | null }) =>
+        [b.game_id, b.book, b.bet_type, b.side, b.line_value ?? "∅", b.price, b.stake ?? "∅"].join("|");
+
       const rows = bets.map((bet: any) => ({
         game_id: bet.gameId,
         season: bet.season,
@@ -543,9 +556,48 @@ export default async function handler(req: any, res: any) {
         to_win: bet.toWin ?? null,
         result: bet.result ?? "pending",
       }));
-      const { error, count } = await supabaseAdmin.from("placed_bets").insert(rows, { count: "exact" });
-      if (error) throw error;
-      res.status(200).json({ imported: count ?? rows.length });
+
+      const gameIds = Array.from(new Set(rows.map((r) => r.game_id)));
+      const { data: existing, error: fetchError } = await supabaseAdmin
+        .from("placed_bets")
+        .select("id, game_id, book, bet_type, side, line_value, price, stake, to_win")
+        .in("game_id", gameIds);
+      if (fetchError) throw fetchError;
+
+      // A key already saved under more than one row (a duplicate from
+      // before this fix existed) just updates the first one found — it
+      // doesn't delete the others, so a stale duplicate needs a one-time
+      // manual cleanup, but no import ever creates a new one going forward.
+      const existingIdByKey = new Map<string, number>();
+      for (const e of existing ?? []) {
+        const key = betKey(e);
+        if (!existingIdByKey.has(key)) existingIdByKey.set(key, e.id);
+      }
+
+      const toInsert: typeof rows = [];
+      const toUpdate: { id: number; row: (typeof rows)[number] }[] = [];
+      for (const row of rows) {
+        const id = existingIdByKey.get(betKey(row));
+        if (id != null) toUpdate.push({ id, row });
+        else toInsert.push(row);
+      }
+
+      if (toInsert.length > 0) {
+        const { error } = await supabaseAdmin.from("placed_bets").insert(toInsert);
+        if (error) throw error;
+      }
+      for (const { id, row } of toUpdate) {
+        // Keep whichever to_win is non-null rather than blanking a
+        // previously-computed value with an unfilled re-export column.
+        const existingToWin = (existing ?? []).find((e) => e.id === id) as any;
+        const { error } = await supabaseAdmin
+          .from("placed_bets")
+          .update({ result: row.result, to_win: row.to_win ?? existingToWin?.to_win ?? null, price: row.price, stake: row.stake })
+          .eq("id", id);
+        if (error) throw error;
+      }
+
+      res.status(200).json({ inserted: toInsert.length, updated: toUpdate.length });
       return;
     }
 

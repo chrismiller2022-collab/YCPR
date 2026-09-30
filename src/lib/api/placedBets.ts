@@ -1,6 +1,14 @@
 import { supabase } from "../supabaseClient";
 
-export type BetBook = "bovada" | "betonlineag" | "novig" | "kalshi" | "dkpredictions" | "polymarket";
+// The site's own known books get a fixed casing/label (below) so filters
+// and the manual bet-entry dropdown stay tidy. Widened to `string` (not a
+// closed union) so the CSV importer can accept a genuinely new book by
+// name — e.g. "FanDuel" — without every display site needing a matching
+// literal added first; every render site already falls back to the raw
+// value via `BOOK_LABELS[x] ?? x`, so an unlisted book just shows as
+// whatever text was imported instead of a mapped label.
+export type BetBook = string;
+export type KnownBetBook = "bovada" | "betonlineag" | "novig" | "kalshi" | "dkpredictions" | "polymarket" | "other";
 export type BetType = "spread" | "moneyline" | "total" | "team_total";
 export type BetResult = "win" | "loss" | "push" | "pending";
 
@@ -61,7 +69,12 @@ export async function savePlacedBet(bet: NewPlacedBet): Promise<void> {
 // `bet`, just an array of them in one round trip instead of one POST per
 // row. Parsing/team-matching happens client-side (parsePlacedBetsCsv);
 // this just persists whatever it already resolved.
-export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ imported: number }> {
+// Bulk UPSERT (see the placed_bets_dedupe_key migration) on identity
+// (game_id, book, bet_type, side, line_value, price, stake) — a row that
+// matches a bet already saved updates it (result/stake/to_win/price)
+// instead of inserting a duplicate, so re-uploading the same season sheet
+// every week is safe.
+export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ inserted: number; updated: number }> {
   const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
@@ -73,13 +86,20 @@ export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ imported
   return data;
 }
 
-export const BOOK_LABELS: Record<BetBook, string> = {
+// Record<string, string> (not Record<KnownBetBook, string>) on purpose —
+// BetBook is a plain string now, and every call site indexes this with a
+// `bet.book` value (falling back to the raw string via `?? bet.book`), so
+// the key type has to accept any string, not just the known literals.
+export const BOOK_LABELS: Record<string, string> = {
   bovada: "Bovada",
   betonlineag: "BetOnline",
   novig: "Novig",
   kalshi: "Kalshi",
   dkpredictions: "DK Predictions",
   polymarket: "Polymarket",
+  // CSV rows with no book column filled in (e.g. a manually tracked pick
+  // with no specific sportsbook attached) land here rather than erroring.
+  other: "Other / Unspecified",
 };
 
 // ---------------------------------------------------------------------

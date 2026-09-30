@@ -10,9 +10,10 @@ import type { BetBook, BetType, BetResult, NewPlacedBet } from "./placedBets";
 //
 // - date: anything Date.parse can read (e.g. 2026-08-15, 8/15/2026) —
 //   used only to narrow which season's games to search, not stored.
-// - book: bovada | betonline | novig | kalshi | dkpredictions
+// - book: bovada | betonline | novig | kalshi | dkpredictions | polymarket
 //   (case-insensitive, "bet online"/"betonlineag" and "dk predictions"/"dk"
-//   all accepted).
+//   all accepted) — or ANY other name, which is remembered as a new book
+//   rather than rejected (see normalizeBook). Blank maps to "other".
 // - away_team / home_team: any reasonably recognizable team name —
 //   matched against the site's canonical roster the same way The Odds
 //   API's "School Mascot" names are (see teamNameMatch.ts). A row that
@@ -41,6 +42,18 @@ export interface PlacedBetImportError {
 export interface PlacedBetImportResult {
   resolved: NewPlacedBet[];
   errors: PlacedBetImportError[];
+  // Rows in THIS file that resolved to the exact same bet (same game, book,
+  // bet_type, side, line_value, price and stake) as another row further
+  // down the file — collapsed to the last one before saving, since a
+  // single database write can't touch the same "existing bet" row twice.
+  // Reported so a re-uploaded season sheet doesn't silently look like it
+  // imported fewer rows than expected.
+  duplicatesInFile: number;
+}
+
+/** Same identity importPlacedBets (api/admin-bets-save.ts) matches against bets already saved from a previous import. */
+function betIdentityKey(b: NewPlacedBet): string {
+  return [b.gameId, b.book, b.betType, b.side, b.lineValue ?? "∅", b.price, b.stake ?? "∅"].join("|");
 }
 
 const BOOK_ALIASES: Record<string, BetBook> = {
@@ -53,8 +66,17 @@ const BOOK_ALIASES: Record<string, BetBook> = {
   dkpredictions: "dkpredictions",
   "dk predictions": "dkpredictions",
   dk: "dkpredictions",
+  polymarket: "polymarket",
+  poly: "polymarket",
 };
 
+// bet_type stays a closed set (unlike book) — spread/moneyline/total/
+// team_total each drive their own grading logic (gradeAgainstScore, CLV,
+// parlay math, etc.) site-wide, so a CSV value has to resolve to one of
+// these four, never a new one. Keys are matched against the collapsed
+// form normalizeBetType produces below (spaces/underscores/hyphens
+// stripped), so "team total", "team-total" and "TEAM_TOTAL" all hit
+// "teamtotal" here without needing every spelling listed separately.
 const BET_TYPE_ALIASES: Record<string, BetType> = {
   spread: "spread",
   ats: "spread",
@@ -62,18 +84,32 @@ const BET_TYPE_ALIASES: Record<string, BetType> = {
   ml: "moneyline",
   total: "total",
   ou: "total",
-  "o/u": "total",
-  team_total: "team_total",
   teamtotal: "team_total",
   tt: "team_total",
 };
 
-function normalizeBook(raw: string): BetBook | null {
-  return BOOK_ALIASES[raw.trim().toLowerCase()] ?? null;
+// A book with no fixed alias isn't an error — it's a new book to remember
+// (per Chris: "add to existing books if it finds a new one"), stored
+// under a stable lowercase/collapsed-whitespace form so "FanDuel" and
+// "fanduel" land as the same book on re-import; every place the site
+// displays a book already falls back to showing the raw value when it's
+// not in BOOK_LABELS. A blank cell (no book column filled in — the
+// common case for a manually tracked pick with no sportsbook attached)
+// maps to "other" instead of erroring.
+function normalizeBook(raw: string): BetBook {
+  const trimmed = raw.trim();
+  if (trimmed === "") return "other";
+  const key = trimmed.toLowerCase().replace(/\s+/g, " ");
+  return BOOK_ALIASES[key] ?? key;
 }
 
+// bet_type has no free-form fallback — see BET_TYPE_ALIASES' comment —
+// so an unrecognized value is still reported as an error, just matched
+// more forgivingly: "o/u" needs its slash stripped too, handled by the
+// same collapse as the rest.
 function normalizeBetType(raw: string): BetType | null {
-  return BET_TYPE_ALIASES[raw.trim().toLowerCase()] ?? null;
+  const key = raw.trim().toLowerCase().replace(/[\s_/-]+/g, "");
+  return BET_TYPE_ALIASES[key] ?? null;
 }
 
 // Accepts either American odds ("-110", "+230") or a win% ("53%", "53")
@@ -154,11 +190,9 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
     const lineNum = i + 2; // header is line 1
     const get = (key: string) => (row[key] ?? row[key.toLowerCase()] ?? row[key.toUpperCase()] ?? "").trim();
 
+    // normalizeBook never fails — an unlisted book is remembered as a new
+    // one rather than rejected; only bet_type stays a closed set.
     const book = normalizeBook(get("book"));
-    if (!book) {
-      errors.push({ line: lineNum, raw: row, reason: `Unrecognized book "${get("book")}"` });
-      return;
-    }
     const betType = normalizeBetType(get("bet_type"));
     if (!betType) {
       errors.push({ line: lineNum, raw: row, reason: `Unrecognized bet_type "${get("bet_type")}"` });
@@ -246,5 +280,14 @@ export async function parsePlacedBetsCsv(text: string): Promise<PlacedBetImportR
     });
   });
 
-  return { resolved, errors };
+  // Collapse same-bet rows within this one file (see betIdentityKey) —
+  // keeps the LAST matching row, since a re-exported season sheet's later
+  // rows are the more current snapshot (e.g. result finally graded). This
+  // is separate from matching against bets already saved from a PREVIOUS
+  // import, which importPlacedBets handles server-side on write.
+  const byKey = new Map<string, NewPlacedBet>();
+  for (const bet of resolved) byKey.set(betIdentityKey(bet), bet);
+  const deduped = Array.from(byKey.values());
+
+  return { resolved: deduped, errors, duplicatesInFile: resolved.length - deduped.length };
 }

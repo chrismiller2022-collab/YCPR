@@ -895,6 +895,7 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
   const [text, setText] = useState("");
   const [resolved, setResolved] = useState<NewPlacedBet[]>([]);
   const [errors, setErrors] = useState<PlacedBetImportError[]>([]);
+  const [duplicatesInFile, setDuplicatesInFile] = useState(0);
   const [checking, setChecking] = useState(false);
   const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -905,9 +906,10 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
     setMessage(null);
     setChecking(true);
     try {
-      const { resolved: r, errors: e } = await parsePlacedBetsCsv(csvText);
+      const { resolved: r, errors: e, duplicatesInFile: d } = await parsePlacedBetsCsv(csvText);
       setResolved(r);
       setErrors(e);
+      setDuplicatesInFile(d);
     } catch (err: any) {
       setMessage(`Error: ${err.message ?? "Failed to parse CSV"}`);
     } finally {
@@ -925,10 +927,13 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
     setImporting(true);
     setMessage(null);
     try {
-      const { imported } = await importPlacedBets(resolved);
-      setMessage(`Imported ${imported} bet${imported === 1 ? "" : "s"}.`);
+      const { inserted, updated } = await importPlacedBets(resolved);
+      setMessage(
+        `Saved ${resolved.length} bet${resolved.length === 1 ? "" : "s"}: ${inserted} new, ${updated} matched an existing bet and had its result/stake/price updated instead of duplicating.`
+      );
       setResolved([]);
       setErrors([]);
+      setDuplicatesInFile(0);
       setText("");
       onImported();
     } catch (err: any) {
@@ -954,9 +959,46 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
           Close
         </button>
       </div>
+      <details style={{ marginBottom: "0.6rem" }}>
+        <summary style={{ cursor: "pointer", fontSize: "0.82rem" }}>CSV import format</summary>
+        <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.4rem" }}>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>Columns:</strong> date, book, away_team, home_team, bet_type, side, line_value, price, stake,
+            to_win, result. date is only used to narrow which season's games to search — it isn't stored.
+          </p>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>book:</strong> any name works. A known one (Bovada, BetOnline, Novig, Kalshi, DK Predictions,
+            Polymarket — plus common shorthand like "DK" or "bet online") maps to that book; anything else not seen
+            before is remembered as its own new book rather than rejected, matched case/spacing-insensitively so
+            "FanDuel" and "fanduel" land as the same book next time. Leave it blank for a bet with no particular
+            book attached — those are grouped under "Other / Unspecified".
+          </p>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>bet_type:</strong> spread, moneyline, total or team_total only (ats/ml/ou/tt accepted as
+            shorthand, and spacing doesn't matter — "team total", "team-total" and "team_total" all work). Unlike
+            book, this can't auto-add a new value — every bet on the site is graded as one of these four.
+          </p>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>side:</strong> a team name for spread/moneyline, over/under for total, "&lt;team&gt; over" or
+            "&lt;team&gt; under" for team_total.
+          </p>
+          <p style={{ margin: "0 0 0.4rem" }}>
+            <strong>price:</strong> American odds ("-110", "+230") or a win% ("53%") — required for every row, even
+            a pending one; there's no way to grade or value a bet without it. stake and to_win are optional.
+          </p>
+          <p style={{ margin: 0 }}>
+            <strong>Re-uploading:</strong> a row is matched against a bet already saved by its game, book, bet_type,
+            side, line_value, price and stake (the actual terms of the wager) — a match UPDATES that bet's
+            result/stake/to_win/price instead of adding a duplicate, so re-uploading your whole season sheet every
+            week (to pick up newly graded results, plus whatever new open bets you appended) is safe. Two rows
+            within the same file that match each other the same way are merged before saving, keeping the last one.
+            A bet that differs in any of those terms — even just a different price at a different book — is treated
+            as a separate bet, not an update.
+          </p>
+        </div>
+      </details>
       <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-        Columns: date, book, away_team, home_team, bet_type, side, line_value, price, stake, to_win, result. Team
-        names just need to be recognizable (e.g. "Bama" matches Alabama) — rows that can't be matched to a real
+        Team names just need to be recognizable (e.g. "Bama" matches Alabama) — rows that can't be matched to a real
         scheduled game show up as errors below instead of being silently guessed.{" "}
         <button
           className="mode-btn"
@@ -993,7 +1035,14 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
 
       {resolved.length > 0 && (
         <div style={{ marginTop: "0.8rem" }}>
-          <p style={{ color: "#8fd39a", fontSize: "0.85rem" }}>{resolved.length} row(s) ready to import.</p>
+          <p style={{ color: "#8fd39a", fontSize: "0.85rem" }}>
+            {resolved.length} row(s) ready to import.
+            {duplicatesInFile > 0 && ` ${duplicatesInFile} row(s) in this file matched another row in the same file (same game/book/type/side/line/price/stake) and were merged, keeping the last.`}
+          </p>
+          <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
+            A row that matches a bet already saved (same game/book/type/side/line/price/stake) updates that bet's
+            result/stake/price instead of adding a duplicate — safe to re-upload the same season sheet every week.
+          </p>
           <button className="mode-btn mode-btn-active" onClick={handleImport} disabled={importing}>
             {importing ? "Importing…" : `Import ${resolved.length} bet${resolved.length === 1 ? "" : "s"}`}
           </button>
