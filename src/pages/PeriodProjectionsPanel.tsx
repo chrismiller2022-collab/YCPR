@@ -549,17 +549,33 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
   const cell = { padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", fontSize: "0.78rem", whiteSpace: "nowrap" as const };
   const head = { ...cell, textAlign: "right" as const, color: "var(--chalk-dim)", fontWeight: 600 };
 
+  const [tab, setTab] = useState<"projections" | "info">("projections");
+
   return (
     <div>
       <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
         ‹ Admin
       </button>
       <h2 style={{ marginTop: 0 }}>Period Projections</h2>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+        <button className={`mode-btn ${tab === "projections" ? "mode-btn-active" : ""}`} onClick={() => setTab("projections")}>
+          Projections
+        </button>
+        <button className={`mode-btn ${tab === "info" ? "mode-btn-active" : ""}`} onClick={() => setTab("info")}>
+          How This Works
+        </button>
+      </div>
+
+      {tab === "info" ? (
+        <PeriodModelInfoTab />
+      ) : (
+        <>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         1st/2nd half and quarter spreads, totals and team totals for each FBS-vs-FBS game, built from your projected spread and total for
         the game (those stay exactly as they are — this adds a layer underneath). Each game is priced from real historical scoreboards
         re-weighted so their quarter averages match a ridge model (model {PERIOD_MODEL_VERSION}). Regulation only — overtime excluded.
-        Spread is the away line (negative = away favored). Values shown are means.
+        Spread is the away line (negative = away favored). Values shown are means. See "How This Works" for the full explanation.
       </p>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem" }}>
@@ -700,6 +716,53 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
       <p style={{ marginTop: "2rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
         Results across past weeks and seasons (including everything pulled in Historical Odds Pull) are in Admin → Period Grading.
       </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// "How This Works" info tab — a plain explanation of what actually
+// produces these numbers, since it isn't a Monte Carlo re-sim the way the
+// season simulator is (a question that's come up more than once).
+// ---------------------------------------------------------------------
+function PeriodModelInfoTab() {
+  const p = { fontSize: "0.85rem", lineHeight: 1.6, marginBottom: "1rem" };
+  const li = { marginBottom: "0.6rem" };
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <p style={p}>
+        No — it doesn't run a 100k-trial Monte Carlo. That's a separate, unrelated tool (the season simulator on the Monte Carlo page).
+        The period model works differently:
+      </p>
+      <ol style={{ fontSize: "0.85rem", lineHeight: 1.6, paddingLeft: "1.2rem" }}>
+        <li style={li}>
+          <strong>Inputs:</strong> for each game it takes your projected spread and total for that week — the locked values when the game
+          is locked, otherwise the live numbers from your power ratings and the totals model. Those come from the rest of the site as
+          usual; nothing in the period step re-derives them.
+        </li>
+        <li style={li}>
+          <strong>No random draws:</strong> instead of simulating, it pulls the 500 nearest real historical scoreboards to that
+          spread/total from a fixed pool of about 3,900 games (2021–2026), by closeness in spread and total.
+        </li>
+        <li style={li}>
+          <strong>Reweighting, not sampling:</strong> those 500 real scoreboards get weighted (an exponential-tilt solve) so their
+          weighted quarter-by-quarter averages match a frozen ridge regression's predicted quarter splits, and so the weighted median
+          margin and total land exactly on your projected spread and total. So every possible outcome is a real, lumpy scoreboard, not
+          synthetic noise — the ridge model and your projection set the levels, the history supplies the shape (0s, 3s, 7s, halftime
+          ties, etc).
+        </li>
+        <li style={li}>
+          <strong>Exact math, not simulation variance:</strong> probabilities, means and medians are computed directly from those
+          weights. There's no trial count and no run-to-run randomness — the same inputs always give the same output, unlike the Monte
+          Carlo season sim which redraws every trial.
+        </li>
+        <li style={li}>
+          <strong>When it runs:</strong> on page load, for whatever week you're viewing in Period Projections — see{" "}
+          <code>PeriodProjectionsPanel.tsx</code> calling <code>buildPeriodDistribution</code>.
+        </li>
+      </ol>
     </div>
   );
 }
