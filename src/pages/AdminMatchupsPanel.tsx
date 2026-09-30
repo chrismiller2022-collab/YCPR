@@ -14,6 +14,7 @@ import { TotalsTab, TeamTotalsTab, filterRowsByDivision } from "./GameTotalsAdmi
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import { fetchPlacedBets, type BetType } from "../lib/api/placedBets";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -749,6 +750,11 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [completedFilter, setCompletedFilter] = useState<"all" | "hideCompleted" | "completedOnly">("all");
   const [sortKey, setSortKey] = useState<string | null>("betSize");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // "Have I already bet this game (in THIS market)?" — scoped to the
+  // current mode's own bet_type, not just "any bet on this game at all",
+  // since a game can have a spread bet placed but no total bet, and each
+  // tab should only answer for its own market.
+  const [betFilter, setBetFilter] = useState<"all" | "placed" | "notPlaced">("all");
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(false);
@@ -761,6 +767,37 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [betModalContext, setBetModalContext] = useState<PlaceBetContext | null>(null);
   const [betSavedMessage, setBetSavedMessage] = useState<string | null>(null);
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string; week: number } | null>(null);
+
+  // Placed-bet awareness for the "Bet already / Not bet yet" filter —
+  // loaded once per season (all weeks), independent of the week/matchup
+  // filters above, so switching weeks doesn't refetch it.
+  const [placedGameIdsByType, setPlacedGameIdsByType] = useState<Record<BetType, Set<string>>>({} as Record<BetType, Set<string>>);
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlacedBets(season)
+      .then((bets) => {
+        if (cancelled) return;
+        const map: Record<string, Set<string>> = {};
+        for (const b of bets) {
+          if (b.game_id == null) continue; // futures have no game
+          (map[b.bet_type] ??= new Set()).add(b.game_id);
+        }
+        setPlacedGameIdsByType(map as Record<BetType, Set<string>>);
+      })
+      .catch(() => !cancelled && setPlacedGameIdsByType({} as Record<BetType, Set<string>>));
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  // Which placed_bets bet_type each tab's "already bet" filter checks —
+  // Predictions has no such concept (it's CFBD's own contest, not a
+  // sportsbook bet), so it's left out and the filter just doesn't render.
+  const MODE_TO_BET_TYPE: Partial<Record<string, BetType>> = { spreads: "spread", moneyline: "moneyline", totals: "total", teamtotals: "team_total" };
+  function applyBetFilter<T extends { game: { id: string } }>(rows: T[], betType: BetType | undefined): T[] {
+    if (!betType || betFilter === "all") return rows;
+    const placed = placedGameIdsByType[betType] ?? new Set<string>();
+    return rows.filter((r) => (betFilter === "placed" ? placed.has(r.game.id) : !placed.has(r.game.id)));
+  }
 
   const currentSeason = new Date().getFullYear();
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
@@ -919,17 +956,24 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   );
 
   const visibleRows = useMemo(() => {
+    const betType = MODE_TO_BET_TYPE[mode];
+    const placed = betType ? placedGameIdsByType[betType] ?? new Set<string>() : null;
     return computedRows.filter((c) => {
       const isCompleted = c.game.away_points != null && c.game.home_points != null;
       if (completedFilter === "hideCompleted" && isCompleted) return false;
       if (completedFilter === "completedOnly" && !isCompleted) return false;
+      if (placed && betFilter !== "all") {
+        const hasBet = placed.has(c.game.id);
+        if (betFilter === "placed" && !hasBet) return false;
+        if (betFilter === "notPlaced" && hasBet) return false;
+      }
       if (!hideNoLine) return true;
       if (mode === "spreads") return c.vegasAwaySpread != null;
       if (mode === "moneyline") return c.vegasMoneyline != null;
       if (mode === "totals") return c.line?.over_under != null;
       return true;
     });
-  }, [computedRows, hideNoLine, completedFilter, mode]);
+  }, [computedRows, hideNoLine, completedFilter, mode, betFilter, placedGameIdsByType]);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return visibleRows;
@@ -1056,6 +1100,21 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <option value="FCSvFCS">FCS vs FCS</option>
           <option value="Cross">Cross-Division (FBS vs FCS)</option>
         </select>
+        {MODE_TO_BET_TYPE[mode] && (
+          <div style={{ display: "flex", gap: "0.3rem" }} title={`Checks your placed ${MODE_TO_BET_TYPE[mode]} bets specifically — a game with a spread bet but no total bet still counts as "not bet" on the Totals tab.`}>
+            {(
+              [
+                ["all", "All games"],
+                ["placed", "Bet already"],
+                ["notPlaced", "Not bet yet"],
+              ] as const
+            ).map(([key, label]) => (
+              <button key={key} className={`mode-btn ${betFilter === key ? "mode-btn-active" : ""}`} onClick={() => setBetFilter(key)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {(mode === "spreads" || mode === "moneyline") && (
           <>
             <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
@@ -1231,26 +1290,36 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       {mode === "totals" && (
         <>
           {(() => {
-            const betRows = buildBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, totalsPoolRows);
+            const rows = applyBetFilter(totalsViewRows, "total");
+            const betRows = buildBetRows(rows, totalsSettings.filterThresholdMultiplier, totalsPoolRows);
             const filtered = betRows.filter((r) => r.isFiltered);
             const w = filtered.filter((r) => r.grade === "win").length;
             const l = filtered.filter((r) => r.grade === "loss").length;
-            return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
+            return (
+              <>
+                <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />
+                <TotalsTab rows={rows} settings={totalsSettings} poolRows={totalsPoolRows} />
+              </>
+            );
           })()}
-          <TotalsTab rows={totalsViewRows} settings={totalsSettings} poolRows={totalsPoolRows} />
         </>
       )}
 
       {mode === "teamtotals" && (
         <>
           {(() => {
-            const betRows = buildTeamSplitBetRows(totalsViewRows, totalsSettings.filterThresholdMultiplier, actualVegasTTByKey, totalsPoolRows);
+            const rows = applyBetFilter(totalsViewRows, "team_total");
+            const betRows = buildTeamSplitBetRows(rows, totalsSettings.filterThresholdMultiplier, actualVegasTTByKey, totalsPoolRows);
             const filtered = betRows.filter((r) => r.isFiltered);
             const w = filtered.filter((r) => r.grade === "win").length;
             const l = filtered.filter((r) => r.grade === "loss").length;
-            return <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />;
+            return (
+              <>
+                <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />
+                <TeamTotalsTab rows={rows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} poolRows={totalsPoolRows} />
+              </>
+            );
           })()}
-          <TeamTotalsTab rows={totalsViewRows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} poolRows={totalsPoolRows} />
         </>
       )}
 

@@ -1,0 +1,48 @@
+placed_at,date,book,away_team,home_team,bet_type,side,line_value,price,stake,to_win,result,market
+2026-09-05,2026-09-05,kalshi,Baylor,,futures,yes,6,-188,9.99,5.30,pending,Will Baylor win at least 6 games this season?
+2026-08-28,2026-08-28,kalshi,Clemson,,futures,no,,-660,10.00,1.51,pending,Will Clemson qualify for the College Football Playoffs?
+2026-08-28,2026-08-28,kalshi,Florida,,futures,no,,-525,9.99,1.91,pending,Will Florida qualify for the College Football Playoffs?
+2026-08-25,2026-08-25,kalshi,Ole Miss,,futures,no,,-228,5.00,2.19,pending,Will Ole Miss qualify for the College Football Playoffs?
+2026-08-25,2026-08-25,kalshi,Utah,,futures,yes,,+398,2.02,8.03,pending,Will Utah qualify for the College Football Playoffs?
+2026-08-25,2026-08-25,kalshi,Texas Tech,,futures,yes,,+2243,0.99,22.26,pending,Will Texas Tech win the College Football Playoff National Championship?
+2026-08-25,2026-08-25,kalshi,Notre Dame,,futures,yes,,-177,4.99,2.82,pending,Will Notre Dame record more regular season wins than Miami (FL) in the 2026-27 college football season?
+2026-08-25,2026-08-25,kalshi,Ohio State,,futures,yes,,-121,5.00,4.13,pending,Will Ohio St. record more regular season wins than Texas in the 2026-27 college football season?
+2026-08-15,2026-08-15,kalshi,USC,,futures,no,,-306,5.00,1.63,pending,Will USC qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,LSU,,futures,no,,-162,15.98,9.86,pending,Will LSU qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Oklahoma,,futures,no,,-183,0.99,0.54,pending,Will Oklahoma qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Indiana,,futures,yes,,-306,0.99,0.33,pending,Will Indiana qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Oregon,,futures,yes,,-340,0.99,0.29,pending,Will Oregon qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Texas,,futures,no,,+137,4.42,5.99,pending,Will Texas qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Texas A&M,,futures,yes,,+166,0.99,1.64,pending,Will Texas A&M qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Oregon,,futures,yes,,+756,5.99,45.27,pending,Will Oregon win the College Football Playoff National Championship?
+2026-08-15,2026-08-15,kalshi,LSU,,futures,yes,,-2044,0.99,0.05,pending,Will LSU win the College Football Playoff National Championship?
+2026-08-15,2026-08-15,kalshi,Texas,,futures,yes,,-870,10.99,1.26,pending,Will Texas win the College Football Playoff National Championship?
+2026-08-15,2026-08-15,kalshi,Ohio State,,futures,yes,,+625,5.99,37.47,pending,Will Ohio St. win the College Football Playoff National Championship?
+2026-08-15,2026-08-15,kalshi,Notre Dame,,futures,yes,,+625,5.99,37.47,pending,Will Notre Dame win the College Football Playoff National Championship?
+2026-08-26,2026-08-26,kalshi,Texas Tech,,futures,yes,,-116,49.99,43.02,pending,Will Texas Tech win the College Football Big 12 Championship?
+2026-08-25,2026-08-25,kalshi,Texas,,futures,yes,,-1087,49.99,4.60,pending,Will Texas be selected as the College Football Playoff #1 seed?
+2026-08-25,2026-08-25,kalshi,Florida,,futures,yes,8,-154,5.00,3.23,pending,Will Florida win at least 8 games this season?
+2026-08-25,2026-08-25,kalshi,USC,,futures,yes,10,-290,4.99,1.72,pending,Will USC win at least 10 games this season?
+2026-08-25,2026-08-25,kalshi,USC,,futures,yes,9,-126,4.99,3.97,pending,Will USC win at least 9 games this season?
+2026-08-15,2026-08-15,kalshi,Alabama,,futures,yes,,+173,0.99,1.72,pending,Will Alabama record more regular season wins than Georgia in the 2026-27 college football season?
+2026-08-15,2026-08-15,kalshi,Iowa,,futures,no,,-1087,0.99,0.09,pending,Will Iowa qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Washington,,futures,no,,-564,0.99,0.17,pending,Will Washington qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Tennessee,,futures,no,,-360,0.99,0.28,pending,Will Tennessee qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Penn State,,futures,yes,,+250,4.65,11.60,pending,Will Penn St. qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Ohio State,,futures,no,,+222,0.66,1.40,pending,Will Ohio St. qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Miami (FL),,futures,yes,,-306,0.99,0.33,pending,Will Miami (FL) qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Alabama,,futures,no,,-196,8.48,4.25,pending,Will Alabama qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Georgia,,futures,yes,,-239,0.99,0.41,pending,Will Georgia qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,kalshi,Texas Tech,,futures,yes,,-207,15.98,7.72,pending,Will Texas Tech qualify for the College Football Playoffs?
+2026-08-15,2026-08-15,betonline,Navy,,futures,yes,,+850,1.40,11.90,pending,NCAAF Futures - To Make The Playoffs - Navy
+2026-08-15,2026-08-15,betonline,James Madison,,futures,yes,,+1600,1.40,22.40,pending,NCAAF Futures - To Make The Playoffs - James Madison
+2026-08-15,2026-08-15,betonline,Boise State,,futures,yes,,+450,1.40,6.30,pending,NCAAF Futures - To Make The Playoffs - Boise State
+2026-08-15,2026-08-15,betonline,Texas A&M,,futures,yes,,+1200,1.40,16.80,pending,NCAAF Futures - Conference Futures - SEC Winner - Texas A&M
+2026-08-15,2026-08-15,betonline,Georgia,,futures,yes,,+275,1.40,3.85,pending,NCAAF Futures - Conference Futures - SEC Winner - Georgia
+2026-08-15,2026-08-15,betonline,Jacksonville State,,futures,yes,,+450,1.40,6.30,pending,NCAAF Futures - Conference Futures - Conference USA Winner - Jacksonville State
+2026-08-15,2026-08-15,betonline,Toledo,,futures,yes,,+375,1.40,5.25,pending,NCAAF Futures - Conference Futures - MAC Winner - Toledo
+2026-08-15,2026-08-15,betonline,Texas Tech,,futures,yes,,-105,1.40,1.33,pending,NCAAF Futures - Conference Futures - Big 12 Winner - Texas Tech
+2026-08-15,2026-08-15,betonline,East Carolina,,futures,yes,,+900,1.40,12.60,pending,NCAAF Futures - Conference Futures - American Conference Winner - East Carolina
+2026-08-15,2026-08-15,betonline,Iowa State,,futures,over,3.5,+150,1.00,1.50,pending,NCAAF Team Wins - Big 12 Conference Wins - Iowa State Conference Wins 2026
+2026-08-15,2026-08-15,betonline,Toledo,,futures,over,7.5,-140,1.40,1.00,pending,NCAAF Team Wins - MAC Regular Season Wins - Toledo Regular Season Wins 2026
+2026-08-15,2026-08-15,betonline,North Texas,,futures,over,5.5,-130,1.40,1.08,pending,NCAAF Team Wins - American Conference - North Texas Regular Season Wins 2026
