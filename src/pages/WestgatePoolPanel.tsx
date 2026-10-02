@@ -14,7 +14,6 @@ import {
   fetchWestgatePoolSettings,
   saveWestgatePoolSettings,
   importWestgateStandings,
-  computePayoutPctByRank,
   projectPayout,
   type WestgateStandingRow,
   type WestgatePoolSettings,
@@ -24,10 +23,6 @@ import { WESTGATE_LINES_CSV_TEMPLATE, parseWestgateLinesCsv, importWestgateLines
 
 const POOL_URL =
   "https://www.westgateresorts.com/hotels/nevada/las-vegas/westgate-las-vegas-resort-casino/casino/2026-supercontest-college-card/";
-// The reference season whose final cash prizes seed the payout-%-by-rank
-// table — last year's full field/payout structure, scaled onto this
-// year's (typically smaller) entry count.
-const REFERENCE_SEASON = 2025;
 
 async function westgateSave(season: number, week: number, rows: WestgateRow[]) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -186,11 +181,10 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
 
 // ---------------------------------------------------------------------
 // Standings tab — uploaded contest leaderboard, merged with our own live
-// record/points, payouts scaled off REFERENCE_SEASON's cash prizes.
+// record/points; payouts follow the top-10 place schedule with ties splitting.
 // ---------------------------------------------------------------------
 function StandingsTab({ season }: { season: number }) {
   const [standings, setStandings] = useState<WestgateStandingRow[]>([]);
-  const [reference, setReference] = useState<WestgateStandingRow[]>([]);
   const [settings, setSettings] = useState<WestgatePoolSettings>({ season, entries: 774, entry_fee: 500 });
   const [entriesInput, setEntriesInput] = useState("774");
   const [feeInput, setFeeInput] = useState("500");
@@ -210,13 +204,11 @@ function StandingsTab({ season }: { season: number }) {
     setError(null);
     Promise.all([
       fetchWestgateStandings(season),
-      season === REFERENCE_SEASON ? Promise.resolve([]) : fetchWestgateStandings(REFERENCE_SEASON),
       fetchWestgatePoolSettings(season),
       fetchWestgateSeasonRows(season, liveByTeam),
     ])
-      .then(([s, ref, set, mine]) => {
+      .then(([s, set, mine]) => {
         setStandings(s);
-        setReference(season === REFERENCE_SEASON ? s : ref);
         setSettings(set);
         setEntriesInput(String(set.entries));
         setFeeInput(String(set.entry_fee));
@@ -231,8 +223,6 @@ function StandingsTab({ season }: { season: number }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, ratingsLoading]);
-
-  const pctByRank = useMemo(() => computePayoutPctByRank(reference), [reference]);
 
   const myRecord = useMemo(() => {
     return myRows.reduce(
@@ -354,7 +344,7 @@ function StandingsTab({ season }: { season: number }) {
           {savingSettings ? "Saving…" : "Save"}
         </button>
         <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
-          Total pool: {fmtMoney(settings.entries * settings.entry_fee)} — payouts scaled off {REFERENCE_SEASON}'s percentages.
+          Total pool: {fmtMoney(settings.entries * settings.entry_fee)} — only the top 10 places pay (40/20/15/9/5/3.5/2.5/2.5/1.5/1%), and tied finishers split the money for the places they occupy.
         </span>
       </div>
 
@@ -441,7 +431,7 @@ function StandingsTab({ season }: { season: number }) {
                     {r.points != null ? r.points.toFixed(2) : "–"}
                   </td>
                   <td style={{ padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmtMoney(projectPayout(r.place_rank, settings, pctByRank))}
+                    {fmtMoney(projectPayout(r.place_rank, merged.filter((x) => x.place_rank === r.place_rank).length, settings))}
                   </td>
                 </tr>
               ))}
@@ -452,8 +442,9 @@ function StandingsTab({ season }: { season: number }) {
 
       <div className="footer-note" style={{ marginTop: "1rem" }}>
         "You" is inserted using your own live record/points from every game you've picked this season
-        (1 pt per win, 0.5 per push) — not part of the uploaded CSV. Proj. Payout applies{" "}
-        {REFERENCE_SEASON}'s per-rank share of the pool to this season's field size × entry fee.
+        (1 pt per win, 0.5 per push) — not part of the uploaded CSV. Proj. Payout pools the prize money for every
+        paid place (1-10) a tie group occupies and splits it evenly across the whole group — a tie that runs past 10th
+        only splits the places that pay (e.g. 8 people tied for 9th share just 9th + 10th). Pool = entries × entry fee.
       </div>
     </div>
   );

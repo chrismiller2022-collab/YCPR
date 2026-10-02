@@ -1,15 +1,5 @@
 import { fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints } from "./westgatePool";
-import {
-  fetchWestgateStandings,
-  fetchWestgatePoolSettings,
-  computePayoutPctByRank,
-  projectPayout,
-  type WestgateStandingRow,
-} from "./westgateStandings";
-
-// Same reference season WestgatePoolPanel's Standings tab uses to seed
-// the payout-%-by-rank table.
-const REFERENCE_SEASON = 2025;
+import { fetchWestgateStandings, fetchWestgatePoolSettings, projectPayout } from "./westgateStandings";
 
 export interface WestgateProjection {
   points: number;
@@ -20,16 +10,16 @@ export interface WestgateProjection {
 /**
  * Your live points (from every Westgate game you've picked this season)
  * inserted into the uploaded standings by rank, then converted to a
- * projected payout via REFERENCE_SEASON's cash-prize percentages. Shared
+ * projected payout via the top-10 place schedule, splitting tied places
+ * across the whole tie group (see tieGroupPayoutPct). Shared
  * by the Balance Sheet's Hypothetical tab — see WestgatePoolPanel's
  * Standings tab for the same computation applied to the live leaderboard
  * view.
  */
 export async function fetchWestgateProjectedPayout(season: number, liveByTeam: Record<string, any> = {}): Promise<WestgateProjection> {
-  const [myRows, standings, reference, settings] = await Promise.all([
+  const [myRows, standings, settings] = await Promise.all([
     fetchWestgateSeasonRows(season, liveByTeam),
     fetchWestgateStandings(season),
-    season === REFERENCE_SEASON ? Promise.resolve([] as WestgateStandingRow[]) : fetchWestgateStandings(REFERENCE_SEASON),
     fetchWestgatePoolSettings(season),
   ]);
 
@@ -46,7 +36,8 @@ export async function fetchWestgateProjectedPayout(season: number, liveByTeam: R
   const points = westgatePoints(record);
   const better = standings.filter((r) => (r.points ?? -Infinity) > points).length;
   const rank = better + 1;
-  const pctByRank = computePayoutPctByRank(season === REFERENCE_SEASON ? standings : reference);
-  const payout = projectPayout(rank, settings, pctByRank);
+  // Everyone already at exactly your points, plus you, share this rank.
+  const groupSize = standings.filter((r) => r.points === points).length + 1;
+  const payout = projectPayout(rank, groupSize, settings);
   return { points, rank, payout };
 }

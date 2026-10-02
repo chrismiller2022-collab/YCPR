@@ -58,25 +58,35 @@ export async function saveWestgatePoolSettings(season: number, entries: number, 
 }
 
 /**
- * Maps place_rank -> this-person's share of the total pool, read off a
- * REFERENCE season's standings (one with cash_prize populated, e.g. last
- * year's final results). Ties already carry identical cash_prize per
- * person in the source data, so no special grouping is needed — take
- * whichever row for that rank as the representative percentage.
+ * Share of the prize pool paid to each of the top 10 PLACES (index 0 = 1st).
+ * Only the top 10 places pay. Verified against two real final standings
+ * files: 2025 (1st 40%, 2nd 20%, 3rd 15%, 4th 9%, a 3-way tie for 5th
+ * splitting places 5-7 = 11%, a 3-way tie for 8th splitting places 8-10 =
+ * 5%) and 2026's uploaded file (a 2-way tie for 1st = places 1-2 = 60%, a
+ * 6-way tie for 3rd = places 3-8 = 37.5%, an 8-way tie for 9th = places
+ * 9-10 only = 2.5%). Those files only ever show the SUMS for tied places,
+ * so the split within 5-7 (5 / 3.5 / 2.5) and within 9-10 (1.5 / 1.0) is
+ * an assumption — it only matters for a tie group that cuts through
+ * those ranges, and the sums above are exact.
  */
-export function computePayoutPctByRank(referenceRows: WestgateStandingRow[]): Map<number, number> {
-  const totalCash = referenceRows.reduce((sum, r) => sum + (r.cash_prize ?? 0), 0);
-  const pctByRank = new Map<number, number>();
-  if (totalCash <= 0) return pctByRank;
-  for (const r of referenceRows) {
-    if (r.cash_prize == null || pctByRank.has(r.place_rank)) continue;
-    pctByRank.set(r.place_rank, r.cash_prize / totalCash);
+export const WESTGATE_PLACE_PCT = [0.4, 0.2, 0.15, 0.09, 0.05, 0.035, 0.025, 0.025, 0.015, 0.01];
+
+/**
+ * Each person's payout when `groupSize` people finish tied starting at
+ * `startRank`: the prize money for every place the group occupies AMONG THE
+ * PAID PLACES (1-10) is pooled and split evenly across the whole group —
+ * including people tied past the cutoff, who dilute the share rather than
+ * being excluded (an 8-way tie for 9th splits only places 9 and 10).
+ */
+export function tieGroupPayoutPct(startRank: number, groupSize: number): number {
+  let total = 0;
+  for (let place = startRank; place < startRank + groupSize; place++) {
+    total += WESTGATE_PLACE_PCT[place - 1] ?? 0;
   }
-  return pctByRank;
+  return total / groupSize;
 }
 
-/** This season's projected payout for a given finishing rank, scaled off the reference season's percentages. */
-export function projectPayout(rank: number, settings: WestgatePoolSettings, pctByRank: Map<number, number>): number {
-  const pct = pctByRank.get(rank) ?? 0;
-  return pct * settings.entries * settings.entry_fee;
+/** Projected payout for a finishing rank, given how many people share that rank (tie group size). */
+export function projectPayout(rank: number, groupSize: number, settings: WestgatePoolSettings): number {
+  return tieGroupPayoutPct(rank, groupSize) * settings.entries * settings.entry_fee;
 }
