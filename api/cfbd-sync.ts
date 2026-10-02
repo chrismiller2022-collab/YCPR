@@ -241,11 +241,30 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
     // team -> year -> candidates
     const byTeam = new Map<string, Map<number, { key: string; name: string; games: number; hireDate: string | null }[]>>();
     const yearsByCoachTeam = new Map<string, Set<number>>();
+    // Every coach-season in the window, kept as-is for the admin coach-history table.
+    const seasonRows = new Map<string, any>();
+    const nowIso = new Date().toISOString();
     for (const c of coaches ?? []) {
       const key = String(c.id ?? `${c.firstName}|${c.lastName}`);
       const name = `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim();
       for (const cs of c.seasons ?? []) {
         if (!cs.school || cs.year == null) continue;
+        seasonRows.set(`${cs.school}|${cs.year}|${key}`, {
+          team: cs.school,
+          year: cs.year,
+          coach_id: key,
+          coach_name: name,
+          hire_date: c.hireDate ?? null,
+          games: cs.games ?? null,
+          wins: cs.wins ?? null,
+          losses: cs.losses ?? null,
+          ties: cs.ties ?? null,
+          srs: cs.srs ?? null,
+          sp_overall: cs.spOverall ?? null,
+          preseason_rank: cs.preseasonRank ?? null,
+          postseason_rank: cs.postseasonRank ?? null,
+          updated_at: nowIso,
+        });
         const ty = byTeam.get(cs.school) ?? new Map();
         const list = ty.get(cs.year) ?? [];
         list.push({ key, name, games: cs.games ?? 0, hireDate: c.hireDate ?? null });
@@ -292,8 +311,18 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
       if (error) throw new Error(`Saving coaches failed: ${error.message}`);
       saved += count ?? 0;
     }
+    const historyRows = Array.from(seasonRows.values());
+    let historySaved = 0;
+    for (let i = 0; i < historyRows.length; i += 500) {
+      const { error, count } = await supabaseAdmin
+        .from("team_coach_seasons")
+        .upsert(historyRows.slice(i, i + 500), { onConflict: "team,year,coach_id", count: "exact" });
+      if (error) throw new Error(`Saving coach history failed: ${error.message}`);
+      historySaved += count ?? 0;
+    }
     out.coaches = {
       fetched: (coaches ?? []).length,
+      historySeasons: historySaved,
       teams: saved,
       staleTeams: rows.filter((r) => r.latest_year_with_data < year).length,
       sample: rows[0] ?? null,

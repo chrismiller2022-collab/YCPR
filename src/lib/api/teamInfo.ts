@@ -22,6 +22,33 @@ export interface TeamCoachRow {
   latest_year_with_data: number | null;
 }
 
+export interface TeamCoachSeasonRow {
+  team: string;
+  year: number;
+  coach_id: string;
+  coach_name: string;
+  hire_date: string | null;
+  games: number | null;
+  wins: number | null;
+  losses: number | null;
+  ties: number | null;
+  srs: number | null;
+  sp_overall: number | null;
+  preseason_rank: number | null;
+  postseason_rank: number | null;
+}
+
+/** Every coach-season CFBD reported for one team (needs the Team Info "Coaches" pull to have run since coach history was added). */
+export async function fetchTeamCoachSeasons(team: string): Promise<TeamCoachSeasonRow[]> {
+  const { data, error } = await supabase
+    .from("team_coach_seasons")
+    .select("team, year, coach_id, coach_name, hire_date, games, wins, losses, ties, srs, sp_overall, preseason_rank, postseason_rank")
+    .eq("team", team)
+    .order("year", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as TeamCoachSeasonRow[];
+}
+
 export async function fetchTeamGameAdvanced(season: number): Promise<TeamGameAdvancedRow[]> {
   return fetchAllRows<TeamGameAdvancedRow>((from, to) =>
     supabase
@@ -61,7 +88,7 @@ export async function pullTeamInfo(season: number, week: number | null, parts: s
   return data as {
     pgwe?: { games: number; withPgwe: number };
     netSr?: { fetched: number; saved: number };
-    coaches?: { fetched: number; teams: number; staleTeams: number };
+    coaches?: { fetched: number; historySeasons?: number; teams: number; staleTeams: number };
     warnings?: string[];
   };
 }

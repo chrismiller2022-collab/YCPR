@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { fetchAllRows } from "../lib/api/fetchAll";
+import { SPLITS, add, empty, fmtRec, grade, splitsFor, winPct, type LogRow, type Outcome, type Rec, type SplitKey } from "../lib/coachRecords";
 import { TEAMS_BY_NAME } from "../data/teams";
 import SortHeader from "./SortHeader";
 import TeamLink from "./TeamLink";
@@ -12,80 +13,6 @@ import TeamLink from "./TeamLink";
 // line oriented to the team) and grades in the browser so the opening/closing
 // toggle is instant.
 
-interface LogRow {
-  team: string;
-  coach_name: string;
-  first_year_at_school: number | null;
-  game_id: string;
-  season: number;
-  week: number;
-  season_type: string;
-  location: "home" | "away" | "neutral";
-  opponent: string;
-  team_points: number;
-  opp_points: number;
-  close_spread: number | null;
-  open_spread: number | null;
-  line_provider: string | null;
-}
-
-interface Rec {
-  w: number;
-  l: number;
-  p: number;
-}
-const empty = (): Rec => ({ w: 0, l: 0, p: 0 });
-
-const SPLITS = [
-  { key: "all", label: "Overall" },
-  { key: "fav", label: "Fav" },
-  { key: "dog", label: "Dog" },
-  { key: "home", label: "Home" },
-  { key: "away", label: "Away" },
-  { key: "homeFav", label: "Home Fav" },
-  { key: "homeDog", label: "Home Dog" },
-  { key: "awayFav", label: "Away Fav" },
-  { key: "awayDog", label: "Away Dog" },
-] as const;
-type SplitKey = (typeof SPLITS)[number]["key"];
-
-type Outcome = "W" | "L" | "P" | null;
-
-function grade(g: LogRow, spread: number | null) {
-  const margin = g.team_points - g.opp_points;
-  const su: Outcome = margin > 0 ? "W" : margin < 0 ? "L" : "P";
-  let ats: Outcome = null;
-  if (spread != null) {
-    const v = margin + spread;
-    ats = v > 0 ? "W" : v < 0 ? "L" : "P";
-  }
-  return { su, ats };
-}
-
-// Which splits a game counts toward. Fav/dog needs a line (and a non-zero
-// spread); home/away excludes neutral-site games.
-function splitsFor(g: LogRow, spread: number | null): SplitKey[] {
-  const out: SplitKey[] = ["all"];
-  const role = spread == null || spread === 0 ? null : spread < 0 ? "Fav" : "Dog";
-  if (role) out.push(role === "Fav" ? "fav" : "dog");
-  if (g.location === "home" || g.location === "away") {
-    out.push(g.location);
-    if (role) out.push(`${g.location}${role}` as SplitKey);
-  }
-  return out;
-}
-
-function add(r: Rec, o: Outcome) {
-  if (o === "W") r.w += 1;
-  else if (o === "L") r.l += 1;
-  else if (o === "P") r.p += 1;
-}
-function fmtRec(r: Rec) {
-  return r.w + r.l + r.p === 0 ? "–" : `${r.w}-${r.l}${r.p ? `-${r.p}` : ""}`;
-}
-function winPct(r: Rec): number | null {
-  return r.w + r.l === 0 ? null : r.w / (r.w + r.l);
-}
 function fmtSpread(v: number | null) {
   return v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 }

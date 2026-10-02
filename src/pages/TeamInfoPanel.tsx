@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import CoachAtsSection from "../components/CoachAtsSection";
+import TeamOverviewSection from "../components/TeamOverviewSection";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
 import {
@@ -132,7 +133,7 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
       const bits: string[] = [];
       if (r.pgwe) bits.push(`PGWE: ${r.pgwe.withPgwe} of ${r.pgwe.games} games have it`);
       if (r.netSr) bits.push(`Net success rate: ${r.netSr.saved} team-games saved`);
-      if (r.coaches) bits.push(`Coaches: ${r.coaches.teams} teams${r.coaches.staleTeams ? ` (${r.coaches.staleTeams} using last season's coach)` : ""}`);
+      if (r.coaches) bits.push(`Coaches: ${r.coaches.teams} teams${r.coaches.historySeasons != null ? `, ${r.coaches.historySeasons} coach-seasons of history` : ""}${r.coaches.staleTeams ? ` (${r.coaches.staleTeams} using last season's coach)` : ""}`);
       setPullMsg(bits.join(" · ") + (r.warnings?.length ? ` — ${r.warnings.join(" ")}` : ""));
       invalidateCache();
       setReloadTick((n) => n + 1);
@@ -231,6 +232,8 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
           </tbody>
         </table>
       </div>
+
+      <TeamOverviewSection season={season} refreshKey={reloadTick} />
 
       <CoachAtsSection refreshKey={reloadTick} />
     </div>

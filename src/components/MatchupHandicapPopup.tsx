@@ -2,6 +2,7 @@ import TeamLogo from "./TeamLogo";
 import { useMatchupHandicap, type RankInfo, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
 import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { fetchCoachGameLog, fmtRec, tallyCoachRows, type LogRow, type SplitKey } from "../lib/coachRecords";
 import { fetchSavedRatingsAtOrBefore } from "../lib/api/ratingSystems";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { buildRatingsByTeam, computeMultiSystemRow, type MultiSystemGameRow } from "../lib/multiRatingMatchups";
@@ -168,13 +169,88 @@ function SpotBadges({ hc }: { hc: TeamHandicap }) {
   );
 }
 
+// The current head coach's record at this school over his WHOLE tenure (every
+// completed game since his first season here, entering this week), in the same
+// buckets the season rows above use — role in this game, favorite/underdog, and
+// the combination. Season rows stay the headline; this is the longer sample.
+function TenureSplits({
+  team,
+  season,
+  week,
+  roleLabel,
+  favLabel,
+}: {
+  team: string;
+  season: number;
+  week: number;
+  roleLabel: "Home" | "Road";
+  favLabel: "Favorite" | "Underdog" | null;
+}) {
+  const [log, setLog] = useState<LogRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLog(null);
+    fetchCoachGameLog(team)
+      .then((r) => !cancelled && setLog(r))
+      .catch(() => !cancelled && setLog([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [team]);
+
+  const tally = useMemo(() => {
+    // Entering this week: earlier seasons, plus this season's earlier weeks.
+    const rows = (log ?? []).filter((g) => g.season < season || (g.season === season && g.week < week));
+    return tallyCoachRows(rows, "close");
+  }, [log, season, week]);
+
+  if (!log || log.length === 0) return null;
+  const coach = log[0];
+  const loc = roleLabel === "Home" ? "home" : "away";
+  const fd = favLabel === "Favorite" ? "Fav" : favLabel === "Underdog" ? "Dog" : null;
+  const lines: { label: string; key: SplitKey }[] = [
+    { label: "Overall", key: "all" },
+    { label: roleLabel === "Home" ? "As home team" : "As road team", key: loc as SplitKey },
+  ];
+  if (fd) {
+    lines.push({ label: `As ${favLabel!.toLowerCase()}`, key: fd.toLowerCase() as SplitKey });
+    lines.push({ label: `${roleLabel === "Home" ? "Home" : "Away"} ${favLabel}`, key: `${loc}${fd}` as SplitKey });
+  }
+  const atsLabel = (k: SplitKey) => {
+    const r = tally.ats[k];
+    return r.p > 0 ? `${r.w}-${r.l}-${r.p}` : `${r.w}-${r.l}`;
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.3rem", marginTop: "0.4rem" }}>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", marginBottom: "0.15rem" }}>
+        {coach.coach_name}'s tenure{coach.first_year_at_school ? ` (since ${coach.first_year_at_school})` : ""}
+      </div>
+      {lines.map(({ label, key }) => {
+        const su = tally.su[key];
+        const empty = su.w + su.l + su.p === 0;
+        return (
+          <div key={key} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", padding: "0.2rem 0" }}>
+            <span style={{ color: "var(--chalk-dim)" }}>{label}</span>
+            <span>{empty ? "–" : `${fmtRec(su)} SU · ${atsLabel(key)} ATS`}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TeamColumn({
   hc,
   roleLabel,
   favLabel,
   categories,
+  season,
+  week,
 }: {
   hc: TeamHandicap;
+  season: number;
+  week: number;
   roleLabel: "Home" | "Road";
   favLabel: "Favorite" | "Underdog" | null;
   categories: SpreadCallCategoryInfo[];
@@ -262,6 +338,8 @@ function TeamColumn({
         {hc.homeAwayFavDog && comboLabel && <SplitRow label={comboLabel} split={hc.homeAwayFavDog} />}
         <CategoryCallRows team={hc.team} categories={categories} />
       </div>
+
+      <TenureSplits team={hc.team} season={season} week={week} roleLabel={roleLabel} favLabel={favLabel} />
     </div>
   );
 }
@@ -709,12 +787,16 @@ export default function MatchupHandicapPopup({
             <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
               <TeamColumn
                 hc={hc.away}
+                season={season}
+                week={week}
                 roleLabel="Road"
                 favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === awayTeam ? "Favorite" : "Underdog"}
                 categories={hc.spreadCallCategories}
               />
               <TeamColumn
                 hc={hc.home}
+                season={season}
+                week={week}
                 roleLabel="Home"
                 favLabel={hc.favoriteTeam == null ? null : hc.favoriteTeam === homeTeam ? "Favorite" : "Underdog"}
                 categories={hc.spreadCallCategories}
