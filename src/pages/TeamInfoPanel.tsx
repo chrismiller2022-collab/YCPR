@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import CoachAtsSection from "../components/CoachAtsSection";
-import TeamOverviewSection from "../components/TeamOverviewSection";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
 import {
@@ -232,8 +231,6 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
           </tbody>
         </table>
       </div>
-
-      <TeamOverviewSection season={season} refreshKey={reloadTick} />
 
       <CoachAtsSection refreshKey={reloadTick} />
     </div>

@@ -22,6 +22,7 @@ import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 import WinDistributionBarChart from "../components/WinDistributionBarChart";
 import { TeamRatingHistoryChart, TeamWinsVsExpectedChart } from "../components/TeamTrendCharts";
+import TeamOverviewSection from "../components/TeamOverviewSection";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -477,6 +478,14 @@ function HomeRoadSplitsBlock({ team }: { team: any }) {
   );
 }
 
+function safeAdminSession(): boolean {
+  try {
+    return !!sessionStorage.getItem("admin_password");
+  } catch {
+    return false;
+  }
+}
+
 export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
@@ -700,6 +709,15 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           </tbody>
         </table>
       </div>
+
+      {/* Admin-only: coach tenure buckets + coach history for FBS teams. Shown
+          only in a browser session that has logged in to Admin (the data is
+          public-read either way — this is just keeping it off the public view). */}
+      {team.div === "FBS" && safeAdminSession() && (
+        <div data-export-exclude="true">
+          <TeamOverviewSection season={season} fixedTeam={team.team} showCharts={false} />
+        </div>
+      )}
     </div>
   );
 }

@@ -25,6 +25,37 @@ export async function saveResumeRatingsToSite(season: number, week: number, rows
   return data;
 }
 
+/** Snapshots the "completed games only" Resume Rating into team_resume_ratings_finished (separate table — never touches the published numbers). */
+export async function saveFinishedResumeRatings(season: number, week: number, rows: { team: string; score: number | null; actWins: number | null; losses: number | null }[]) {
+  const password = sessionStorage.getItem("admin_password") ?? "";
+  const res = await fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password, action: "saveResumeRatingsFinished", season, week, rows }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Save failed");
+  return data;
+}
+
+/**
+ * Framework for the weekly report (NOT wired into it yet): one saved week's
+ * finished-games-only Resume Rating, team -> score. The report's resume
+ * images read ratings through the report data layer (see
+ * lib/reportOverlays.ts); to add a "finished games only" version, call this
+ * for the report week, rank it like the other resume rows, and build
+ * graphics from it the same way toResumeRows does.
+ */
+export async function fetchFinishedResumeForWeek(season: number, week: number): Promise<Record<string, { score: number | null; act_wins: number | null; losses: number | null }>> {
+  const { data, error } = await supabase.from("team_resume_ratings_finished").select("team, score, act_wins, losses").eq("season", season).eq("week", week);
+  if (error) throw error;
+  const out: Record<string, { score: number | null; act_wins: number | null; losses: number | null }> = {};
+  for (const r of (data ?? []) as { team: string; score: number | null; act_wins: number | null; losses: number | null }[]) {
+    out[r.team] = { score: r.score, act_wins: r.act_wins, losses: r.losses };
+  }
+  return out;
+}
+
 /** Distinct week numbers with a saved Resume Ratings snapshot for this season — used by the Publish status grid. */
 export async function fetchResumeRatingsAvailableWeeks(season: number): Promise<number[]> {
   const { data, error } = await supabase.from("team_resume_ratings").select("week").eq("season", season);

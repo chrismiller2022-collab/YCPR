@@ -8,6 +8,7 @@ import { bucketFor } from "./conferenceBuckets";
 import { fetchWeeklyStats, type WeeklyTeamStats } from "./api/weeklyStats";
 import type { GameWithLines } from "./api/gamesLines";
 import type { CompactRatingRow } from "./compactPowerRatings";
+import type { ProjectedWins } from "./reportOverlays";
 
 // ---------------------------------------------------------------------
 // Shared data layer for the Weekly Image Dump admin tool (Admin > Weekly
@@ -55,6 +56,11 @@ export interface ImageDumpTeamRow {
   // always assuming 0.
   liveWins: number;
   liveLosses: number;
+  // Set when win totals come from the power-ratings projection (current wins
+  // + each remaining game's win probability) instead of the weekly upload:
+  // projected wins/losses still to come.
+  winsLeftProj: number | null;
+  lossesLeftProj: number | null;
 }
 
 /**
@@ -110,25 +116,32 @@ export function buildDivisionResolvedTeams(
   division: "FBS" | "FCS",
   liveByTeam: Record<string, WeeklyTeamStats>,
   changeByTeam: Record<string, { change: number | null }> = {},
-  actualRecordByTeam: Record<string, { wins: number; losses: number }> = {}
+  actualRecordByTeam: Record<string, { wins: number; losses: number }> = {},
+  // Optional: win totals projected from power ratings (see reportOverlays.ts
+  // computeProjectedWins). When a team has an entry, its winTotal/liveWins/
+  // liveLosses come from it instead of weekly_team_stats.total_wins.
+  projectedWinsByTeam: Record<string, ProjectedWins> = {}
 ): ImageDumpTeamRow[] {
   const divTeams = TEAMS.filter((t) => t.div === division);
 
   const withRating = divTeams.map((t) => {
     const live = liveByTeam[t.team];
     const actual = actualRecordByTeam[t.team];
+    const proj = projectedWinsByTeam[t.team];
     return {
       team: t.team,
       conf: t.conf,
       div: t.div,
       rating: live?.rating ?? t.rating,
-      winTotal: live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
+      winTotal: proj ? proj.projTotal : live?.total_wins ?? TEAM_WIN_TOTALS[t.team]?.total ?? 0,
       confWinTotal: live?.conf_proj_wins ?? TEAM_WIN_TOTALS[t.team]?.confTotal ?? 0,
       sos: live?.sor ?? SOS_BY_TEAM[t.team] ?? null,
       resumeRating: live?.resume_rating ?? RESUME_BY_TEAM[t.team]?.rating ?? null,
       resumeRank: live?.resume_rank ?? RESUME_BY_TEAM[t.team]?.rank ?? null,
-      liveWins: actual?.wins ?? live?.live_wins ?? 0,
-      liveLosses: actual?.losses ?? live?.live_losses ?? 0,
+      liveWins: proj ? proj.wins : actual?.wins ?? live?.live_wins ?? 0,
+      liveLosses: proj ? proj.losses : actual?.losses ?? live?.live_losses ?? 0,
+      winsLeftProj: proj ? proj.winsLeft : null,
+      lossesLeftProj: proj ? proj.gamesLeft - proj.winsLeft : null,
     };
   });
 
@@ -164,6 +177,8 @@ export function buildDivisionResolvedTeams(
       change: changeByTeam[t.team]?.change ?? null,
       liveWins: t.liveWins,
       liveLosses: t.liveLosses,
+      winsLeftProj: t.winsLeftProj,
+      lossesLeftProj: t.lossesLeftProj,
     }))
     .sort((a, b) => a.rank - b.rank);
 }
@@ -200,33 +215,48 @@ export function toSosRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
-/** Same idea, ranked/valued by projected Win Total. */
+/** Same idea, ranked/valued by projected end-of-season Win Total, with the
+ * wins already banked and the projected wins still to come as extra columns. */
 export function toWinTotalRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
   return rows
-    .map((r) => ({ rank: r.winTotalRank, team: r.team, conf: r.conf, rating: r.winTotal }))
+    .map((r) => ({
+      rank: r.winTotalRank,
+      team: r.team,
+      conf: r.conf,
+      rating: r.winTotal,
+      extras: [r.liveWins, winsLeftOf(r)],
+    }))
     .sort((a, b) => a.rank - b.rank);
 }
 
+/** Projected wins still to come: the model's remaining-game total when
+ * available, else the old winTotal-minus-banked-wins arithmetic. */
+function winsLeftOf(r: ImageDumpTeamRow): number {
+  return r.winsLeftProj ?? Math.max(0, r.winTotal - r.liveWins);
+}
+
+function lossesLeftOf(r: ImageDumpTeamRow): number {
+  return r.lossesLeftProj ?? gamesForTeam(r.team).length - r.winTotal - r.liveLosses;
+}
+
 /**
- * Top N by projected wins remaining (winTotal minus wins already banked
- * this season) — ranked fresh within just this list (rank 1 = most wins
- * left), same reasoning as the SOS Hardest/Easiest split: reusing
- * winTotalRank here would show the team's overall win-total rank, not
- * their position in a "who has the most winnable games left" list.
+ * Top N by projected wins remaining — ranked fresh within just this list
+ * (rank 1 = most wins left), same reasoning as the SOS Hardest/Easiest
+ * split: reusing winTotalRank here would show the team's overall win-total
+ * rank, not their position in a "who has the most winnable games left" list.
  */
 export function toWinsLeftRows(rows: ImageDumpTeamRow[], limit = 30): CompactRatingRow[] {
   return rows
-    .map((r) => ({ team: r.team, conf: r.conf, winsLeft: r.winTotal - r.liveWins }))
+    .map((r) => ({ team: r.team, conf: r.conf, winsLeft: winsLeftOf(r) }))
     .sort((a, b) => b.winsLeft - a.winsLeft)
     .slice(0, limit)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.winsLeft }));
 }
 
-/** Same idea for projected losses remaining (total games minus win total
- * minus losses already taken). */
+/** Same idea for projected losses remaining. */
 export function toLossesLeftRows(rows: ImageDumpTeamRow[], limit = 30): CompactRatingRow[] {
   return rows
-    .map((r) => ({ team: r.team, conf: r.conf, lossesLeft: gamesForTeam(r.team).length - r.winTotal - r.liveLosses }))
+    .map((r) => ({ team: r.team, conf: r.conf, lossesLeft: lossesLeftOf(r) }))
     .sort((a, b) => b.lossesLeft - a.lossesLeft)
     .slice(0, limit)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.lossesLeft }));

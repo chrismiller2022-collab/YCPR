@@ -414,6 +414,38 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Same snapshot as saveResumeRatings, but for the "completed games only"
+    // Resume Rating (no rest-of-season projection) — its own table so it can
+    // never overwrite the published numbers. Not read by any public page yet.
+    if (action === "saveResumeRatingsFinished") {
+      const { season, week, rows } = req.body ?? {};
+      if (typeof season !== "number" || typeof week !== "number") {
+        res.status(400).json({ error: "season and week are required" });
+        return;
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "Missing or empty 'rows'" });
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      const saveRows = rows.map((r: any) => ({
+        season,
+        week,
+        team: r.team,
+        updated_at: nowIso,
+        score: r.score ?? null,
+        act_wins: r.actWins ?? null,
+        losses: r.losses ?? null,
+      }));
+      const { error, count } = await supabaseAdmin
+        .from("team_resume_ratings_finished")
+        .upsert(saveRows, { onConflict: "season,week,team", count: "exact" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true, saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "saveGameTotalsSettings") {
       const { season, settings } = req.body;
       if (typeof season !== "number" || typeof settings !== "object" || settings == null) {

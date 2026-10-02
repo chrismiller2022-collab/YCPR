@@ -31,6 +31,7 @@ import { saveRatingRows } from "../lib/api/ratingSystems";
 import { computeCurrentWeek } from "../lib/api/survivorPoolPublic";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import ConferenceStandingsOddsTable from "../components/ConferenceStandingsOddsTable";
+import WinTotalsCompareTab from "../components/WinTotalsCompareTab";
 
 const NUM_TRIALS = 100000;
 
@@ -588,7 +589,7 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
 }
 
 function MonteCarloResultsSection() {
-  const [tab, setTab] = useState<"run" | "history">("run");
+  const [tab, setTab] = useState<"run" | "history" | "wintotals">("run");
   const [season, setSeason] = useState(new Date().getFullYear());
   const numTrials = NUM_TRIALS;
   const [running, setRunning] = useState(false);
@@ -694,6 +695,9 @@ function MonteCarloResultsSection() {
         <button className={`mode-btn ${tab === "history" ? "mode-btn-active" : ""}`} onClick={() => setTab("history")}>
           History
         </button>
+        <button className={`mode-btn ${tab === "wintotals" ? "mode-btn-active" : ""}`} onClick={() => setTab("wintotals")}>
+          Win Totals
+        </button>
       </div>
 
       {tab === "run" && (
@@ -777,6 +781,8 @@ function MonteCarloResultsSection() {
       )}
 
       {tab === "history" && <HistoryTab season={season} />}
+
+      {tab === "wintotals" && <WinTotalsCompareTab season={season} />}
     </div>
   );
 }

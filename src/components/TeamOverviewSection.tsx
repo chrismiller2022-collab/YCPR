@@ -61,8 +61,21 @@ function toStints(rows: TeamCoachSeasonRow[]): CoachStint[] {
  * his whole tenure here and over just the current season, the school's coach
  * history, and the same two trend charts shown on the public team page.
  */
-export default function TeamOverviewSection({ season, refreshKey }: { season: number; refreshKey: number }) {
-  const [team, setTeam] = useState("Georgia");
+export default function TeamOverviewSection({
+  season,
+  refreshKey = 0,
+  fixedTeam,
+  showCharts = true,
+}: {
+  season: number;
+  refreshKey?: number;
+  /** Pin one team (hides the picker) — used by the admin-only block at the bottom of the public team page. */
+  fixedTeam?: string;
+  /** The two trend charts; the public team page already shows them, so it turns them off here. */
+  showCharts?: boolean;
+}) {
+  const [pickedTeam, setPickedTeam] = useState("Georgia");
+  const team = fixedTeam ?? pickedTeam;
   const [lineMode, setLineMode] = useState<"close" | "open">("close");
   const [log, setLog] = useState<LogRow[] | null>(null);
   const [history, setHistory] = useState<TeamCoachSeasonRow[] | null>(null);
@@ -95,18 +108,20 @@ export default function TeamOverviewSection({ season, refreshKey }: { season: nu
 
   return (
     <div style={{ marginTop: "2.5rem" }}>
-      <h2>Team Overview</h2>
+      <h2>{fixedTeam ? `${team} — admin overview` : "Team Overview"}</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
-        One FBS team at a time: current head coach's record over his whole tenure and over {season} only, the school's coach history, and the power-rating and wins-vs-expected charts.
+        Current head coach's record over the whole tenure and over {season} only, in every home/away/favorite/underdog bucket, plus the school's coach history.
       </p>
       <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
-        <select className="filter" value={team} onChange={(e) => setTeam(e.target.value)}>
-          {FBS_TEAMS.map((t) => (
-            <option key={t.team} value={t.team}>
-              {t.team}
-            </option>
-          ))}
-        </select>
+        {!fixedTeam && (
+          <select className="filter" value={team} onChange={(e) => setPickedTeam(e.target.value)}>
+            {FBS_TEAMS.map((t) => (
+              <option key={t.team} value={t.team}>
+                {t.team}
+              </option>
+            ))}
+          </select>
+        )}
         {(["close", "open"] as const).map((m) => (
           <button key={m} className={`mode-btn ${lineMode === m ? "mode-btn-active" : ""}`} onClick={() => setLineMode(m)}>
             {m === "close" ? "Closing line" : "Opening line"}
@@ -216,10 +231,12 @@ export default function TeamOverviewSection({ season, refreshKey }: { season: nu
         Records and SRS are CFBD's season totals, not graded against the spread. Hover a row for the per-season record. The window is the last 30 seasons, so a coach who started earlier shows only those years.
       </p>
 
-      <div style={{ marginTop: "1.25rem", maxWidth: 760 }}>
-        <TeamRatingHistoryChart team={team} season={season} />
-        <TeamWinsVsExpectedChart team={team} season={season} />
-      </div>
+      {showCharts && (
+        <div style={{ marginTop: "1.25rem", maxWidth: 760 }}>
+          <TeamRatingHistoryChart team={team} season={season} />
+          <TeamWinsVsExpectedChart team={team} season={season} />
+        </div>
+      )}
     </div>
   );
 }

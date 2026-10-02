@@ -6,7 +6,7 @@ import { TEAMS, TEAMS_BY_NAME, conferencesForDivision } from "../data/teams";
 import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchResumeWeights, saveResumeRatingsToSite, fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
+import { fetchResumeWeights, saveResumeRatingsToSite, saveFinishedResumeRatings, fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
 import SavedWeekProgression from "../components/SavedWeekProgression";
 import { fetchRatingPulls, fetchTeamSos } from "../lib/api/ratingSystems";
 import { fetchTeamGameAdvanced } from "../lib/api/teamInfo";
@@ -212,6 +212,22 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
   const [saveToSiteMsg, setSaveToSiteMsg] = useState<string | null>(null);
   const [progressionRefresh, setProgressionRefresh] = useState(0);
 
+  const [savingFinished, setSavingFinished] = useState(false);
+  const [saveFinishedMsg, setSaveFinishedMsg] = useState<string | null>(null);
+  async function handleSaveFinished() {
+    setSavingFinished(true);
+    setSaveFinishedMsg(null);
+    try {
+      const saveRows = rows.map((r) => ({ team: r.team.team, score: r.score, actWins: r.raw.actWins, losses: r.raw.losses }));
+      await saveFinishedResumeRatings(season, saveWeek, saveRows);
+      setSaveFinishedMsg(`Saved ${saveRows.length} teams' finished-games-only scores for week ${saveWeek}.`);
+    } catch (err: any) {
+      setSaveFinishedMsg(`Error: ${err.message ?? "Save failed"}`);
+    } finally {
+      setSavingFinished(false);
+    }
+  }
+
   async function handleSaveToSite() {
     setSavingToSite(true);
     setSaveToSiteMsg(null);
@@ -283,6 +299,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem", marginLeft: "0.5rem" }}>
           <input type="checkbox" checked={completedOnly} onChange={(e) => setCompletedOnly(e.target.checked)} />
           Completed games only (no rest-of-season projection)
+          <span style={{ color: "#d9a441", marginLeft: "0.4rem" }}>— not in the weekly report yet; still needs to be added</span>
         </label>
       </div>
 
@@ -332,13 +349,35 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
           Save as week{" "}
           <input type="number" value={saveWeek} onChange={(e) => setSaveWeek(parseInt(e.target.value, 10) || 1)} style={{ width: 60 }} min={0} />
         </label>
-        <button className="menu-btn" onClick={handleSaveToSite} disabled={savingToSite || rows.length === 0}>
+        <button
+          className="menu-btn"
+          onClick={handleSaveToSite}
+          disabled={savingToSite || rows.length === 0 || completedOnly}
+          title={completedOnly ? "Turn off \"Completed games only\" first — Save to Site publishes the full (projected) resume score" : undefined}
+        >
           {savingToSite ? "Saving…" : "Save to Site"}
         </button>
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
           {saveToSiteMsg ?? "Saves the computed scores above (with the weights currently set) as this week's snapshot — this week's numbers stay put once saved, regardless of what gets saved for a later week."}
         </span>
       </div>
+
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap" }}>
+        <button
+          className="menu-btn"
+          onClick={handleSaveFinished}
+          disabled={savingFinished || rows.length === 0 || !completedOnly}
+          title={!completedOnly ? "Check \"Completed games only\" above first" : undefined}
+        >
+          {savingFinished ? "Saving…" : "Save finished-games-only snapshot"}
+        </button>
+        <span style={{ fontSize: "0.78rem", color: saveFinishedMsg?.startsWith("Error") ? "#c45c52" : "var(--chalk-dim)" }}>
+          {saveFinishedMsg ?? "Check \"Completed games only\" above, then save — stored in its own table for the week above, separate from the published Resume Rating."}
+        </span>
+      </div>
+      <p style={{ margin: "-0.75rem 0 1.5rem", fontSize: "0.8rem", color: "#d9a441" }}>
+        ⚠ Not in the weekly report or on the public site yet — this only saves the finished-games-only resume score. It still needs to be added to the report.
+      </p>
 
       {loading ? (
         <div className="empty matchups-empty">Loading…</div>

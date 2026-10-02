@@ -84,6 +84,7 @@ import {
   useWeekPairChange,
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
+import { fetchReportOverlay, computeProjectedWins, savedChangeBetween, savedChangeSinceStart, type ReportOverlay } from "../lib/reportOverlays";
 import { publishWeeklyReportPdf } from "../lib/api/weeklyReports";
 
 // Weekly Post/Image Dump tool. Covers every category on Chris's list:
@@ -321,6 +322,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const { byTeam: ratingChangeByTeam } = useWeekPairChange("rating", currentWeek, compareWeek);
   const { byTeam: resumeChangeByTeam } = useWeekPairChange("resume_rating", currentWeek, compareWeek);
   const { byTeam: sosChangeByTeam } = useWeekPairChange("sor", currentWeek, compareWeek);
+  const { byTeam: ratingSincePreseason } = useWeekPairChange("rating", currentWeek, currentWeek && currentWeek !== "preseason" ? "preseason" : null);
 
   // --- Matchups (schedule week, not the weekly power-ratings snapshot
   // picked above) --- "week3" -> 3; "preseason" (or no week picked yet)
@@ -410,6 +412,69 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     () => buildActualRecordByTeam(seasonGamesAll, scheduleWeekNum),
     [seasonGamesAll, scheduleWeekNum]
   );
+
+  // Resume and SOS from the weekly upload (weekly_team_stats) only exist for
+  // preseason/week 1. From week 2 on they're saved by "Save to Site" in
+  // team_resume_ratings / team_sos, so layer those on top for the report week.
+  const [overlay, setOverlay] = useState<ReportOverlay | null>(null);
+  useEffect(() => {
+    if (scheduleWeekNum == null) {
+      setOverlay(null);
+      return;
+    }
+    let cancelled = false;
+    fetchReportOverlay(season, scheduleWeekNum)
+      .then((o) => !cancelled && setOverlay(o))
+      .catch(() => !cancelled && setOverlay(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [season, scheduleWeekNum]);
+
+  const reportByTeam = useMemo(() => {
+    if (!overlay) return liveByTeam;
+    const out: Record<string, WeeklyTeamStats> = {};
+    for (const [team, row] of Object.entries(liveByTeam)) {
+      const resume = overlay.resume.byTeam[team];
+      const sos = overlay.sos.byTeam[team];
+      out[team] = {
+        ...row,
+        ...(resume != null ? { resume_rating: resume, resume_rank: overlay.resume.rankByTeam[team] ?? null } : {}),
+        ...(sos != null ? { sor: sos } : {}),
+      };
+    }
+    return out;
+  }, [liveByTeam, overlay]);
+
+  // Win totals: current wins (full wins/losses for games already played) plus
+  // each remaining game's win probability from this week's power ratings.
+  const projectedWinsByTeam = useMemo(
+    () => computeProjectedWins(seasonGamesAll, liveByTeam, scheduleWeekNum ?? 0),
+    [seasonGamesAll, liveByTeam, scheduleWeekNum]
+  );
+
+  // Gainers/losers inputs. Week-over-week: the saved-table values when this
+  // week has them, else the old weekly_team_stats comparison. Since-start:
+  // power rating vs the preseason upload; resume and SOS vs the earliest
+  // snapshot saved in their own tables (their preseason numbers in
+  // weekly_team_stats are on a different formula).
+  const weekNumOf = (w: string | null): number | null => {
+    if (!w) return null;
+    if (w === "preseason") return 0;
+    const m = /^week(\d+)$/.exec(w);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const compareWeekNum = weekNumOf(compareWeek);
+  const resumeWeeklyChange = useMemo(() => {
+    const saved = overlay && scheduleWeekNum != null && compareWeekNum != null ? savedChangeBetween(overlay.resume, scheduleWeekNum, compareWeekNum) : {};
+    return Object.keys(saved).length > 0 ? saved : resumeChangeByTeam;
+  }, [overlay, scheduleWeekNum, compareWeekNum, resumeChangeByTeam]);
+  const sosWeeklyChange = useMemo(() => {
+    const saved = overlay && scheduleWeekNum != null && compareWeekNum != null ? savedChangeBetween(overlay.sos, scheduleWeekNum, compareWeekNum) : {};
+    return Object.keys(saved).length > 0 ? saved : sosChangeByTeam;
+  }, [overlay, scheduleWeekNum, compareWeekNum, sosChangeByTeam]);
+  const resumeSinceStart = useMemo(() => (overlay ? savedChangeSinceStart(overlay.resume) : {}), [overlay]);
+  const sosSinceStart = useMemo(() => (overlay ? savedChangeSinceStart(overlay.sos) : {}), [overlay]);
 
   // TV Guide's own week-based filter combines every day in the schedule
   // week onto one grid — fine normally, but CFBD's week numbering can
@@ -689,12 +754,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   );
 
   const fbsRows = useMemo(
-    () => buildDivisionResolvedTeams("FBS", liveByTeam, ratingChangeByTeam, actualRecordByTeam),
-    [liveByTeam, ratingChangeByTeam, actualRecordByTeam]
+    () => buildDivisionResolvedTeams("FBS", reportByTeam, ratingChangeByTeam, actualRecordByTeam, projectedWinsByTeam),
+    [reportByTeam, ratingChangeByTeam, actualRecordByTeam, projectedWinsByTeam]
   );
   const fcsRows = useMemo(
-    () => buildDivisionResolvedTeams("FCS", liveByTeam, ratingChangeByTeam, actualRecordByTeam),
-    [liveByTeam, ratingChangeByTeam, actualRecordByTeam]
+    () => buildDivisionResolvedTeams("FCS", reportByTeam, ratingChangeByTeam, actualRecordByTeam, projectedWinsByTeam),
+    [reportByTeam, ratingChangeByTeam, actualRecordByTeam, projectedWinsByTeam]
   );
 
   // --- Power Ratings (FBS + FCS) ---
@@ -710,8 +775,8 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // --- Resume Ratings (FBS only) ---
   const fbsResumeFull = toResumeRows(fbsRows);
   const fbsResumeTop = fbsResumeFull.slice(0, TOP_N);
-  const fbsResumeGainers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeChangeByTeam, "gainers", true, TOP_N);
-  const fbsResumeLosers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeChangeByTeam, "losers", true, TOP_N);
+  const fbsResumeGainers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeWeeklyChange, "gainers", true, TOP_N);
+  const fbsResumeLosers = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeWeeklyChange, "losers", true, TOP_N);
 
   // --- SOS (FBS only) ---
   // SOS convention: negative = harder schedule, positive = easier — same
@@ -747,7 +812,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // A team's SOS getting more NEGATIVE is its schedule getting harder
   // (same sign convention as above) — "Got Harder" is change < 0.
   const fbsSosChanges = fbsRows
-    .map((r) => ({ team: r.team, conf: r.conf, change: sosChangeByTeam[r.team]?.change ?? null }))
+    .map((r) => ({ team: r.team, conf: r.conf, change: sosWeeklyChange[r.team]?.change ?? null }))
     .filter((r): r is { team: string; conf: string; change: number } => r.change != null);
   const fbsSosGotHarder = fbsSosChanges
     .filter((r) => r.change < 0)
@@ -759,6 +824,29 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     .sort((a, b) => b.change - a.change)
     .slice(0, TOP_N)
     .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
+
+  // --- Since the start of the season (new graphics) ---
+  const fbsGainersSincePre = metricGainersLosers(fbsRows, (r) => r.rank, ratingSincePreseason, "gainers", false, TOP_N);
+  const fbsLosersSincePre = metricGainersLosers(fbsRows, (r) => r.rank, ratingSincePreseason, "losers", false, TOP_N);
+  const fcsGainersSincePre = metricGainersLosers(fcsRows, (r) => r.rank, ratingSincePreseason, "gainers", false, TOP_N);
+  const fcsLosersSincePre = metricGainersLosers(fcsRows, (r) => r.rank, ratingSincePreseason, "losers", false, TOP_N);
+  const resumeGainersSinceStart = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeSinceStart, "gainers", true, TOP_N);
+  const resumeLosersSinceStart = metricGainersLosers(fbsRows, (r) => r.resumeRank, resumeSinceStart, "losers", true, TOP_N);
+  const sosSinceChanges = fbsRows
+    .map((r) => ({ team: r.team, conf: r.conf, change: sosSinceStart[r.team]?.change ?? null }))
+    .filter((r): r is { team: string; conf: string; change: number } => r.change != null);
+  const sosSinceHarder = sosSinceChanges
+    .filter((r) => r.change < 0)
+    .sort((a, b) => a.change - b.change)
+    .slice(0, TOP_N)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
+  const sosSinceEasier = sosSinceChanges
+    .filter((r) => r.change > 0)
+    .sort((a, b) => b.change - a.change)
+    .slice(0, TOP_N)
+    .map((r, i) => ({ rank: i + 1, team: r.team, conf: r.conf, rating: r.change }));
+  const resumeSinceLabel = overlay?.resume.baselineWeek != null ? `Since Week ${overlay.resume.baselineWeek}` : null;
+  const sosSinceLabel = overlay?.sos.baselineWeek != null ? `Since Week ${overlay.sos.baselineWeek}` : null;
 
   // --- Win Totals (FBS + FCS) ---
   // No Gainers/Losers here — Chris's category list only asked for Full
@@ -784,6 +872,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fbsTopRef = useRef<HTMLDivElement>(null);
   const fbsG6Ref = useRef<HTMLDivElement>(null);
   const fbsGainersLosersRef = useRef<HTMLDivElement>(null);
+  const fbsSincePreseasonRef = useRef<HTMLDivElement>(null);
+  const fcsSincePreseasonRef = useRef<HTMLDivElement>(null);
+  const resumeSinceStartRef = useRef<HTMLDivElement>(null);
+  const sosSinceStartRef = useRef<HTMLDivElement>(null);
   const fcsFullRef = useRef<HTMLDivElement>(null);
   const fcsTopRef = useRef<HTMLDivElement>(null);
   const fcsGainersLosersRef = useRef<HTMLDivElement>(null);
@@ -883,15 +975,21 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "02-fbs-power-ratings-top30", node: () => fbsTopRef.current, branding: false, division: "FBS" },
     { key: "03-fbs-power-ratings-top30-g6", node: () => fbsG6Ref.current, branding: false, division: "FBS" },
     { key: "04-fbs-power-ratings-gainers-losers", node: () => fbsGainersLosersRef.current, branding: false, division: "FBS" },
+    { key: "04b-fbs-power-ratings-since-preseason", node: () => fbsSincePreseasonRef.current, branding: false, division: "FBS" },
     { key: "05-fcs-power-ratings-full", node: () => fcsFullRef.current, branding: false, division: "FCS" },
     { key: "06-fcs-power-ratings-top30", node: () => fcsTopRef.current, branding: false, division: "FCS" },
     { key: "07-fcs-power-ratings-gainers-losers", node: () => fcsGainersLosersRef.current, branding: false, division: "FCS" },
+    { key: "07b-fcs-power-ratings-since-preseason", node: () => fcsSincePreseasonRef.current, branding: false, division: "FCS" },
     { key: "08-fbs-resume-ratings-full", node: () => resumeFullRef.current, branding: false, division: "FBS" },
     { key: "09-fbs-resume-ratings-top30", node: () => resumeTopRef.current, branding: false, division: "FBS" },
     { key: "10-fbs-resume-ratings-gainers-losers", node: () => resumeGainersLosersRef.current, branding: false, division: "FBS" },
+    ...(resumeSinceLabel ? [{ key: "10b-fbs-resume-since-start", node: () => resumeSinceStartRef.current, branding: false, division: "FBS" as const }] : []),
     { key: "11-fbs-sos-full", node: () => sosFullRef.current, branding: false, division: "FBS" },
     { key: "12-fbs-sos-hardest-easiest", node: () => sosHardEasyRef.current, branding: false, division: "FBS" },
     { key: "13-fbs-sos-got-harder-got-easier", node: () => sosChangeRef.current, branding: false, division: "FBS" },
+    ...(sosSinceLabel && (sosSinceHarder.length > 0 || sosSinceEasier.length > 0)
+      ? [{ key: "13b-fbs-sos-since-start", node: () => sosSinceStartRef.current, branding: false, division: "FBS" as const }]
+      : []),
     { key: "14-fbs-win-totals-full", node: () => fbsWinTotalFullRef.current, branding: false, division: "FBS" },
     { key: "15-fbs-win-totals-top30", node: () => fbsWinTotalTopRef.current, branding: false, division: "FBS" },
     { key: "16-fbs-win-totals-wins-losses-left", node: () => fbsWinsLossesLeftRef.current, branding: false, division: "FBS" },
@@ -1263,6 +1361,20 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               />
             </div>
 
+            <div ref={fbsSincePreseasonRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Power Ratings — Gainers & Losers Since Preseason"
+                sections={[
+                  { title: "Top 30 Gainers", rows: fbsGainersSincePre },
+                  { title: "Top 30 Losers", rows: fbsLosersSincePre },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                sideBySide
+              />
+            </div>
+
             {/* Power Ratings — FCS */}
             <div ref={fcsFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Power Ratings — Full List" sections={[{ title: "", rows: toRatingRows(fcsRows) }]} />
@@ -1277,6 +1389,20 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 sections={[
                   { title: "Top 30 Gainers", rows: fcsGainers },
                   { title: "Top 30 Losers", rows: fcsLosers },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                sideBySide
+              />
+            </div>
+
+            <div ref={fcsSincePreseasonRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fcsEyebrow}
+                header="Power Ratings — Gainers & Losers Since Preseason"
+                sections={[
+                  { title: "Top 30 Gainers", rows: fcsGainersSincePre },
+                  { title: "Top 30 Losers", rows: fcsLosersSincePre },
                 ]}
                 targetRowsPerColumn={TOP_N}
                 valueLabel="CHANGE"
@@ -1305,6 +1431,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 sideBySide
               />
             </div>
+
+            {resumeSinceLabel && (
+              <div ref={resumeSinceStartRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fbsEyebrow}
+                  header={`Resume Ratings — Gainers & Losers ${resumeSinceLabel}`}
+                  sections={[
+                    { title: "Top 30 Gainers", rows: resumeGainersSinceStart },
+                    { title: "Top 30 Losers", rows: resumeLosersSinceStart },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="CHANGE"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
 
             {/* SOS — FBS only */}
             <div ref={sosFullRef} style={CAPTURE_WRAP_STYLE}>
@@ -1344,14 +1487,31 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               />
             </div>
 
+            {sosSinceLabel && (sosSinceHarder.length > 0 || sosSinceEasier.length > 0) && (
+              <div ref={sosSinceStartRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fbsEyebrow}
+                  header={`Strength of Schedule — Got Harder & Got Easier ${sosSinceLabel}`}
+                  sections={[
+                    { title: "Top 30 Got Harder", rows: sosSinceHarder },
+                    { title: "Top 30 Got Easier", rows: sosSinceEasier },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="CHANGE"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
+
             {/* Win Totals — FBS. signed=false: these are plain counts
                 (8 wins, 3 losses left), not deltas — a leading "+" read
                 like a week-over-week change and was misleading. */}
             <div ref={fbsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
               {/* Per-section higherIsBetter/valueLabel overrides (see
@@ -1377,10 +1537,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
             {/* Win Totals — FCS */}
             <div ref={fcsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic

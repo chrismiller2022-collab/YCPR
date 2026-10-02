@@ -9,6 +9,8 @@ export interface CompactRatingRow {
   team: string;
   conf: string;
   rating: number;
+  /** Extra value columns shown after the main one (e.g. Win Totals' current wins and wins left), in the order of the section's extraLabels. */
+  extras?: number[];
 }
 
 // Column count is derived from how many rows there are, not hardcoded —

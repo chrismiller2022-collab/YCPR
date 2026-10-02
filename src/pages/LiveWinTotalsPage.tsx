@@ -7,6 +7,7 @@ import { CONFERENCES, TEAMS } from "../data/teams";
 import { buildRankMap } from "../lib/ranks";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { useLatestMonteCarloWinTotals } from "../lib/api/monteCarlo";
+import { usePowerRatingWinTotals } from "../lib/api/powerWinTotals";
 
 function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
   const wt = { total: team.winTotal, vegasTotal: team.vegasTotal };
@@ -37,12 +38,14 @@ function LiveWinTotalsRow({ team, onNavigateTeam, onNavigateConference }: any) {
       <td className="conf-cell">
         <ConfLink conf={team.conf} onNavigateConference={onNavigateConference} />
       </td>
-      <td className="wintotals-record-cell">{team.currentWins != null ? `${team.currentWins}-${team.currentLosses}` : "0-0"}</td>
       <td className={`rating-cell ${team.rating < 0 ? "rating-good" : "rating-bad"}`}>
         {team.rating > 0 ? "+" : ""}
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">{wt.total.toFixed(2)}</td>
+      <td className="wintotals-record-cell">{team.currentWins != null ? `${team.currentWins}-${team.currentLosses}` : "0-0"}</td>
+      <td className="wintotals-total-cell">{team.winsLeft != null ? team.winsLeft.toFixed(2) : "–"}</td>
+      <td className="wintotals-total-cell">{team.mcWins != null ? team.mcWins.toFixed(2) : "–"}</td>
       <td className="wintotals-total-cell">{wt.vegasTotal != null ? wt.vegasTotal.toFixed(1) : "–"}</td>
       <td
         className="wintotals-total-cell"
@@ -77,6 +80,10 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
   // ConferencePreviewPage via useLatestMonteCarloWinTotals, not
   // recomputed independently here.
   const { byTeam: winTotalsByTeam, loading: runsLoading, noRunYet } = useLatestMonteCarloWinTotals(season, weekNum ?? null);
+  // The headline Win Total is from power ratings (current record + the rest of
+  // the schedule at win probability), live — the Monte Carlo mean is shown as
+  // its own column for comparison.
+  const { byTeam: powerWins, loading: powerLoading } = usePowerRatingWinTotals(season, weekNum ?? null);
 
   // When viewing a single division, "rank" should mean rank within that
   // division (1-N), not the site-wide national rank FBS+FCS combined —
@@ -112,15 +119,18 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
     }).map((t) => {
       const live = liveByTeam[t.team];
       const sim = winTotalsByTeam[t.team];
-      const winTotal = sim?.meanWins ?? live?.total_wins ?? 0;
+      const pw = powerWins[t.team];
+      const winTotal = pw ? pw.projTotal : sim?.meanWins ?? live?.total_wins ?? 0;
       const vegasTotal = live?.season_win_line ?? null;
       return {
         ...t,
         rating: live?.rating ?? t.rating,
         rank: divisionRankByTeam ? divisionRankByTeam[t.team] : nationalRankByTeam[t.team],
         winTotal,
-        currentWins: sim?.currentWins ?? null,
-        currentLosses: sim?.currentLosses ?? null,
+        currentWins: pw ? pw.wins : sim?.currentWins ?? null,
+        currentLosses: pw ? pw.losses : sim?.currentLosses ?? null,
+        winsLeft: pw ? pw.winsLeft : null,
+        mcWins: sim?.meanWins ?? null,
         vegasTotal,
         diff: vegasTotal != null ? winTotal - vegasTotal : null,
       };
@@ -141,7 +151,7 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
     });
 
     return list;
-  }, [query, division, conference, sortKey, sortDir, liveByTeam, winTotalsByTeam, divisionRankByTeam, nationalRankByTeam]);
+  }, [query, division, conference, sortKey, sortDir, liveByTeam, winTotalsByTeam, powerWins, divisionRankByTeam, nationalRankByTeam]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -197,11 +207,9 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
         <ExportPngButton targetRef={exportRef} filename={`win-totals-${division.toLowerCase()}`} />
       </div>
 
-      {noRunYet && !runsLoading && (
-        <p style={{ color: "#a15c00", padding: "0 1.5rem" }} data-export-exclude="true">
-          {weekNum == null
-            ? `Win totals for ${season} aren't posted yet — check back soon.`
-            : `Week ${weekNum} win totals aren't posted yet — check back soon.`}
+      {noRunYet && !runsLoading && !powerLoading && (
+        <p style={{ color: "var(--chalk-dim)", padding: "0 1.5rem", fontSize: "0.85rem" }} data-export-exclude="true">
+          {weekNum == null ? "No saved Monte Carlo run yet — the Monte Carlo column is blank." : `No Monte Carlo run saved for week ${weekNum} — that column is blank.`}
         </p>
       )}
 
@@ -213,9 +221,11 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
                 <SortHeader label="Rank" sortKey="rank" active={sortKey === "rank"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Team" sortKey="team" active={sortKey === "team"} dir={sortDir} onClick={handleSort} />
                 <SortHeader label="Conference" sortKey="conf" active={sortKey === "conf"} dir={sortDir} onClick={handleSort} />
-                <th className="th">Record</th>
                 <SortHeader label="Rating" sortKey="rating" active={sortKey === "rating"} dir={sortDir} onClick={handleSort} align="right" />
-                <SortHeader label="Win Total" sortKey="winTotal" active={sortKey === "winTotal"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Proj. Win Total" sortKey="winTotal" active={sortKey === "winTotal"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Current Record" sortKey="currentWins" active={sortKey === "currentWins"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Wins Left" sortKey="winsLeft" active={sortKey === "winsLeft"} dir={sortDir} onClick={handleSort} align="right" />
+                <SortHeader label="Monte Carlo Wins" sortKey="mcWins" active={sortKey === "mcWins"} dir={sortDir} onClick={handleSort} align="right" />
                 <SortHeader label="Vegas Win Total" sortKey="vegasTotal" active={sortKey === "vegasTotal"} dir={sortDir} onClick={handleSort} align="right" />
                 <SortHeader label="Difference" sortKey="diff" active={sortKey === "diff"} dir={sortDir} onClick={handleSort} align="right" />
               </tr>
@@ -226,7 +236,7 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="empty">
+                  <td colSpan={10} className="empty">
                     No teams match that search.
                   </td>
                 </tr>
@@ -237,9 +247,10 @@ export default function LiveWinTotalsPage({ defaultDivision, weekNum, subLabel, 
       </div>
 
       <div className="footer-note" data-export-exclude="true">
-        Win Total and Record come from the most recently saved Monte Carlo run — Win Total is that
-        run's mean simulated wins (already-played games count as decided, not as another coin flip),
-        Record is that run's actual current record. Vegas Win Total and the Difference column
+        Proj. Win Total = wins already banked + the sum of each remaining game's win probability from the current power
+        ratings (played games count as full wins/losses, not probabilities), so it updates as ratings and results do.
+        Wins Left is the projected wins from the remaining games. Monte Carlo Wins is the mean from the most recently saved
+        simulation run, shown for comparison. Vegas Win Total and the Difference column (Proj. Win Total minus Vegas)
         populate once a week's upload includes a Vegas win total line for that team.
       </div>
     </div>

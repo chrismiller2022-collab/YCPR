@@ -111,8 +111,10 @@ function CompactSection({
   higherIsBetter,
   colorScale,
   signed,
+  extraLabels,
 }: {
   title: string;
+  extraLabels?: string[];
   rows: CompactRatingRow[];
   targetRowsPerColumn: number;
   valueLabel: string;
@@ -149,6 +151,11 @@ function CompactSection({
                   Team
                 </th>
                 <th style={{ ...HEAD_CELL, textAlign: "right" }}>{valueLabel}</th>
+                {(extraLabels ?? []).map((l) => (
+                  <th key={l} style={{ ...HEAD_CELL, textAlign: "right" }}>
+                    {l}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -173,6 +180,14 @@ function CompactSection({
                       {(valueLabel === "CHANGE" || signed) && r.rating > 0 ? "+" : ""}
                       {r.rating.toFixed(1)}
                     </td>
+                    {(extraLabels ?? []).map((l, ei) => {
+                      const v = r.extras?.[ei];
+                      return (
+                        <td key={l} style={{ ...CELL, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>
+                          {v == null ? "–" : Number.isInteger(v) ? v : v.toFixed(1)}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -199,7 +214,7 @@ export default function CompactPowerRatingsGraphic({
   eyebrow: string;
   /** Bold title describing what this graphic is, e.g. "POWER RATINGS — FULL LIST". */
   header: string;
-  sections: { title: string; rows: CompactRatingRow[]; higherIsBetter?: boolean; valueLabel?: string }[];
+  sections: { title: string; rows: CompactRatingRow[]; higherIsBetter?: boolean; valueLabel?: string; extraLabels?: string[] }[];
   targetRowsPerColumn?: number;
   /** Column header for the value column — "YCPR" for a ratings list,
    * "CHANGE" for a gainers/losers list where the value shown is the
@@ -288,6 +303,7 @@ export default function CompactPowerRatingsGraphic({
             rows={s.rows}
             targetRowsPerColumn={targetRowsPerColumn}
             valueLabel={s.valueLabel ?? valueLabel}
+            extraLabels={s.extraLabels}
             higherIsBetter={s.higherIsBetter ?? higherIsBetter}
             colorScale={colorScale}
             signed={signed}
