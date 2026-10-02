@@ -413,8 +413,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
             <tr>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Game</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Projection</th>
-              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS Line</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
@@ -483,9 +483,6 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     {fmt(p.myProjAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmt(p.vegasAwaySpread)}
-                  </td>
-                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     <input
                       type="number"
                       step="0.5"
@@ -493,6 +490,9 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                       onChange={(e) => updateDraft(p.id, { cbs_line: e.target.value === "" ? null : Number(e.target.value) })}
                       style={{ width: 55, textAlign: "right" }}
                     />
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    {fmt(p.vegasAwaySpread)}
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>

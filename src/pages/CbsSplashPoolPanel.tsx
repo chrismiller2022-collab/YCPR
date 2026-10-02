@@ -470,6 +470,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                     align="right"
                   />
                   <SortHeader
+                    label="Splash Line"
+                    sortKey="splash_line"
+                    active={sortKey === "splash_line"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
                     label="Vegas Line"
                     sortKey="vegasAwaySpread"
                     active={sortKey === "vegasAwaySpread"}
@@ -481,14 +489,6 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                     label="Opening Line"
                     sortKey="openingAwaySpread"
                     active={sortKey === "openingAwaySpread"}
-                    dir={sortDir}
-                    onClick={handleSort}
-                    align="right"
-                  />
-                  <SortHeader
-                    label="Splash Line"
-                    sortKey="splash_line"
-                    active={sortKey === "splash_line"}
                     dir={sortDir}
                     onClick={handleSort}
                     align="right"
@@ -563,8 +563,6 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                       >
                         {fmt(r.myProjAwaySpread)}
                       </td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>
                         <input
                           type="number"
@@ -587,6 +585,8 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           ) : null;
                         })()}
                       </td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(splashVsMineLive(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(splashVsVegasLive(r), 2)}</td>

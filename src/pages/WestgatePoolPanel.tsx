@@ -719,6 +719,14 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                     align="right"
                   />
                   <SortHeader
+                    label="Westgate Line"
+                    sortKey="westgate_line"
+                    active={sortKey === "westgate_line"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
                     label="Vegas Line"
                     sortKey="vegasAwaySpread"
                     active={sortKey === "vegasAwaySpread"}
@@ -730,14 +738,6 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                     label="Opening Line"
                     sortKey="openingAwaySpread"
                     active={sortKey === "openingAwaySpread"}
-                    dir={sortDir}
-                    onClick={handleSort}
-                    align="right"
-                  />
-                  <SortHeader
-                    label="Westgate Line"
-                    sortKey="westgate_line"
-                    active={sortKey === "westgate_line"}
                     dir={sortDir}
                     onClick={handleSort}
                     align="right"
@@ -802,8 +802,6 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                       >
                         {fmt(r.myProjAwaySpread)}
                       </td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>
                         <input
                           type="number"
@@ -826,6 +824,8 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                           ) : null;
                         })()}
                       </td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(westgateVsMineLive(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(westgateVsVegasLive(r), 2)}</td>

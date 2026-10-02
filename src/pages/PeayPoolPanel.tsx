@@ -378,6 +378,14 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                     align="right"
                   />
                   <SortHeader
+                    label="Peay Line"
+                    sortKey="peay_line"
+                    active={sortKey === "peay_line"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                  <SortHeader
                     label="Vegas Line"
                     sortKey="vegasAwaySpread"
                     active={sortKey === "vegasAwaySpread"}
@@ -389,14 +397,6 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                     label="Opening Line"
                     sortKey="openingAwaySpread"
                     active={sortKey === "openingAwaySpread"}
-                    dir={sortDir}
-                    onClick={handleSort}
-                    align="right"
-                  />
-                  <SortHeader
-                    label="Peay Line"
-                    sortKey="peay_line"
-                    active={sortKey === "peay_line"}
                     dir={sortDir}
                     onClick={handleSort}
                     align="right"
@@ -466,8 +466,6 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                       >
                         {fmt(r.myProjAwaySpread)}
                       </td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>
                         <input
                           type="number"
@@ -490,6 +488,8 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           ) : null;
                         })()}
                       </td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(peayVsMineLive(r))}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(peayVsVegasLive(r), 2)}</td>
