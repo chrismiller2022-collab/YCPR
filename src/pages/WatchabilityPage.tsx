@@ -516,7 +516,7 @@ export default function WatchabilityPage({
           interactive rows (less dead space between team names and the
           spread/total line). */}
       <div style={{ position: "absolute", top: -99999, left: -99999 }}>
-        <div ref={mobileExportRef} style={{ background: "#1a1b2e", padding: "1.25rem 1rem", width: 480 }}>
+        <div ref={mobileExportRef} style={{ background: "#1a1b2e", padding: "1.25rem 1rem", width: scope === "weekly" && topView === "windows" ? 1360 : 480 }}>
           {/* Same eyebrow/title header and brand/site/handle footer
               convention as CompactPowerRatingsGraphic and the rest of the
               Weekly Image Dump's images (see that file), so this graphic
@@ -545,18 +545,26 @@ export default function WatchabilityPage({
             ? seasonScored.slice(0, exportTopN).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
             : topView === "overall"
             ? weeklyScored.slice(0, exportTopN).map((g, i) => <MobileGameRow key={g.gameId} g={g} rank={i + 1} />)
-            : (["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
-                <div key={w} style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ color: "#ffc857", fontSize: "0.72rem", fontWeight: 700, marginBottom: "0.3rem" }}>{WINDOW_LABELS[w]}</div>
-                  {byWindow[w]
-                    .slice()
-                    .sort((a, b) => b.score - a.score)
-                    .slice(0, exportTopN)
-                    .map((g, i) => (
-                      <MobileGameRow key={g.gameId} g={g} rank={i + 1} />
-                    ))}
-                </div>
-              ))}
+            : (
+              // Three vertical lists side by side (Early | Afternoon | Night)
+              // — the wide export layout above exists for this.
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
+                {(["early", "afternoon", "night"] as KickoffWindow[]).map((w) => (
+                  <div key={w}>
+                    <div style={{ color: "#ffc857", fontSize: "0.8rem", fontWeight: 800, marginBottom: "0.4rem", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                      {WINDOW_LABELS[w]}
+                    </div>
+                    {byWindow[w]
+                      .slice()
+                      .sort((a, b) => b.score - a.score)
+                      .slice(0, exportTopN)
+                      .map((g, i) => (
+                        <MobileGameRow key={g.gameId} g={g} rank={i + 1} />
+                      ))}
+                  </div>
+                ))}
+              </div>
+            )}
 
           <div
             style={{

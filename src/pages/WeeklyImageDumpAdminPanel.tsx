@@ -826,7 +826,6 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // already target (see WatchabilityPage.tsx/TvGuidePanel.tsx). Both are
   // FBS-scoped (Watchability is FBS-vs-FBS only; TV Guide in practice
   // never has an FCS broadcast game), so both live in the FBS bucket.
-  const watchabilityRef = useRef<HTMLDivElement>(null);
   const watchabilityByWindowRef = useRef<HTMLDivElement>(null);
   const tvGuideRef = useRef<HTMLDivElement>(null);
   // Conference Previews — one image per conference, FBS then FCS.
@@ -921,7 +920,6 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     // Lookahead — next week's FBS-vs-FBS slate, my projection only
     // (Vegas usually hasn't posted lines that far out).
     { key: "27b-fbs-matchups-lookahead", node: () => matchupsLookaheadRef.current, branding: false, division: "FBS" },
-    { key: "28-watchability-saturday-overall", node: () => watchabilityRef.current, branding: false, division: "FBS" },
     { key: "29-watchability-saturday-by-slate", node: () => watchabilityByWindowRef.current, branding: false, division: "FBS" },
     {
       key: "30-tv-guide",
@@ -1510,13 +1508,6 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 forceSaturdaysOnly/shareRef props added to each). No outer
                 capture wrapper needed: shareRef points straight at the
                 page's own internal export-ready node. */}
-            <WatchabilityPage
-              onHome={() => {}}
-              weekOverride={scheduleWeekNum ?? undefined}
-              dateOverride={tvGuideDateOverride}
-              topN={999}
-              shareRef={watchabilityRef}
-            />
             <WatchabilityPage
               onHome={() => {}}
               weekOverride={scheduleWeekNum ?? undefined}

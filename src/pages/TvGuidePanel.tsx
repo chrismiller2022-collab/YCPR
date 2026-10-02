@@ -329,6 +329,14 @@ export default function TvGuidePanel({
   const LANE_HEIGHT = 74;
   const CHANNEL_COL_WIDTH = 130;
 
+  // The exported node is exactly as wide as the grid (channel column + one
+  // column per slot, plus its 1px border each side) — never wider. Before this
+  // it was a block that filled whatever it sat in, so the Weekly Image Dump's
+  // 3000px off-screen wrapper made every capture 3000px wide with the grid
+  // ending near 2 AM and a big empty strip to its right. maxWidth keeps the
+  // live page scrolling horizontally instead of overflowing.
+  const gridWidth = CHANNEL_COL_WIDTH + slotCount * COL_WIDTH + 2;
+
   const exportFilenameLabel = dateOverride || (week != null ? `week-${week}` : "guide");
 
   const runExport = async (includeStreaming: boolean) => {
@@ -434,7 +442,11 @@ export default function TvGuidePanel({
       ) : activeChannels.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No games with a known TV outlet for this selection yet.</p>
       ) : (
-        <div ref={exportRef} data-export-scroll style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+        <div
+          ref={exportRef}
+          data-export-scroll
+          style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, boxSizing: "border-box", width: gridWidth, maxWidth: "100%" }}
+        >
           <div style={{ display: "inline-block", minWidth: "100%" }}>
             <div style={{ display: "flex", position: "sticky", top: 0, background: "var(--turf-panel)", zIndex: 2, borderBottom: "1px solid var(--hash)" }}>
               <div style={{ width: CHANNEL_COL_WIDTH, flexShrink: 0, borderRight: "1px solid var(--hash)" }} />
