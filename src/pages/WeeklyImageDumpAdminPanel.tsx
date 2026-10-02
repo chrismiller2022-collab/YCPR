@@ -1508,10 +1508,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 (8 wins, 3 losses left), not deltas — a leading "+" read
                 like a week-over-week change and was misleading. */}
             <div ref={fbsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fbsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fbsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fbsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
               {/* Per-section higherIsBetter/valueLabel overrides (see
@@ -1537,10 +1537,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
             {/* Win Totals — FCS */}
             <div ref={fcsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinTotalTopRef} style={CAPTURE_WRAP_STYLE}>
-              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop, valueLabel: "PROJ WINS", extraLabels: ["WINS NOW", "WINS LEFT"] }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="PROJ WINS" higherIsBetter colorScale="percentile" signed={false} />
+              <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Top 30" sections={[{ title: "", rows: fcsWinTotalTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
             </div>
             <div ref={fcsWinsLossesLeftRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic

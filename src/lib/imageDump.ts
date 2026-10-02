@@ -215,8 +215,7 @@ export function toSosRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
-/** Same idea, ranked/valued by projected end-of-season Win Total, with the
- * wins already banked and the projected wins still to come as extra columns. */
+/** Same idea, ranked/valued by projected end-of-season Win Total (wins banked + the rest of the schedule at win probability). */
 export function toWinTotalRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
   return rows
     .map((r) => ({
@@ -224,7 +223,6 @@ export function toWinTotalRows(rows: ImageDumpTeamRow[]): CompactRatingRow[] {
       team: r.team,
       conf: r.conf,
       rating: r.winTotal,
-      extras: [r.liveWins, winsLeftOf(r)],
     }))
     .sort((a, b) => a.rank - b.rank);
 }
