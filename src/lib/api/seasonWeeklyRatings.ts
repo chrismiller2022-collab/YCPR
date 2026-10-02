@@ -92,3 +92,15 @@ export async function fetchSeasonWeeklyRatingsForWeeks(
   }
   return out;
 }
+
+/** One team's saved rating at every archived week of a season, ascending by week (0 = preseason). */
+export async function fetchTeamRatingHistory(season: number, team: string): Promise<{ week_number: number; rating: number | null }[]> {
+  const { data, error } = await supabase
+    .from("season_weekly_ratings")
+    .select("week_number, rating")
+    .eq("season", season)
+    .eq("team", team)
+    .order("week_number", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as { week_number: number; rating: number | null }[];
+}

@@ -21,6 +21,7 @@ import ExportPngButton from "../components/ExportPngButton";
 import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 import WinDistributionBarChart from "../components/WinDistributionBarChart";
+import { TeamRatingHistoryChart, TeamWinsVsExpectedChart } from "../components/TeamTrendCharts";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -624,6 +625,10 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
           </div>
         )}
       </div>
+
+      <TeamRatingHistoryChart team={team.team} season={season} />
+
+      <TeamWinsVsExpectedChart team={team.team} season={season} />
 
       <WinDistributionBlock team={team} season={season} />
 
