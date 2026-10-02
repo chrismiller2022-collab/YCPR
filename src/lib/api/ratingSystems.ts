@@ -236,6 +236,25 @@ export async function fetchWeeklyPowerRatings(season: number, week?: number): Pr
   });
 }
 
+/**
+ * The saved ratings snapshot that applies to a game in `week`: that week's own
+ * if it was saved, else the most recent earlier one. Returns the week actually
+ * used (null when nothing is saved at or before `week`).
+ */
+export async function fetchSavedRatingsAtOrBefore(season: number, week: number): Promise<{ week: number | null; rows: WeeklyPowerRatingRow[] }> {
+  const { data, error } = await supabase
+    .from("weekly_power_ratings")
+    .select("week")
+    .eq("season", season)
+    .lte("week", week)
+    .order("week", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const usedWeek = data && data.length > 0 ? (data[0] as { week: number }).week : null;
+  if (usedWeek == null) return { week: null, rows: [] };
+  return { week: usedWeek, rows: await fetchWeeklyPowerRatings(season, usedWeek) };
+}
+
 /** Distinct (season, week) pairs that have a saved snapshot — for the Save-As-Week picker and the Matchups page's week filter. */
 export async function fetchSavedRatingWeeks(season: number): Promise<number[]> {
   // A plain select("week") is capped at PostgREST's 1000-row page, and

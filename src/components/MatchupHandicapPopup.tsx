@@ -1,7 +1,13 @@
 import TeamLogo from "./TeamLogo";
-import { useMatchupHandicap, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
+import { useMatchupHandicap, type RankInfo, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
 import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { fetchSavedRatingsAtOrBefore } from "../lib/api/ratingSystems";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { buildRatingsByTeam, computeMultiSystemRow, type MultiSystemGameRow } from "../lib/multiRatingMatchups";
+import { RATING_SYSTEMS } from "../lib/ratingSystems";
+import { computeDomain, SpreadChartHeader, SpreadChartRow } from "./SystemSpreadChart";
+import type { GameWithLines } from "../lib/api/gamesLines";
 import { altSpreadRows, altTotalRows, buildPeriodDistribution, gameOutcomes, type AltRow } from "../lib/periodSim";
 
 function fmtRecord(su: { w: number; l: number }): string {
@@ -37,6 +43,21 @@ function RatingChange({ v }: { v: number | null }) {
   return (
     <span style={{ color: improved ? "#8fd39a" : "#c45c52" }}>
       {improved ? "▼" : "▲"} {Math.abs(v).toFixed(2)}
+    </span>
+  );
+}
+
+// "#12/134" — rank among every team in the same division (FBS or FCS), 1 = best.
+function Rank({ info, division, what }: { info: RankInfo | null | undefined; division: string | undefined; what: string }) {
+  if (!info) return null;
+  const top = info.rank <= Math.ceil(info.of * 0.25);
+  const bottom = info.rank > Math.floor(info.of * 0.75);
+  return (
+    <span
+      title={`${what}: #${info.rank} of ${info.of} ${division ?? ""} teams`}
+      style={{ marginLeft: "0.4rem", fontSize: "0.72rem", fontWeight: 600, color: top ? "#8fd39a" : bottom ? "#c45c52" : "var(--chalk-dim)" }}
+    >
+      #{info.rank}/{info.of}
     </span>
   );
 }
@@ -171,6 +192,7 @@ function TeamColumn({
         <span style={{ color: "var(--chalk-dim)" }}>Power rating</span>
         <span>
           {fmtRating(hc.currentRating)} (<RatingChange v={hc.ratingChangeFromLastWeek} /> vs last wk)
+          <Rank info={hc.ranks?.rating} division={hc.ranks?.division} what="Power rating" />
         </span>
       </div>
 
@@ -185,17 +207,33 @@ function TeamColumn({
       <div style={{ borderTop: "1px solid var(--hash)", borderBottom: "1px solid var(--hash)", padding: "0.3rem 0", margin: "0.2rem 0 0.4rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
           <span style={{ color: "var(--chalk-dim)" }}>Season record (SU)</span>
-          <b>{hc.overall.su.w + hc.overall.su.l === 0 ? "–" : fmtRecord(hc.overall.su)}</b>
+          <span>
+            <b>{hc.overall.su.w + hc.overall.su.l === 0 ? "–" : fmtRecord(hc.overall.su)}</b>
+            <Rank info={hc.ranks?.suPct} division={hc.ranks?.division} what="Straight-up win %" />
+          </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
           <span style={{ color: "var(--chalk-dim)" }}>Season ATS</span>
-          <b>{hc.overall.ats.w + hc.overall.ats.l + hc.overall.ats.p === 0 ? "–" : fmtAts(hc.overall.ats)}</b>
+          <span>
+            <b>{hc.overall.ats.w + hc.overall.ats.l + hc.overall.ats.p === 0 ? "–" : fmtAts(hc.overall.ats)}</b>
+            <Rank info={hc.ranks?.atsPct} division={hc.ranks?.division} what="ATS win %" />
+          </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
           <span style={{ color: "var(--chalk-dim)" }}>Total ATS margin</span>
-          <b style={{ color: hc.overall.totalAtsMargin == null ? undefined : hc.overall.totalAtsMargin > 0 ? "#8fd39a" : hc.overall.totalAtsMargin < 0 ? "#c45c52" : undefined }}>
-            {fmtMargin(hc.overall.totalAtsMargin)}
-          </b>
+          <span>
+            <b style={{ color: hc.overall.totalAtsMargin == null ? undefined : hc.overall.totalAtsMargin > 0 ? "#8fd39a" : hc.overall.totalAtsMargin < 0 ? "#c45c52" : undefined }}>
+              {fmtMargin(hc.overall.totalAtsMargin)}
+            </b>
+            <Rank info={hc.ranks?.totalAtsMargin} division={hc.ranks?.division} what="Total ATS margin" />
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", padding: "0.12rem 0" }}>
+          <span style={{ color: "var(--chalk-dim)" }}>Avg ATS margin / game</span>
+          <span>
+            <b>{fmtMargin(hc.overall.avgAtsMargin)}</b>
+            <Rank info={hc.ranks?.avgAtsMargin} division={hc.ranks?.division} what="Average ATS margin per game" />
+          </span>
         </div>
       </div>
 
@@ -543,6 +581,55 @@ function TotalsSection({
   );
 }
 
+// This game's slice of Rating Systems Matchups' Spread Chart: every rating
+// system's projected spread as a dot (hover for which system; YC is the gold
+// star), plus the Vegas line and, once final, the actual result. Uses the
+// saved ratings snapshot for this week (or the latest earlier one).
+function SystemScatterSection({ season, week, game }: { season: number; week: number; game: GameWithLines }) {
+  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const [snapshot, setSnapshot] = useState<{ week: number | null; byTeam: Record<string, Record<string, number>> } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSnapshot(null);
+    fetchSavedRatingsAtOrBefore(season, week)
+      .then(({ week: usedWeek, rows }) => {
+        if (!cancelled) setSnapshot({ week: usedWeek, byTeam: buildRatingsByTeam(rows) });
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshot({ week: null, byTeam: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season, week]);
+
+  const row: MultiSystemGameRow | null = useMemo(
+    () => (snapshot && snapshot.week != null ? computeMultiSystemRow(game, snapshot.byTeam, liveByTeam) : null),
+    [snapshot, game, liveByTeam]
+  );
+  const domain = useMemo(() => (row ? computeDomain([row]) : null), [row]);
+  if (!snapshot) return <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: "1rem" }}>Loading rating systems…</p>;
+  if (!row || !domain || RATING_SYSTEMS.every((s) => row.systems[s.key]?.projAwaySpread == null)) return null;
+
+  return (
+    <div style={{ marginTop: "1.1rem", borderTop: "1px solid var(--hash)", paddingTop: "0.7rem" }}>
+      <div style={{ fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--chalk-dim)", marginBottom: "0.4rem" }}>
+        Rating systems — projected spread (away perspective)
+      </div>
+      <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0 0.5rem" }}>
+        <SpreadChartHeader domain={domain} minWidth={0} />
+        <SpreadChartRow row={row} domain={domain} minWidth={0} height={96} jitterStep={14} />
+      </div>
+      <p style={{ fontSize: "0.68rem", color: "var(--chalk-dim)", margin: "0.4rem 0 0" }}>
+        Left = {game.away_team} underdog, right = {game.away_team} favored. <span style={{ color: "var(--gold, #d9a441)" }}>★ YC</span> · white tick = Vegas
+        {game.completed ? " · green tick = final result" : ""}. Hover a dot for its system. Ratings: saved Week {snapshot.week}
+        {snapshot.week !== week ? ` (Week ${week} not saved yet)` : ""}.
+      </p>
+    </div>
+  );
+}
+
 export default function MatchupHandicapPopup({
   season,
   week,
@@ -634,6 +721,7 @@ export default function MatchupHandicapPopup({
               />
             </div>
             <TotalsSection awayTeam={awayTeam} homeTeam={homeTeam} totals={hc.totals} />
+            {hc.game && <SystemScatterSection season={season} week={week} game={hc.game} />}
             <CompletedGamesSection hc={hc.away} />
             <CompletedGamesSection hc={hc.home} />
             <QuadrantNote quadrant={hc.quadrant} />
@@ -642,7 +730,7 @@ export default function MatchupHandicapPopup({
         )}
 
         <p style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "1rem", marginBottom: 0 }}>
-          Records are entering this week (games before Week {week} only). SU/ATS margins graded against the synced
+          Records are entering this week (games before Week {week} only). Ranks (#n/total) are among every team in the same division, 1 = best; avg margin ranks tell you more than the total when teams have played different numbers of games. SU/ATS margins graded against the synced
           Vegas line; Lookahead/Sandwich/Letdown compare our own power ratings and projected spreads. Category win
           rates (Filtered/WFB/NWFB) are site-wide, not team-specific — the non-favored side of the same call is
           shown as that same record's inverse, not a separately tracked stat.

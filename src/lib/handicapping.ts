@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
 import { computeRow, classOf } from "./matchupsCompute";
+import { TEAMS_BY_NAME } from "../data/teams";
 import { useWeekAccurateRatings } from "./weekAccurateRatings";
 import { useGameProjectionLocks } from "./api/gameProjectionLocks";
 import { fetchTeamGameAdvanced } from "./api/teamInfo";
@@ -65,6 +66,22 @@ export interface RecordSplit {
   atsWinPct: number | null; // ats.w / (ats.w + ats.l), null if nothing decided yet
 }
 
+export interface RankInfo {
+  rank: number; // 1 = best in the division; ties share a rank
+  of: number; // how many teams in the division have this stat
+}
+
+// Where this team sits among every team in its own division (FBS or FCS),
+// entering this week — same games and grading as the record splits.
+export interface TeamRanks {
+  division: string;
+  rating: RankInfo | null; // power rating this week, lower = better
+  suPct: RankInfo | null;
+  atsPct: RankInfo | null;
+  totalAtsMargin: RankInfo | null;
+  avgAtsMargin: RankInfo | null;
+}
+
 export interface RestInfo {
   byeLastWeek: boolean;
   daysOfRest: number | null;
@@ -104,6 +121,7 @@ export interface TeamHandicap {
   favoriteDog: RecordSplit | null; // this team's record in the role (favorite/dog) it has in the current game, null if the current game has no favorite/dog side (pick'em or no line/projection at all)
   homeAwayFavDog: RecordSplit | null; // the INTERSECTION of the two above (e.g. "Home Dog" or "Away Favorite") — null under the same condition favoriteDog is
   spots: SituationalSpots;
+  ranks: TeamRanks | null;
   currentRating: number | null; // this week's power rating (lower = better)
   ratingChangeFromLastWeek: number | null; // currentRating - previous week's rating; negative = improved
   lastGame: LastGameInfo | null;
@@ -170,6 +188,7 @@ export interface MatchupHandicap {
   quadrant: QuadrantInfo | null;
   // Raw spread/total numbers (home-relation, negative = home favored) for pricing alternate lines.
   altInputs: AltLineInputs | null;
+  game: GameWithLines | null; // the game itself (lines, score, neutral site), null until loaded / if it isn't in the synced data
   loading: boolean;
   error: string | null;
 }
@@ -253,7 +272,9 @@ function buildTeamGameLog(
   });
 }
 
-function computeRecordSplit(log: TeamGameLogRow[], week: number, pred: (r: TeamGameLogRow) => boolean): RecordSplit {
+type RecordRow = Pick<TeamGameLogRow, "completed" | "week" | "suResult" | "atsResult" | "atsMargin">;
+
+function computeRecordSplit<T extends RecordRow>(log: T[], week: number, pred: (r: T) => boolean): RecordSplit {
   const rows = log.filter((r) => r.completed && r.week < week && pred(r));
   let suW = 0,
     suL = 0,
@@ -280,6 +301,84 @@ function computeRecordSplit(log: TeamGameLogRow[], week: number, pred: (r: TeamG
     avgAtsMargin: marginCount > 0 ? marginSum / marginCount : null,
     totalAtsMargin: marginCount > 0 ? marginSum : null,
     atsWinPct: atsDecided > 0 ? atsW / atsDecided : null,
+  };
+}
+
+// One light row per team per game — the same SU/ATS grading buildTeamGameLog
+// does (closing line preferred provider, tie = no SU result), without the
+// projection/rating work, so every team in the division can be ranked cheaply.
+function lightLogsByTeam(allGames: GameWithLines[]): Map<string, RecordRow[]> {
+  const out = new Map<string, RecordRow[]>();
+  for (const g of allGames) {
+    if (!g.completed) continue;
+    const spread = pickLine(g.lines)?.spread ?? null;
+    for (const isHome of [true, false]) {
+      const team = isHome ? g.home_team : g.away_team;
+      const teamPoints = isHome ? g.home_points : g.away_points;
+      const oppPoints = isHome ? g.away_points : g.home_points;
+      const teamMargin = teamPoints != null && oppPoints != null ? teamPoints - oppPoints : null;
+      const { result, margin } = gradeAts(teamMargin, teamSpreadFrom(spread, isHome));
+      const row: RecordRow = {
+        completed: true,
+        week: g.week,
+        suResult: teamMargin == null ? null : teamMargin > 0 ? "win" : teamMargin < 0 ? "loss" : null,
+        atsResult: result,
+        atsMargin: margin,
+      };
+      const list = out.get(team);
+      if (list) list.push(row);
+      else out.set(team, [row]);
+    }
+  }
+  return out;
+}
+
+function rankIn(values: Map<string, number>, team: string, higherIsBetter: boolean): RankInfo | null {
+  const v = values.get(team);
+  if (v == null) return null;
+  let better = 0;
+  for (const x of values.values()) if (higherIsBetter ? x > v : x < v) better++;
+  return { rank: better + 1, of: values.size };
+}
+
+/** Rank every team within its own division on the stats the popup shows, entering `week`. */
+function buildRankLookup(allGames: GameWithLines[], week: number, ratingsByWeek: Record<number, Record<string, any>>): (team: string) => TeamRanks | null {
+  const logs = lightLogsByTeam(allGames);
+  const byDiv = new Map<string, { suPct: Map<string, number>; atsPct: Map<string, number>; total: Map<string, number>; avg: Map<string, number>; rating: Map<string, number> }>();
+  const bucket = (div: string) => {
+    let b = byDiv.get(div);
+    if (!b) {
+      b = { suPct: new Map(), atsPct: new Map(), total: new Map(), avg: new Map(), rating: new Map() };
+      byDiv.set(div, b);
+    }
+    return b;
+  };
+  for (const [team, log] of logs) {
+    const div = TEAMS_BY_NAME[team]?.div;
+    if (!div) continue;
+    const split = computeRecordSplit(log, week, () => true);
+    const b = bucket(div);
+    if (split.su.w + split.su.l > 0) b.suPct.set(team, split.su.w / (split.su.w + split.su.l));
+    if (split.atsWinPct != null) b.atsPct.set(team, split.atsWinPct);
+    if (split.totalAtsMargin != null) b.total.set(team, split.totalAtsMargin);
+    if (split.avgAtsMargin != null) b.avg.set(team, split.avgAtsMargin);
+  }
+  for (const [team, row] of Object.entries(ratingsByWeek[week] ?? {})) {
+    const div = TEAMS_BY_NAME[team]?.div;
+    if (div && row?.rating != null) bucket(div).rating.set(team, row.rating);
+  }
+  return (team) => {
+    const div = TEAMS_BY_NAME[team]?.div;
+    const b = div ? byDiv.get(div) : null;
+    if (!div || !b) return null;
+    return {
+      division: div,
+      rating: rankIn(b.rating, team, false),
+      suPct: rankIn(b.suPct, team, true),
+      atsPct: rankIn(b.atsPct, team, true),
+      totalAtsMargin: rankIn(b.total, team, true),
+      avgAtsMargin: rankIn(b.avg, team, true),
+    };
   };
 }
 
@@ -362,7 +461,8 @@ function buildTeamHandicap(
   isFavoriteInCurrentGame: boolean | null,
   log: TeamGameLogRow[],
   week: number,
-  ratingsByWeek: Record<number, Record<string, any>>
+  ratingsByWeek: Record<number, Record<string, any>>,
+  ranks: TeamRanks | null
 ): TeamHandicap {
   const prevGame = log.find((r) => r.week === week - 1) ?? null;
   const nextGameRow = log.find((r) => r.week === week + 1) ?? null;
@@ -390,6 +490,7 @@ function buildTeamHandicap(
             (r) => r.isHome === isHomeInCurrentGame && (isFavoriteInCurrentGame ? (r.vegasSpreadForTeam ?? 0) < 0 : (r.vegasSpreadForTeam ?? 0) > 0)
           ),
     spots: computeSituationalSpots(log, week),
+    ranks,
     currentRating,
     ratingChangeFromLastWeek: currentRating != null && prevRating != null ? currentRating - prevRating : null,
     lastGame: prevGame
@@ -489,6 +590,7 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         favoriteDog: null,
         homeAwayFavDog: null,
         spots: { lookahead: false, sandwich: false, letdown: false, letdownBadBeat: false, nextOpponent: null, prevOpponent: null },
+        ranks: null,
         currentRating: null,
         ratingChangeFromLastWeek: null,
         lastGame: null,
@@ -505,6 +607,7 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
         spreadCallCategories: [],
         totals: emptyTotals,
         altInputs: null,
+        game: null,
         quadrant: null,
         loading,
         error,
@@ -621,13 +724,15 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
       quadrant = { verdict, betTeam: primaryCategoryTeam, betRole, totalCall };
     }
 
+    const rankFor = buildRankLookup(allGames, week, ratingsByWeek);
+
     return {
       season,
       week,
       awayTeam,
       homeTeam,
-      away: buildTeamHandicap(awayTeam, false, awayIsFavorite, awayLog, week, ratingsByWeek),
-      home: buildTeamHandicap(homeTeam, true, homeIsFavorite, homeLog, week, ratingsByWeek),
+      away: buildTeamHandicap(awayTeam, false, awayIsFavorite, awayLog, week, ratingsByWeek, rankFor(awayTeam)),
+      home: buildTeamHandicap(homeTeam, true, homeIsFavorite, homeLog, week, ratingsByWeek, rankFor(homeTeam)),
       favoriteTeam,
       spreadCallCategories: spreadCallCategoriesInfo,
       totals,
@@ -641,6 +746,7 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
             neutralSite: currentGameWithLines.neutral_site,
           }
         : null,
+      game: currentGameWithLines ?? null,
       loading: false,
       error,
     };
