@@ -13,7 +13,9 @@ import {
   winPct,
   type MultiSystemGameRow,
 } from "../lib/multiRatingMatchups";
-import { ATS_BREAKEVEN_PCT } from "../lib/matchupsCompute";
+import { ATS_BREAKEVEN_PCT, computeRow, type MatchupComputed } from "../lib/matchupsCompute";
+import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
+import { MatchupsRow, MatchupsHeaderRow, BettingStatsBlock, sortValue as matchupSortValue, compareValues } from "./AdminMatchupsPanel";
 
 const CP: React.CSSProperties = {
   padding: "0.3rem 0.5rem",
@@ -529,13 +531,196 @@ function ResultsTable({ weekRows, seasonRows }: { weekRows: MultiSystemGameRow[]
 }
 
 // ---------------------------------------------------------------------
+// Single System tab — one rating system treated as if it were my own: its
+// saved ratings for each game's week feed the same computeRow (projected
+// spread, cover team, Filtered/WFB/NWFB/WTF, bet size, win %, EV) and the
+// same row/column layout as the regular admin Matchups page. Games whose
+// week has no saved snapshot are skipped (except weeks after the latest
+// snapshot, which preview against it, like the other tabs); games where
+// either team has no value for this system are skipped and counted rather
+// than silently falling back to YC's numbers. Projection locks are never
+// applied — they freeze MY numbers, not another system's.
+// ---------------------------------------------------------------------
+function SingleSystemTab({
+  games,
+  ratingsByWeek,
+  latestSavedWeek,
+  liveByTeam,
+  systemKey,
+  setSystemKey,
+  weekLabel,
+}: {
+  games: GameWithLines[];
+  ratingsByWeek: Map<number, Record<string, Record<string, number>>>;
+  latestSavedWeek: number | null;
+  liveByTeam: Record<string, any>;
+  systemKey: string;
+  setSystemKey: (k: string) => void;
+  weekLabel: string;
+}) {
+  const [mode, setMode] = useState<"spreads" | "moneyline">("spreads");
+  const [hideNoLine, setHideNoLine] = useState(false);
+  const [completedFilter, setCompletedFilter] = useState<"all" | "hideCompleted" | "completedOnly">("all");
+  const [gradeLine, setGradeLine] = useState<"close" | "open">("close");
+  const [mlEvThreshold, setMlEvThreshold] = useState(0);
+  const [sortKey, setSortKey] = useState<string | null>("betSize");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const label = RATING_SYSTEMS.find((s) => s.key === systemKey)?.label ?? systemKey;
+
+  // Per saved week: liveByTeam with each team's rating swapped for this
+  // system's value (HFA and everything else untouched).
+  const synthByWeek = useMemo(() => {
+    const out = new Map<number, Record<string, any>>();
+    for (const [wk, byTeam] of ratingsByWeek) {
+      const m: Record<string, any> = {};
+      for (const [team, vals] of Object.entries(byTeam)) {
+        const v = vals[systemKey];
+        if (v == null) continue;
+        m[team] = { ...liveByTeam[team], rating: v };
+      }
+      out.set(wk, m);
+    }
+    return out;
+  }, [ratingsByWeek, liveByTeam, systemKey]);
+
+  const { rows, skipped } = useMemo(() => {
+    let skippedCount = 0;
+    const computed: MatchupComputed[] = [];
+    for (const g of games) {
+      const snapWeek = ratingsByWeek.has(g.week) ? g.week : latestSavedWeek != null && g.week > latestSavedWeek ? latestSavedWeek : null;
+      const synth = snapWeek != null ? synthByWeek.get(snapWeek) : undefined;
+      if (!synth) continue;
+      if (synth[g.away_team] == null || synth[g.home_team] == null) {
+        skippedCount++;
+        continue;
+      }
+      computed.push(computeRow(g, synth, "team", DEFAULT_CUSTOM_PARAMS, null, gradeLine));
+    }
+    return { rows: computed, skipped: skippedCount };
+  }, [games, ratingsByWeek, latestSavedWeek, synthByWeek, gradeLine]);
+
+  const visibleRows = useMemo(
+    () =>
+      rows.filter((c) => {
+        const isCompleted = c.game.away_points != null && c.game.home_points != null;
+        if (completedFilter === "hideCompleted" && isCompleted) return false;
+        if (completedFilter === "completedOnly" && !isCompleted) return false;
+        if (!hideNoLine) return true;
+        return mode === "spreads" ? c.vegasAwaySpread != null : c.vegasMoneyline != null;
+      }),
+    [rows, completedFilter, hideNoLine, mode]
+  );
+  const sortedRows = useMemo(
+    () => (sortKey ? [...visibleRows].sort((a, b) => compareValues(matchupSortValue(a, mode, sortKey), matchupSortValue(b, mode, sortKey), sortDir)) : visibleRows),
+    [visibleRows, mode, sortKey, sortDir]
+  );
+  function handleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+  const labelStyle: React.CSSProperties = { fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+        <label style={labelStyle}>
+          System:
+          <select className="filter" value={systemKey} onChange={(e) => setSystemKey(e.target.value)}>
+            {RATING_SYSTEMS.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div style={{ display: "flex", gap: "0.3rem" }}>
+          {(
+            [
+              ["spreads", "Spreads"],
+              ["moneyline", "Moneylines"],
+            ] as const
+          ).map(([k, l]) => (
+            <button
+              key={k}
+              className={`mode-btn ${mode === k ? "mode-btn-active" : ""}`}
+              onClick={() => {
+                setMode(k);
+                setSortKey(k === "spreads" ? "betSize" : null);
+                setSortDir("desc");
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        <label style={labelStyle} title="Opening: only games with an opening line are graded — no fallback to the closing line">
+          Grade vs:
+          <select className="filter" value={gradeLine} onChange={(e) => setGradeLine(e.target.value as "close" | "open")}>
+            <option value="close">Closing line</option>
+            <option value="open">Opening line</option>
+          </select>
+        </label>
+        <label style={labelStyle}>
+          <input type="checkbox" checked={hideNoLine} onChange={(e) => setHideNoLine(e.target.checked)} />
+          Hide games with no Vegas {mode === "spreads" ? "line" : "moneyline"}
+        </label>
+        <label style={labelStyle}>
+          Games:
+          <select className="filter" value={completedFilter} onChange={(e) => setCompletedFilter(e.target.value as "all" | "hideCompleted" | "completedOnly")}>
+            <option value="all">All</option>
+            <option value="hideCompleted">Hide completed</option>
+            <option value="completedOnly">Completed only</option>
+          </select>
+        </label>
+        {mode === "moneyline" && (
+          <label style={labelStyle}>
+            Filtered Bet EV threshold:
+            <input type="range" min={0} max={30} step={0.5} value={mlEvThreshold} onChange={(e) => setMlEvThreshold(parseFloat(e.target.value))} style={{ width: 160 }} />
+            <span style={{ fontWeight: 700, minWidth: 40 }}>{mlEvThreshold.toFixed(1)}%</span>
+          </label>
+        )}
+      </div>
+      <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: 0 }}>
+        {label}'s saved ratings for each game's week, run through the same math as Admin Matchups — spread = away rating − home rating + home-field advantage (current HFA
+        values). Not YC's projection locks.
+        {skipped > 0 && ` ${skipped} game${skipped === 1 ? "" : "s"} skipped: ${label} has no saved rating for one of the teams.`}
+      </p>
+
+      {sortedRows.length === 0 ? (
+        <div className="empty matchups-empty">No games match these filters.</div>
+      ) : (
+        <div className="table-wrap" style={{ maxWidth: "none" }}>
+          <div className="table-scroll">
+            <table className="matchups-table" style={{ width: "100%" }}>
+              <thead>
+                <MatchupsHeaderRow mode={mode} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} showSelect={false} />
+              </thead>
+              <tbody>
+                {sortedRows.map((c) => (
+                  <MatchupsRow key={c.game.id} computed={c} mode={mode} mlEvThreshold={mlEvThreshold} showSelect={false} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {sortedRows.length > 0 && <BettingStatsBlock rows={sortedRows} label={label} title={`${label} — ${weekLabel} Betting Stats`} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Top-level panel.
 // ---------------------------------------------------------------------
 export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
   useDefaultToAdminWeek(setWeek);
-  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results">("spreads");
+  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results" | "system">("spreads");
+  const [systemKey, setSystemKey] = useState("yc");
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
   const [confFilter, setConfFilter] = useState("");
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -627,6 +812,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
     () => (week === "all" ? displayRows : displayRows.filter((r) => r.game.week === week)),
     [displayRows, week]
   );
+  const weekGames = useMemo(() => weekRows.map((r) => r.game), [weekRows]);
   const resultsWeekRows = useMemo(
     () => (week === "all" ? allGradedRows : allGradedRows.filter((r) => r.game.week === week)),
     [allGradedRows, week]
@@ -666,6 +852,9 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <button className={`mode-btn ${tab === "results" ? "mode-btn-active" : ""}`} onClick={() => setTab("results")}>
           Results
         </button>
+        <button className={`mode-btn ${tab === "system" ? "mode-btn-active" : ""}`} onClick={() => setTab("system")}>
+          Single System
+        </button>
       </div>
 
       <FilterBar
@@ -704,6 +893,17 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
             <GamesTable rows={weekRows} cell={(r, key) => teamName(r.game, r.systems[key]?.nwfbTeam ?? null)} />
           )}
           {tab === "results" && <ResultsTable weekRows={resultsWeekRows} seasonRows={allGradedRows} />}
+          {tab === "system" && (
+            <SingleSystemTab
+              games={weekGames}
+              ratingsByWeek={ratingsByWeek}
+              latestSavedWeek={latestSavedWeek}
+              liveByTeam={liveByTeam}
+              systemKey={systemKey}
+              setSystemKey={setSystemKey}
+              weekLabel={week === "all" ? "Season" : `Week ${week}`}
+            />
+          )}
         </>
       )}
     </div>

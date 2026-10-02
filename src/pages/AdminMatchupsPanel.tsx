@@ -113,7 +113,7 @@ function CategorySnapshot({ label, w, l }: { label: string; w: number; l: number
   );
 }
 
-function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: string }) {
+export function BettingStatsBlock({ rows, title, label = "YC" }: { rows: MatchupComputed[]; title?: string; label?: string }) {
   const stats = useMemo(() => computeMatchupStats(rows), [rows]);
   const errorStats = useMemo(() => computeErrorStats(rows), [rows]);
   const { straightUp, ats, filtered, wfb, nwfb } = stats;
@@ -132,7 +132,7 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
             <thead>
               <tr>
                 <th className="th"></th>
-                <th className="th th-right">YC</th>
+                <th className="th th-right">{label}</th>
                 <th className="th th-right">Vegas</th>
               </tr>
             </thead>
@@ -166,7 +166,7 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
             <thead>
               <tr>
                 <th className="th"></th>
-                <th className="th th-right">YC</th>
+                <th className="th th-right">{label}</th>
                 <th className="th th-right">Breakeven Baseline</th>
               </tr>
             </thead>
@@ -196,7 +196,7 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
             <thead>
               <tr>
                 <th className="th"></th>
-                <th className="th th-right">YC</th>
+                <th className="th th-right">{label}</th>
                 <th className="th th-right">Vegas</th>
               </tr>
             </thead>
@@ -302,7 +302,7 @@ function BettingStatsBlock({ rows, title }: { rows: MatchupComputed[]; title?: s
         before any profit — that's a fixed constant built into the vig, the same for every
         bettor regardless of dataset or edge size. Beating 52.4% is the bar that actually
         matters; beating 50% doesn't mean you're profitable. Abs Error / MSE compare each
-        projection (YC's model, Vegas's own line) against the actual final margin —
+        projection ({label}'s model, Vegas's own line) against the actual final margin —
         negative "over Vegas" values mean lower error (better) than Vegas.
       </p>
     </div>
@@ -351,7 +351,7 @@ function CheckIcon({ on }: { on: boolean }) {
   );
 }
 
-function MatchupsRow({
+export function MatchupsRow({
   computed,
   mode,
   selected,
@@ -359,6 +359,7 @@ function MatchupsRow({
   onPlaceBet,
   mlEvThreshold = 0,
   onOpenHandicap,
+  showSelect = true,
 }: {
   computed: MatchupComputed;
   mode: string;
@@ -367,6 +368,9 @@ function MatchupsRow({
   onPlaceBet?: (computed: MatchupComputed) => void;
   mlEvThreshold?: number;
   onOpenHandicap?: (awayTeam: string, homeTeam: string, week: number) => void;
+  // The Bet? checkbox column (spreads mode) is for logging a bet from this
+  // page's own projections; off when rows come from another rating system.
+  showSelect?: boolean;
 }) {
   const {
     game,
@@ -415,21 +419,23 @@ function MatchupsRow({
 
     return (
       <tr>
-        <td style={{ ...CP, textAlign: "center" }}>
-          {betTeam || projCoverTeam ? (
-            <input
-              type="checkbox"
-              checked={!!selected}
-              onChange={() => {
-                const wasSelected = !!selected;
-                onToggleSelect?.(computed);
-                if (!wasSelected) onPlaceBet?.(computed);
-              }}
-            />
-          ) : (
-            "–"
-          )}
-        </td>
+        {showSelect && (
+          <td style={{ ...CP, textAlign: "center" }}>
+            {betTeam || projCoverTeam ? (
+              <input
+                type="checkbox"
+                checked={!!selected}
+                onChange={() => {
+                  const wasSelected = !!selected;
+                  onToggleSelect?.(computed);
+                  if (!wasSelected) onPlaceBet?.(computed);
+                }}
+              />
+            ) : (
+              "–"
+            )}
+          </td>
+        )}
         <td style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
         <td style={{ ...CP, color: "var(--chalk-dim)", textAlign: "center" }}>{game.week}</td>
         <td
@@ -601,6 +607,76 @@ function MatchupsRow({
   );
 }
 
+// Column headers for the Spreads / Moneylines tables — shared with the Rating
+// Systems Matchups page's single-system view so both show the same columns.
+export function MatchupsHeaderRow({
+  mode,
+  sortKey,
+  sortDir,
+  onSort,
+  showSelect = true,
+}: {
+  mode: string;
+  sortKey: string | null;
+  sortDir: "asc" | "desc";
+  onSort: (key: string) => void;
+  showSelect?: boolean;
+}) {
+  return (
+    <>
+        {mode === "spreads" && (
+          <tr>
+            {showSelect && <th className="th">Bet?</th>}
+            <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Opening Line" sortKey="openingLine" active={sortKey === "openingLine"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Projected Spread" sortKey="projSpread" active={sortKey === "projSpread"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Proj. Cover Team" sortKey="projCover" active={sortKey === "projCover"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Bet" sortKey="bet" active={sortKey === "bet"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Bet Size" sortKey="betSize" active={sortKey === "betSize"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Watch" sortKey="watch" active={sortKey === "watch"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Relative Off" sortKey="relativeOff" active={sortKey === "relativeOff"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Sigma Off" sortKey="sigmaOff" active={sortKey === "sigmaOff"} dir={sortDir} onClick={onSort} align="right" />
+          </tr>
+        )}
+        {mode === "moneyline" && (
+          <tr>
+            <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Vegas Away ML" sortKey="vegasML" active={sortKey === "vegasML"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="My Away ML" sortKey="projML" active={sortKey === "projML"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="My Away Win %" sortKey="projWinPct" active={sortKey === "projWinPct"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Vegas Away Win %" sortKey="vegasWinPct" active={sortKey === "vegasWinPct"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Away EV" sortKey="ev" active={sortKey === "ev"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Vegas Home ML" sortKey="vegasHomeML" active={sortKey === "vegasHomeML"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="My Home ML" sortKey="projHomeML" active={sortKey === "projHomeML"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="My Home Win %" sortKey="homeWinPct" active={sortKey === "homeWinPct"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Vegas Home Win %" sortKey="vegasHomeWinPct" active={sortKey === "vegasHomeWinPct"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Home EV" sortKey="evHome" active={sortKey === "evHome"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Bet" sortKey="betSide" active={sortKey === "betSide"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Filtered Bet" sortKey="filteredBetSide" active={sortKey === "filteredBetSide"} dir={sortDir} onClick={onSort} />
+            <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Act. Winner" sortKey="actWinner" active={sortKey === "actWinner"} dir={sortDir} onClick={onSort} />
+          </tr>
+        )}
+    </>
+  );
+}
+
 const MATCHUPS_MODES = [
   { key: "spreads", label: "Spreads" },
   { key: "moneyline", label: "Moneylines" },
@@ -611,7 +687,7 @@ const MATCHUPS_MODES = [
 
 const WEEK_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1);
 
-function sortValue(c: MatchupComputed, mode: string, key: string): number | string | null {
+export function sortValue(c: MatchupComputed, mode: string, key: string): number | string | null {
   switch (key) {
     case "date":
       return c.game.start_date ? new Date(c.game.start_date).getTime() : null;
@@ -721,7 +797,7 @@ function sortValue(c: MatchupComputed, mode: string, key: string): number | stri
   return null;
 }
 
-function compareValues(a: number | string | null, b: number | string | null, dir: "asc" | "desc"): number {
+export function compareValues(a: number | string | null, b: number | string | null, dir: "asc" | "desc"): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1;
   if (b == null) return -1;
@@ -1189,55 +1265,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             <div className="table-scroll">
               <table className="matchups-table" style={{ width: "100%" }}>
                 <thead>
-                  {mode === "spreads" && (
-                    <tr>
-                      <th className="th">Bet?</th>
-                      <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Opening Line" sortKey="openingLine" active={sortKey === "openingLine"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Projected Spread" sortKey="projSpread" active={sortKey === "projSpread"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Proj. Cover Team" sortKey="projCover" active={sortKey === "projCover"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Bet" sortKey="bet" active={sortKey === "bet"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Bet Size" sortKey="betSize" active={sortKey === "betSize"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Filtered Bet" sortKey="filteredBet" active={sortKey === "filteredBet"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="WFB" sortKey="wfb" active={sortKey === "wfb"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="NWFB" sortKey="nwfb" active={sortKey === "nwfb"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Watch" sortKey="watch" active={sortKey === "watch"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Relative Off" sortKey="relativeOff" active={sortKey === "relativeOff"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Sigma Off" sortKey="sigmaOff" active={sortKey === "sigmaOff"} dir={sortDir} onClick={handleSort} align="right" />
-                    </tr>
-                  )}
-                  {mode === "moneyline" && (
-                    <tr>
-                      <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Vegas Away ML" sortKey="vegasML" active={sortKey === "vegasML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="My Away ML" sortKey="projML" active={sortKey === "projML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="My Away Win %" sortKey="projWinPct" active={sortKey === "projWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Vegas Away Win %" sortKey="vegasWinPct" active={sortKey === "vegasWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Away EV" sortKey="ev" active={sortKey === "ev"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Vegas Home ML" sortKey="vegasHomeML" active={sortKey === "vegasHomeML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="My Home ML" sortKey="projHomeML" active={sortKey === "projHomeML"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="My Home Win %" sortKey="homeWinPct" active={sortKey === "homeWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Vegas Home Win %" sortKey="vegasHomeWinPct" active={sortKey === "vegasHomeWinPct"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Home EV" sortKey="evHome" active={sortKey === "evHome"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Bet" sortKey="betSide" active={sortKey === "betSide"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Filtered Bet" sortKey="filteredBetSide" active={sortKey === "filteredBetSide"} dir={sortDir} onClick={handleSort} />
-                      <SortHeader label="Away Score" sortKey="awayScore" active={sortKey === "awayScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Home Score" sortKey="homeScore" active={sortKey === "homeScore"} dir={sortDir} onClick={handleSort} align="right" />
-                      <SortHeader label="Act. Winner" sortKey="actWinner" active={sortKey === "actWinner"} dir={sortDir} onClick={handleSort} />
-                    </tr>
-                  )}
+                  <MatchupsHeaderRow mode={mode} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                 </thead>
                 <tbody>
                   {sortedRows.map((c) => (
