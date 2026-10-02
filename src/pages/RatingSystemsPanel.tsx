@@ -918,7 +918,7 @@ function HistoryTable({
                         key={key}
                         style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", color: diffColor(v) }}
                       >
-                        {isDiff && v != null && v > 0 ? `+${fmtNum(v)}` : fmtNum(v)}
+                        {fmtNum(v)}
                       </td>
                     );
                   })}
