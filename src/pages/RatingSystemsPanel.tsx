@@ -14,6 +14,8 @@ import { buildRatingsByTeam, computeMultiSystemRow, aggregateSystemPerformance, 
 import {
   fetchRatingPulls,
   fetchRatingWeights,
+  fetchMcilleceRatings,
+  fetchJpPlusRatings,
   saveRatingWeights,
   syncCfbdRatings,
   fetchPublishedSheetCsv,
@@ -271,6 +273,41 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     setBusy(null);
   }
 
+  // McIllece (replaces the CSV upload) and JP+ (new system), both scraped from
+  // their public pages. Kept as its own button — not part of Sync All — until
+  // the scrape has been trusted for a few weeks; the CSV upload still works.
+  async function handleMcilleceJpPlusScrape() {
+    setBusy("mcjp");
+    setLog(null);
+    setUnmatched(null);
+    const lines: string[] = [];
+    const unmatchedAll: { source: string; names: string[] } = { source: "McIllece/JP+ scrape", names: [] };
+    async function run(label: string, fetchRows: () => Promise<{ rows: { team: string; values: Record<string, number> }[]; note: string | null }>) {
+      try {
+        const { rows: scraped, note } = await fetchRows();
+        const { matched, unmatched: um } = matchTeamRows(scraped, (r) => r.team);
+        const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
+        const result = await saveRatingRows(rows);
+        lines.push(`${label}${note ? ` (${note})` : ""} — scraped ${scraped.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`);
+        for (const r of um) unmatchedAll.names.push(`${label}: ${r.team}`);
+      } catch (err: any) {
+        lines.push(`${label} failed: ${err.message ?? "unknown error"}`);
+      }
+    }
+    await run("McIllece", async () => {
+      const r = await fetchMcilleceRatings();
+      return { rows: r.rows, note: r.year };
+    });
+    await run("JP+", async () => {
+      const r = await fetchJpPlusRatings();
+      return { rows: r.rows, note: r.label };
+    });
+    setLog(lines.join("\n"));
+    if (unmatchedAll.names.length > 0) setUnmatched(unmatchedAll);
+    onDataChanged();
+    setBusy(null);
+  }
+
   async function handleMcilleceUpload(file: File) {
     setBusy("mcillece");
     setLog(null);
@@ -367,6 +404,9 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         </button>
         <button onClick={handleSyncAll} disabled={busy != null} style={{ fontWeight: 700 }}>
           {busy === "all" ? "Syncing everything…" : "Sync All (CFBD + Sheet + Sagarin/FEI/F+)"}
+        </button>
+        <button onClick={handleMcilleceJpPlusScrape} disabled={busy != null} title="Scrapes mcillecesports.com and jpplusratings.com — no CSV needed">
+          {busy === "mcjp" ? "Scraping…" : "Sync McIllece + JP+ (scrape)"}
         </button>
         <label className="menu-btn" style={{ cursor: "pointer" }}>
           {busy === "mcillece" ? "Uploading…" : "Upload McIllece CSV"}

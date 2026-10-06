@@ -37,11 +37,16 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // the Google Sheet block per Chris's request.
   { key: "fei_avg", label: "FEI", source: "scraped" },
   { key: "f_plus", label: "F+", source: "scraped" },
-  { key: "mcillece", label: "McIllece", source: "csv_upload" },
+  // McIllece can be scraped from mcillecesports.com/power-ratings (the same
+  // Team/Power table the weekly CSV comes from); the CSV upload stays as a fallback.
+  { key: "mcillece", label: "McIllece", source: "scraped" },
   { key: "massey", label: "Massey", source: "csv_upload" },
   // Scraped directly from sagarin.com's own public page — no year param,
   // it's always just "current."
   { key: "sagarin", label: "Sagarin", source: "scraped" },
+  // JP+ (jpplusratings.com) — scraped from its home-page power ratings table.
+  // FBS only. New and still being evaluated: see AGGREGATE_EXCLUDED_SYSTEMS.
+  { key: "jpplus", label: "JP+", source: "scraped" },
 
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },
@@ -68,7 +73,11 @@ export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fro
 // here too, back when it came from the Google Sheet and wasn't fully
 // rated — the bcftoys.com scraper covers the full FBS field, so it's
 // back in, with its own weight box again.)
-export const AGGREGATE_EXCLUDED_SYSTEMS = ["pi"];
+// JP+ is excluded for now too: it's a new system that only rates FBS and hasn't
+// been judged against the others yet, so it shows in the table / week snapshots
+// and matchup comparisons but doesn't move Consensus or YC. To promote it,
+// remove "jpplus" from this list and give it a weight in the YC weights box.
+export const AGGREGATE_EXCLUDED_SYSTEMS = ["pi", "jpplus"];
 
 /** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
 export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);

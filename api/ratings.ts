@@ -51,6 +51,31 @@ function minMaxNormalize<T>(rows: T[], valueOf: (r: T) => number, rawHigherIsBet
   });
 }
 
+// Plain-HTML scraping helpers for the McIllece / JP+ pulls below (no DOM
+// library on the server — these pages are simple enough for regex).
+const SCRAPE_USER_AGENT = "Mozilla/5.0 (compatible; YCPR ratings sync)";
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
+/** Every <tr> in the HTML as an array of its cell texts (th and td), tags stripped and entities decoded. */
+function tableRows(html: string): string[][] {
+  const rows: string[][] = [];
+  for (const m of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+    const cells = Array.from(m[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)).map((c) => decodeEntities(c[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim());
+    if (cells.length > 0) rows.push(cells);
+  }
+  return rows;
+}
+
 interface IncomingSaveRow {
   team: string;
   conference?: string | null;
@@ -165,6 +190,104 @@ export default async function handler(req: any, res: any) {
       res.status(200).json({ ok: true, rows });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Sagarin fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "mcilleceProxy" — scrapes mcillecesports.com/power-ratings, the
+  // same table the weekly McIllece CSV is exported from (its "Team" and
+  // "Power" columns are exactly the two columns parseMcilleceCsv reads).
+  // The rows are server-rendered into the page's own <table>, so a plain
+  // GET + <tr>/<td> parse is enough — no ajax. Power runs higher = better,
+  // so it's sign-flipped to this site's negative-is-better convention,
+  // identical to the CSV path (verified value-for-value against an upload
+  // of the same week). Header cells are located by name ("Team", "Power",
+  // "Year") rather than position, and a header that's missing fails loudly
+  // instead of guessing.
+  // -----------------------------------------------------------------
+  if (action === "mcilleceProxy") {
+    try {
+      const pageRes = await fetch("https://mcillecesports.com/power-ratings/", {
+        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" },
+      });
+      if (!pageRes.ok) throw new Error(`McIllece fetch failed (${pageRes.status})`);
+      const html = await pageRes.text();
+      const rows = tableRows(html);
+      const headerIdx = rows.findIndex((cells) => cells.includes("Team") && cells.includes("Power"));
+      if (headerIdx === -1) throw new Error("McIllece page no longer has a table with Team and Power columns — its layout may have changed");
+      const header = rows[headerIdx];
+      const teamIdx = header.indexOf("Team");
+      const powerIdx = header.indexOf("Power");
+      const yearIdx = header.indexOf("Year");
+      const out: { team: string; values: { mcillece: number } }[] = [];
+      let year: string | null = null;
+      for (const cells of rows.slice(headerIdx + 1)) {
+        const team = (cells[teamIdx] ?? "").trim();
+        const power = Number((cells[powerIdx] ?? "").trim());
+        if (!team || (cells[powerIdx] ?? "").trim() === "" || Number.isNaN(power)) continue;
+        if (yearIdx !== -1 && cells[yearIdx]) year = cells[yearIdx];
+        out.push({ team, values: { mcillece: -power } });
+      }
+      if (out.length === 0) throw new Error("Parsed 0 rows from McIllece's page");
+      res.status(200).json({ ok: true, rows: out, year });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "McIllece fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "jpplusProxy" — scrapes jpplusratings.com's home-page power
+  // ratings table (the latest published week, e.g. "2026 · After Week 5").
+  // FBS only (~138 teams). Each <tr data-rating-team="Alabama"> carries the
+  // team name; its third cell is the JP+ rating in points vs an average FBS
+  // team (higher = better, e.g. +26.8), sign-flipped here to this site's
+  // convention like McIllece's Power. The page is ~10 MB of mostly embedded
+  // script payload AFTER the table, so only the first ~1.5 MB is requested
+  // (Range) and reading stops at </table>. The "After Week N" label is
+  // returned so the admin can see which week of ratings it just pulled.
+  // -----------------------------------------------------------------
+  if (action === "jpplusProxy") {
+    try {
+      const pageRes = await fetch("https://www.jpplusratings.com/", {
+        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html", Range: "bytes=0-1500000" },
+      });
+      if (!pageRes.ok && pageRes.status !== 206) throw new Error(`JP+ fetch failed (${pageRes.status})`);
+      // Stream and stop at </table> in case the server ignored Range and is sending the whole page.
+      let html = "";
+      if (pageRes.body) {
+        const reader = (pageRes.body as any).getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          html += decoder.decode(value, { stream: true });
+          if (html.includes("</table>")) {
+            await reader.cancel().catch(() => {});
+            break;
+          }
+        }
+      } else {
+        html = await pageRes.text();
+      }
+      const tableEnd = html.indexOf("</table>");
+      if (tableEnd === -1) throw new Error("Couldn't find the ratings table in the first part of JP+'s page — its layout may have changed");
+      const tableHtml = html.slice(html.indexOf("<table"), tableEnd);
+      const out: { team: string; values: { jpplus: number } }[] = [];
+      for (const m of tableHtml.matchAll(/<tr[^>]*data-rating-team="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/g)) {
+        const team = decodeEntities(m[1]).trim();
+        const cells = Array.from(m[2].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)).map((c) => decodeEntities(c[1].replace(/<[^>]+>/g, "")).trim());
+        const rating = parseFloat((cells[2] ?? "").replace(/[+\u2212]/g, (ch) => (ch === "+" ? "" : "-")));
+        if (!team || Number.isNaN(rating)) continue;
+        out.push({ team, values: { jpplus: -rating } });
+      }
+      if (out.length === 0) throw new Error("Parsed 0 rows from JP+'s table — its layout may have changed");
+      const textOnly = html.replace(/<!--.*?-->/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      const week = /(20\d\d)\s*·\s*(After Week \d+|Preseason|Final)/.exec(textOnly);
+      res.status(200).json({ ok: true, rows: out, label: week ? `${week[1]} · ${week[2]}` : null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "JP+ fetch failed" });
     }
     return;
   }

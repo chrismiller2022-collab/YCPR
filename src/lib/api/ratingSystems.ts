@@ -192,6 +192,18 @@ export async function fetchSagarinRatings(): Promise<ScrapedRatingRow[]> {
   return data.rows as ScrapedRatingRow[];
 }
 
+/** Scrapes mcillecesports.com/power-ratings — same Team/Power table as the weekly CSV (value already sign-flipped). */
+export async function fetchMcilleceRatings(): Promise<{ rows: ScrapedRatingRow[]; year: string | null }> {
+  const data = await authedPost("mcilleceProxy", {});
+  return { rows: data.rows as ScrapedRatingRow[], year: (data.year as string | null) ?? null };
+}
+
+/** Scrapes jpplusratings.com's latest power ratings table (FBS only, value already sign-flipped). `label` is the page's own "2026 · After Week 5" tag. */
+export async function fetchJpPlusRatings(): Promise<{ rows: ScrapedRatingRow[]; label: string | null }> {
+  const data = await authedPost("jpplusProxy", {});
+  return { rows: data.rows as ScrapedRatingRow[], label: (data.label as string | null) ?? null };
+}
+
 /** Scrapes bcftoys.com's FEI and F+ pages for the given year and merges them by team. */
 export async function fetchFeiFplusRatings(year: number): Promise<ScrapedRatingRow[]> {
   const data = await authedPost("fplusProxy", { year });
