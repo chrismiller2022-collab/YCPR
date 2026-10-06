@@ -500,7 +500,9 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
     if (syncHalves) markets.push("spreads_h1", "totals_h1", "spreads_h2", "totals_h2");
     if (syncQuarters) for (const q of [1, 2, 3, 4]) markets.push(`spreads_q${q}`, `totals_q${q}`);
     if (targets.length === 0) {
-      setSyncMsg("No unplayed FBS-vs-FBS games this week.");
+      setSyncMsg(
+        `Every FBS-vs-FBS game in week ${week} has already been played, so there are no live lines left to sync. For played games use Historical Odds Pull (Ratings & models) — it loads the lines from just before kickoff, which is what Period Grading reads.`
+      );
       return;
     }
     const perGame = markets.length + (syncTeamTotals ? 1 : 0);
