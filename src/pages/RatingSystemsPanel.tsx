@@ -16,6 +16,7 @@ import {
   fetchRatingWeights,
   fetchMcilleceRatings,
   fetchJpPlusRatings,
+  fetchTeamRankingsRatings,
   saveRatingWeights,
   syncCfbdRatings,
   fetchPublishedSheetCsv,
@@ -320,6 +321,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       const r = await fetchJpPlusRatings();
       return { rows: r.rows, note: r.label };
     });
+    await run("TR", async () => ({ rows: await fetchTeamRankingsRatings(), note: null }));
     setLog(lines.join("\n"));
     if (unmatchedAll.names.length > 0) setUnmatched(unmatchedAll);
     onDataChanged();
@@ -465,8 +467,8 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         <button onClick={handleSyncAll} disabled={busy != null} style={{ fontWeight: 700 }}>
           {busy === "all" ? "Syncing everything…" : "Sync All (CFBD + Sheet + Sagarin/FEI/F+)"}
         </button>
-        <button onClick={handleMcilleceJpPlusScrape} disabled={busy != null} title="Scrapes mcillecesports.com and jpplusratings.com — no CSV needed">
-          {busy === "mcjp" ? "Scraping…" : "Sync McIllece + JP+ (scrape)"}
+        <button onClick={handleMcilleceJpPlusScrape} disabled={busy != null} title="Scrapes mcillecesports.com, jpplusratings.com and teamrankings.com — no CSV needed">
+          {busy === "mcjp" ? "Scraping…" : "Sync McIllece + JP+ + TR (scrape)"}
         </button>
         <button
           onClick={handleJpPlusBackfill}

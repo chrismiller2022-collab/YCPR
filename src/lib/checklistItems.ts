@@ -28,6 +28,7 @@ export const CHECKLIST_ITEMS: ChecklistItemDef[] = [
       { key: "update_ratings_sheet", label: "Sheet" },
       { key: "update_ratings_mcillece", label: "McIllece" },
       { key: "update_ratings_jpplus", label: "JP+" },
+      { key: "update_ratings_tr", label: "TR" },
       { key: "update_ratings_massey", label: "Massey" },
       { key: "update_ratings_srs", label: "Run SRS" },
     ],

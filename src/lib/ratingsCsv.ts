@@ -63,8 +63,9 @@ function findHeaderIdx(headers: string[], name: string): number {
 // a manual copy of that same source. If the sheet still has those
 // columns, they're simply ignored now rather than overwriting the
 // scraper's fresher values on the next sheet pull.
+// TR is NOT mapped here either now — it's scraped from teamrankings.com
+// (see the teamrankingsProxy action), so a stale sheet column can't overwrite it.
 const SHEET_COLUMN_TO_SYSTEM: Record<string, string> = {
-  TR: "tr",
   John: "john",
   Harris: "harris",
   "Win Totals": "win_totals",

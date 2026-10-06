@@ -198,6 +198,12 @@ export async function fetchMcilleceRatings(): Promise<{ rows: ScrapedRatingRow[]
   return { rows: data.rows as ScrapedRatingRow[], year: (data.year as string | null) ?? null };
 }
 
+/** Scrapes teamrankings.com's predictive rankings page (FBS only; value already sign-flipped). Replaces the sheet's TR column. */
+export async function fetchTeamRankingsRatings(): Promise<ScrapedRatingRow[]> {
+  const data = await authedPost("teamrankingsProxy", {});
+  return data.rows as ScrapedRatingRow[];
+}
+
 export interface JpPlusSnapshot {
   label: string;
   rows: { team: string; conference: string; value: number }[]; // value already sign-flipped to this site's convention

@@ -315,6 +315,41 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
+  // action: "teamrankingsProxy" — scrapes TeamRankings' college football
+  // "Predictive Rankings" page (the same TR rating the Google Sheet's TR
+  // column carried, which this replaces). The first table's rows are
+  // "<Team> (W-L)" + a Rating in points (higher = better), sign-flipped here
+  // to this site's convention. FBS only — TeamRankings doesn't rate FCS.
+  // robots.txt allows the page (Crawl-delay 10; this is one request per pull).
+  // -----------------------------------------------------------------
+  if (action === "teamrankingsProxy") {
+    try {
+      const pageRes = await fetch("https://www.teamrankings.com/college-football/ranking/predictive-by-other", {
+        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" },
+      });
+      if (!pageRes.ok) throw new Error(`TeamRankings fetch failed (${pageRes.status})`);
+      const rows = tableRows(await pageRes.text());
+      const headerIdx = rows.findIndex((cells) => cells.includes("Team") && cells.includes("Rating"));
+      if (headerIdx === -1) throw new Error("TeamRankings page no longer has a table with Team and Rating columns — its layout may have changed");
+      const teamIdx = rows[headerIdx].indexOf("Team");
+      const ratingIdx = rows[headerIdx].indexOf("Rating");
+      const out: { team: string; values: { tr: number } }[] = [];
+      for (const cells of rows.slice(headerIdx + 1)) {
+        if (cells.includes("Team")) break; // the next table's header
+        const team = (cells[teamIdx] ?? "").replace(/\s*\(\d+-\d+(?:-\d+)?\)\s*$/, "").trim();
+        const rating = Number((cells[ratingIdx] ?? "").trim());
+        if (!team || (cells[ratingIdx] ?? "").trim() === "" || Number.isNaN(rating)) continue;
+        out.push({ team, values: { tr: -rating } });
+      }
+      if (out.length === 0) throw new Error("Parsed 0 rows from TeamRankings' table");
+      res.status(200).json({ ok: true, rows: out });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "TeamRankings fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
   // action: "fplusProxy" — scrapes Brian Fremeau's own bcftoys.com pages
   // for FEI and F+ (FEI blended with Bill Connelly's SP+), formerly
   // copied by hand into the published Google Sheet. Both pages share the

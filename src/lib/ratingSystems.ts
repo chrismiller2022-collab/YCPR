@@ -45,8 +45,12 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // it's always just "current."
   { key: "sagarin", label: "Sagarin", source: "scraped" },
   // JP+ (jpplusratings.com) — scraped from its home-page power ratings table.
-  // FBS only. Starts with a 0 Consensus weight and no YC weight — set both in the weights box.
+  // FBS only. Starts with no YC weight and unchecked for Consensus — set both in the weights box.
   { key: "jpplus", label: "JP+", source: "scraped" },
+
+  // TeamRankings predictive rating — scraped from teamrankings.com (FBS only);
+  // used to come from the Google Sheet's TR column.
+  { key: "tr", label: "TR", source: "scraped" },
 
   // Published Google Sheet.
   { key: "john", label: "John Harris", source: "google_sheet" },
@@ -56,7 +60,6 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   { key: "power", label: "Power", source: "google_sheet" },
   { key: "drat", label: "DRate", source: "google_sheet" },
   { key: "pi", label: "Pi", source: "google_sheet" },
-  { key: "tr", label: "TR", source: "google_sheet" },
   { key: "win_totals", label: "Win Totals", source: "google_sheet" },
 ];
 
