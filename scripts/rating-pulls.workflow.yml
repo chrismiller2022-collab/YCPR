@@ -1,0 +1,40 @@
+name: Rating pulls
+
+# Runs every hour; scripts/pull-ratings.ts decides from the Eastern-time clock
+# which sources are due (see the schedule at the top of that file) and does
+# nothing outside the Aug 1 – Feb 10 season. It only writes the live
+# rating_pulls table — never a saved week.
+#
+# Repo secrets needed: SITE_URL (e.g. https://ycpr.vercel.app) and ADMIN_PASSWORD.
+# Optional notifications: NTFY_TOPIC and/or DISCORD_WEBHOOK_URL.
+on:
+  schedule:
+    - cron: "5 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run these sources now, ignoring the schedule and season (comma list: sagarin,cfbd,fei,jpplus,mcillece,tr,sheet)"
+        required: false
+        default: ""
+
+concurrency:
+  group: rating-pulls
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Pull due rating sources
+        run: npx --yes tsx scripts/pull-ratings.ts
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FORCE_SOURCES: ${{ github.event.inputs.force }}

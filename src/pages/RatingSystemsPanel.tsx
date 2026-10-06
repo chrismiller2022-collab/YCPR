@@ -17,6 +17,8 @@ import {
   fetchMcilleceRatings,
   fetchJpPlusRatings,
   fetchTeamRankingsRatings,
+  fetchRecentPullRuns,
+  type PullRunRow,
   saveRatingWeights,
   syncCfbdRatings,
   fetchPublishedSheetCsv,
@@ -110,6 +112,91 @@ function WeightsEditor({
         {saving ? "Saving…" : "Save weights"}
       </button>
       {msg && <span style={{ marginLeft: "0.75rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>{msg}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Automatic pulls — what the hourly GitHub job (scripts/pull-ratings.ts) has
+// done. It only refreshes the live ratings above; it never saves or
+// overwrites a week.
+// ---------------------------------------------------------------------
+const AUTO_SOURCE_LABELS: Record<string, string> = {
+  sagarin: "Sagarin",
+  cfbd: "CFBD (FPI/SP+/SRS/Core/Elo)",
+  fei: "FEI/F+",
+  jpplus: "JP+",
+  mcillece: "McIllece",
+  tr: "TR",
+  sheet: "Google Sheet",
+};
+
+function fmtWhen(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function AutoPullStatus() {
+  const [runs, setRuns] = useState<PullRunRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    fetchRecentPullRuns(14)
+      .then(setRuns)
+      .catch((e) => setError(e.message ?? "Failed to load"));
+  }, []);
+
+  const rows = useMemo(() => {
+    return Object.keys(AUTO_SOURCE_LABELS).map((source) => {
+      const mine = (runs ?? []).filter((r) => r.source === source);
+      return {
+        source,
+        last: mine[0] ?? null,
+        lastOk: mine.find((r) => r.ok) ?? null,
+        lastChange: mine.find((r) => r.ok && (r.changed ?? 0) + (r.new_teams ?? 0) > 0) ?? null,
+      };
+    });
+  }, [runs]);
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.4rem" }}>
+        Automatic pulls (hourly GitHub job)
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Refreshes the live ratings above on a schedule during the season (Aug 1 – Feb 10). It never saves a week, overwrites a saved week or changes the public
+        ratings — Save as Week and Push YC stay manual.
+      </p>
+      {error && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{error}</p>}
+      {runs && runs.length === 0 && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>No scheduled runs recorded yet.</p>}
+      <div className="table-scroll" style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: "0.76rem", width: "100%" }}>
+          <thead>
+            <tr>
+              {["Source", "Last run", "Result", "Last time it changed", "Unmatched names"].map((h) => (
+                <th key={h} style={{ textAlign: "left", padding: "0.25rem 0.6rem", color: "var(--chalk-dim)", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ source, last, lastChange }) => (
+              <tr key={source} style={{ borderTop: "1px solid var(--hash)" }}>
+                <td style={{ padding: "0.25rem 0.6rem", fontWeight: 700, whiteSpace: "nowrap" }}>{AUTO_SOURCE_LABELS[source]}</td>
+                <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>{last ? fmtWhen(last.ran_at) : "–"}</td>
+                <td style={{ padding: "0.25rem 0.6rem", color: last ? (last.ok ? "#8fd39a" : "#e07a7a") : undefined }} title={last?.error ?? undefined}>
+                  {last ? (last.ok ? `OK — ${last.changed ?? 0} changed${last.label ? ` (${last.label})` : ""}` : `FAILED${last.error ? `: ${last.error.slice(0, 60)}` : ""}`) : "–"}
+                </td>
+                <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>
+                  {lastChange ? `${fmtWhen(lastChange.ran_at)} — ${(lastChange.changed ?? 0) + (lastChange.new_teams ?? 0)} teams${lastChange.label ? ` (${lastChange.label})` : ""}` : "–"}
+                </td>
+                <td style={{ padding: "0.25rem 0.6rem", color: last?.unmatched?.length ? "#d9a441" : undefined }}>
+                  {last?.unmatched?.length ? last.unmatched.slice(0, 6).join(", ") + (last.unmatched.length > 6 ? "…" : "") : "–"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1274,6 +1361,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
           ) : (
             <>
               <SyncControls onDataChanged={loadAll} />
+              <AutoPullStatus />
               <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
               <PushYcControl rows={conglomerated} />
               <ConglomeratedTable rows={conglomerated} />

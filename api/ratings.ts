@@ -717,6 +717,58 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
+  // actions: "logPullRun" / "getPullRuns" — the run log for the scheduled
+  // pulls (scripts/pull-ratings.ts, run hourly by the GitHub Actions
+  // workflow). The scheduled job only ever calls the pull actions above plus
+  // "save"/"sync", which write rating_pulls — never weekly_power_ratings — and
+  // then records what happened here.
+  // -----------------------------------------------------------------
+  if (action === "logPullRun") {
+    const r = req.body ?? {};
+    if (!r.source || typeof r.ok !== "boolean") {
+      res.status(400).json({ error: "source and ok are required" });
+      return;
+    }
+    const { error } = await supabaseAdmin.from("rating_pull_runs").insert({
+      source: r.source,
+      trigger: r.trigger ?? "schedule",
+      ok: r.ok,
+      error: r.error ?? null,
+      fetched: r.fetched ?? null,
+      matched: r.matched ?? null,
+      saved: r.saved ?? null,
+      changed: r.changed ?? null,
+      unchanged: r.unchanged ?? null,
+      new_teams: r.newTeams ?? null,
+      unmatched: r.unmatched ?? null,
+      label: r.label ?? null,
+      detail: r.detail ?? null,
+    });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true });
+    return;
+  }
+
+  if (action === "getPullRuns") {
+    const sinceIso = typeof req.body?.since === "string" ? req.body.since : new Date(Date.now() - 4 * 86400000).toISOString();
+    const { data, error } = await supabaseAdmin
+      .from("rating_pull_runs")
+      .select("*")
+      .gte("ran_at", sinceIso)
+      .order("ran_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true, runs: data ?? [] });
+    return;
+  }
+
+  // -----------------------------------------------------------------
   // action: "weightsSave" — formerly ratings-weights-save.ts
   // -----------------------------------------------------------------
   if (action === "weightsSave") {

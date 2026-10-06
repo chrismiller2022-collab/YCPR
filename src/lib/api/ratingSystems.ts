@@ -308,3 +308,33 @@ export async function fetchSavedRatingWeeks(season: number): Promise<number[]> {
   }
   return found;
 }
+
+export interface PullRunRow {
+  id: number;
+  source: string;
+  ran_at: string;
+  trigger: string;
+  ok: boolean;
+  error: string | null;
+  fetched: number | null;
+  matched: number | null;
+  saved: number | null;
+  changed: number | null;
+  unchanged: number | null;
+  new_teams: number | null;
+  unmatched: string[] | null;
+  label: string | null;
+}
+
+/** Recent scheduled-pull attempts (scripts/pull-ratings.ts), newest first. */
+export async function fetchRecentPullRuns(days = 14): Promise<PullRunRow[]> {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const { data, error } = await supabase
+    .from("rating_pull_runs")
+    .select("id, source, ran_at, trigger, ok, error, fetched, matched, saved, changed, unchanged, new_teams, unmatched, label")
+    .gte("ran_at", since)
+    .order("ran_at", { ascending: false })
+    .limit(400);
+  if (error) throw error;
+  return (data ?? []) as PullRunRow[];
+}
