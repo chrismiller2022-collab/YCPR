@@ -64,30 +64,32 @@ export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fro
   RATING_SYSTEMS.map((s) => [s.key, s])
 );
 
-// Pi isn't fully rated across every team yet — temporarily excluded from
-// both YC and Consensus so a handful of missing/partial pulls don't skew
-// the aggregates, while still showing up as its own column in the
-// systems table (and still saved into a week snapshot) so progress on
-// filling it in stays visible. Remove from this list once it's fully
-// rated to fold it back into both aggregates. (F+ used to be excluded
-// here too, back when it came from the Google Sheet and wasn't fully
-// rated — the bcftoys.com scraper covers the full FBS field, so it's
-// back in, with its own weight box again.)
-// JP+ is excluded for now too: it's a new system that only rates FBS and hasn't
-// been judged against the others yet, so it shows in the table / week snapshots
-// and matchup comparisons but doesn't move Consensus or YC. To promote it,
-// remove "jpplus" from this list and give it a weight in the YC weights box.
-export const AGGREGATE_EXCLUDED_SYSTEMS = ["pi", "jpplus"];
+// Nothing is excluded from YC or Consensus in code — every system is a weighted
+// input to both, and a weight of 0 turns one off. YC weights are the
+// system_key rows in rating_system_weights; the weight a system carries INSIDE
+// Consensus is stored beside them under `consensus:<system_key>`. Both are
+// edited in the Rating Systems weights box and can change at any time.
+
+/** rating_system_weights key for a system's weight inside the Consensus average. */
+export function consensusWeightKey(systemKey: string): string {
+  return `consensus:${systemKey}`;
+}
+
+// Consensus used to be an unweighted average of every system except Pi. A
+// system with no saved Consensus weight keeps that behavior: 1 (counts equally),
+// except Pi (not fully rated) and JP+ (new, FBS-only, still being evaluated),
+// which start at 0 so adding them didn't silently move Consensus and YC. Saving
+// the weights box writes an explicit value for every system.
+const DEFAULT_CONSENSUS_ZERO = ["pi", "jpplus"];
+export function defaultConsensusWeight(systemKey: string): number {
+  return DEFAULT_CONSENSUS_ZERO.includes(systemKey) ? 0 : 1;
+}
 
 /** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
 export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);
 
-/** Every system that's an input to the YC weighted average (i.e. NOT yc itself, minus AGGREGATE_EXCLUDED_SYSTEMS). */
-export const YC_INPUT_SYSTEMS = RATING_SYSTEMS.filter(
-  (s) => s.key !== "yc" && !AGGREGATE_EXCLUDED_SYSTEMS.includes(s.key)
-).map((s) => s.key);
+/** Every system that's an input to the YC weighted average (everything except YC itself; Consensus is one of them). */
+export const YC_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc").map((s) => s.key);
 
-/** Every system that's an input to Consensus (a simple average — every pulled system, excluding YC/Consensus themselves and AGGREGATE_EXCLUDED_SYSTEMS). */
-export const CONSENSUS_INPUT_SYSTEMS = RATING_SYSTEMS.filter(
-  (s) => s.key !== "yc" && s.key !== "consensus" && !AGGREGATE_EXCLUDED_SYSTEMS.includes(s.key)
-).map((s) => s.key);
+/** Every system that's an input to Consensus (every pulled system; each carries its own Consensus weight, 0 = not in the average). */
+export const CONSENSUS_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);

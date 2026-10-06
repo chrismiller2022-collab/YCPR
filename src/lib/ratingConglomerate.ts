@@ -5,7 +5,7 @@
 // per-system projections.
 
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
-import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS } from "./ratingSystems";
+import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusWeightKey, defaultConsensusWeight } from "./ratingSystems";
 import type { RatingPullRow } from "./api/ratingSystems";
 
 export interface ConglomeratedRow {
@@ -26,11 +26,6 @@ function weightedAvg(entries: { value: number; weight: number }[]): number | nul
   return usable.reduce((s, e) => s + e.value * e.weight, 0) / totalWeight;
 }
 
-function simpleAvg(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((s, v) => s + v, 0) / values.length;
-}
-
 export function computeConglomeratedTable(
   pulls: RatingPullRow[],
   weights: Record<string, number>
@@ -48,13 +43,20 @@ export function computeConglomeratedTable(
     // Every pulled system's raw value, shown in the table / saved to a
     // week snapshot regardless of whether it currently feeds YC or
     // Consensus (those two aggregates use their own, possibly smaller,
-    // input lists below — see AGGREGATE_EXCLUDED_SYSTEMS).
+    // weights — see consensusWeightKey).
     const values: Record<string, number | null> = {};
     for (const key of ALL_PULLED_SYSTEMS) {
       values[key] = pulled[key] ?? null;
     }
 
-    const consensus = simpleAvg(CONSENSUS_INPUT_SYSTEMS.map((k) => pulled[k]).filter((v): v is number => v != null));
+    // Consensus: weighted by each system's Consensus weight (default 1, so with
+    // no changes it's the plain average it used to be); 0 leaves a system out.
+    const consensus = weightedAvg(
+      CONSENSUS_INPUT_SYSTEMS.flatMap((k) => {
+        const v = pulled[k];
+        return v == null ? [] : [{ value: v, weight: weights[consensusWeightKey(k)] ?? defaultConsensusWeight(k) }];
+      })
+    );
 
     const ycEntries: { value: number; weight: number }[] = [];
     for (const key of YC_INPUT_SYSTEMS) {
