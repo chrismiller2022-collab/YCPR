@@ -45,7 +45,7 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // it's always just "current."
   { key: "sagarin", label: "Sagarin", source: "scraped" },
   // JP+ (jpplusratings.com) — scraped from its home-page power ratings table.
-  // FBS only. New and still being evaluated: see AGGREGATE_EXCLUDED_SYSTEMS.
+  // FBS only. Starts with a 0 Consensus weight and no YC weight — set both in the weights box.
   { key: "jpplus", label: "JP+", source: "scraped" },
 
   // Published Google Sheet.
