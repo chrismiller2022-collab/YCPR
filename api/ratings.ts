@@ -238,54 +238,76 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
-  // action: "jpplusProxy" — scrapes jpplusratings.com's home-page power
-  // ratings table (the latest published week, e.g. "2026 · After Week 5").
-  // FBS only (~138 teams). Each <tr data-rating-team="Alabama"> carries the
-  // team name; its third cell is the JP+ rating in points vs an average FBS
-  // team (higher = better, e.g. +26.8), sign-flipped here to this site's
-  // convention like McIllece's Power. The page is ~10 MB of mostly embedded
-  // script payload AFTER the table, so only the first ~1.5 MB is requested
-  // (Range) and reading stops at </table>. The "After Week N" label is
-  // returned so the admin can see which week of ratings it just pulled.
+  // action: "jpplusProxy" — reads jpplusratings.com's power ratings. The page
+  // is a Next.js app whose ~10 MB of HTML embeds every published snapshot as
+  // JSON ({"key":"2026-w6","label":"2026 · Week 6","ratings":[{"rank":1,
+  // "team":"Alabama","conference":"SEC","overall":26.85,...}]}) — one snapshot
+  // per week of the season plus past seasons, 138 FBS teams each. This pulls
+  // that JSON rather than the visible table: full precision instead of the
+  // table's one decimal, and every week of the current season in one request
+  // (used to backfill saved weeks). `overall` is points vs an average FBS team
+  // (higher = better), sign-flipped here to this site's convention. A snapshot
+  // keyed "2026-wN" is the ratings going INTO week N (the page's "After Week
+  // N-1"), which lines up with this site's saved week N; "-w1" and
+  // "-preseason" are the same numbers. `latestKey` is the one the page's own
+  // week dropdown has selected. Fails loudly if the embedded JSON isn't there.
   // -----------------------------------------------------------------
   if (action === "jpplusProxy") {
     try {
       const pageRes = await fetch("https://www.jpplusratings.com/", {
-        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html", Range: "bytes=0-1500000" },
+        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" },
       });
-      if (!pageRes.ok && pageRes.status !== 206) throw new Error(`JP+ fetch failed (${pageRes.status})`);
-      // Stream and stop at </table> in case the server ignored Range and is sending the whole page.
-      let html = "";
-      if (pageRes.body) {
-        const reader = (pageRes.body as any).getReader();
-        const decoder = new TextDecoder();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          html += decoder.decode(value, { stream: true });
-          if (html.includes("</table>")) {
-            await reader.cancel().catch(() => {});
-            break;
+      if (!pageRes.ok) throw new Error(`JP+ fetch failed (${pageRes.status})`);
+      const html = (await pageRes.text()).replace(/\\"/g, '"');
+
+      const selected = /<option value="([^"]+)" selected/.exec(html)?.[1] ?? null;
+      const snapshots: Record<string, { label: string; rows: { team: string; conference: string; value: number }[] }> = {};
+      const startRe = /\{"key":"(20\d\d[^"]*)","label":"([^"]*)","ratings":\[/g;
+      let m: RegExpExecArray | null;
+      while ((m = startRe.exec(html))) {
+        const key = m[1];
+        if (snapshots[key]) continue; // the page repeats each snapshot; the first copy is enough
+        const rows: { team: string; conference: string; value: number }[] = [];
+        const teamRe = /\{"rank":(\d+),"team":"([^"]+)","conference":"([^"]*)","overall":(-?[\d.]+),/g;
+        teamRe.lastIndex = m.index + m[0].length;
+        let last = 0;
+        let t: RegExpExecArray | null;
+        while ((t = teamRe.exec(html))) {
+          const rank = Number(t[1]);
+          if (rank <= last || t.index - m.index > 600000) break; // ranks restart at 1 in the next snapshot
+          last = rank;
+          let team = t[2];
+          try {
+            team = JSON.parse(`"${t[2]}"`);
+          } catch {
+            /* keep the raw text */
           }
+          const overall = Number(t[4]);
+          if (!Number.isNaN(overall)) rows.push({ team, conference: t[3], value: overall });
         }
-      } else {
-        html = await pageRes.text();
+        snapshots[key] = { label: m[2], rows };
       }
-      const tableEnd = html.indexOf("</table>");
-      if (tableEnd === -1) throw new Error("Couldn't find the ratings table in the first part of JP+'s page — its layout may have changed");
-      const tableHtml = html.slice(html.indexOf("<table"), tableEnd);
-      const out: { team: string; values: { jpplus: number } }[] = [];
-      for (const m of tableHtml.matchAll(/<tr[^>]*data-rating-team="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/g)) {
-        const team = decodeEntities(m[1]).trim();
-        const cells = Array.from(m[2].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)).map((c) => decodeEntities(c[1].replace(/<[^>]+>/g, "")).trim());
-        const rating = parseFloat((cells[2] ?? "").replace(/[+\u2212]/g, (ch) => (ch === "+" ? "" : "-")));
-        if (!team || Number.isNaN(rating)) continue;
-        out.push({ team, values: { jpplus: -rating } });
-      }
-      if (out.length === 0) throw new Error("Parsed 0 rows from JP+'s table — its layout may have changed");
-      const textOnly = html.replace(/<!--.*?-->/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-      const week = /(20\d\d)\s*·\s*(After Week \d+|Preseason|Final)/.exec(textOnly);
-      res.status(200).json({ ok: true, rows: out, label: week ? `${week[1]} · ${week[2]}` : null });
+      const keys = Object.keys(snapshots);
+      if (keys.length === 0) throw new Error("Couldn't find JP+'s embedded ratings JSON — its page structure may have changed");
+      const latestKey = selected && snapshots[selected] ? selected : keys[0];
+      const latest = snapshots[latestKey];
+      if (latest.rows.length === 0) throw new Error("JP+'s latest snapshot had 0 teams — its page structure may have changed");
+      const season = Number(latestKey.slice(0, 4));
+      // The page's own header says "After Week N"; the JSON label says "Week N+1".
+      const afterWeek = /(20\d\d)\s*·\s*(After Week \d+|Preseason|Final)/.exec(html.slice(0, 40000).replace(/<!--.*?-->/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " "));
+      res.status(200).json({
+        ok: true,
+        season,
+        latestKey,
+        label: afterWeek ? `${afterWeek[1]} · ${afterWeek[2]}` : latest.label,
+        rows: latest.rows.map((r) => ({ team: r.team, values: { jpplus: Math.round(-r.value * 1000) / 1000 } })),
+        // Every snapshot of the latest snapshot's season, for backfilling saved weeks.
+        seasonSnapshots: Object.fromEntries(
+          keys
+            .filter((k) => k.startsWith(String(season)))
+            .map((k) => [k, { label: snapshots[k].label, rows: snapshots[k].rows.map((r) => ({ team: r.team, conference: r.conference, value: Math.round(-r.value * 1000) / 1000 })) }])
+        ),
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "JP+ fetch failed" });
     }

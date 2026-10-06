@@ -3,11 +3,11 @@ import type { CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { CONFERENCES } from "../data/teams";
-import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusWeightKey, defaultConsensusWeight } from "../lib/ratingSystems";
+import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusMemberKey, isInConsensus } from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
 import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
-import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, type ConglomeratedRow } from "../lib/ratingConglomerate";
+import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, teamDivConf, type ConglomeratedRow } from "../lib/ratingConglomerate";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
 import { buildRatingsByTeam, computeMultiSystemRow, aggregateSystemPerformance, winPct } from "../lib/multiRatingMatchups";
@@ -88,22 +88,19 @@ function WeightsEditor({
         ))}
       </div>
       <div className="section-label" style={{ margin: "0.9rem 0 0.6rem" }}>
-        Consensus weights (what each system counts for inside Consensus — 0 leaves it out of that average)
+        Systems in Consensus (a plain, unweighted average of the checked systems)
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem 1rem" }}>
         {CONSENSUS_INPUT_SYSTEMS.map((key) => {
-          const wk = consensusWeightKey(key);
+          const wk = consensusMemberKey(key);
           return (
-            <label key={wk} style={{ display: "flex", flexDirection: "column", fontSize: "0.75rem", gap: "0.2rem" }}>
-              {RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
+            <label key={wk} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}>
               <input
-                type="number"
-                step="0.05"
-                min={0}
-                value={draft[wk] ?? defaultConsensusWeight(key)}
-                onChange={(e) => setDraft((d) => ({ ...d, [wk]: parseFloat(e.target.value) || 0 }))}
-                style={{ width: 70 }}
+                type="checkbox"
+                checked={isInConsensus(key, draft)}
+                onChange={(e) => setDraft((d) => ({ ...d, [wk]: e.target.checked ? 1 : 0 }))}
               />
+              {RATING_SYSTEMS_BY_KEY[key]?.label ?? key}
             </label>
           );
         })}
@@ -329,6 +326,48 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     setBusy(null);
   }
 
+  // Fills JP+ into the weekly snapshots you've already saved (Save as week), from
+  // JP+'s own week-by-week archive, so JP+ has history, week-to-week change and
+  // per-week matchup columns. Only writes the jpplus values — every other
+  // system in those saved weeks is left alone — and is safe to re-run.
+  async function handleJpPlusBackfill() {
+    setBusy("jpbackfill");
+    setLog(null);
+    setUnmatched(null);
+    try {
+      const jp = await fetchJpPlusRatings();
+      const savedWeeks = await fetchSavedRatingWeeks(jp.season);
+      if (savedWeeks.length === 0) {
+        setLog(`No saved weeks for ${jp.season} to backfill.`);
+        return;
+      }
+      const lines: string[] = [];
+      const unmatchedNames = new Set<string>();
+      for (const week of savedWeeks) {
+        const snap = jp.seasonSnapshots[`${jp.season}-w${week}`] ?? (week === 1 ? jp.seasonSnapshots[`${jp.season}-preseason`] : undefined);
+        if (!snap) {
+          lines.push(`Week ${week}: no JP+ snapshot for that week — skipped`);
+          continue;
+        }
+        const { matched, unmatched: um } = matchTeamRows(snap.rows, (r) => r.team);
+        const rows: RatingSaveRow[] = matched.map((m) => {
+          const dc = teamDivConf(m.team);
+          return { team: m.team, division: dc?.div ?? null, conference: dc?.conf ?? null, values: { jpplus: m.row.value } };
+        });
+        const result = await saveRatingWeek(jp.season, week, rows);
+        lines.push(`Week ${week} (${snap.label}): matched ${matched.length}/${snap.rows.length}, saved ${result.saved} JP+ values`);
+        for (const r of um) unmatchedNames.add(r.team);
+      }
+      setLog(lines.join("\n"));
+      if (unmatchedNames.size > 0) setUnmatched({ source: "JP+ backfill", names: Array.from(unmatchedNames) });
+      onDataChanged();
+    } catch (err: any) {
+      setLog(err.message ?? "JP+ backfill failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleMcilleceUpload(file: File) {
     setBusy("mcillece");
     setLog(null);
@@ -428,6 +467,13 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         </button>
         <button onClick={handleMcilleceJpPlusScrape} disabled={busy != null} title="Scrapes mcillecesports.com and jpplusratings.com — no CSV needed">
           {busy === "mcjp" ? "Scraping…" : "Sync McIllece + JP+ (scrape)"}
+        </button>
+        <button
+          onClick={handleJpPlusBackfill}
+          disabled={busy != null}
+          title="Writes JP+'s own week-by-week ratings into every week you've already saved (JP+ values only; nothing else is touched)"
+        >
+          {busy === "jpbackfill" ? "Backfilling…" : "Backfill JP+ into saved weeks"}
         </button>
         <label className="menu-btn" style={{ cursor: "pointer" }}>
           {busy === "mcillece" ? "Uploading…" : "Upload McIllece CSV"}

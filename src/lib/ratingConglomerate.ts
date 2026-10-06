@@ -5,7 +5,7 @@
 // per-system projections.
 
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
-import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusWeightKey, defaultConsensusWeight } from "./ratingSystems";
+import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, isInConsensus } from "./ratingSystems";
 import type { RatingPullRow } from "./api/ratingSystems";
 
 export interface ConglomeratedRow {
@@ -43,20 +43,18 @@ export function computeConglomeratedTable(
     // Every pulled system's raw value, shown in the table / saved to a
     // week snapshot regardless of whether it currently feeds YC or
     // Consensus (those two aggregates use their own, possibly smaller,
-    // weights — see consensusWeightKey).
+    // membership — see consensusMemberKey).
     const values: Record<string, number | null> = {};
     for (const key of ALL_PULLED_SYSTEMS) {
       values[key] = pulled[key] ?? null;
     }
 
-    // Consensus: weighted by each system's Consensus weight (default 1, so with
-    // no changes it's the plain average it used to be); 0 leaves a system out.
-    const consensus = weightedAvg(
-      CONSENSUS_INPUT_SYSTEMS.flatMap((k) => {
-        const v = pulled[k];
-        return v == null ? [] : [{ value: v, weight: weights[consensusWeightKey(k)] ?? defaultConsensusWeight(k) }];
-      })
-    );
+    // Consensus: plain (unweighted) average of the systems switched on for it
+    // that have a value for this team.
+    const consensusValues = CONSENSUS_INPUT_SYSTEMS.filter((k) => isInConsensus(k, weights))
+      .map((k) => pulled[k])
+      .filter((v): v is number => v != null);
+    const consensus = consensusValues.length > 0 ? consensusValues.reduce((s, v) => s + v, 0) / consensusValues.length : null;
 
     const ycEntries: { value: number; weight: number }[] = [];
     for (const key of YC_INPUT_SYSTEMS) {

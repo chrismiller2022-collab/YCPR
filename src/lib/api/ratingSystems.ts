@@ -198,10 +198,31 @@ export async function fetchMcilleceRatings(): Promise<{ rows: ScrapedRatingRow[]
   return { rows: data.rows as ScrapedRatingRow[], year: (data.year as string | null) ?? null };
 }
 
-/** Scrapes jpplusratings.com's latest power ratings table (FBS only, value already sign-flipped). `label` is the page's own "2026 · After Week 5" tag. */
-export async function fetchJpPlusRatings(): Promise<{ rows: ScrapedRatingRow[]; label: string | null }> {
+export interface JpPlusSnapshot {
+  label: string;
+  rows: { team: string; conference: string; value: number }[]; // value already sign-flipped to this site's convention
+}
+
+/**
+ * Reads jpplusratings.com's power ratings (FBS only, values sign-flipped).
+ * `rows` is the latest published snapshot; `label` is the page's own "2026 · After
+ * Week 5" tag. `seasonSnapshots` is every snapshot of that season keyed "2026-wN"
+ * (the ratings going INTO week N, so it lines up with this site's saved week N;
+ * "-w1" and "-preseason" are the same numbers) — used to backfill saved weeks.
+ */
+export async function fetchJpPlusRatings(): Promise<{
+  rows: ScrapedRatingRow[];
+  label: string | null;
+  season: number;
+  seasonSnapshots: Record<string, JpPlusSnapshot>;
+}> {
   const data = await authedPost("jpplusProxy", {});
-  return { rows: data.rows as ScrapedRatingRow[], label: (data.label as string | null) ?? null };
+  return {
+    rows: data.rows as ScrapedRatingRow[],
+    label: (data.label as string | null) ?? null,
+    season: data.season as number,
+    seasonSnapshots: (data.seasonSnapshots ?? {}) as Record<string, JpPlusSnapshot>,
+  };
 }
 
 /** Scrapes bcftoys.com's FEI and F+ pages for the given year and merges them by team. */
