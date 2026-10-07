@@ -11,7 +11,24 @@ import {
   savePeriodMarketLines,
   type GameRef,
 } from "../lib/api/oddsHistorical";
-import { GRADE_PERIODS, consensusLines, gradeItems, summarizeGrades, type GradeItem, type GradedBet, type PeriodLineRowLite } from "../lib/periodGrading";
+import {
+  GRADE_PERIODS,
+  SPREAD_SEGMENTS,
+  TOTAL_SEGMENTS,
+  chartRowsFor,
+  consensusLines,
+  gradeItems,
+  summarizeGrades,
+  type GradeItem,
+  type GradeMarket,
+  type GradePeriod,
+  type GradedBet,
+  type PeriodFilter,
+  type PeriodLineRowLite,
+} from "../lib/periodGrading";
+import { computeAmountOffDistribution, type AmountOffMetric } from "../lib/gameTotalsEngine";
+import { AmountOffChart, AmountOffMetricToggle } from "./PerformanceView";
+import { winPctColor, isSmallSample, MIN_RELIABLE_SAMPLE } from "../lib/winPctColor";
 import { matchSchoolMascotName } from "../lib/teamNameMatch";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
@@ -150,10 +167,19 @@ function pctStr(w: number, l: number): string {
 export function GradeSection({ title, items, note }: { title: string; items: GradeItem[]; note?: string }) {
   const [minOff, setMinOff] = useState(1.5);
   const [showBets, setShowBets] = useState(false);
+  // Which period / market the bet list below is narrowed to (click a row in the summary, or use the chips).
+  const [listPeriod, setListPeriod] = useState<PeriodFilter>("all");
+  const [listMarket, setListMarket] = useState<GradeMarket | "all">("all");
   const bets: GradedBet[] = useMemo(() => gradeItems(items), [items]);
   const rows = useMemo(() => summarizeGrades(bets, minOff), [bets, minOff]);
   const cell = { padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", fontSize: "0.78rem", whiteSpace: "nowrap" as const };
-  const shown = bets.filter((b) => b.off >= minOff);
+  const shown = bets.filter((b) => b.off >= minOff && (listPeriod === "all" || b.period === listPeriod) && (listMarket === "all" || b.market === listMarket));
+  const pctCell = (w: number, l: number) => {
+    const decided = w + l;
+    const small = decided > 0 && isSmallSample(decided);
+    return { color: decided === 0 ? undefined : winPctColor(w / decided), opacity: small ? 0.55 : 1, fontStyle: small ? ("italic" as const) : undefined };
+  };
+  const chip = (active: boolean) => ({ padding: "0.15rem 0.55rem", fontSize: "0.76rem" , opacity: active ? 1 : 0.8 });
   return (
     <div style={{ marginTop: "1.5rem" }}>
       <div className="section-label" style={{ marginBottom: "0.4rem" }}>
@@ -182,27 +208,52 @@ export function GradeSection({ title, items, note }: { title: string; items: Gra
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={`${r.period}|${r.market}`}>
+                <tr
+                  key={`${r.period}|${r.market}`}
+                  onClick={() => {
+                    setListPeriod(r.period);
+                    setListMarket(r.market);
+                    setShowBets(true);
+                  }}
+                  title="Click to list just these bets"
+                  style={{ cursor: "pointer", background: listPeriod === r.period && listMarket === r.market ? "var(--hash)" : undefined }}
+                >
                   <td style={cell}>{PERIOD_LABELS[r.period]}</td>
                   <td style={cell}>{r.market === "spread" ? "Spread" : "Total"}</td>
                   <td style={{ ...cell, textAlign: "right" }}>
                     {r.w}-{r.l}
                     {r.p ? `-${r.p}` : ""}
                   </td>
-                  <td style={{ ...cell, textAlign: "right" }}>{pctStr(r.w, r.l)}</td>
+                  <td style={{ ...cell, textAlign: "right", fontWeight: 700, ...pctCell(r.w, r.l) }}>{pctStr(r.w, r.l)}</td>
                   <td style={{ ...cell, textAlign: "right" }}>
                     {r.fw}-{r.fl}
                     {r.fp ? `-${r.fp}` : ""}
                   </td>
-                  <td style={{ ...cell, textAlign: "right" }}>{pctStr(r.fw, r.fl)}</td>
+                  <td style={{ ...cell, textAlign: "right", fontWeight: 700, ...pctCell(r.fw, r.fl) }}>{pctStr(r.fw, r.fl)}</td>
                   <td style={{ ...cell, textAlign: "right" }}>{r.pending || ""}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <button className="menu-btn" style={{ marginTop: "0.6rem" }} onClick={() => setShowBets((v) => !v)}>
-            {showBets ? "Hide bets" : `Show ${shown.length} bets`}
-          </button>
+          <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", margin: "0.4rem 0 0" }}>
+            Win % is colored against the 52.4% break-even at -110 (yellow); faded italic = fewer than {MIN_RELIABLE_SAMPLE} decided bets. Click a row to list just those bets.
+          </p>
+          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center", marginTop: "0.6rem" }}>
+            <button className="menu-btn" onClick={() => setShowBets((v) => !v)}>
+              {showBets ? "Hide bets" : `Show ${shown.length} bets`}
+            </button>
+            {(["all", ...GRADE_PERIODS] as PeriodFilter[]).map((p) => (
+              <button key={p} className={`mode-btn ${listPeriod === p ? "mode-btn-active" : ""}`} style={chip(listPeriod === p)} onClick={() => { setListPeriod(p); setShowBets(true); }}>
+                {p === "all" ? "All periods" : PERIOD_LABELS[p as GradePeriod]}
+              </button>
+            ))}
+            {(["all", "spread", "total"] as const).map((m) => (
+              <button key={m} className={`mode-btn ${listMarket === m ? "mode-btn-active" : ""}`} style={chip(listMarket === m)} onClick={() => { setListMarket(m); setShowBets(true); }}>
+                {m === "all" ? "Both markets" : m === "spread" ? "Spreads" : "Totals"}
+              </button>
+            ))}
+            {showBets && <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{shown.length} bets shown</span>}
+          </div>
           {showBets && (
             <div style={{ maxHeight: 420, overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8, marginTop: "0.5rem" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -235,7 +286,78 @@ export function GradeSection({ title, items, note }: { title: string; items: Gra
               </table>
             </div>
           )}
+          <PeriodAmountOffCharts bets={bets} minOff={minOff} />
         </>
+      )}
+    </div>
+  );
+}
+
+// Win % by how far off the market the bet was, for one market (totals or spreads),
+// one period (or all) and one segment, in points or in std devs. Std dev off is
+// measured against the std dev of (my number - the market line) within that very
+// segment and period, so a segment is only ever compared with its own spread.
+function PeriodAmountOffCharts({ bets, minOff }: { bets: GradedBet[]; minOff: number }) {
+  const [market, setMarket] = useState<GradeMarket>("total");
+  const [period, setPeriod] = useState<PeriodFilter>("all");
+  const [segmentKey, setSegmentKey] = useState("all");
+  const [metric, setMetric] = useState<AmountOffMetric>("stdDevOff");
+  const [filteredOnly, setFilteredOnly] = useState(false);
+  const segments = market === "total" ? TOTAL_SEGMENTS : SPREAD_SEGMENTS;
+  const segment = segments.find((s) => s.key === segmentKey) ?? segments[0];
+  const chartData = useMemo(() => chartRowsFor(bets, market, period, segment, minOff, filteredOnly), [bets, market, period, segment, minOff, filteredOnly]);
+  const buckets = useMemo(() => computeAmountOffDistribution(chartData.rows, metric), [chartData, metric]);
+  const decided = chartData.rows.filter((r) => r.grade === "win" || r.grade === "loss").length;
+  const wins = chartData.rows.filter((r) => r.grade === "win").length;
+  const chip = { padding: "0.15rem 0.55rem", fontSize: "0.76rem" };
+
+  return (
+    <div style={{ marginTop: "1.5rem", borderTop: "1px solid var(--hash)", paddingTop: "0.8rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.4rem" }}>
+        Win % by amount off
+      </div>
+      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.4rem" }}>
+        {(["total", "spread"] as const).map((m) => (
+          <button key={m} className={`mode-btn ${market === m ? "mode-btn-active" : ""}`} style={chip} onClick={() => { setMarket(m); setSegmentKey("all"); }}>
+            {m === "total" ? "Totals" : "Spreads"}
+          </button>
+        ))}
+        <span style={{ width: "0.5rem" }} />
+        {(["all", ...GRADE_PERIODS] as PeriodFilter[]).map((p) => (
+          <button key={p} className={`mode-btn ${period === p ? "mode-btn-active" : ""}`} style={chip} onClick={() => setPeriod(p)}>
+            {p === "all" ? "All periods" : PERIOD_LABELS[p as GradePeriod]}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.4rem" }}>
+        {segments.map((sg) => (
+          <button key={sg.key} className={`mode-btn ${segment.key === sg.key ? "mode-btn-active" : ""}`} style={chip} onClick={() => setSegmentKey(sg.key)}>
+            {sg.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+        <AmountOffMetricToggle metric={metric} setMetric={setMetric} />
+        <label style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.5rem" }}>
+          <input type="checkbox" checked={filteredOnly} onChange={(e) => setFilteredOnly(e.target.checked)} />
+          Filtered only (≥ {minOff} pts off the line)
+        </label>
+      </div>
+      <p style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", margin: "0 0 0.4rem" }}>
+        {segment.label} · {period === "all" ? "all periods" : PERIOD_LABELS[period as GradePeriod]} · {market === "total" ? "totals" : "spreads"}: {chartData.total} bets,{" "}
+        {decided > 0 ? (
+          <span style={{ color: winPctColor(wins / decided), fontWeight: 700 }}>
+            {wins}-{decided - wins} ({((wins / decided) * 100).toFixed(1)}%)
+          </span>
+        ) : (
+          "none graded yet"
+        )}
+        {chartData.stdDev != null ? ` · std dev of (mine − line) in this segment: ${chartData.stdDev.toFixed(2)} pts` : " · too few bets for a std dev"}
+      </p>
+      {metric === "stdDevOff" && chartData.stdDev == null ? (
+        <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Need at least 3 bets in this segment to compute its std dev — switch to Amount Off, or widen the segment.</p>
+      ) : (
+        <AmountOffChart buckets={buckets} metric={metric} />
       )}
     </div>
   );

@@ -64,6 +64,11 @@ export interface GradedBet {
   pick: string; // "away" | "home" | "over" | "under"
   result: "win" | "loss" | "push" | "pending";
   books: number;
+  /** mine - line (signed): the number whose spread across a segment gives that segment's "std dev off". */
+  diff: number;
+  /** Spreads only: which team the pick is on, and whether that team is the underdog on the market line (null = pick'em / not a spread). */
+  pickIsHome: boolean | null;
+  pickIsDog: boolean | null;
 }
 
 export function gradeItems(items: GradeItem[]): GradedBet[] {
@@ -79,8 +84,13 @@ export function gradeItems(items: GradeItem[]): GradedBet[] {
         if (off === 0) continue;
         let pick: string;
         let result: GradedBet["result"] = "pending";
+        let pickIsHome: boolean | null = null;
+        let pickIsDog: boolean | null = null;
         if (market === "spread") {
           pick = mineVal < l.line ? "away" : "home";
+          pickIsHome = pick === "home";
+          const pickLine = pickIsHome ? -l.line : l.line; // the picked team's own line: positive = getting points
+          pickIsDog = pickLine > 0 ? true : pickLine < 0 ? false : null;
           if (actual) {
             const cover = actual[0] - actual[1] + l.line; // >0 away covers
             result = cover === 0 ? "push" : (cover > 0) === (pick === "away") ? "win" : "loss";
@@ -92,7 +102,7 @@ export function gradeItems(items: GradeItem[]): GradedBet[] {
             result = tot === l.line ? "push" : (tot > l.line) === (pick === "over") ? "win" : "loss";
           }
         }
-        out.push({ gameId: it.gameId, label: it.label, period, market, line: l.line, mine: mineVal, off, pick, result, books: l.books });
+        out.push({ gameId: it.gameId, label: it.label, period, market, line: l.line, mine: mineVal, off, pick, result, books: l.books, diff: mineVal - l.line, pickIsHome, pickIsDog });
       }
     }
   }
@@ -139,4 +149,65 @@ export function summarizeGrades(bets: GradedBet[], minOff: number): GradeSummary
     }
   }
   return rows;
+}
+
+// ---------------------------------------------------------------------
+// Segments for the amount-off charts.
+// ---------------------------------------------------------------------
+export type PeriodFilter = "all" | GradePeriod;
+
+export interface SegmentDef {
+  key: string;
+  label: string;
+  test: (b: GradedBet) => boolean;
+}
+
+export const TOTAL_SEGMENTS: SegmentDef[] = [
+  { key: "all", label: "All", test: () => true },
+  { key: "over", label: "Overs", test: (b) => b.pick === "over" },
+  { key: "under", label: "Unders", test: (b) => b.pick === "under" },
+];
+
+export const SPREAD_SEGMENTS: SegmentDef[] = [
+  { key: "all", label: "All", test: () => true },
+  { key: "dog", label: "Dogs", test: (b) => b.pickIsDog === true },
+  { key: "fav", label: "Favorites", test: (b) => b.pickIsDog === false },
+  { key: "home", label: "Home", test: (b) => b.pickIsHome === true },
+  { key: "away", label: "Away", test: (b) => b.pickIsHome === false },
+  { key: "homeDog", label: "Home dog", test: (b) => b.pickIsHome === true && b.pickIsDog === true },
+  { key: "homeFav", label: "Home fav", test: (b) => b.pickIsHome === true && b.pickIsDog === false },
+  { key: "awayDog", label: "Away dog", test: (b) => b.pickIsHome === false && b.pickIsDog === true },
+  { key: "awayFav", label: "Away fav", test: (b) => b.pickIsHome === false && b.pickIsDog === false },
+];
+
+/** Sample standard deviation of (my number - market line) over a set of bets; null with fewer than 3. */
+export function diffStdDev(bets: GradedBet[]): number | null {
+  const n = bets.length;
+  if (n < 3) return null;
+  const mean = bets.reduce((s, b) => s + b.diff, 0) / n;
+  const variance = bets.reduce((s, b) => s + (b.diff - mean) ** 2, 0) / (n - 1);
+  return Math.sqrt(variance);
+}
+
+/**
+ * The bets in one (market, period, segment) cell, as rows for the amount-off
+ * chart. Std dev off = |amount off| / the std dev of (mine - line) within THAT
+ * same cell, so each segment and period is measured against its own spread of
+ * disagreement with the market. Pending bets are left out; pushes are kept as
+ * "push" (the chart excludes them from win %).
+ */
+export function chartRowsFor(
+  bets: GradedBet[],
+  market: GradeMarket,
+  period: PeriodFilter,
+  segment: SegmentDef,
+  minOff: number,
+  filteredOnly: boolean
+): { rows: { amountOff: number; stdDevOff: number | null; grade: "win" | "loss" | "push" | null }[]; stdDev: number | null; total: number } {
+  const cell = bets.filter((b) => b.market === market && (period === "all" || b.period === period) && segment.test(b));
+  const sd = diffStdDev(cell);
+  const rows = cell
+    .filter((b) => b.result !== "pending" && (!filteredOnly || b.off >= minOff))
+    .map((b) => ({ amountOff: b.off, stdDevOff: sd != null && sd > 0 ? b.off / sd : null, grade: b.result === "pending" ? null : (b.result as "win" | "loss" | "push") }));
+  return { rows, stdDev: sd, total: cell.length };
 }
