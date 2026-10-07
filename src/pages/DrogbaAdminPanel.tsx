@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useDrogba } from "../lib/drogba/useDrogba";
+import { OPEN_MODE_LABELS, type OpenMode } from "../lib/drogba/dataset";
 import DrogbaDataTab from "../components/drogba/DrogbaDataTab";
 import DrogbaBacktestTab from "../components/drogba/DrogbaBacktestTab";
 import DrogbaThisWeekTab from "../components/drogba/DrogbaThisWeekTab";
@@ -29,6 +30,17 @@ export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Data Ridge on Games By Agent — a spread model that looks for games where the opening line is off, built on walk-forward efficiency ratings and checked against the open and the close.
       </p>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ fontSize: "0.85rem" }}>
+          Opening line:{" "}
+          <select className="filter" value={state.openMode} onChange={(e) => state.setOpenMode(e.target.value as OpenMode)}>
+            {(Object.keys(OPEN_MODE_LABELS) as OpenMode[]).map((m) => (
+              <option key={m} value={m}>{OPEN_MODE_LABELS[m]}</option>
+            ))}
+          </select>
+        </label>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>{state.fanduelGames} games with a FanDuel open on file</span>
+      </div>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
         {TABS.map((t) => (
           <button key={t} className={`mode-btn ${tab === t ? "mode-btn-active" : ""}`} onClick={() => setTab(t)}>

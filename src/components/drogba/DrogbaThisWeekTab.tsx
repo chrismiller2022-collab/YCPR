@@ -136,6 +136,7 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
             <tr>
               <th style={CELL}>Matchup</th>
               <th style={NUM}>Open (home)</th>
+              <th style={CELL}>Open book</th>
               <th style={NUM}>Now (home)</th>
               <th style={NUM}>My consensus</th>
               <th style={NUM}>Consensus edge</th>
@@ -154,6 +155,7 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
                 <tr key={r.g.id} style={hit ? { background: "rgba(120,200,120,0.10)" } : undefined}>
                   <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
                   <td style={NUM}>{f1(r.open)}</td>
+                  <td style={CELL}>{r.g.openProvider ?? "–"}</td>
                   <td style={NUM}>{f1(r.close)}</td>
                   <td style={NUM}>{f1(r.consSpread)}{r.consSource === "live" ? "*" : ""}</td>
                   <td style={NUM}>{sgn(r.consEdge)}{r.consEdge != null && Math.abs(r.consEdge) > EDGE_CAP ? " (capped)" : ""}</td>
@@ -170,7 +172,7 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
             })}
             {rows.length === 0 && (
               <tr>
-                <td style={CELL} colSpan={11}>No unplayed FBS-vs-FBS games with an opening line for this week.</td>
+                <td style={CELL} colSpan={12}>No unplayed FBS-vs-FBS games with an opening line for this week.</td>
               </tr>
             )}
           </tbody>

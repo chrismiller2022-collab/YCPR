@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { pullDrogba } from "../../lib/api/drogbaData";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
+import DrogbaFanDuelSection from "./DrogbaFanDuelSection";
 import { CELL, DIM, H3, NUM, P } from "./shared";
 
 const SEASONS = [2021, 2022, 2023, 2024, 2025, 2026];
@@ -134,6 +135,8 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
         Note: the preseason endpoints (returning production, talent, recruiting, portal) follow CFBD's published response shapes but I could not test them against a live response from here. If a count comes back 0
         for a source, the line above says so — tell me and I'll fix the field mapping.
       </p>
+
+      <DrogbaFanDuelSection state={state} />
     </div>
   );
 }

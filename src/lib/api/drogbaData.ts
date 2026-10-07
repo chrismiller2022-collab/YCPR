@@ -1,15 +1,21 @@
 import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
 import { cachedFetch, invalidateCacheKey } from "./cache";
-import { buildGames, type DGame, type RawGameRow, type RawLineRow } from "../drogba/dataset";
+import type { RawGameRow, RawLineRow } from "../drogba/dataset";
 import type { RawAdvRow } from "../drogba/efficiencyRatings";
 import type { RawPreseasonRow } from "../drogba/preseason";
 import type { LockLike } from "../drogba/consensus";
 
 export const DROGBA_FIRST_SEASON = 2021;
 
-export async function fetchDrogbaGames(): Promise<DGame[]> {
-  return cachedFetch("drogba-games", async () => {
+export interface DrogbaRaw {
+  games: RawGameRow[];
+  lines: RawLineRow[];
+}
+
+// Raw rows; the page builds DGame[] from them (so switching the "open" book doesn't re-download anything).
+export async function fetchDrogbaRaw(): Promise<DrogbaRaw> {
+  return cachedFetch("drogba-raw", async () => {
     const [games, lines] = await Promise.all([
       fetchAllRows<RawGameRow>((from, to) =>
         supabase
@@ -23,7 +29,7 @@ export async function fetchDrogbaGames(): Promise<DGame[]> {
         supabase.from("betting_lines").select("game_id, provider, spread, opening_spread").gte("season", DROGBA_FIRST_SEASON).order("id").range(from, to)
       ),
     ]);
-    return buildGames(games, lines);
+    return { games, lines };
   });
 }
 

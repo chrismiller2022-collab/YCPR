@@ -253,6 +253,54 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // FanDuel (or any book) spread snapshots from The Odds API. Snapshots are immutable: an existing
+    // (game, book, snapshot time) is never rewritten. Every call is also logged in book_snapshot_pulls
+    // — even when it returned nothing — so the page can skip snapshots that were already paid for.
+    if (action === "saveBookSpreadSnapshots") {
+      const { rows, pull } = req.body;
+      let saved = 0;
+      if (Array.isArray(rows) && rows.length > 0) {
+        const saveRows = rows.map((r: any) => ({
+          game_id: String(r.game_id),
+          book: String(r.book),
+          snapshot_at: r.snapshot_at,
+          season: Number(r.season),
+          week: Number(r.week),
+          home_spread: Number(r.home_spread),
+          home_price: r.home_price ?? null,
+          away_price: r.away_price ?? null,
+          is_historical: r.is_historical !== false,
+        }));
+        const { error, count } = await supabaseAdmin
+          .from("book_spread_snapshots")
+          .upsert(saveRows, { onConflict: "game_id,book,snapshot_at", ignoreDuplicates: true, count: "exact" });
+        if (error) throw error;
+        saved = count ?? saveRows.length;
+      }
+      if (pull && pull.book && pull.target_at) {
+        const { error } = await supabaseAdmin.from("book_snapshot_pulls").upsert(
+          [
+            {
+              book: String(pull.book),
+              target_at: pull.target_at,
+              snapshot_at: pull.snapshot_at ?? null,
+              season: pull.season ?? null,
+              week: pull.week ?? null,
+              events: pull.events ?? null,
+              matched: pull.matched ?? null,
+              saved,
+              credits_last: pull.credits_last ?? null,
+              credits_remaining: pull.credits_remaining ?? null,
+            },
+          ],
+          { onConflict: "book,target_at" }
+        );
+        if (error) throw error;
+      }
+      res.status(200).json({ saved });
+      return;
+    }
+
     if (action === "saveHistoricalTeamTotals") {
       // `overwrite` is for replacing an earlier LIVE snapshot (a week-1 line
       // captured days before kickoff) with the pulled closing consensus;

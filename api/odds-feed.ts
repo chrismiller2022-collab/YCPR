@@ -424,6 +424,68 @@ async function handlePeriodLines(req: any, res: any) {
   res.status(200).json({ results, quota: { remaining, last } });
 }
 
+// ---------------------------------------------------------------------
+// Single-book spread snapshots (DROGBA's FanDuel opener). Both modes are manual + password-gated:
+//   - mode=historical-spreads&date=ISO&book=fanduel: every game's spread from ONE book as of a past
+//     timestamp (nearest snapshot at or before `date`). Cost = 10 credits (1 market x 1 book).
+//   - mode=current-spreads&book=fanduel: the same, live. Cost = 1 credit.
+// Returns trimmed events plus the actual snapshot timestamp and The Odds API's quota headers.
+// ---------------------------------------------------------------------
+export function trimSpreadEvents(events: OddsApiEvent[] | undefined, book: string) {
+  const out: any[] = [];
+  for (const e of events ?? []) {
+    const b = (e as any).bookmakers?.find((x: any) => x.key === book);
+    const m = b?.markets?.find((x: any) => x.key === "spreads");
+    if (!b || !m) continue;
+    const home = m.outcomes?.find((o: any) => o.name === e.home_team);
+    const away = m.outcomes?.find((o: any) => o.name === e.away_team);
+    if (home?.point == null) continue;
+    out.push({
+      id: e.id,
+      homeTeam: e.home_team,
+      awayTeam: e.away_team,
+      commenceTime: e.commence_time,
+      lastUpdate: b.last_update ?? null,
+      homePoint: home.point,
+      homePrice: home.price ?? null,
+      awayPrice: away?.price ?? null,
+    });
+  }
+  return out;
+}
+
+async function handleBookSpreads(req: any, res: any, historical: boolean) {
+  const book = String(req.query?.book ?? "fanduel").toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const qs = new URLSearchParams({ apiKey: ODDS_API_KEY!, bookmakers: book, markets: "spreads", oddsFormat: "american", dateFormat: "iso" });
+  let url: string;
+  if (historical) {
+    const date = String(req.query?.date ?? "");
+    if (!date) {
+      res.status(400).json({ error: "date is required (ISO 8601)" });
+      return;
+    }
+    qs.set("date", date);
+    url = `${ODDS_API_BASE}/historical/sports/americanfootball_ncaaf/odds?${qs.toString()}`;
+  } else {
+    url = `${ODDS_API_BASE}/sports/americanfootball_ncaaf/odds?${qs.toString()}`;
+  }
+  const upstream = await fetch(url);
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    throw new Error(`Spread snapshot request failed (${upstream.status}): ${text || upstream.statusText}`);
+  }
+  const body = (await upstream.json()) as any;
+  const events = historical ? (body.data as OddsApiEvent[]) : (body as OddsApiEvent[]);
+  res.status(200).json({
+    book,
+    timestamp: historical ? (body.timestamp ?? null) : new Date().toISOString(),
+    totalEvents: (events ?? []).length,
+    events: trimSpreadEvents(events, book),
+    quota: creditHeaders(upstream),
+  });
+}
+
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -447,6 +509,15 @@ export default async function handler(req: any, res: any) {
         return;
       }
       await handlePeriodLines(req, res);
+      return;
+    }
+
+    if (req.query?.mode === "historical-spreads" || req.query?.mode === "current-spreads") {
+      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+        res.status(401).json({ error: "Incorrect password" });
+        return;
+      }
+      await handleBookSpreads(req, res, req.query.mode === "historical-spreads");
       return;
     }
 

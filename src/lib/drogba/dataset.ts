@@ -47,7 +47,23 @@ export interface RawLineRow {
 // opens differ from it by ~1.5 points on average — "the open" is book-specific.
 export const OPEN_PROVIDER_ORDER = ["Bovada", "DraftKings", "Draft Kings", "ESPN Bet", "consensus", "William Hill (New Jersey)"];
 
-export function buildGames(rows: RawGameRow[], lines: RawLineRow[]): DGame[] {
+// Which book's opening line the model treats as "the open".
+//   fanduel_then_bovada — FanDuel's open where we have one, Bovada's otherwise (default)
+//   fanduel_only        — games without a FanDuel line drop out of the analysis (no mixing of books)
+//   bovada              — the original series
+export type OpenMode = "fanduel_then_bovada" | "fanduel_only" | "bovada";
+export const OPEN_MODE_LABELS: Record<OpenMode, string> = {
+  fanduel_then_bovada: "FanDuel open (Bovada where missing)",
+  fanduel_only: "FanDuel open only",
+  bovada: "Bovada open",
+};
+export interface BookLineLike {
+  open: number;
+  last: number;
+  lastAt: number;
+}
+
+export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Map<string, BookLineLike>, mode: OpenMode = "bovada"): DGame[] {
   const byGame = new Map<string, RawLineRow[]>();
   for (const l of lines) {
     const a = byGame.get(l.game_id);
@@ -72,11 +88,25 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[]): DGame[] {
       }
     }
     if (close == null) close = ls.find((l) => l.spread != null)?.spread ?? null;
+    const startMs = g.start_date ? Date.parse(g.start_date) : null;
+    if (mode !== "bovada") {
+      const fd = fanduel?.get(g.id);
+      if (fd) {
+        open = fd.open;
+        openProvider = "FanDuel";
+        // FanDuel's own last look counts as the close only if it was taken within 2 days of kickoff; otherwise
+        // keep the best closing line we already have.
+        if (startMs != null && startMs - fd.lastAt <= 48 * 3_600_000) close = fd.last;
+      } else if (mode === "fanduel_only") {
+        open = null;
+        openProvider = null;
+      }
+    }
     out.push({
       id: g.id,
       season: g.season,
       week: g.week,
-      startMs: g.start_date ? Date.parse(g.start_date) : null,
+      startMs,
       neutral: !!g.neutral_site,
       home: g.home_team,
       away: g.away_team,
