@@ -7,7 +7,6 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
-import { TEAMS_BY_NAME } from "../data/teams";
 import {
   aggregatePlain,
   aggregateCustom,
@@ -1361,11 +1360,21 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
     [seasonRatings0.byWeek, seasonRatings1.byWeek, seasonRatings2.byWeek]
   );
 
-  // Frozen pregame projections for the live season — locked games are graded on
-  // their locked spread, not re-projected from ratings.
+  // Frozen pregame projections for the live season. Used ONLY for the "Model record, all
+  // games" column (liveRecordsLocked below); every other number on this page — Every Bet,
+  // Filtered, WFB, NWFB, the games list — is computed exactly as before, from the
+  // week-accurate ratings.
   const { locks: liveLocks } = useGameProjectionLocks(currentSeason, weekNumbersBySeason[currentSeason] ?? []);
 
   const liveRecords = useMemo(() => {
+    const all: BetHistoryRecord[] = [];
+    for (const s of LIVE_SEASONS) {
+      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode));
+    }
+    return all;
+  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
+
+  const liveRecordsLocked = useMemo(() => {
     const all: BetHistoryRecord[] = [];
     for (const s of LIVE_SEASONS) {
       all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode, liveLocks));
@@ -1377,6 +1386,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   // under "Opening line" it has nothing to grade against and is left out
   // entirely rather than quietly graded on closing numbers.
   const allRecords = useMemo(() => (lineMode === "open" ? liveRecords : [...BET_HISTORY, ...liveRecords]), [liveRecords, lineMode]);
+  const allRecordsLocked = useMemo(() => (lineMode === "open" ? liveRecordsLocked : [...BET_HISTORY, ...liveRecordsLocked]), [liveRecordsLocked, lineMode]);
 
   function toggleYear(y: number) {
     setYears((prev) => {
@@ -1411,6 +1421,12 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const filtered = useMemo(
     () => filterRecords(allRecords, filters),
     [allRecords, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]
+  );
+
+  // Same filters, but on the locked-projection records — feeds only the Model record column.
+  const filteredLocked = useMemo(
+    () => filterRecords(allRecordsLocked, filters),
+    [allRecordsLocked, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]
   );
 
   const keyNumberStudy = useMemo(() => computeKeyNumberStudy(filtered), [filtered]);
@@ -1455,10 +1471,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const plainByTeam = useMemo(() => breakdownByTeam(filtered, "plain"), [filtered]);
   const customByConf = useMemo(() => breakdownByConference(filtered, "custom", params), [filtered, params]);
   const customByTeam = useMemo(() => breakdownByTeam(filtered, "custom", params), [filtered, params]);
-  const plainModelByTeam = useMemo(() => modelRecordBy(filtered, "plain", undefined, (t) => t), [filtered]);
-  const plainModelByConf = useMemo(() => modelRecordBy(filtered, "plain", undefined, (t) => TEAMS_BY_NAME[t]?.conf ?? null), [filtered]);
-  const customModelByTeam = useMemo(() => modelRecordBy(filtered, "custom", params, (t) => t), [filtered, params]);
-  const customModelByConf = useMemo(() => modelRecordBy(filtered, "custom", params, (t) => TEAMS_BY_NAME[t]?.conf ?? null), [filtered, params]);
+  // Model record, all games: team table only (not conferences), from the locked projections.
+  const plainModelByTeam = useMemo(() => modelRecordBy(filteredLocked, "plain", undefined, (t) => t), [filteredLocked]);
+  const customModelByTeam = useMemo(() => modelRecordBy(filteredLocked, "custom", params, (t) => t), [filteredLocked, params]);
 
   const weeksAvailable = Array.from(new Set(filtered.map((r) => r.week))).sort((a, b) => a - b);
 
@@ -1571,7 +1586,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
           <NwfbSigmaMatrixSection points={amountOffPoints} />
-          <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} modelRecord={plainModelByConf} />
+          <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} modelRecord={plainModelByTeam} />
         </>
       ) : tab === "wfb" ? (
@@ -1708,7 +1723,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
           <NwfbSigmaMatrixSection points={amountOffPoints} />
-          <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} modelRecord={customModelByConf} />
+          <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
           <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} modelRecord={customModelByTeam} />
         </>
       )}

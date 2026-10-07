@@ -39,6 +39,8 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
   const [lineMode, setLineMode] = useState<"close" | "open">("close");
   const [metric, setMetric] = useState<"ats" | "su">("ats");
   const [sortKey, setSortKey] = useState<string>("all");
+  // What a split column sorts by: win % (pushes excluded) or the record itself (most wins, then fewest losses).
+  const [sortBasis, setSortBasis] = useState<"pct" | "record">("pct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -106,7 +108,9 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
       if (sortKey === "since") return t.since;
       if (sortKey === "games") return t.games;
       const rec = (metric === "ats" ? t.ats : t.su)[sortKey as SplitKey];
-      return rec ? winPct(rec) : null;
+      if (!rec) return null;
+      if (sortBasis === "record") return rec.w + rec.l + rec.p === 0 ? null : rec.w * 1000 - rec.l;
+      return winPct(rec);
     };
     return [...list].sort((a, b) => {
       const av = value(a);
@@ -119,7 +123,7 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
       }
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [teams, sortKey, sortDir, metric, query]);
+  }, [teams, sortKey, sortDir, metric, query, sortBasis]);
 
   function handleSort(key: string) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -137,7 +141,7 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Each team's record since its current head coach's first season there — straight up and against the spread, split by favorite/underdog,
         home/away and the combinations. Neutral-site games count in Overall/Fav/Dog but not in Home/Away. A game with no line counts SU only;
-        ATS pushes are the third number. Win% sorts (pushes excluded). Click a team for its game-by-game log.
+        ATS pushes are the third number. Every cell shows the record and the win % (pushes excluded); choose above whether a column sorts by win % or by record (most wins first, fewest losses breaking ties). Click a team for its game-by-game log.
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
@@ -150,6 +154,13 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
         {(["close", "open"] as const).map((m) => (
           <button key={m} className={`mode-btn ${lineMode === m ? "mode-btn-active" : ""}`} onClick={() => setLineMode(m)}>
             {m === "close" ? "Closing line" : "Opening line"}
+          </button>
+        ))}
+        <span style={{ width: "0.5rem" }} />
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Sort columns by:</span>
+        {(["pct", "record"] as const).map((b) => (
+          <button key={b} className={`mode-btn ${sortBasis === b ? "mode-btn-active" : ""}`} onClick={() => setSortBasis(b)}>
+            {b === "pct" ? "Win %" : "Record (wins)"}
           </button>
         ))}
         <input className="search" placeholder="Search team or coach…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 190 }} />
@@ -209,9 +220,9 @@ export default function CoachAtsSection({ refreshKey }: { refreshKey: number }) 
                         <td
                           key={s.key}
                           style={{ ...num, color: p == null ? undefined : p > 0.5 ? "#8fd39a" : p < 0.5 ? "#c45c52" : undefined }}
-                          title={p == null ? undefined : `${(p * 100).toFixed(0)}%`}
                         >
                           {fmtRec(r)}
+                          {p != null && <span style={{ color: "var(--chalk-dim)", marginLeft: "0.3rem", fontWeight: 400 }}>({(p * 100).toFixed(1)}%)</span>}
                         </td>
                       );
                     })}
