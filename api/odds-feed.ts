@@ -459,7 +459,7 @@ async function handleBookSpreads(req: any, res: any, historical: boolean) {
   const qs = new URLSearchParams({ apiKey: ODDS_API_KEY!, bookmakers: book, markets: "spreads", oddsFormat: "american", dateFormat: "iso" });
   let url: string;
   if (historical) {
-    const date = String(req.query?.date ?? "");
+    const date = String(req.query?.date ?? "").replace(/\.\d{3}Z$/, "Z");
     if (!date) {
       res.status(400).json({ error: "date is required (ISO 8601)" });
       return;

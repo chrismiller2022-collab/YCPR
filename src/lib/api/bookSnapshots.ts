@@ -24,7 +24,8 @@ export interface SpreadPull {
 
 export async function pullBookSpreads(book: string, dateISO: string | null): Promise<SpreadPull> {
   const qs = new URLSearchParams({ mode: dateISO ? "historical-spreads" : "current-spreads", book });
-  if (dateISO) qs.set("date", dateISO);
+  // The Odds API rejects milliseconds: it wants YYYY-MM-DDTHH:MM:SSZ exactly.
+  if (dateISO) qs.set("date", dateISO.replace(/\.\d{3}Z$/, "Z"));
   const res = await fetch(`/api/odds-feed?${qs.toString()}`, { headers: pw() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Spread pull failed (${res.status})`);
