@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { fetchDistinctWeeks } from "./distinctWeeks";
 import { fetchAllRows } from "./fetchAll";
 import type { WeekSaveInfo } from "./ratingSystems";
 
@@ -58,13 +59,7 @@ export async function fetchFinishedResumeForWeek(season: number, week: number): 
 
 /** Distinct week numbers with a saved Resume Ratings snapshot for this season — used by the Publish status grid. */
 export async function fetchResumeRatingsAvailableWeeks(season: number): Promise<number[]> {
-  const { data, error } = await supabase.from("team_resume_ratings").select("week").eq("season", season);
-  if (error) throw error;
-  const set = new Set<number>();
-  for (const row of (data ?? []) as { week: number | null }[]) {
-    if (row.week != null) set.add(row.week);
-  }
-  return Array.from(set).sort((a, b) => a - b);
+  return fetchDistinctWeeks("team_resume_ratings", season);
 }
 
 /** Every saved week's Resume Rating score for every team, indexed by week then team — for Weekly Progression. */

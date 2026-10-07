@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { fetchDistinctWeeks } from "./distinctWeeks";
 import { fetchAllRows } from "./fetchAll";
 import { cachedFetch } from "./cache";
 import { type TeamSeasonInputs, type SystemWeights, type EfficiencyInputs, DEFAULT_SYSTEM_WEIGHTS } from "../gameTotals";
@@ -359,7 +360,6 @@ export async function fetchGameTotalSnapshots(season: number): Promise<GameTotal
 
 /** Distinct saved weeks for this season's Totals snapshots, ascending — for picking "previous" vs "current" and for the willOverwrite check in the save control. */
 export async function fetchSavedGameTotalWeeks(season: number): Promise<number[]> {
-  const { data, error } = await supabase.from("game_total_snapshots").select("week").eq("season", season);
-  if (error) throw error;
-  return Array.from(new Set((data ?? []).map((r: any) => r.week as number))).sort((a, b) => a - b);
+  // Not a plain select("week"): each saved week is ~1,600 rows, past PostgREST's 1,000-row cap.
+  return fetchDistinctWeeks("game_total_snapshots", season);
 }

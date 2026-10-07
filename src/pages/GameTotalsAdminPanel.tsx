@@ -1258,6 +1258,7 @@ function SaveTotalsSnapshotControl({ rows, season }: { rows: EnrichedGameRow[]; 
   const willOverwrite = savedWeeks.includes(week);
 
   async function handleSave() {
+    if (willOverwrite && !window.confirm(`Week ${week} is already saved for ${season}. Overwrite it with the current numbers?`)) return;
     setSaving(true);
     setMsg(null);
     try {
