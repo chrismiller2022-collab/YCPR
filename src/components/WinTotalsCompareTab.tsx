@@ -7,6 +7,7 @@ import { fetchAvailableWeeks } from "../lib/api/weeklyStats";
 import { fetchLatestMonteCarloRunPerWeek, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { fetchPowerRatingWinTotals } from "../lib/api/powerWinTotals";
 import type { ProjectedWins } from "../lib/reportOverlays";
+import WinTotalPrTab from "./WinTotalPrTab";
 
 const cell: CSSProperties = { padding: "0.3rem 0.55rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" };
 const num: CSSProperties = { ...cell, textAlign: "right" };
@@ -38,7 +39,7 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [view, setView] = useState<"week" | "all">("week");
+  const [view, setView] = useState<"week" | "all" | "pr">("week");
   const [week, setWeek] = useState<number | null>(null);
   const [measure, setMeasure] = useState<"mc" | "pr" | "diff">("diff");
   const [division, setDivision] = useState<"FBS" | "FCS" | "all">("FBS");
@@ -98,6 +99,12 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
         base.mc = mc;
         base.pr = pr ? pr.projTotal : null;
         base.diff = mc != null && pr ? pr.projTotal - mc : null;
+        // Change vs the previous week that has data (same idea as the SOS / resume change columns).
+        const prevWeek = [...weeks].reverse().find((w) => w < week);
+        const prevMc = prevWeek != null ? mcVal(prevWeek) : null;
+        const prevPr = prevWeek != null ? prVal(prevWeek) : null;
+        base.mcChange = mc != null && prevMc != null ? mc - prevMc : null;
+        base.prChange = pr && prevPr != null ? pr.projTotal - prevPr : null;
         base.record = pr ? `${pr.wins}-${pr.losses}` : "–";
         base.prLeft = pr ? pr.winsLeft : null;
         base.mcLeft = mc != null && pr ? mc - pr.wins : null;
@@ -140,11 +147,13 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
-        {(["week", "all"] as const).map((v) => (
+        {(["week", "all", "pr"] as const).map((v) => (
           <button key={v} className={`mode-btn ${view === v ? "mode-btn-active" : ""}`} onClick={() => setView(v)}>
-            {v === "week" ? "Single week" : "All weeks"}
+            {v === "week" ? "Single week" : v === "all" ? "All weeks" : "Win Total PR"}
           </button>
         ))}
+        {view !== "pr" && (
+          <>
         {view === "week" ? (
           <select className="filter" value={week ?? ""} onChange={(e) => setWeek(parseInt(e.target.value, 10))}>
             {weeks.map((w) => (
@@ -167,8 +176,14 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
           </button>
         ))}
         <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 190 }} />
+          </>
+        )}
       </div>
 
+      {view === "pr" ? (
+        <WinTotalPrTab season={season} />
+      ) : (
+        <>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {loading ? (
         <p>Loading every week's run and ratings…</p>
@@ -186,6 +201,8 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
                     <SortHeader label="Monte Carlo" sortKey="mc" active={sortKey === "mc"} dir={sortDir} onClick={handleSort} align="right" />
                     <SortHeader label="Power Ratings" sortKey="pr" active={sortKey === "pr"} dir={sortDir} onClick={handleSort} align="right" />
                     <SortHeader label="Diff (PR − MC)" sortKey="diff" active={sortKey === "diff"} dir={sortDir} onClick={handleSort} align="right" />
+                    <SortHeader label="MC change" sortKey="mcChange" active={sortKey === "mcChange"} dir={sortDir} onClick={handleSort} align="right" />
+                    <SortHeader label="PR change" sortKey="prChange" active={sortKey === "prChange"} dir={sortDir} onClick={handleSort} align="right" />
                     <th className="th th-right">Record</th>
                     <SortHeader label="PR wins left" sortKey="prLeft" active={sortKey === "prLeft"} dir={sortDir} onClick={handleSort} align="right" />
                     <SortHeader label="MC wins left" sortKey="mcLeft" active={sortKey === "mcLeft"} dir={sortDir} onClick={handleSort} align="right" />
@@ -207,6 +224,8 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
                       <td style={num}>{f2(r.mc)}</td>
                       <td style={num}>{f2(r.pr)}</td>
                       <td style={{ ...num, ...gap(r.diff) }}>{signed(r.diff)}</td>
+                      <td style={{ ...num, ...gap(r.mcChange) }}>{signed(r.mcChange)}</td>
+                      <td style={{ ...num, ...gap(r.prChange) }}>{signed(r.prChange)}</td>
                       <td style={num}>{r.record}</td>
                       <td style={num}>{f2(r.prLeft)}</td>
                       <td style={num}>{f2(r.mcLeft)}</td>
@@ -230,6 +249,8 @@ export default function WinTotalsCompareTab({ season }: { season: number }) {
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -446,6 +446,36 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // Preseason win-total markets (line + over/under prices), pasted in from the
+    // sheet. One row per (season, team); re-saving a team replaces its line.
+    if (action === "saveWinTotalLines") {
+      const { season, rows, source } = req.body ?? {};
+      if (typeof season !== "number" || !Array.isArray(rows) || rows.length === 0) {
+        res.status(400).json({ error: "season and rows are required" });
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      const saveRows = rows
+        .filter((r: any) => r.team && [r.line, r.overPrice, r.underPrice].every((v: any) => typeof v === "number" && !Number.isNaN(v)))
+        .map((r: any) => ({
+          season,
+          team: r.team,
+          line: r.line,
+          over_price: r.overPrice,
+          under_price: r.underPrice,
+          source: source ?? null,
+          updated_at: nowIso,
+        }));
+      if (saveRows.length === 0) {
+        res.status(400).json({ error: "No valid rows (team, line, over price, under price)" });
+        return;
+      }
+      const { error, count } = await supabaseAdmin.from("team_win_total_lines").upsert(saveRows, { onConflict: "season,team", count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ ok: true, saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "saveGameTotalsSettings") {
       const { season, settings } = req.body;
       if (typeof season !== "number" || typeof settings !== "object" || settings == null) {
