@@ -24,23 +24,43 @@ export function weekAnchors(games: DGame[]): Map<string, number> {
   return out;
 }
 
+// UTC time of a US-Eastern wall-clock hour on the Eastern date whose midnight-UTC is `dayMs`. Handles daylight
+// saving (EDT through the first Sunday of November, EST after), so "Sunday 8am ET" is the same real-world moment
+// in September and in late November.
+export function etWallToUtcMs(dayMs: number, hourEt: number): number {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, day: "numeric" });
+  const want = new Date(dayMs).getUTCDate();
+  for (const offset of [4, 5]) {
+    const t = dayMs + (hourEt + offset) * HOUR;
+    const parts = fmt.formatToParts(new Date(t));
+    const h = Number(parts.find((p) => p.type === "hour")?.value) % 24;
+    const d = Number(parts.find((p) => p.type === "day")?.value);
+    if (h === hourEt % 24 && d === want) return t;
+  }
+  return dayMs + (hourEt + 5) * HOUR;
+}
+
 export interface SnapshotSlot {
   id: string;
   label: string;
   day: number; // days from the week's Saturday (negative = before)
-  hourUtc: number;
+  hourEt: number; // Eastern wall-clock hour
   isClose: boolean;
 }
-// Lines for a Saturday slate go up from Sunday on. Two Sunday looks (FanDuel opens early, other books copy
-// later in the day) and one Monday look catch the open; a Friday-night look gives a FanDuel close.
+// A Saturday slate's lines go up Sunday morning (FanDuel first, the other books copying later in the day) and are
+// mostly all posted by about 11am ET. Sunday looks from 6 to 11am ET catch the open; the Friday-evening and
+// Saturday-morning looks give FanDuel's own later number, to measure closing-line value against.
 export const SNAPSHOT_SLOTS: SnapshotSlot[] = [
-  { id: "sun-am", label: "Sunday 10:00 UTC (6am ET)", day: -6, hourUtc: 10, isClose: false },
-  { id: "sun-pm", label: "Sunday 18:00 UTC (2pm ET)", day: -6, hourUtc: 18, isClose: false },
-  { id: "mon", label: "Monday 14:00 UTC (10am ET)", day: -5, hourUtc: 14, isClose: false },
-  { id: "fri", label: "Friday 22:00 UTC (6pm ET) — close", day: -1, hourUtc: 22, isClose: true },
+  { id: "sun-6", label: "Sunday 6:00am ET", day: -6, hourEt: 6, isClose: false },
+  { id: "sun-8", label: "Sunday 8:00am ET", day: -6, hourEt: 8, isClose: false },
+  { id: "sun-10", label: "Sunday 10:00am ET", day: -6, hourEt: 10, isClose: false },
+  { id: "sun-11", label: "Sunday 11:00am ET", day: -6, hourEt: 11, isClose: false },
+  { id: "fri-18", label: "Friday 6:00pm ET (later number)", day: -1, hourEt: 18, isClose: true },
+  { id: "sat-10", label: "Saturday 10:00am ET (later number)", day: 0, hourEt: 10, isClose: true },
 ];
+export const DEFAULT_SLOT_IDS = ["sun-8", "sun-10", "sun-11", "fri-18", "sat-10"];
 
-export const slotTargetMs = (anchorMs: number, slot: SnapshotSlot) => anchorMs + slot.day * DAY + slot.hourUtc * HOUR;
+export const slotTargetMs = (anchorMs: number, slot: SnapshotSlot) => etWallToUtcMs(anchorMs + slot.day * DAY, slot.hourEt);
 
 export interface OddsEvent {
   id: string;

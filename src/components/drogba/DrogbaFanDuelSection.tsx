@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { fetchPulledTargets, pullBookSpreads, saveBookSnapshots, type SpreadPull } from "../../lib/api/bookSnapshots";
-import { SNAPSHOT_SLOTS, matchEvents, slotTargetMs, weekAnchors, type SnapshotSlot } from "../../lib/drogba/openers";
+import { DEFAULT_SLOT_IDS, SNAPSHOT_SLOTS, matchEvents, slotTargetMs, weekAnchors, type SnapshotSlot } from "../../lib/drogba/openers";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { CELL, DIM, H3, NUM, P, f1, sgn } from "./shared";
 
@@ -22,14 +22,14 @@ interface PullSummary {
 export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) {
   const [testSeason, setTestSeason] = useState(2025);
   const [testWeek, setTestWeek] = useState(6);
-  const [testSlot, setTestSlot] = useState(SNAPSHOT_SLOTS[0].id);
+  const [testSlot, setTestSlot] = useState("sun-10");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<PullSummary | null>(null);
 
   const [seasons, setSeasons] = useState<Record<number, boolean>>({ 2026: true, 2025: true });
-  const [slots, setSlots] = useState<Record<string, boolean>>({ "sun-am": true, "sun-pm": true, mon: true, fri: true });
+  const [slots, setSlots] = useState<Record<string, boolean>>(Object.fromEntries(SNAPSHOT_SLOTS.map((s) => [s.id, DEFAULT_SLOT_IDS.includes(s.id)])));
   const [firstWeek, setFirstWeek] = useState(2);
   const [lastWeek, setLastWeek] = useState(15);
   const [cap, setCap] = useState(1000);
