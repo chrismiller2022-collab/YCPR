@@ -43,6 +43,7 @@ import SosAdminPanel from "./SosAdminPanel";
 import MatchupHistoryPanel from "./MatchupHistoryPanel";
 import TeamInfoPanel from "./TeamInfoPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
+import DrogbaAdminPanel from "./DrogbaAdminPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
 import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
 import { CHECKLIST_ITEMS } from "../lib/checklistItems";
@@ -239,6 +240,7 @@ type AdminView =
   | "periodgrading"
   | "pm"
   | "gametotals"
+  | "drogba"
   | "totalshistory"
   | "gameslines"
   | "matchups"
@@ -537,6 +539,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "resumerating", label: "Resume Rating" },
       { key: "sos", label: "Strength of Schedule" },
       { key: "gametotals", label: "Totals" },
+      { key: "drogba", label: "DROGBA (Spreads)" },
       { key: "periodproj", label: "Period Projections" },
       { key: "periodgrading", label: "Period Grading" },
       { key: "oddshistorical", label: "Historical Odds Pull" },
@@ -971,6 +974,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "checklist" && <AdminChecklistPage onBack={() => setView("home")} />}
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
+          {view === "drogba" && <DrogbaAdminPanel onBack={() => setView("home")} />}
 
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}

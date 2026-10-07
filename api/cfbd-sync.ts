@@ -334,6 +334,170 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
   res.status(200).json(out);
 }
 
+// DROGBA (admin spread-model page) backfill. Two independent parts, each safe to re-run:
+//  - "gameadv": one week of /stats/game/advanced → team_game_advanced (PPA, success rate,
+//    explosiveness, etc. for BOTH sides of every game). The page loops season × week so each
+//    request stays small.
+//  - "preseason": one season of returning production, talent, recruiting class and transfer portal
+//    → team_preseason_inputs. These are the priors that carry a team into week 1.
+// Response shapes for the preseason endpoints follow CFBD's published schema but were NOT checked
+// against a live response from here — every field is optional-chained, a `sample` row comes back
+// so the first run can be eyeballed, and an empty result adds a warning rather than throwing.
+async function syncDrogba(res: any, year: number, week: number | null, part: string) {
+  const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+  const out: any = { ok: true, year, week: week ?? "all", part };
+  const warnings: string[] = [];
+  const r5 = (v: any) => (v == null || Number.isNaN(Number(v)) ? null : Math.round(Number(v) * 100000) / 100000);
+
+  if (part === "gameadv") {
+    const weekParam = week != null ? `&week=${week}` : "";
+    const adv = await cfbdFetch(`/stats/game/advanced?year=${year}${weekParam}&seasonType=regular`);
+    const now = new Date().toISOString();
+    const rows: any[] = [];
+    for (const r of adv ?? []) {
+      if (r.gameId == null || !r.team) continue;
+      const o = r.offense ?? {};
+      const d = r.defense ?? {};
+      const off = o.successRate;
+      const def = d.successRate;
+      rows.push({
+        game_id: String(r.gameId),
+        team: r.team,
+        season: r.season ?? year,
+        week: r.week ?? week ?? null,
+        season_type: r.seasonType ?? "regular",
+        opponent: r.opponent ?? null,
+        off_success_rate: r5(off),
+        def_success_rate: r5(def),
+        net_success_rate: off != null && def != null ? r5(off - def) : null,
+        off_plays: r5(o.plays), def_plays: r5(d.plays),
+        off_drives: r5(o.drives), def_drives: r5(d.drives),
+        off_ppa: r5(o.ppa), def_ppa: r5(d.ppa),
+        off_explosiveness: r5(o.explosiveness), def_explosiveness: r5(d.explosiveness),
+        off_power_success: r5(o.powerSuccess), def_power_success: r5(d.powerSuccess),
+        off_stuff_rate: r5(o.stuffRate), def_stuff_rate: r5(d.stuffRate),
+        off_line_yards: r5(o.lineYards), def_line_yards: r5(d.lineYards),
+        off_havoc_total: r5(o.havoc?.total), def_havoc_total: r5(d.havoc?.total),
+        off_rush_ppa: r5(o.rushingPlays?.ppa), def_rush_ppa: r5(d.rushingPlays?.ppa),
+        off_rush_success_rate: r5(o.rushingPlays?.successRate), def_rush_success_rate: r5(d.rushingPlays?.successRate),
+        off_pass_ppa: r5(o.passingPlays?.ppa), def_pass_ppa: r5(d.passingPlays?.ppa),
+        off_pass_success_rate: r5(o.passingPlays?.successRate), def_pass_success_rate: r5(d.passingPlays?.successRate),
+        off_standard_downs_ppa: r5(o.standardDowns?.ppa), def_standard_downs_ppa: r5(d.standardDowns?.ppa),
+        off_passing_downs_ppa: r5(o.passingDowns?.ppa), def_passing_downs_ppa: r5(d.passingDowns?.ppa),
+        updated_at: now,
+      });
+    }
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 400) {
+      const { error, count } = await supabaseAdmin
+        .from("team_game_advanced")
+        .upsert(rows.slice(i, i + 400), { onConflict: "game_id,team", count: "exact" });
+      if (error) throw new Error(`Saving per-game advanced stats failed: ${error.message}`);
+      saved += count ?? 0;
+    }
+    out.gameAdv = { fetched: (adv ?? []).length, saved, withPpa: rows.filter((r) => r.off_ppa != null).length, sample: rows[0] ?? null };
+    if (rows.length === 0) warnings.push("CFBD returned no advanced game stats for that year/week.");
+  }
+
+  if (part === "preseason") {
+    const byTeam = new Map<string, any>();
+    const entry = (team: string) => {
+      let e = byTeam.get(team);
+      if (!e) {
+        e = { season: year, team };
+        byTeam.set(team, e);
+      }
+      return e;
+    };
+    const counts: Record<string, number> = {};
+
+    const returning = await cfbdFetch(`/player/returning?year=${year}`).catch((e: any) => {
+      warnings.push(`returning production: ${e.message}`);
+      return [];
+    });
+    for (const r of returning ?? []) {
+      if (!r.team) continue;
+      const e = entry(r.team);
+      e.returning_ppa_pct = r5(r.percentPPA);
+      e.returning_pass_ppa_pct = r5(r.percentPassingPPA);
+      e.returning_rush_ppa_pct = r5(r.percentRushingPPA);
+      e.returning_rec_ppa_pct = r5(r.percentReceivingPPA);
+      e.returning_usage = r5(r.usage);
+      e.returning_total_ppa = r5(r.totalPPA);
+      counts.returning = (counts.returning ?? 0) + 1;
+    }
+
+    const talent = await cfbdFetch(`/talent?year=${year}`).catch((e: any) => {
+      warnings.push(`talent: ${e.message}`);
+      return [];
+    });
+    for (const t of talent ?? []) {
+      const team = t.team ?? t.school;
+      if (!team) continue;
+      entry(team).talent = r5(t.talent);
+      counts.talent = (counts.talent ?? 0) + 1;
+    }
+
+    const recruiting = await cfbdFetch(`/recruiting/teams?year=${year}`).catch((e: any) => {
+      warnings.push(`recruiting: ${e.message}`);
+      return [];
+    });
+    for (const t of recruiting ?? []) {
+      if (!t.team) continue;
+      const e = entry(t.team);
+      e.recruiting_rank = t.rank ?? null;
+      e.recruiting_points = r5(t.points);
+      counts.recruiting = (counts.recruiting ?? 0) + 1;
+    }
+
+    const portal = await cfbdFetch(`/player/portal?year=${year}`).catch((e: any) => {
+      warnings.push(`portal: ${e.message}`);
+      return [];
+    });
+    const agg = new Map<string, { inN: number; inR: number; outN: number; outR: number }>();
+    const bump = (team: string, dir: "in" | "out", rating: number) => {
+      const a = agg.get(team) ?? { inN: 0, inR: 0, outN: 0, outR: 0 };
+      if (dir === "in") {
+        a.inN += 1;
+        a.inR += rating;
+      } else {
+        a.outN += 1;
+        a.outR += rating;
+      }
+      agg.set(team, a);
+    };
+    for (const p of portal ?? []) {
+      const rating = Number(p.rating ?? 0.7) || 0.7; // unrated transfer ≈ a generic 3-star
+      if (p.destination) bump(p.destination, "in", rating);
+      if (p.origin) bump(p.origin, "out", rating);
+    }
+    for (const [team, a] of agg) {
+      const e = entry(team);
+      e.portal_in_count = a.inN;
+      e.portal_in_rating_sum = r5(a.inR);
+      e.portal_out_count = a.outN;
+      e.portal_out_rating_sum = r5(a.outR);
+    }
+    counts.portalPlayers = (portal ?? []).length;
+
+    const now = new Date().toISOString();
+    const rows = Array.from(byTeam.values()).map((e) => ({ ...e, updated_at: now }));
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 400) {
+      const { error, count } = await supabaseAdmin
+        .from("team_preseason_inputs")
+        .upsert(rows.slice(i, i + 400), { onConflict: "season,team", count: "exact" });
+      if (error) throw new Error(`Saving preseason inputs failed: ${error.message}`);
+      saved += count ?? 0;
+    }
+    out.preseason = { teams: rows.length, saved, counts, sample: rows[0] ?? null };
+    if (rows.length === 0) warnings.push("CFBD returned nothing for returning production / talent / recruiting / portal.");
+  }
+
+  if (warnings.length) out.warnings = warnings;
+  res.status(200).json(out);
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -363,6 +527,32 @@ export default async function handler(req: any, res: any) {
       await syncPredictions(res);
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Predictions sync failed" });
+    }
+    return;
+  }
+
+  if (req.body?.mode === "drogba") {
+    const { password, year, week, part } = req.body ?? {};
+    if (password !== ADMIN_PASSWORD) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_API_KEY) {
+      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+      return;
+    }
+    if (!year || typeof year !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'year'" });
+      return;
+    }
+    if (part !== "gameadv" && part !== "preseason") {
+      res.status(400).json({ error: "'part' must be 'gameadv' or 'preseason'" });
+      return;
+    }
+    try {
+      await syncDrogba(res, year, typeof week === "number" ? week : null, part);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "DROGBA sync failed" });
     }
     return;
   }

@@ -122,6 +122,53 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // DROGBA picks log. The point of the log is a record of what the model said while the line was
+  // open, so by default a game that is already logged is left alone (first save wins); the caller must
+  // pass overwrite: true — the page asks for confirmation first — to replace existing rows.
+  if (action === "saveDrogbaPicks") {
+    const { picks, overwrite } = req.body ?? {};
+    if (!Array.isArray(picks) || picks.length === 0) {
+      res.status(400).json({ error: "No picks to save" });
+      return;
+    }
+    const rows = picks.map((p: any) => ({
+      game_id: String(p.game_id),
+      season: Number(p.season),
+      week: Number(p.week),
+      home_team: String(p.home_team),
+      away_team: String(p.away_team),
+      model_home_spread: Number(p.model_home_spread),
+      open_spread: p.open_spread == null ? null : Number(p.open_spread),
+      open_provider: p.open_provider ?? null,
+      edge: p.edge == null ? null : Number(p.edge),
+      side: p.side === "home" || p.side === "away" ? p.side : null,
+      filtered: !!p.filtered,
+      model_version: p.model_version ?? null,
+    }));
+    if (rows.some((r: any) => !r.game_id || !Number.isFinite(r.season) || !Number.isFinite(r.week) || !Number.isFinite(r.model_home_spread))) {
+      res.status(400).json({ error: "Every pick needs game_id, season, week and model_home_spread" });
+      return;
+    }
+    try {
+      const existing = new Set<string>();
+      for (let i = 0; i < rows.length; i += 200) {
+        const ids = rows.slice(i, i + 200).map((r: any) => r.game_id);
+        const { data, error } = await supabaseAdmin.from("drogba_picks").select("game_id").in("game_id", ids);
+        if (error) throw error;
+        for (const d of data ?? []) existing.add(d.game_id);
+      }
+      const toWrite = overwrite ? rows : rows.filter((r: any) => !existing.has(r.game_id));
+      if (toWrite.length > 0) {
+        const { error } = await supabaseAdmin.from("drogba_picks").upsert(toWrite, { onConflict: "game_id" });
+        if (error) throw error;
+      }
+      res.status(200).json({ ok: true, saved: toWrite.length, skippedExisting: overwrite ? 0 : rows.length - toWrite.length, overwritten: overwrite ? rows.filter((r: any) => existing.has(r.game_id)).length : 0 });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Save failed" });
+    }
+    return;
+  }
+
   // Default (no action, or action: "saveWeeklyStats") — original
   // admin-save.ts behavior, unchanged.
   const { week, rows } = req.body ?? {};
