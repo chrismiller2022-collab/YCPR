@@ -19,6 +19,7 @@ import {
 } from "../lib/gameTotalsEngine";
 import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./PerformanceView";
 import { winPctColor, isSmallSample, MIN_RELIABLE_SAMPLE } from "../lib/winPctColor";
+import TotalsWindowCompare from "../components/TotalsWindowCompare";
 
 const KEY_NUMBER_MIN_SEASON = 2026;
 
@@ -340,9 +341,9 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
 // rather than duplicating them, and the same useMultiSeasonGameTotalsEngine/
 // filterRowsByDivision/DivisionPicker every other Totals-related page
 // already uses.
-const TABS = ["performance", "teamperformance", "keynumbers"] as const;
+const TABS = ["performance", "teamperformance", "keynumbers", "wkcompare"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABELS: Record<Tab, string> = { performance: "Performance", teamperformance: "TT Performance", keynumbers: "Key Numbers" };
+const TAB_LABELS: Record<Tab, string> = { performance: "Performance", teamperformance: "TT Performance", keynumbers: "Key Numbers", wkcompare: "Wk 1–5 vs 6+" };
 
 const SEASON_OPTIONS = [2026, 2025, 2024, 2023, 2022, 2021];
 
@@ -429,7 +430,7 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
         </label>
       </div>
 
-      {singleSeason && tab !== "keynumbers" && (
+      {singleSeason && tab !== "keynumbers" && tab !== "wkcompare" && (
         <WeekSeasonToggle mode={viewMode} setMode={setViewMode} week={viewWeek} setWeek={setViewWeek} availableWeeks={availableWeeks} />
       )}
 
@@ -453,10 +454,11 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
         <div className="empty">Loading…</div>
       ) : (
         <>
+          {tab === "wkcompare" && <TotalsWindowCompare rows={rows} filterMultiplier={settings.filterThresholdMultiplier} />}
           {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} />}
           {tab === "teamperformance" && <TeamPerformanceTab rows={viewRows} settings={settings} />}
 
-          {singleSeason && (
+          {singleSeason && tab !== "wkcompare" && (
             <div style={{ marginTop: "2rem" }}>
               <h3>Game-by-game — {seasons[0]}</h3>
               {tab === "performance" && <TotalsTab rows={viewRows} settings={settings} />}

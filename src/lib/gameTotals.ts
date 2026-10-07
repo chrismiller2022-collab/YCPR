@@ -139,6 +139,20 @@ export interface LeagueAverages {
   defPassPpaAllowed: number;
   offPassSuccessRate: number;
   defPassSuccessRateAllowed: number;
+  // Spread (sample std dev) across teams of the four stats the Ridge total model
+  // reads — used to re-standardize them within the current season, see
+  // totalModelRidge.ts. 0 when there are fewer than 3 teams with data.
+  offPpaSd: number;
+  defPpaSd: number;
+  offExplosivenessSd: number;
+  defExplosivenessSd: number;
+}
+
+function sdOf(values: (number | null | undefined)[]): number {
+  const valid = values.filter((v): v is number => v != null && !Number.isNaN(v));
+  if (valid.length < 3) return 0;
+  const mean = valid.reduce((s, v) => s + v, 0) / valid.length;
+  return Math.sqrt(valid.reduce((s, v) => s + (v - mean) ** 2, 0) / (valid.length - 1));
 }
 
 function meanOf(values: (number | null | undefined)[]): number {
@@ -175,6 +189,10 @@ export function computeLeagueAverages(teams: TeamSeasonInputs[]): LeagueAverages
     defPassPpaAllowed: meanOf(teams.map((t) => t.defPassingPlaysPpa)),
     offPassSuccessRate: meanOf(teams.map((t) => t.offPassingPlaysSuccessRate)),
     defPassSuccessRateAllowed: meanOf(teams.map((t) => t.defPassingPlaysSuccessRate)),
+    offPpaSd: sdOf(teams.map((t) => t.offPpa)),
+    defPpaSd: sdOf(teams.map((t) => t.defPpa)),
+    offExplosivenessSd: sdOf(teams.map((t) => t.offExplosiveness)),
+    defExplosivenessSd: sdOf(teams.map((t) => t.defExplosiveness)),
   };
 }
 
@@ -533,6 +551,15 @@ export function computeGameProjection(
     homeRestDays: context.homeRestDays,
     awayRestDays: context.awayRestDays,
     marketTotal: odds.vegasTotal,
+    // Re-standardize the four team stats against THIS season's FBS pool (mean + std
+    // dev), so early-season, small-sample numbers aren't read against full-season
+    // training distributions — see totalModelRidge.ts.
+    seasonStats: {
+      offPpa: { mean: league.offPpa, sd: league.offPpaSd },
+      defPpa: { mean: league.defPpaAllowed, sd: league.defPpaSd },
+      offExplosiveness: { mean: league.offExplosiveness, sd: league.offExplosivenessSd },
+      defExplosiveness: { mean: league.defExplosivenessAllowed, sd: league.defExplosivenessSd },
+    },
   });
 
   return { homeResults, awayResults, projectedTotal };

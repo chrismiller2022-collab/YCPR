@@ -44,7 +44,21 @@ export interface RidgeTotalModelInput {
   homeRestDays: number;
   awayRestDays: number;
   marketTotal: number | null; // closing (preferred) or opening over/under; null falls back to the training-set average
+  // The current season's FBS mean and std dev for each team stat. When given, each of the
+  // eight team-stat inputs is converted to a z-score against THIS pool, clipped to
+  // ±Z_CLIP, and read as if it sat on the training distribution (training mean +
+  // z × training scale). Without it the raw value is used as before.
+  seasonStats?: Partial<Record<"offPpa" | "defPpa" | "offExplosiveness" | "defExplosiveness", { mean: number; sd: number }>>;
 }
+
+// Why this exists: the coefficients were fit on full-season stats from 2021-25, but
+// early in a season each team has a handful of games, so the stats are shifted (2026
+// defensive PPA averaged 0.06 vs a training mean of 0.16, ~1.2 training SDs) and much
+// more spread out (SD 0.12 vs 0.08). A linear model reads that as two elite defenses
+// in nearly every game and projected totals ran ~3 points under the market, with
+// absurd outliers (Texas-Oklahoma 16.7). Re-standardizing within the season removes
+// the shift and the clip caps the extremes — no regression toward Vegas involved.
+export const Z_CLIP = 2.5;
 
 const FEATURE_ORDER = [
   "home_off_ppa",
@@ -89,16 +103,25 @@ function orNeutral(value: number | null, index: number): number {
   return value == null || Number.isNaN(value) ? MEAN[index] : value;
 }
 
+// Maps one team-stat value onto the training distribution through the season's own mean/sd.
+function seasonAdjust(value: number | null, index: number, stats: { mean: number; sd: number } | undefined): number {
+  const v = orNeutral(value, index);
+  if (!stats || !(stats.sd > 0) || value == null || Number.isNaN(value)) return v;
+  const z = Math.max(-Z_CLIP, Math.min(Z_CLIP, (v - stats.mean) / stats.sd));
+  return MEAN[index] + z * SCALE[index];
+}
+
 export function predictGameTotalRidge(input: RidgeTotalModelInput): number {
+  const s = input.seasonStats;
   const raw = [
-    orNeutral(input.homeOffPpa, 0),
-    orNeutral(input.homeDefPpa, 1),
-    orNeutral(input.homeOffExplosiveness, 2),
-    orNeutral(input.homeDefExplosiveness, 3),
-    orNeutral(input.awayOffPpa, 4),
-    orNeutral(input.awayDefPpa, 5),
-    orNeutral(input.awayOffExplosiveness, 6),
-    orNeutral(input.awayDefExplosiveness, 7),
+    seasonAdjust(input.homeOffPpa, 0, s?.offPpa),
+    seasonAdjust(input.homeDefPpa, 1, s?.defPpa),
+    seasonAdjust(input.homeOffExplosiveness, 2, s?.offExplosiveness),
+    seasonAdjust(input.homeDefExplosiveness, 3, s?.defExplosiveness),
+    seasonAdjust(input.awayOffPpa, 4, s?.offPpa),
+    seasonAdjust(input.awayDefPpa, 5, s?.defPpa),
+    seasonAdjust(input.awayOffExplosiveness, 6, s?.offExplosiveness),
+    seasonAdjust(input.awayDefExplosiveness, 7, s?.defExplosiveness),
     input.homeFlag,
     input.homeRestDays,
     input.awayRestDays,

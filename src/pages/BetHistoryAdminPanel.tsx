@@ -6,6 +6,7 @@ import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
 import { TEAMS_BY_NAME } from "../data/teams";
 import {
   aggregatePlain,
@@ -1303,7 +1304,7 @@ function FilterBar({
 
 export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void }) {
   const allConfs = useMemo(() => availableConferences(), []);
-  const [tab, setTab] = useState<"plain" | "custom" | "wfb" | "keynumbers">("custom");
+  const [tab, setTab] = useState<"plain" | "custom" | "wfb" | "keynumbers" | "wkcompare">("custom");
 
   const [years, setYears] = useState<Set<number>>(new Set(SEASONS));
   const [week, setWeek] = useState<number | "all">("all");
@@ -1505,6 +1506,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         <button className={`mode-btn ${tab === "keynumbers" ? "mode-btn-active" : ""}`} onClick={() => setTab("keynumbers")}>
           Key Numbers
         </button>
+        <button className={`mode-btn ${tab === "wkcompare" ? "mode-btn-active" : ""}`} onClick={() => setTab("wkcompare")}>
+          Wk 1–5 vs 6+
+        </button>
       </div>
 
       <FilterBar
@@ -1574,6 +1578,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         <WfbMatrixSection points={wfbPoints} params={params} />
       ) : tab === "keynumbers" ? (
         <KeyNumbersSection study={keyNumberStudy} />
+      ) : tab === "wkcompare" ? (
+        <BetHistoryWindowCompare records={filtered} params={params} />
       ) : (
         <>
           <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginBottom: "0.5rem" }}>
