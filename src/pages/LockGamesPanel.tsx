@@ -5,6 +5,8 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeRow, classOf } from "../lib/matchupsCompute";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useGameTotalsEngine } from "../lib/gameTotalsEngine";
+import { lockPeriodProjections } from "../lib/api/periodLocks";
+import { buildPeriodLockCandidate } from "../lib/periodLockCandidate";
 import {
   fetchGameProjectionLocks,
   lockGameProjections,
@@ -60,8 +62,10 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
   const [games, setGames] = useState<GameWithLines[] | null>(null);
   const [existingLocks, setExistingLocks] = useState<Record<string, ExistingLock>>({});
   const [loading, setLoading] = useState(false);
-  const [locking, setLocking] = useState<DivBucket | "all" | null>(null);
-  const [result, setResult] = useState<(LockProjectionsResult & { missing: { game: GameWithLines; reason: string }[] }) | null>(null);
+  const [locking, setLocking] = useState<DivBucket | "all" | "selected" | null>(null);
+  const [result, setResult] = useState<(LockProjectionsResult & { missing: { game: GameWithLines; reason: string }[]; periodLocked: number; periodSkipped: number }) | null>(null);
+  // Games ticked in the "Would Freeze" tables — Freeze Selected locks just these (one game at a time is fine).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [editingGameId, setEditingGameId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<{ spread: string; total: string; winPct: string }>({ spread: "", total: "", winPct: "" });
@@ -141,14 +145,33 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
     return { ready, missing };
   }
 
-  async function handleLock(bucket: DivBucket | "all") {
-    setLocking(bucket);
+  async function handleLock(bucket: DivBucket | "all" | "selected") {
+    setLocking(bucket as any);
     setError(null);
     try {
-      const list = bucket === "all" ? candidateGames : candidatesByDiv[bucket];
+      const list = bucket === "all" ? candidateGames : bucket === "selected" ? candidateGames.filter((g) => selected.has(g.id)) : candidatesByDiv[bucket];
       const { ready, missing } = buildCandidates(list);
       const lockResult = await lockGameProjections(ready);
-      setResult({ ...lockResult, missing });
+      // Freeze the period (1H/2H/quarter) projections for the same games in the same step.
+      // Insert-only server-side: a game that already has a period lock is left untouched.
+      const gameById = new Map(list.map((g) => [g.id, g]));
+      const periodCandidates = ready
+        .filter((c) => c.my_total != null && c.my_away_spread != null && gameById.has(c.game_id))
+        .map((c) =>
+          buildPeriodLockCandidate({
+            gameId: c.game_id,
+            season: c.season,
+            week: c.week,
+            homeTeam: c.home_team,
+            awayTeam: c.away_team,
+            neutralSite: !!gameById.get(c.game_id)!.neutral_site,
+            homeSpread: -(c.my_away_spread as number),
+            total: c.my_total as number,
+          })
+        );
+      const periodResult = periodCandidates.length > 0 ? await lockPeriodProjections(periodCandidates) : { locked: 0, alreadyLocked: [] as string[] };
+      setResult({ ...lockResult, missing, periodLocked: periodResult.locked, periodSkipped: ready.length - periodCandidates.length });
+      setSelected(new Set());
       await handleLoad(); // refresh so the list reflects what's now locked
     } catch (err: any) {
       setError(err.message ?? "Failed to freeze week");
@@ -327,6 +350,20 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
         <table style={{ borderCollapse: "collapse", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
           <thead>
             <tr>
+              <th className="th">
+                <input
+                  type="checkbox"
+                  title="Select all in this group"
+                  checked={list.length > 0 && list.every((g) => selected.has(g.id))}
+                  onChange={(e) =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      for (const g of list) (e.target.checked ? next.add(g.id) : next.delete(g.id));
+                      return next;
+                    })
+                  }
+                />
+              </th>
               <th className="th">Kickoff</th>
               <th className="th">Game</th>
               <th className="th th-right">My Line (would freeze)</th>
@@ -337,10 +374,26 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
             {list.map((g) => {
               const computed = computeRow(g, ratings);
               const myTotal = projTotalByGame.get(`${g.week}|${g.home_team}|${g.away_team}`) ?? null;
+              const started = g.start_date != null && new Date(g.start_date).getTime() <= Date.now();
               return (
                 <tr key={g.id}>
                   <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(g.id)}
+                      onChange={(e) =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(g.id);
+                          else next.delete(g.id);
+                          return next;
+                        })
+                      }
+                    />
+                  </td>
+                  <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", color: started ? "#e07a7a" : undefined }} title={started ? "Already kicked off — freezing now captures the current ratings, not the pregame ones" : undefined}>
                     {g.start_date ? new Date(g.start_date).toLocaleString() : "–"}
+                    {started ? " ⚠" : ""}
                   </td>
                   <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>
                     <TeamLink team={g.away_team} size={16} /> @ <TeamLink team={g.home_team} size={16} />
@@ -467,8 +520,10 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
       </button>
       <h2 style={{ marginTop: 0 }}>Freeze Week</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0, maxWidth: 640 }}>
-        Freezes "my" spread, total, and win% for every game in the selected week that doesn't already
-        have one — using THAT WEEK'S OWN ratings snapshot, never "latest." Team totals and moneylines
+        Freezes "my" spread, total, win% and the 1H/2H/quarter projections for the games you choose (tick
+        them, then Freeze Selected — one game at a time is fine for midweek games) or for the whole week
+        — using THAT WEEK'S OWN ratings snapshot, never "latest." Once a game is frozen, pushing or saving
+        ratings for the week skips both its teams and says so. Team totals and moneylines
         aren't stored separately; every page derives them from these three frozen numbers, so nothing
         can drift independently. Do this once, before you finalize picks/reports for the week — not
         after games have already started. Vegas/closing lines are never touched by this and keep
@@ -510,9 +565,18 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                   {(["fbsVfbs", "cross", "fcsVfcs"] as DivBucket[]).map((b) => (
                     <CandidateTable key={b} bucket={b} list={candidatesByDiv[b]} />
                   ))}
-                  <button onClick={() => handleLock("all")} disabled={locking != null} style={{ marginBottom: "1.5rem" }}>
-                    {locking === "all" ? "Freezing…" : `Freeze All ${candidateGames.length} Week ${week} Games Now`}
-                  </button>
+                  <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1.5rem" }}>
+                    <button
+                      onClick={() => handleLock("selected")}
+                      disabled={locking != null || candidateGames.filter((g) => selected.has(g.id)).length === 0}
+                      title="Freezes just the games ticked above — spread, total, win % and the 1H/2H/quarter projections together"
+                    >
+                      {locking === "selected" ? "Freezing…" : `Freeze Selected (${candidateGames.filter((g) => selected.has(g.id)).length})`}
+                    </button>
+                    <button onClick={() => handleLock("all")} disabled={locking != null}>
+                      {locking === "all" ? "Freezing…" : `Freeze All ${candidateGames.length} Week ${week} Games Now`}
+                    </button>
+                  </div>
                 </>
               )}
 
@@ -585,6 +649,10 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
         <div style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--hash)", borderRadius: 8, maxWidth: 700 }}>
           <p style={{ color: "#8fd39a", fontWeight: 700, margin: 0 }}>
             Froze {result.locked} new game{result.locked === 1 ? "" : "s"} for Week {week}.
+          </p>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", margin: "0.3rem 0 0" }}>
+            Period projections (1H/2H/quarters): {result.periodLocked} frozen
+            {result.periodSkipped > 0 ? `, ${result.periodSkipped} not frozen (no total to build them from)` : ""}.
           </p>
           {result.alreadyLocked.length > 0 && (
             <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem" }}>

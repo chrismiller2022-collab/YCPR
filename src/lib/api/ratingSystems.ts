@@ -59,6 +59,15 @@ export function syncCfbdRatings(year: number) {
 }
 
 /** Writes YC into weekly_team_stats.rating for the given week (site-wide "live rating" source), without touching any other column on those rows. */
+/** One-line note for the "skipped because their game is frozen" part of a push/save result (empty when nothing was skipped). */
+export function frozenSkipNote(result: { skippedLocked?: string[] | number; warnings?: string[] }): string {
+  const n = Array.isArray(result.skippedLocked) ? result.skippedLocked.length : result.skippedLocked ?? 0;
+  const list = Array.isArray(result.skippedLocked) && result.skippedLocked.length > 0 ? `: ${result.skippedLocked.slice(0, 8).join(", ")}${result.skippedLocked.length > 8 ? "…" : ""}` : "";
+  const skipped = n > 0 ? ` ${n} skipped — their game is frozen${list}.` : "";
+  const warn = result.warnings && result.warnings.length > 0 ? ` ⚠ ${result.warnings.join(" ")}` : "";
+  return `${skipped}${warn}`;
+}
+
 export function pushYcToLiveRatings(week: string, teamRatings: { team: string; rating: number }[]) {
   return authedPost("pushYc", { week, teamRatings });
 }

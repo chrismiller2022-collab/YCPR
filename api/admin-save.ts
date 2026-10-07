@@ -170,16 +170,37 @@ export default async function handler(req: any, res: any) {
     }
     return cleaned;
   });
-  const { error, count } = await supabaseAdmin
-    .from("weekly_team_stats")
-    .upsert(cleanRows, { onConflict: "team,week", count: "exact" });
+  // Freeze Week: teams whose game this week is frozen keep their row as saved.
+  const lockedTeams = new Set<string>();
+  if (weekNumber >= 1) {
+    const { data: lockRows, error: lockError } = await supabaseAdmin
+      .from("game_projection_locks")
+      .select("home_team, away_team")
+      .eq("season", new Date().getFullYear())
+      .eq("week", weekNumber)
+      .limit(2000);
+    if (lockError) {
+      res.status(500).json({ error: `Couldn't read this week's frozen games (${lockError.message}) — nothing was written` });
+      return;
+    }
+    for (const r of lockRows ?? []) {
+      if (r.home_team) lockedTeams.add(r.home_team);
+      if (r.away_team) lockedTeams.add(r.away_team);
+    }
+  }
+  const skippedLocked = cleanRows.filter((r: any) => lockedTeams.has(r.team)).map((r: any) => r.team);
+  const writeRows = cleanRows.filter((r: any) => !lockedTeams.has(r.team));
+  const { error, count } = writeRows.length
+    ? await supabaseAdmin.from("weekly_team_stats").upsert(writeRows, { onConflict: "team,week", count: "exact" })
+    : { error: null, count: 0 };
   if (error) {
     res.status(500).json({ error: error.message });
     return;
   }
   res.status(200).json({
     ok: true,
-    saved: cleanRows.length,
+    skippedLocked,
+    saved: writeRows.length,
     teamsSynced: teamRows.length,
     week,
     count,

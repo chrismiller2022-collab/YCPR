@@ -76,6 +76,43 @@ function tableRows(html: string): string[][] {
   return rows;
 }
 
+// ---------------------------------------------------------------------
+// Freeze Week: a team whose game this week is frozen (game_projection_locks) keeps
+// its rating for the week — pushes and saves skip it and say so. Fails CLOSED: if
+// the lock lookup errors, the write is refused rather than risking an overwrite.
+// ---------------------------------------------------------------------
+async function lockedTeamsForWeek(client: any, season: number, week: number): Promise<{ locked: Set<string>; warnings: string[] }> {
+  const warnings: string[] = [];
+  if (!(week >= 1)) return { locked: new Set(), warnings };
+  const { data, error } = await client.from("game_projection_locks").select("game_id, home_team, away_team").eq("season", season).eq("week", week).limit(2000);
+  if (error) throw new Error(`Couldn't read this week's frozen games (${error.message}) — nothing was written`);
+  const locked = new Set<string>();
+  const lockedIds = new Set<string>();
+  for (const r of data ?? []) {
+    if (r.home_team) locked.add(r.home_team);
+    if (r.away_team) locked.add(r.away_team);
+    lockedIds.add(r.game_id);
+  }
+  // Games that have already kicked off but were never frozen — their teams are NOT protected.
+  const { data: started } = await client
+    .from("games")
+    .select("id, home_team, away_team")
+    .eq("season", season)
+    .eq("week", week)
+    .lte("start_date", new Date().toISOString())
+    .limit(2000);
+  const unprotected = (started ?? []).filter((g: any) => !lockedIds.has(g.id));
+  if (unprotected.length > 0) {
+    warnings.push(
+      `${unprotected.length} week-${week} game(s) already kicked off but are NOT frozen, so their teams' ratings were overwritten like any other: ${unprotected
+        .slice(0, 6)
+        .map((g: any) => `${g.away_team} @ ${g.home_team}`)
+        .join(", ")}${unprotected.length > 6 ? "…" : ""}`
+    );
+  }
+  return { locked, warnings };
+}
+
 interface IncomingSaveRow {
   team: string;
   conference?: string | null;
@@ -714,9 +751,21 @@ export default async function handler(req: any, res: any) {
     }
 
     const now = new Date().toISOString();
+    let lockInfo: { locked: Set<string>; warnings: string[] };
+    try {
+      lockInfo = await lockedTeamsForWeek(supabaseAdmin, season, week);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    const skippedLocked: string[] = [];
     const upsertRows: any[] = [];
     for (const row of rows as IncomingSaveRow[]) {
       if (!row.team || !row.values) continue;
+      if (lockInfo.locked.has(row.team)) {
+        skippedLocked.push(row.team);
+        continue;
+      }
       for (const [systemKey, value] of Object.entries(row.values)) {
         if (value == null || Number.isNaN(value)) continue;
         upsertRows.push({
@@ -732,6 +781,10 @@ export default async function handler(req: any, res: any) {
       }
     }
     if (upsertRows.length === 0) {
+      if (skippedLocked.length > 0) {
+        res.status(200).json({ ok: true, saved: 0, deduped: 0, skippedLocked, warnings: lockInfo.warnings });
+        return;
+      }
       res.status(400).json({ error: "No usable (non-null) values in 'rows'" });
       return;
     }
@@ -745,7 +798,7 @@ export default async function handler(req: any, res: any) {
       res.status(500).json({ error: error.message });
       return;
     }
-    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length });
+    res.status(200).json({ ok: true, saved: count ?? deduped.length, deduped: upsertRows.length - deduped.length, skippedLocked, warnings: lockInfo.warnings });
     return;
   }
 
@@ -897,9 +950,22 @@ export default async function handler(req: any, res: any) {
 
     const nowIso = new Date().toISOString();
     const weekNumber = weekToNumber(week);
+    const currentSeason = new Date().getFullYear();
+    let lockInfo: { locked: Set<string>; warnings: string[] };
+    try {
+      lockInfo = await lockedTeamsForWeek(supabaseAdmin, currentSeason, weekNumber);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    const skippedLocked: string[] = [];
     let matched = 0;
     for (const { team, rating } of teamRatings as { team: string; rating: number }[]) {
       if (rating == null || Number.isNaN(rating)) continue;
+      if (lockInfo.locked.has(team)) {
+        skippedLocked.push(team); // frozen game this week: leave the team's row exactly as it is
+        continue;
+      }
       const existing = byTeam.get(team);
       if (existing) {
         existing.rating = rating;
@@ -920,9 +986,12 @@ export default async function handler(req: any, res: any) {
       r.rank = i + 1;
     });
 
+    // Frozen teams' rows are not written at all (rank is derived from the whole week,
+    // so theirs would shift) — they stay exactly as saved.
+    const writeRows = allRows.filter((r) => !lockInfo.locked.has(r.team));
     const { error: upsertError, count } = await supabaseAdmin
       .from("weekly_team_stats")
-      .upsert(allRows, { onConflict: "team,week", count: "exact" });
+      .upsert(writeRows, { onConflict: "team,week", count: "exact" });
     if (upsertError) {
       res.status(500).json({ error: upsertError.message });
       return;
@@ -936,8 +1005,7 @@ export default async function handler(req: any, res: any) {
     // every push means it's already saved from the moment each week goes
     // live, not something that has to be remembered at season's end.
     // Best-effort: a failure here doesn't fail the actual ratings push.
-    const currentSeason = new Date().getFullYear();
-    const archiveRows = allRows
+    const archiveRows = writeRows
       .filter((r) => r.rating != null)
       .map((r) => ({
         season: currentSeason,
@@ -957,7 +1025,7 @@ export default async function handler(req: any, res: any) {
       // best-effort mirror, not the primary write this action promises.
     }
 
-    res.status(200).json({ ok: true, matched, saved: count ?? allRows.length, week });
+    res.status(200).json({ ok: true, matched, saved: count ?? writeRows.length, week, skippedLocked, warnings: lockInfo.warnings });
     return;
   }
 

@@ -1289,7 +1289,10 @@ function SaveTotalsSnapshotControl({ rows, season }: { rows: EnrichedGameRow[]; 
     setMsg(null);
     try {
       const result = await saveGameTotalSnapshot(season, week, rows);
-      if (result) setMsg(`Saved ${result.saved} games for ${season} week ${week}.`);
+      if (result)
+        setMsg(
+          `Saved ${result.saved} games for ${season} week ${week}.${result.skippedLocked ? ` ${result.skippedLocked} left as saved — their game is frozen.` : ""}`
+        );
     } catch (err: any) {
       setMsg(err.message ?? "Save failed");
     } finally {

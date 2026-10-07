@@ -509,7 +509,24 @@ export default async function handler(req: any, res: any) {
       }
 
       const now = new Date().toISOString();
-      const upsertRows = rows.map((r: any) => ({
+      // Freeze Week: a game frozen this week that already has a row in this week's snapshot
+      // keeps it — re-saving the snapshot never rewrites a locked game's numbers.
+      const { data: lockRows, error: lockErr } = await supabaseAdmin.from("game_projection_locks").select("game_id").eq("season", season).eq("week", week).limit(2000);
+      if (lockErr) throw lockErr;
+      const lockedIds = new Set((lockRows ?? []).map((r: any) => r.game_id));
+      let existingLockedRows = new Set<string>();
+      if (lockedIds.size > 0) {
+        const { data: existing, error: exErr } = await supabaseAdmin
+          .from("game_total_snapshots")
+          .select("game_id")
+          .eq("season", season)
+          .eq("week", week)
+          .in("game_id", Array.from(lockedIds));
+        if (exErr) throw exErr;
+        existingLockedRows = new Set((existing ?? []).map((r: any) => r.game_id));
+      }
+      const skippedLocked = rows.filter((r: any) => existingLockedRows.has(r.gameId)).length;
+      const upsertRows = rows.filter((r: any) => !existingLockedRows.has(r.gameId)).map((r: any) => ({
         season,
         week,
         game_id: r.gameId,
@@ -527,12 +544,12 @@ export default async function handler(req: any, res: any) {
         saved_at: now,
       }));
 
-      const { error, count } = await supabaseAdmin
-        .from("game_total_snapshots")
-        .upsert(upsertRows, { onConflict: "season,week,game_id", count: "exact" });
+      const { error, count } = upsertRows.length
+        ? await supabaseAdmin.from("game_total_snapshots").upsert(upsertRows, { onConflict: "season,week,game_id", count: "exact" })
+        : { error: null, count: 0 };
       if (error) throw error;
 
-      res.status(200).json({ ok: true, saved: count ?? upsertRows.length });
+      res.status(200).json({ ok: true, saved: count ?? upsertRows.length, skippedLocked });
       return;
     }
 

@@ -29,6 +29,7 @@ import {
   fetchSavedRatingWeeks,
   fetchWeeklyPowerRatings,
   pushYcToLiveRatings,
+  frozenSkipNote,
   type RatingPullRow,
   type RatingSaveRow,
 } from "../lib/api/ratingSystems";
@@ -749,12 +750,13 @@ function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season:
   const willOverwrite = savedWeeks.includes(week);
 
   async function handleSave() {
+    if (willOverwrite && !window.confirm(`Week ${week} is already saved for ${season}. Overwrite it with the current ratings? (Teams whose game this week is frozen are left alone.)`)) return;
     setSaving(true);
     setMsg(null);
     try {
       const saveRows = conglomeratedRowsToSaveFormat(rows);
       const result = await saveRatingWeek(season, week, saveRows);
-      setMsg(`Saved ${result.saved} values for ${season} week ${week}.`);
+      setMsg(`Saved ${result.saved} values for ${season} week ${week}.${frozenSkipNote(result)}`);
     } catch (err: any) {
       setMsg(err.message ?? "Save failed");
     } finally {
@@ -821,7 +823,7 @@ function PushYcControl({ rows }: { rows: ConglomeratedRow[] }) {
     try {
       const teamRatings = rows.filter((r) => r.yc != null).map((r) => ({ team: r.team, rating: r.yc as number }));
       const result = await pushYcToLiveRatings(week, teamRatings);
-      setMsg(`Pushed YC for ${result.matched} teams into "${week}" live ratings (${result.saved} rows saved).`);
+      setMsg(`Pushed YC for ${result.matched} teams into "${week}" live ratings (${result.saved} rows saved).${frozenSkipNote(result)}`);
     } catch (err: any) {
       setMsg(err.message ?? "Push failed");
     } finally {
