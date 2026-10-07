@@ -48,17 +48,15 @@ export interface SnapshotSlot {
   isClose: boolean;
 }
 // A Saturday slate's lines go up Sunday morning (FanDuel first, the other books copying later in the day) and are
-// mostly all posted by about 11am ET. Sunday looks from 6 to 11am ET catch the open; the Friday-evening and
-// Saturday-morning looks give FanDuel's own later number, to measure closing-line value against.
+// mostly all posted by about 11am ET, so the opener is looked for at 6, 8, 10 and 11am ET. The closing line is
+// Bovada's from CFBD (it exists for every game), not a FanDuel snapshot.
 export const SNAPSHOT_SLOTS: SnapshotSlot[] = [
   { id: "sun-6", label: "Sunday 6:00am ET", day: -6, hourEt: 6, isClose: false },
   { id: "sun-8", label: "Sunday 8:00am ET", day: -6, hourEt: 8, isClose: false },
   { id: "sun-10", label: "Sunday 10:00am ET", day: -6, hourEt: 10, isClose: false },
   { id: "sun-11", label: "Sunday 11:00am ET", day: -6, hourEt: 11, isClose: false },
-  { id: "fri-18", label: "Friday 6:00pm ET (later number)", day: -1, hourEt: 18, isClose: true },
-  { id: "sat-10", label: "Saturday 10:00am ET (later number)", day: 0, hourEt: 10, isClose: true },
 ];
-export const DEFAULT_SLOT_IDS = ["sun-8", "sun-10", "sun-11", "fri-18", "sat-10"];
+export const DEFAULT_SLOT_IDS = SNAPSHOT_SLOTS.map((s) => s.id);
 
 export const slotTargetMs = (anchorMs: number, slot: SnapshotSlot) => etWallToUtcMs(anchorMs + slot.day * DAY, slot.hourEt);
 
@@ -123,13 +121,11 @@ export interface SnapshotRow {
 export interface BookLine {
   open: number;
   openAt: number;
-  last: number; // latest snapshot at or before kickoff
-  lastAt: number;
 }
 
 // Per game: the book's open = its EARLIEST snapshot from the start of that game's own week (the Sunday
 // before) on — so a line posted weeks ahead as a "lookahead" is judged by what it showed that Sunday, the
-// same moment for every game — and its last = the latest snapshot before kickoff.
+// same moment for every game.
 export function buildBookLines(rows: SnapshotRow[], games: DGame[]): Map<string, BookLine> {
   const anchors = weekAnchors(games);
   const gameById = new Map(games.map((g) => [g.id, g]));
@@ -150,8 +146,7 @@ export function buildBookLines(rows: SnapshotRow[], games: DGame[]): Map<string,
     const usable = list.filter((x) => x.at >= windowStart && x.at <= kickoff).sort((a, b) => a.at - b.at);
     if (usable.length === 0) continue;
     const first = usable[0];
-    const last = usable[usable.length - 1];
-    out.set(id, { open: first.spread, openAt: first.at, last: last.spread, lastAt: last.at });
+    out.set(id, { open: first.spread, openAt: first.at });
   }
   return out;
 }

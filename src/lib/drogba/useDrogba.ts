@@ -18,6 +18,7 @@ export interface DrogbaState {
   openMode: OpenMode;
   setOpenMode: (m: OpenMode) => void;
   fanduelGames: number; // games with a FanDuel open on file
+  fanduelLines: Map<string, BookLine>; // per game id: FanDuel's open and when it was first seen
   bovadaOpen: Map<string, number>; // Bovada's open per game id, for comparing books
   reload: () => void;
 }
@@ -52,6 +53,7 @@ export function useDrogba(): DrogbaState {
   const [games, setGames] = useState<DGame[]>([]);
   const [engine, setEngine] = useState<Engine | null>(null);
   const [fanduelGames, setFanduelGames] = useState(0);
+  const [fanduelLines, setFanduelLines] = useState<Map<string, BookLine>>(new Map());
   const [bovadaOpen, setBovadaOpen] = useState<Map<string, number>>(new Map());
   const [openMode, setOpenModeState] = useState<OpenMode>(readMode);
   const [nonce, setNonce] = useState(0);
@@ -88,6 +90,7 @@ export function useDrogba(): DrogbaState {
         const base = buildGames(loaded.raw.games, loaded.raw.lines);
         const fd: Map<string, BookLine> = buildBookLines(loaded.fdRows, base);
         setFanduelGames(fd.size);
+        setFanduelLines(fd);
         setBovadaOpen(new Map(base.filter((b) => b.open != null).map((b) => [b.id, b.open as number])));
         const g = buildGames(loaded.raw.games, loaded.raw.lines, fd, openMode);
         setGames(g);
@@ -117,5 +120,5 @@ export function useDrogba(): DrogbaState {
     setNonce((n) => n + 1);
   }, []);
 
-  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, bovadaOpen, reload };
+  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, fanduelLines, bovadaOpen, reload };
 }

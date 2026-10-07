@@ -59,8 +59,6 @@ export const OPEN_MODE_LABELS: Record<OpenMode, string> = {
 };
 export interface BookLineLike {
   open: number;
-  last: number;
-  lastAt: number;
 }
 
 export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Map<string, BookLineLike>, mode: OpenMode = "bovada"): DGame[] {
@@ -87,6 +85,10 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Ma
         break;
       }
     }
+    // The close is Bovada's closing line whenever it has one (it has one for essentially every game), so every
+    // game is graded against the same book's close rather than whichever snapshot happened to exist.
+    const bovadaClose = ls.find((l) => l.provider === "Bovada" && l.spread != null)?.spread ?? null;
+    if (bovadaClose != null) close = bovadaClose;
     if (close == null) close = ls.find((l) => l.spread != null)?.spread ?? null;
     const startMs = g.start_date ? Date.parse(g.start_date) : null;
     if (mode !== "bovada") {
@@ -94,9 +96,6 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Ma
       if (fd) {
         open = fd.open;
         openProvider = "FanDuel";
-        // FanDuel's own last look counts as the close only if it was taken within 2 days of kickoff; otherwise
-        // keep the best closing line we already have.
-        if (startMs != null && startMs - fd.lastAt <= 48 * 3_600_000) close = fd.last;
       } else if (mode === "fanduel_only") {
         open = null;
         openProvider = null;
