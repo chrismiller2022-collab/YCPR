@@ -13,10 +13,12 @@ import {
   computeTotalsKeyNumberStudy,
   TOTALS_KEY_NUMBER_TIERS,
   TOTAL_BET_THRESHOLD_STDDEV,
+  buildBetRows,
   type TotalsKeyNumberTally,
   type TotalsKeyNumberGame,
 } from "../lib/gameTotalsEngine";
 import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./PerformanceView";
+import { winPctColor, isSmallSample, MIN_RELIABLE_SAMPLE } from "../lib/winPctColor";
 
 const KEY_NUMBER_MIN_SEASON = 2026;
 
@@ -32,11 +34,25 @@ function fmtTallyPct(t: TotalsKeyNumberTally): string {
 }
 
 function KeyNumberTallyCells({ tally }: { tally: TotalsKeyNumberTally }) {
+  const decided = tally.w + tally.l;
+  const pct = decided === 0 ? null : tally.w / decided;
+  const small = decided > 0 && isSmallSample(decided);
   return (
     <>
       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{tallyGames(tally)}</td>
       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtTallyRecord(tally)}</td>
-      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>
+      <td
+        title={small ? `Small sample (${decided} decided bets, under ${MIN_RELIABLE_SAMPLE})` : undefined}
+        style={{
+          padding: "0.35rem 0.6rem",
+          borderBottom: "1px solid var(--hash)",
+          textAlign: "right",
+          fontWeight: 700,
+          color: winPctColor(pct),
+          opacity: small ? 0.55 : 1,
+          fontStyle: small ? "italic" : undefined,
+        }}
+      >
         {fmtTallyPct(tally)}
       </td>
     </>
@@ -109,20 +125,17 @@ function KeyNumberDrilldownRow({
   );
 }
 
-function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType<typeof useMultiSeasonGameTotalsEngine>["rows"]; hasEligibleSeason: boolean }) {
-  const study = useMemo(() => computeTotalsKeyNumberStudy(rows), [rows]);
-  const [openRow, setOpenRow] = useState<string | null>(null);
-  const toggle = (key: string) => setOpenRow((cur) => (cur === key ? null : key));
-
-  if (!hasEligibleSeason) {
-    return (
-      <p style={{ color: "var(--chalk-dim)" }}>
-        Check {KEY_NUMBER_MIN_SEASON} or a later season above to see this study — it's live-only, {KEY_NUMBER_MIN_SEASON}+, with no
-        historical backfill for earlier seasons.
-      </p>
-    );
-  }
-
+function KeyNumberStudyTables({
+  study,
+  openRow,
+  toggle,
+  prefix,
+}: {
+  study: ReturnType<typeof computeTotalsKeyNumberStudy>;
+  openRow: string | null;
+  toggle: (key: string) => void;
+  prefix: string;
+}) {
   const headerRow = (
     <tr>
       <th style={{ textAlign: "left", padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }} rowSpan={2}>
@@ -161,13 +174,6 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
 
   return (
     <div>
-      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "1.25rem" }}>
-        How the Totals model performs when my projected total and Vegas's total straddle a real scoring key number.
-        Under rows are games where my total is at or below that key number and Vegas's is above it (I project the
-        Under to cover); Over rows are the mirror image. Live-only, {KEY_NUMBER_MIN_SEASON}+ — no historical
-        backfill. "Pooled" counts a game once if it clears at least one key number in that group, not once per key
-        number it happens to clear. Click any row to see the actual games behind it.
-      </p>
 
       <div className="section-label" style={{ marginBottom: "0.5rem" }}>
         Pooled — All Key Numbers
@@ -179,12 +185,12 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
             {subHeaderRow}
           </thead>
           <tbody>
-            <tr onClick={() => toggle("pooled")} style={{ cursor: "pointer", background: openRow === "pooled" ? "var(--hash)" : undefined }}>
+            <tr onClick={() => toggle(`${prefix}pooled`)} style={{ cursor: "pointer", background: openRow === `${prefix}pooled` ? "var(--hash)" : undefined }}>
               <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", fontWeight: 700 }}>{study.pooledAll.label}</td>
               <KeyNumberTallyCells tally={study.pooledAll.under} />
               <KeyNumberTallyCells tally={study.pooledAll.over} />
             </tr>
-            <KeyNumberDrilldownRow isOpen={openRow === "pooled"} underGames={study.pooledAll.underGames} overGames={study.pooledAll.overGames} />
+            <KeyNumberDrilldownRow isOpen={openRow === `${prefix}pooled`} underGames={study.pooledAll.underGames} overGames={study.pooledAll.overGames} />
           </tbody>
         </table>
       </div>
@@ -200,7 +206,7 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
           </thead>
           <tbody>
             {study.byTier.map((t, i) => {
-              const key = `tier:${i}`;
+              const key = `${prefix}tier:${i}`;
               return (
                 <Fragment key={t.label}>
                   <tr onClick={() => toggle(key)} style={{ cursor: "pointer", background: openRow === key ? "var(--hash)" : undefined }}>
@@ -227,7 +233,7 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
           </thead>
           <tbody>
             {study.cumulativeTiers.map((t, i) => {
-              const key = `cum:${i}`;
+              const key = `${prefix}cum:${i}`;
               return (
                 <Fragment key={t.label}>
                   <tr onClick={() => toggle(key)} style={{ cursor: "pointer", background: openRow === key ? "var(--hash)" : undefined }}>
@@ -255,7 +261,7 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
           <tbody>
             {study.byKey.map((r, i) => {
               const isNewTier = i === 0 || study.byKey[i - 1].tier !== r.tier;
-              const key = `key:${r.key}`;
+              const key = `${prefix}key:${r.key}`;
               return (
                 <Fragment key={r.key}>
                   {isNewTier && (
@@ -276,6 +282,51 @@ function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function TotalsKeyNumbersSection({ rows, hasEligibleSeason }: { rows: ReturnType<typeof useMultiSeasonGameTotalsEngine>["rows"]; hasEligibleSeason: boolean }) {
+  const study = useMemo(() => computeTotalsKeyNumberStudy(rows), [rows]);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const toggle = (key: string) => setOpenRow((cur) => (cur === key ? null : key));
+  // "Filtered" twin: the same study over only the games past the 1.5 std-dev bar
+  // (the same filter Filtered Bet uses everywhere else).
+  const filteredRows = useMemo(() => buildBetRows(rows, TOTAL_BET_THRESHOLD_STDDEV).filter((b) => b.isFiltered).map((b) => b.row), [rows]);
+  const filteredStudy = useMemo(() => computeTotalsKeyNumberStudy(filteredRows), [filteredRows]);
+
+  if (!hasEligibleSeason) {
+    return (
+      <p style={{ color: "var(--chalk-dim)" }}>
+        Check {KEY_NUMBER_MIN_SEASON} or a later season above to see this study — it's live-only, {KEY_NUMBER_MIN_SEASON}+, with no
+        historical backfill for earlier seasons.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "1.25rem" }}>
+        How the Totals model performs when my projected total and Vegas's total straddle a real scoring key number.
+        Under rows are games where my total is at or below that key number and Vegas's is above it (I project the
+        Under to cover); Over rows are the mirror image. Live-only, {KEY_NUMBER_MIN_SEASON}+ — no historical
+        backfill. "Pooled" counts a game once if it clears at least one key number in that group, not once per key
+        number it happens to clear. Click any row to see the actual games behind it.
+      </p>
+      <p style={{ fontSize: "0.74rem", color: "var(--chalk-dim)", marginTop: 0, marginBottom: "1.25rem" }}>
+        Left = every game; right = Filtered only (games at least {TOTAL_BET_THRESHOLD_STDDEV} std dev off the line). Win % is colored against the 52.4% break-even at -110
+        (yellow = break-even, green above, red below); a faded, italic Win % has fewer than {MIN_RELIABLE_SAMPLE} decided bets — treat it as noise.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(520px, 1fr))", gap: "1.5rem", alignItems: "start" }}>
+        <div>
+          <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem" }}>All games</h3>
+          <KeyNumberStudyTables study={study} openRow={openRow} toggle={toggle} prefix="all:" />
+        </div>
+        <div>
+          <h3 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem" }}>Filtered only ({filteredRows.length} games)</h3>
+          <KeyNumberStudyTables study={filteredStudy} openRow={openRow} toggle={toggle} prefix="filtered:" />
+        </div>
       </div>
     </div>
   );

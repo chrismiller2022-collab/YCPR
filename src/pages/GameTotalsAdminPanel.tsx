@@ -448,13 +448,39 @@ export function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
   const segments = useMemo(() => computeGamePerformanceBreakdown(betRows), [betRows]);
   const [chartMetric, setChartMetric] = useState<AmountOffMetric>("stdDevOff");
-  const buckets = useMemo(() => computeAmountOffDistribution(betRows, chartMetric), [betRows, chartMetric]);
+  // Chart segment: every game (default), or only the bets that were Overs / Unders;
+  // "filtered only" keeps just the bets past the 1.5 std-dev bar.
+  const [chartSegment, setChartSegment] = useState<"all" | "over" | "under">("all");
+  const [filteredOnly, setFilteredOnly] = useState(false);
+  const chartRows = useMemo(
+    () =>
+      betRows.filter(
+        (b) => (chartSegment === "all" || (chartSegment === "over" ? b.call === "Over" : b.call === "Under")) && (!filteredOnly || b.isFiltered)
+      ),
+    [betRows, chartSegment, filteredOnly]
+  );
+  const buckets = useMemo(() => computeAmountOffDistribution(chartRows, chartMetric), [chartRows, chartMetric]);
 
   return (
     <div>
       <PerformanceTable segments={segments} />
-      <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>Win% by Amount Off (every bet)</h3>
-      <AmountOffMetricToggle metric={chartMetric} setMetric={setChartMetric} />
+      <h3 style={{ marginTop: "1.5rem", fontSize: "0.95rem" }}>
+        Win% by Amount Off ({chartSegment === "all" ? "every bet" : chartSegment === "over" ? "Overs only" : "Unders only"}
+        {filteredOnly ? ", filtered bets only" : ""})
+      </h3>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+        <AmountOffMetricToggle metric={chartMetric} setMetric={setChartMetric} />
+        <span style={{ width: "0.5rem" }} />
+        {(["all", "over", "under"] as const).map((seg) => (
+          <button key={seg} className={`mode-btn ${chartSegment === seg ? "mode-btn-active" : ""}`} onClick={() => setChartSegment(seg)} style={{ marginBottom: "0.5rem" }}>
+            {seg === "all" ? "All" : seg === "over" ? "Overs" : "Unders"}
+          </button>
+        ))}
+        <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.5rem", marginLeft: "0.4rem" }}>
+          <input type="checkbox" checked={filteredOnly} onChange={(e) => setFilteredOnly(e.target.checked)} />
+          Filtered only (≥ {settings.filterThresholdMultiplier} std dev)
+        </label>
+      </div>
       <AmountOffChart buckets={buckets} metric={chartMetric} />
     </div>
   );

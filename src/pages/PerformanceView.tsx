@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { PerformanceSegment, AmountOffBucket, AmountOffMetric } from "../lib/gameTotalsEngine";
+import { winPctColor, isSmallSample, BREAKEVEN_WIN_PCT, MIN_RELIABLE_SAMPLE } from "../lib/winPctColor";
 
 const CP: React.CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 
@@ -170,12 +171,12 @@ export function AmountOffChart({ buckets, metric = "stdDevOff" }: { buckets: Amo
   return (
     <div className="table-scroll">
       <svg width={width} height={height} style={{ display: "block" }}>
-        {/* 50% reference line */}
+        {/* 52.4% breakeven reference line (-110) */}
         <line
           x1={0}
           x2={width}
-          y1={chartTop + chartHeight * 0.5}
-          y2={chartTop + chartHeight * 0.5}
+          y1={chartBottom - chartHeight * BREAKEVEN_WIN_PCT}
+          y2={chartBottom - chartHeight * BREAKEVEN_WIN_PCT}
           stroke="var(--hash)"
           strokeDasharray="4,4"
         />
@@ -183,17 +184,19 @@ export function AmountOffChart({ buckets, metric = "stdDevOff" }: { buckets: Amo
           const x = i * (barWidth + gap) + gap / 2;
           const h = b.winPct != null ? b.winPct * chartHeight : 0;
           const y = chartBottom - h;
-          const barColor = b.winPct == null ? "var(--hash)" : b.winPct >= 0.5 ? "#8fd39a" : "#e07a7a";
+          const barColor = b.winPct == null ? "var(--hash)" : winPctColor(b.winPct) ?? "var(--hash)";
+          const small = isSmallSample(b.n);
           return (
-            <g key={b.label}>
-              <rect x={x} y={y} width={barWidth} height={h} fill={barColor} rx={2} />
+            <g key={b.label} opacity={small ? 0.5 : 1}>
+              <title>{`${b.label}: ${b.winPct != null ? (b.winPct * 100).toFixed(1) + "%" : "–"} (${b.wins}-${b.losses}, n=${b.n})${small ? " — small sample" : ""}`}</title>
+              <rect x={x} y={y} width={barWidth} height={h} fill={barColor} rx={2} stroke={small ? "var(--chalk-dim)" : undefined} strokeDasharray={small ? "3,2" : undefined} />
               <text x={x + barWidth / 2} y={y - 4} textAnchor="middle" fontSize="10" fill="var(--chalk)">
                 {b.winPct != null ? `${(b.winPct * 100).toFixed(0)}%` : "–"}
               </text>
               <text x={x + barWidth / 2} y={chartBottom + 14} textAnchor="middle" fontSize="9" fill="var(--chalk-dim)">
                 {b.label}
               </text>
-              <text x={x + barWidth / 2} y={chartBottom + 26} textAnchor="middle" fontSize="9" fill="var(--chalk-dim)">
+              <text x={x + barWidth / 2} y={chartBottom + 26} textAnchor="middle" fontSize="9" fill="var(--chalk-dim)" fontStyle={small ? "italic" : undefined}>
                 n={b.n}
               </text>
             </g>
@@ -204,7 +207,7 @@ export function AmountOffChart({ buckets, metric = "stdDevOff" }: { buckets: Amo
         {metric === "stdDevOff"
           ? "Win% by |std dev off| bucket (this pool's own amount-off distribution), pushes excluded."
           : "Win% by |amount off| bucket (points from Vegas), pushes excluded."}{" "}
-        Dashed line = 50%.
+        Dashed line = 52.4% (break-even at -110): bars are yellow there, green above, red below. Faded, dashed-outline bars have fewer than {MIN_RELIABLE_SAMPLE} bets — a small sample.
       </p>
     </div>
   );
