@@ -44,6 +44,13 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // Scraped directly from sagarin.com's own public page — no year param,
   // it's always just "current."
   { key: "sagarin", label: "Sagarin", source: "scraped" },
+  // Sagarin's other score-based ratings, from the same page (RATING above is his
+  // synthesis of Predictor, Golden Mean and Recent). Track-only by default: not in
+  // Consensus and no YC weight until you opt them in.
+  { key: "sagarin_pred", label: "Sagarin Predictor", source: "scraped" },
+  { key: "sagarin_gm", label: "Sagarin Golden Mean", source: "scraped" },
+  { key: "sagarin_recent", label: "Sagarin Recent", source: "scraped" },
+  { key: "sagarin_strong", label: "Sagarin Strong Recent", source: "scraped" },
   // JP+ (jpplusratings.com) — scraped from its home-page power ratings table.
   // FBS only. Starts with no YC weight and unchecked for Consensus — set both in the weights box.
   { key: "jpplus", label: "JP+", source: "scraped" },
@@ -81,10 +88,11 @@ export function consensusMemberKey(systemKey: string): string {
 }
 
 // A system with no saved membership row keeps Consensus's old behavior: in,
-// except Pi (not fully rated) and JP+ (new, FBS-only, still being evaluated),
+// except Pi (not fully rated), JP+ (new, FBS-only, still being evaluated) and Sagarin's
+// extra rating types (track-only for now),
 // which start out so adding them didn't silently move Consensus and YC.
 // Saving the weights box writes an explicit in/out value for every system.
-const NOT_IN_CONSENSUS_BY_DEFAULT = ["pi", "jpplus"];
+const NOT_IN_CONSENSUS_BY_DEFAULT = ["pi", "jpplus", "sagarin_pred", "sagarin_gm", "sagarin_recent", "sagarin_strong"];
 export function defaultInConsensus(systemKey: string): boolean {
   return !NOT_IN_CONSENSUS_BY_DEFAULT.includes(systemKey);
 }

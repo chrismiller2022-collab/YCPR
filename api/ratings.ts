@@ -172,7 +172,17 @@ export default async function handler(req: any, res: any) {
       // fixes both without over-matching, since a real team name is
       // never itself immediately followed by "<letters> =".
       const lineRe = /^\s*\d+\s+(.+?)\s+([A-Za-z]+)\s*=\s*(-?[\d.]+)\s/;
-      const parsed: { team: string; rawRating: number }[] = [];
+      // The same line also carries Sagarin's other score-based ratings after the
+      // schedule-strength and "vs top 10/30" columns:
+      //   ... =  95.26  5 0  76.44(  9)  0 0 | 2 0 |  91.30 7 | 96.12 4 | 99.58 1 | 103.50 1  SEC (A)
+      //   RATING        W L  SCHEDL(RANK) top10  top30 PREDICTOR GOLDEN_MEAN RECENT STRONG_RECENT
+      // Each is "<rating> <rank>" separated by pipes. RATING (the overall synthesis)
+      // is the existing "sagarin" system; the other four are tracked as their own
+      // systems. A line that matches the base pattern but not this extended one
+      // still yields RATING, so a layout tweak can't take the main number down with it.
+      const extRe =
+        /^\s*\d+\s+.+?\s+[A-Za-z]+\s*=\s*-?[\d.]+\s+\d+\s+\d+\s+[\d.]+\(\s*\d+\)\s+\d+\s+\d+\s*\|\s*\d+\s+\d+\s*\|\s*(-?[\d.]+)\s+\d+\s*\|\s*(-?[\d.]+)\s+\d+\s*\|\s*(-?[\d.]+)\s+\d+\s*\|\s*(-?[\d.]+)\s+\d+/;
+      const parsed: { team: string; rawRating: number; predictor?: number; goldenMean?: number; recent?: number; strongRecent?: number }[] = [];
       for (const line of text.split("\n")) {
         const m = lineRe.exec(line);
         if (!m) continue;
@@ -182,11 +192,34 @@ export default async function handler(req: any, res: any) {
         const team = m[1].replace(/\([A-Za-z]+\)\s*$/, "").trim();
         const rating = parseFloat(m[3]);
         if (!team || Number.isNaN(rating)) continue;
-        parsed.push({ team, rawRating: rating });
+        const e = extRe.exec(line);
+        parsed.push({
+          team,
+          rawRating: rating,
+          ...(e ? { predictor: parseFloat(e[1]), goldenMean: parseFloat(e[2]), recent: parseFloat(e[3]), strongRecent: parseFloat(e[4]) } : {}),
+        });
       }
       if (parsed.length === 0) throw new Error("Parsed 0 rows — sagarin.com's page layout may have changed");
-      const normalized = minMaxNormalize(parsed, (r) => r.rawRating, true);
-      const rows = parsed.map((r, i) => ({ team: r.team, values: { sagarin: normalized[i] } }));
+      // Each rating is min-max normalized on its own (best -> -30, worst -> +55), same as RATING always was.
+      const columns: { key: string; pick: (r: (typeof parsed)[number]) => number | undefined }[] = [
+        { key: "sagarin", pick: (r) => r.rawRating },
+        { key: "sagarin_pred", pick: (r) => r.predictor },
+        { key: "sagarin_gm", pick: (r) => r.goldenMean },
+        { key: "sagarin_recent", pick: (r) => r.recent },
+        { key: "sagarin_strong", pick: (r) => r.strongRecent },
+      ];
+      const valuesByTeam = new Map<string, Record<string, number>>();
+      for (const col of columns) {
+        const withValue = parsed.filter((r) => col.pick(r) != null && !Number.isNaN(col.pick(r) as number));
+        if (withValue.length === 0) continue;
+        const normalized = minMaxNormalize(withValue, (r) => col.pick(r) as number, true);
+        withValue.forEach((r, i) => {
+          const entry = valuesByTeam.get(r.team) ?? {};
+          entry[col.key] = normalized[i]; // a team listed twice keeps its last value, like before
+          valuesByTeam.set(r.team, entry);
+        });
+      }
+      const rows = Array.from(valuesByTeam.entries()).map(([team, values]) => ({ team, values }));
       res.status(200).json({ ok: true, rows });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Sagarin fetch failed" });
