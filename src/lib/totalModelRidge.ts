@@ -111,26 +111,102 @@ function seasonAdjust(value: number | null, index: number, stats: { mean: number
   return MEAN[index] + z * SCALE[index];
 }
 
-export function predictGameTotalRidge(input: RidgeTotalModelInput): number {
+// Calibration constant added to every projection. After re-standardizing, the 2026 backtest
+// (271 finished FBS games) had the model +1.4 over the Vegas close while actual games
+// landed only +0.5 over, so every unlocked game leaned Over. Subtracting 2.0 puts the
+// average projection ~0.6 under Vegas (a slight Under lean) and, measured on the same
+// games, did not hurt accuracy (MAE vs actual 10.80 -> 10.62). It is a plain shift of the
+// output — rank order of games and the size of every disagreement between games is
+// unchanged. Set to 0 to remove. Re-check it with the bias backtest after a few more weeks.
+export const TOTAL_BIAS_OFFSET = -2.0;
+
+export const FEATURE_LABELS: Record<(typeof FEATURE_ORDER)[number], string> = {
+  home_off_ppa: "Home offense PPA",
+  home_def_ppa: "Home defense PPA allowed",
+  home_off_expl: "Home offense explosiveness",
+  home_def_expl: "Home defense explosiveness allowed",
+  away_off_ppa: "Away offense PPA",
+  away_def_ppa: "Away defense PPA allowed",
+  away_off_expl: "Away offense explosiveness",
+  away_def_expl: "Away defense explosiveness allowed",
+  home_flag: "Home flag (1 home / 0.5 neutral)",
+  home_rest_days: "Home rest days",
+  away_rest_days: "Away rest days",
+  market_total: "Market total (Vegas)",
+};
+
+export interface RidgeFeatureStep {
+  key: (typeof FEATURE_ORDER)[number];
+  label: string;
+  given: number | null; // what the caller supplied (null = missing, fell back to the training mean)
+  used: number; // after the season re-standardization / clip / fallback — what the regression sees
+  clipped: boolean;
+  trainingMean: number;
+  trainingScale: number;
+  zScore: number; // (used - trainingMean) / trainingScale
+  coef: number;
+  contribution: number; // zScore * coef, in points
+}
+
+export interface RidgeTotalBreakdown {
+  intercept: number;
+  steps: RidgeFeatureStep[];
+  rawTotal: number; // intercept + sum of contributions
+  biasOffset: number;
+  total: number; // rawTotal + biasOffset — same number predictGameTotalRidge returns
+}
+
+// Same math as predictGameTotalRidge, but keeps every intermediate number so the
+// Methodology tab and the hypothetical matchup tool can show the work.
+export function explainGameTotalRidge(input: RidgeTotalModelInput): RidgeTotalBreakdown {
   const s = input.seasonStats;
-  const raw = [
-    seasonAdjust(input.homeOffPpa, 0, s?.offPpa),
-    seasonAdjust(input.homeDefPpa, 1, s?.defPpa),
-    seasonAdjust(input.homeOffExplosiveness, 2, s?.offExplosiveness),
-    seasonAdjust(input.homeDefExplosiveness, 3, s?.defExplosiveness),
-    seasonAdjust(input.awayOffPpa, 4, s?.offPpa),
-    seasonAdjust(input.awayDefPpa, 5, s?.defPpa),
-    seasonAdjust(input.awayOffExplosiveness, 6, s?.offExplosiveness),
-    seasonAdjust(input.awayDefExplosiveness, 7, s?.defExplosiveness),
+  const given: (number | null)[] = [
+    input.homeOffPpa,
+    input.homeDefPpa,
+    input.homeOffExplosiveness,
+    input.homeDefExplosiveness,
+    input.awayOffPpa,
+    input.awayDefPpa,
+    input.awayOffExplosiveness,
+    input.awayDefExplosiveness,
     input.homeFlag,
     input.homeRestDays,
     input.awayRestDays,
-    orNeutral(input.marketTotal, 11),
+    input.marketTotal,
   ];
-
-  let z = INTERCEPT;
+  const statKeys = ["offPpa", "defPpa", "offExplosiveness", "defExplosiveness", "offPpa", "defPpa", "offExplosiveness", "defExplosiveness"] as const;
+  const steps: RidgeFeatureStep[] = [];
+  let rawTotal = INTERCEPT;
   for (let i = 0; i < FEATURE_ORDER.length; i++) {
-    z += ((raw[i] - MEAN[i]) / SCALE[i]) * COEF[i];
+    const g = given[i];
+    let used: number;
+    let clipped = false;
+    if (i < 8) {
+      used = seasonAdjust(g, i, s?.[statKeys[i]]);
+      const st = s?.[statKeys[i]];
+      if (st && st.sd > 0 && g != null && !Number.isNaN(g)) clipped = Math.abs((g - st.mean) / st.sd) > Z_CLIP;
+    } else {
+      used = orNeutral(g, i);
+    }
+    const zScore = (used - MEAN[i]) / SCALE[i];
+    const contribution = zScore * COEF[i];
+    rawTotal += contribution;
+    steps.push({
+      key: FEATURE_ORDER[i],
+      label: FEATURE_LABELS[FEATURE_ORDER[i]],
+      given: g == null || Number.isNaN(g) ? null : g,
+      used,
+      clipped,
+      trainingMean: MEAN[i],
+      trainingScale: SCALE[i],
+      zScore,
+      coef: COEF[i],
+      contribution,
+    });
   }
-  return z;
+  return { intercept: INTERCEPT, steps, rawTotal, biasOffset: TOTAL_BIAS_OFFSET, total: rawTotal + TOTAL_BIAS_OFFSET };
+}
+
+export function predictGameTotalRidge(input: RidgeTotalModelInput): number {
+  return explainGameTotalRidge(input).total;
 }

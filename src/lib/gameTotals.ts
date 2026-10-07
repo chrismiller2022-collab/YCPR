@@ -34,7 +34,7 @@
 //      average, admin-weighted average, and versions regressed toward /
 //      averaged with the market's total.
 
-import { predictGameTotalRidge } from "./totalModelRidge";
+import { predictGameTotalRidge, type RidgeTotalModelInput } from "./totalModelRidge";
 
 export interface TeamSeasonInputs {
   team: string;
@@ -523,22 +523,16 @@ export interface GameProjection {
   projectedTotal: number;
 }
 
-export function computeGameProjection(
+// Everything the Ridge model reads for one game, in one place — shared by the live
+// projection and the Methodology / hypothetical matchup views so they can't drift apart.
+export function buildRidgeTotalInput(
   home: TeamSeasonInputs,
   away: TeamSeasonInputs,
   league: LeagueAverages,
   odds: GameOdds,
   context: { homeFlag: number; homeRestDays: number; awayRestDays: number }
-): GameProjection {
-  // homeResults/awayResults are the old 6-system formula breakdown — kept
-  // around ONLY so the Raw Data / Efficiency Inputs admin tabs still have
-  // something to show. They no longer feed the actual prediction; that's
-  // now the Ridge model below. Worth removing those tabs in a fast-follow
-  // rather than leaving legacy numbers on display indefinitely.
-  const homeResults = computeSystemResults(home, away, league);
-  const awayResults = computeSystemResults(away, home, league);
-
-  const projectedTotal = predictGameTotalRidge({
+): RidgeTotalModelInput {
+  return {
     homeOffPpa: home.offPpa,
     homeDefPpa: home.defPpa,
     homeOffExplosiveness: home.offExplosiveness,
@@ -560,7 +554,25 @@ export function computeGameProjection(
       offExplosiveness: { mean: league.offExplosiveness, sd: league.offExplosivenessSd },
       defExplosiveness: { mean: league.defExplosivenessAllowed, sd: league.defExplosivenessSd },
     },
-  });
+  };
+}
+
+export function computeGameProjection(
+  home: TeamSeasonInputs,
+  away: TeamSeasonInputs,
+  league: LeagueAverages,
+  odds: GameOdds,
+  context: { homeFlag: number; homeRestDays: number; awayRestDays: number }
+): GameProjection {
+  // homeResults/awayResults are the old 6-system formula breakdown — kept
+  // around ONLY so the Raw Data / Efficiency Inputs admin tabs still have
+  // something to show. They no longer feed the actual prediction; that's
+  // now the Ridge model below. Worth removing those tabs in a fast-follow
+  // rather than leaving legacy numbers on display indefinitely.
+  const homeResults = computeSystemResults(home, away, league);
+  const awayResults = computeSystemResults(away, home, league);
+
+  const projectedTotal = predictGameTotalRidge(buildRidgeTotalInput(home, away, league, odds, context));
 
   return { homeResults, awayResults, projectedTotal };
 }

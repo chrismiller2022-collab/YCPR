@@ -29,17 +29,20 @@ import { WeekSeasonToggle, filterByViewMode, PerformanceTable, AmountOffChart, A
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { TotalsMethodologyTab, HypotheticalTotalTab } from "../components/TotalsMethodologyTab";
 
 const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 // Team Stats / Games Ahead used to be bolted onto Admin Matchups' tab
 // bar instead of living here — moved back per Chris, since this is the
 // Totals admin page and Matchups is meant for the working views that
 // share its own filter bar, not these one-off drilldowns.
-const TABS = ["teamstats", "gamesahead"] as const;
+const TABS = ["teamstats", "gamesahead", "hypothetical", "methodology"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   teamstats: "Team Stats",
   gamesahead: "Games Ahead",
+  hypothetical: "Hypothetical Matchup",
+  methodology: "Methodology",
 };
 
 const LEGACY_TABS = ["raw", "inputs", "composites"] as const;
@@ -1517,6 +1520,8 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
       </div>
       {tab === "teamstats" && <TeamStatsDrilldownTab rows={rows} season={season} />}
       {tab === "gamesahead" && <GamesAheadTab rows={rows} season={season} week={week} />}
+      {tab === "hypothetical" && <HypotheticalTotalTab season={season} />}
+      {tab === "methodology" && <TotalsMethodologyTab rows={rows} season={season} />}
 
       <ShowMore rows={rows} />
 
