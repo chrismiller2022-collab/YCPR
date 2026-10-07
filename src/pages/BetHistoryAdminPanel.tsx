@@ -5,12 +5,15 @@ import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
+import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
+import { TEAMS_BY_NAME } from "../data/teams";
 import {
   aggregatePlain,
   aggregateCustom,
   computeCustomGrading,
   breakdownByConference,
   breakdownByTeam,
+  modelRecordBy,
   filterRecords,
   winPct,
   computeErrorStatsFromBetHistory,
@@ -413,13 +416,24 @@ function StatsBlock({
   );
 }
 
-function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakdown: BreakdownTriple; maxHeight?: number }) {
+function BreakdownTable({
+  title,
+  breakdown,
+  maxHeight,
+  modelRecord,
+}: {
+  title: string;
+  breakdown: BreakdownTriple;
+  maxHeight?: number;
+  // The model's record on every game these teams played (not just ones bet) — see modelRecordBy.
+  modelRecord?: Map<string, RecordTally>;
+}) {
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<"group" | "everyBet" | "filteredBet" | "weightedFilteredBet">("group");
+  const [sortKey, setSortKey] = useState<"group" | "everyBet" | "filteredBet" | "weightedFilteredBet" | "modelRecord">("group");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const groups = Array.from(
-    new Set([...breakdown.everyBet.keys(), ...breakdown.filteredBet.keys(), ...breakdown.weightedFilteredBet.keys()])
+    new Set([...breakdown.everyBet.keys(), ...breakdown.filteredBet.keys(), ...breakdown.weightedFilteredBet.keys(), ...(modelRecord ? modelRecord.keys() : [])])
   );
 
   const empty = { w: 0, l: 0, push: 0 };
@@ -434,8 +448,14 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
     }
   }
 
-  const mapFor = (key: "everyBet" | "filteredBet" | "weightedFilteredBet") =>
-    key === "everyBet" ? breakdown.everyBet : key === "filteredBet" ? breakdown.filteredBet : breakdown.weightedFilteredBet;
+  const mapFor = (key: "everyBet" | "filteredBet" | "weightedFilteredBet" | "modelRecord") =>
+    key === "everyBet"
+      ? breakdown.everyBet
+      : key === "filteredBet"
+      ? breakdown.filteredBet
+      : key === "modelRecord"
+      ? modelRecord ?? new Map<string, RecordTally>()
+      : breakdown.weightedFilteredBet;
 
   const filteredGroups = groups
     .filter((g) => !search.trim() || g.toLowerCase().includes(search.trim().toLowerCase()))
@@ -497,6 +517,16 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
                   onClick={handleSort}
                   align="right"
                 />
+                {modelRecord && (
+                  <SortHeader
+                    label="Model record, all games (Win %)"
+                    sortKey="modelRecord"
+                    active={sortKey === "modelRecord"}
+                    dir={sortDir}
+                    onClick={handleSort}
+                    align="right"
+                  />
+                )}
               </tr>
             </thead>
             <tbody>
@@ -504,6 +534,7 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
                 const eb = breakdown.everyBet.get(g) ?? empty;
                 const fb = breakdown.filteredBet.get(g) ?? empty;
                 const wfb = breakdown.weightedFilteredBet.get(g) ?? empty;
+                const mr = modelRecord?.get(g) ?? empty;
                 return (
                   <tr key={g}>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
@@ -530,6 +561,17 @@ function BreakdownTable({ title, breakdown, maxHeight }: { title: string; breakd
                         <span style={{ color: "var(--chalk-dim)" }}>–</span>
                       )}
                     </td>
+                    {modelRecord && (
+                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                        {mr.w + mr.l + mr.push > 0 ? (
+                          <>
+                            {fmtRecord(mr)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(mr)})</span>
+                          </>
+                        ) : (
+                          <span style={{ color: "var(--chalk-dim)" }}>–</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -1318,13 +1360,17 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
     [seasonRatings0.byWeek, seasonRatings1.byWeek, seasonRatings2.byWeek]
   );
 
+  // Frozen pregame projections for the live season — locked games are graded on
+  // their locked spread, not re-projected from ratings.
+  const { locks: liveLocks } = useGameProjectionLocks(currentSeason, weekNumbersBySeason[currentSeason] ?? []);
+
   const liveRecords = useMemo(() => {
     const all: BetHistoryRecord[] = [];
     for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode));
+      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode, liveLocks));
     }
     return all;
-  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
+  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode, liveLocks]);
 
   // The uploaded 2024/25 history only ever carried the closing line, so
   // under "Opening line" it has nothing to grade against and is left out
@@ -1408,6 +1454,10 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const plainByTeam = useMemo(() => breakdownByTeam(filtered, "plain"), [filtered]);
   const customByConf = useMemo(() => breakdownByConference(filtered, "custom", params), [filtered, params]);
   const customByTeam = useMemo(() => breakdownByTeam(filtered, "custom", params), [filtered, params]);
+  const plainModelByTeam = useMemo(() => modelRecordBy(filtered, "plain", undefined, (t) => t), [filtered]);
+  const plainModelByConf = useMemo(() => modelRecordBy(filtered, "plain", undefined, (t) => TEAMS_BY_NAME[t]?.conf ?? null), [filtered]);
+  const customModelByTeam = useMemo(() => modelRecordBy(filtered, "custom", params, (t) => t), [filtered, params]);
+  const customModelByConf = useMemo(() => modelRecordBy(filtered, "custom", params, (t) => TEAMS_BY_NAME[t]?.conf ?? null), [filtered, params]);
 
   const weeksAvailable = Array.from(new Set(filtered.map((r) => r.week))).sort((a, b) => a - b);
 
@@ -1517,8 +1567,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
           <NwfbSigmaMatrixSection points={amountOffPoints} />
-          <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} />
-          <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} />
+          <BreakdownTable title="Breakdown by Conference" breakdown={plainByConf} modelRecord={plainModelByConf} />
+          <BreakdownTable title="Breakdown by Team" breakdown={plainByTeam} maxHeight={500} modelRecord={plainModelByTeam} />
         </>
       ) : tab === "wfb" ? (
         <WfbMatrixSection points={wfbPoints} params={params} />
@@ -1652,8 +1702,8 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
           <ErrorStatsBlock errorStats={errorStats} />
           <AmountOffMatrixSection points={amountOffPoints} />
           <NwfbSigmaMatrixSection points={amountOffPoints} />
-          <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} />
-          <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} />
+          <BreakdownTable title="Breakdown by Conference" breakdown={customByConf} modelRecord={customModelByConf} />
+          <BreakdownTable title="Breakdown by Team" breakdown={customByTeam} maxHeight={500} modelRecord={customModelByTeam} />
         </>
       )}
     </div>

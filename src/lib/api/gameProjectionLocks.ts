@@ -15,14 +15,18 @@ export interface GameProjectionLockRow {
  */
 export async function fetchGameProjectionLocks(season: number, weekNumbers: number[]): Promise<Record<string, GameProjectionLockRow>> {
   if (weekNumbers.length === 0) return {};
-  const { data, error } = await supabase
-    .from("game_projection_locks")
-    .select("game_id, my_away_spread, my_total, my_away_win_pct")
-    .eq("season", season)
-    .in("week", weekNumbers);
-  if (error) throw error;
+  // Paginated: a season of locks passes PostgREST's 1,000-row cap partway through the year.
+  const data = await fetchAllRows<GameProjectionLockRow>((from, to) =>
+    supabase
+      .from("game_projection_locks")
+      .select("game_id, my_away_spread, my_total, my_away_win_pct")
+      .eq("season", season)
+      .in("week", weekNumbers)
+      .order("game_id")
+      .range(from, to)
+  );
   const map: Record<string, GameProjectionLockRow> = {};
-  for (const row of data ?? []) map[row.game_id] = row;
+  for (const row of data) map[row.game_id] = row;
   return map;
 }
 

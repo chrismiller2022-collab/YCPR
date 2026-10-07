@@ -375,7 +375,13 @@ export function buildLiveBetHistoryRecords(
   // Only meaningful for live seasons (2026+) — the static BET_HISTORY
   // upload only ever carried the closing line, so "open" here has no
   // effect on historical seasons regardless of what the caller passes.
-  lineMode: LineMode = "close"
+  lineMode: LineMode = "close",
+  // Frozen pregame projections (game_projection_locks, keyed by game id). A locked
+  // game is graded on its locked away-perspective spread instead of being
+  // re-projected from ratings, so this page can never disagree with what was
+  // actually posted before kickoff (the Week 1 incident). Unlocked games fall back
+  // to the week's saved ratings, as before.
+  locksByGameId?: Record<string, { my_away_spread: number | null } | undefined>
 ): BetHistoryRecord[] {
   const records: BetHistoryRecord[] = [];
 
@@ -393,12 +399,17 @@ export function buildLiveBetHistoryRecords(
     // "performance" drifted away from what Admin Matchups' bet filter
     // shows for the exact same games — the discrepancy Chris flagged.
     const weekRatings = ratingsByWeek[g.week] ?? {};
-    const homeRating = weekRatings[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
-    const awayRating = weekRatings[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
-    if (homeRating == null || awayRating == null) continue;
-
-    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
-    const awayPerspectivePrediction = awayRating - homeRating + hfa;
+    const lockedAwaySpread = locksByGameId?.[g.id]?.my_away_spread ?? null;
+    let awayPerspectivePrediction: number;
+    if (lockedAwaySpread != null) {
+      awayPerspectivePrediction = lockedAwaySpread;
+    } else {
+      const homeRating = weekRatings[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
+      const awayRating = weekRatings[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
+      if (homeRating == null || awayRating == null) continue;
+      const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
+      awayPerspectivePrediction = awayRating - homeRating + hfa;
+    }
 
     const base: BetHistoryRecord = {
       season: g.season,
@@ -740,6 +751,34 @@ export function breakdownByConference(
 ): BreakdownTriple {
   const picksFn = mode === "plain" ? picksFromPlain : (r: BetHistoryRecord) => picksFromCustom(r, params!);
   return breakdownGeneric(records, picksFn, (team) => TEAMS_BY_NAME[team]?.conf ?? null);
+}
+
+/**
+ * "Was I right on their games" — the model's record on EVERY game a team played,
+ * not just the ones it was bet on. The model always has a cover call on a game
+ * (everyBet); if that call was right it's a win for BOTH teams (it called the
+ * cover side, or the non-cover side, correctly), if it was wrong it's a loss for
+ * both, a push is a push for both. Each game counts once per team.
+ */
+export function modelRecordBy(
+  records: BetHistoryRecord[],
+  mode: "plain" | "custom",
+  params: CustomParams | undefined,
+  keyFor: (team: string) => string | null
+): Map<string, RecordTally> {
+  const out = new Map<string, RecordTally>();
+  for (const r of records) {
+    const result = mode === "plain" ? r.everyBetResult : computeCustomGrading(r, params!).everyBetResult;
+    if (result == null) continue;
+    for (const team of [r.homeTeam, r.awayTeam]) {
+      const key = keyFor(team);
+      if (key == null) continue;
+      const t = out.get(key) ?? emptyTally();
+      tallyAdd(t, result);
+      out.set(key, t);
+    }
+  }
+  return out;
 }
 
 export function breakdownByTeam(records: BetHistoryRecord[], mode: "plain" | "custom", params?: CustomParams): BreakdownTriple {
