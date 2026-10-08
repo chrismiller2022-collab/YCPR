@@ -10,6 +10,7 @@ import { RATING_SYSTEMS } from "../lib/ratingSystems";
 import { computeDomain, SpreadChartHeader, SpreadChartRow } from "./SystemSpreadChart";
 import type { GameWithLines } from "../lib/api/gamesLines";
 import { altSpreadRows, altTotalRows, buildPeriodDistribution, gameOutcomes, type AltRow } from "../lib/periodSim";
+import TotalsModelBlock from "./TotalsModelBlock";
 
 function fmtRecord(su: { w: number; l: number }): string {
   return `${su.w}-${su.l}`;
@@ -808,6 +809,7 @@ export default function MatchupHandicapPopup({
             <CompletedGamesSection hc={hc.home} />
             <QuadrantNote quadrant={hc.quadrant} />
             {hc.altInputs && <AltLinesSection awayTeam={awayTeam} homeTeam={homeTeam} inputs={hc.altInputs} />}
+            <TotalsModelBlock season={season} week={week} awayTeam={awayTeam} homeTeam={homeTeam} />
           </>
         )}
 

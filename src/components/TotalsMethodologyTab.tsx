@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { fetchTeamSeasonInputs } from "../lib/api/gameTotalsData";
-import { buildRidgeTotalInput, computeLeagueAverages, resolveGameOdds, type LeagueAverages, type TeamSeasonInputs } from "../lib/gameTotals";
-import { TOTAL_BIAS_OFFSET, Z_CLIP, explainGameTotalRidge, type RidgeTotalBreakdown } from "../lib/totalModelRidge";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { buildRidgeTotalInput, resolveGameOdds } from "../lib/gameTotals";
+import { TOTAL_BIAS_OFFSET, Z_CLIP, explainGameTotalRidge } from "../lib/totalModelRidge";
 import { TOTAL_BET_THRESHOLD_STDDEV, type EnrichedGameRow } from "../lib/gameTotalsEngine";
+import { computeTotalBreakdown, useSeasonPool } from "../lib/totalBreakdown";
+import { BreakdownTable, LeaguePoolNote, TeamStatsLine } from "./TotalBreakdownView";
 
 const CELL: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
 const NUM: CSSProperties = { ...CELL, textAlign: "right", fontVariantNumeric: "tabular-nums" };
@@ -14,112 +15,6 @@ function f(v: number | null | undefined, d = 2): string {
 }
 function sgn(v: number, d = 2): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(d)}`;
-}
-
-function useSeasonPool(season: number) {
-  const [teamInputs, setTeamInputs] = useState<Record<string, TeamSeasonInputs>>({});
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchTeamSeasonInputs(season)
-      .then((m) => {
-        if (!cancelled) setTeamInputs(m);
-      })
-      .catch(() => {
-        if (!cancelled) setTeamInputs({});
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [season]);
-  const league: LeagueAverages | null = useMemo(() => {
-    const values = Object.values(teamInputs);
-    return values.length > 0 ? computeLeagueAverages(values) : null;
-  }, [teamInputs]);
-  return { teamInputs, league, loading };
-}
-
-// Step-by-step table: every input the regression sees, how it was converted, and its points.
-function BreakdownTable({ b, withStats }: { b: RidgeTotalBreakdown; withStats: boolean }) {
-  return (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th style={CELL}>Input</th>
-            <th style={NUM}>Value given</th>
-            <th style={NUM}>Value used{withStats ? " (re-standardized)" : ""}</th>
-            <th style={NUM}>Training mean</th>
-            <th style={NUM}>Training SD</th>
-            <th style={NUM}>z-score</th>
-            <th style={NUM}>Coefficient (pts / SD)</th>
-            <th style={NUM}>Points</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style={CELL}>Intercept</td>
-            <td style={NUM} colSpan={6} />
-            <td style={NUM}>{f(b.intercept)}</td>
-          </tr>
-          {b.steps.map((s) => (
-            <tr key={s.key}>
-              <td style={CELL}>
-                {s.label}
-                {s.given == null && <span style={{ color: "var(--chalk-dim)" }}> (missing → training mean)</span>}
-                {s.clipped && <span style={{ color: "var(--chalk-dim)" }}> (clipped at ±{Z_CLIP} SD)</span>}
-              </td>
-              <td style={NUM}>{f(s.given, s.key.includes("ppa") || s.key.includes("expl") ? 3 : 2)}</td>
-              <td style={NUM}>{f(s.used, s.key.includes("ppa") || s.key.includes("expl") ? 3 : 2)}</td>
-              <td style={NUM}>{f(s.trainingMean, 3)}</td>
-              <td style={NUM}>{f(s.trainingScale, 3)}</td>
-              <td style={NUM}>{sgn(s.zScore)}</td>
-              <td style={NUM}>{sgn(s.coef)}</td>
-              <td style={NUM}>{sgn(s.contribution)}</td>
-            </tr>
-          ))}
-          <tr>
-            <td style={{ ...CELL, fontWeight: 600 }}>Raw model total (intercept + all points)</td>
-            <td style={NUM} colSpan={6} />
-            <td style={{ ...NUM, fontWeight: 600 }}>{f(b.rawTotal)}</td>
-          </tr>
-          <tr>
-            <td style={CELL}>Calibration offset (slight Under lean)</td>
-            <td style={NUM} colSpan={6} />
-            <td style={NUM}>{sgn(b.biasOffset)}</td>
-          </tr>
-          <tr>
-            <td style={{ ...CELL, fontWeight: 700 }}>Projected total</td>
-            <td style={NUM} colSpan={6} />
-            <td style={{ ...NUM, fontWeight: 700 }}>{f(b.total)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function TeamStatsLine({ label, t }: { label: string; t: TeamSeasonInputs }) {
-  return (
-    <span style={{ marginRight: "1.2rem" }}>
-      <strong>{label}</strong> ({t.games} G): off PPA {f(t.offPpa, 3)}, def PPA {f(t.defPpa, 3)}, off expl {f(t.offExplosiveness, 3)}, def expl{" "}
-      {f(t.defExplosiveness, 3)}
-    </span>
-  );
-}
-
-function LeaguePoolNote({ league }: { league: LeagueAverages }) {
-  return (
-    <p style={{ ...P, color: "var(--chalk-dim)" }}>
-      This season's pool (used for re-standardizing): off PPA mean {f(league.offPpa, 3)} / SD {f(league.offPpaSd, 3)}; def PPA mean{" "}
-      {f(league.defPpaAllowed, 3)} / SD {f(league.defPpaSd, 3)}; off explosiveness mean {f(league.offExplosiveness, 3)} / SD{" "}
-      {f(league.offExplosivenessSd, 3)}; def explosiveness mean {f(league.defExplosivenessAllowed, 3)} / SD {f(league.defExplosivenessSd, 3)}.
-    </p>
-  );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -336,20 +231,16 @@ export function HypotheticalTotalTab({ season }: { season: number }) {
   const [awayRest, setAwayRest] = useState("7");
 
   const result = useMemo(() => {
-    const home = teamInputs[homeTeam];
-    const away = teamInputs[awayTeam];
-    if (!league || !home || !away || homeTeam === awayTeam) return null;
     const m = market.trim() === "" ? null : Number(market);
-    const odds = resolveGameOdds(m != null && Number.isFinite(m) ? m : null, null);
-    const ctx = {
-      homeFlag: site === "neutral" ? 0.5 : 1.0,
-      homeRestDays: Number(homeRest) || 7,
-      awayRestDays: Number(awayRest) || 7,
-    };
-    const breakdown = explainGameTotalRidge(buildRidgeTotalInput(home, away, league, odds, ctx));
-    // Same model with the market input left blank — what the stats alone say.
-    const noMarket = explainGameTotalRidge(buildRidgeTotalInput(home, away, league, resolveGameOdds(null, null), ctx));
-    return { home, away, breakdown, noMarket, marketTotal: odds.vegasTotal };
+    const r = computeTotalBreakdown(teamInputs, league, {
+      home: homeTeam,
+      away: awayTeam,
+      marketTotal: m != null && Number.isFinite(m) ? m : null,
+      neutral: site === "neutral",
+      homeRest: Number(homeRest) || 7,
+      awayRest: Number(awayRest) || 7,
+    });
+    return r ? { ...r, marketTotal: market.trim() === "" || !Number.isFinite(Number(market)) ? null : Number(market) } : null;
   }, [teamInputs, league, homeTeam, awayTeam, site, market, homeRest, awayRest]);
 
   const sel: CSSProperties = { marginRight: "0.6rem", marginBottom: "0.6rem" };

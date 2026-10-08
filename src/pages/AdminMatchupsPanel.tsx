@@ -14,6 +14,7 @@ import { TotalsTab, TeamTotalsTab, filterRowsByDivision } from "./GameTotalsAdmi
 import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import MatchupTotalsPopup from "../components/MatchupTotalsPopup";
 import { fetchPlacedBets, type BetType } from "../lib/api/placedBets";
 
 // Deliberately dense — this table is for actually placing bets, not for
@@ -843,6 +844,8 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [betModalContext, setBetModalContext] = useState<PlaceBetContext | null>(null);
   const [betSavedMessage, setBetSavedMessage] = useState<string | null>(null);
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string; week: number } | null>(null);
+  // Totals / Team Totals rows open this: how the totals model got its projection, with the stats behind it.
+  const [totalsGame, setTotalsGame] = useState<{ awayTeam: string; homeTeam: string; week: number } | null>(null);
 
   // Placed-bet awareness for the "Bet already / Not bet yet" filter —
   // loaded once per season (all weeks), independent of the week/matchup
@@ -1326,7 +1329,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             return (
               <>
                 <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />
-                <TotalsTab rows={rows} settings={totalsSettings} poolRows={totalsPoolRows} />
+                <TotalsTab rows={rows} settings={totalsSettings} poolRows={totalsPoolRows} onOpenTotals={setTotalsGame} />
               </>
             );
           })()}
@@ -1344,7 +1347,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             return (
               <>
                 <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />
-                <TeamTotalsTab rows={rows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} poolRows={totalsPoolRows} />
+                <TeamTotalsTab rows={rows} settings={totalsSettings} actualVegasTTByKey={actualVegasTTByKey} poolRows={totalsPoolRows} onOpenTotals={setTotalsGame} />
               </>
             );
           })()}
@@ -1374,6 +1377,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         <div style={{ position: "fixed", bottom: 20, right: 20, background: "#8fd39a", color: "#1a1b2e", padding: "0.6rem 1rem", borderRadius: 8, fontWeight: 700, zIndex: 1001 }}>
           {betSavedMessage}
         </div>
+      )}
+      {totalsGame && (
+        <MatchupTotalsPopup season={season} week={totalsGame.week} awayTeam={totalsGame.awayTeam} homeTeam={totalsGame.homeTeam} onClose={() => setTotalsGame(null)} />
       )}
       {handicapGame && (
         <MatchupHandicapPopup

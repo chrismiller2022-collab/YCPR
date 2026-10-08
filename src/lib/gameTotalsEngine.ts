@@ -66,7 +66,7 @@ function normalizeWeights(weights: unknown): typeof DEFAULT_SYSTEM_WEIGHTS {
 // for a team's first tracked game of the season (no prior game to diff
 // against). Keyed by "<team>|<gameId>" since a team's rest before Game A
 // isn't the same number as its rest before Game B.
-function computeRestDaysByGame(games: GameForTotals[]): Map<string, number> {
+export function computeRestDaysByGame(games: GameForTotals[]): Map<string, number> {
   const byTeam = new Map<string, GameForTotals[]>();
   for (const g of games) {
     if (!g.startDate) continue;

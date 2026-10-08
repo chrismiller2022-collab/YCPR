@@ -685,9 +685,12 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
     // three (game total, away team total, home team total) actually
     // qualify as a real bet.
     const currentTotalsRow = totalsRows.find((r) => r.game.week === week && r.game.awayTeam === awayTeam && r.game.homeTeam === homeTeam);
-    const myTotal = currentTotalsRow?.projection?.projectedTotal ?? null;
+    // A frozen game keeps its locked total and spread (game_projection_locks), same as every other totals view,
+    // instead of whatever the model would say today.
+    const myTotal = currentLock?.my_total ?? currentTotalsRow?.projection?.projectedTotal ?? null;
     const vegasTotal = currentTotalsRow?.odds.vegasTotal ?? null;
-    const mySplit = splitTeamTotal(myTotal, currentTotalsRow?.myHomeSpread ?? null);
+    const myHomeSpreadForTotals = currentLock?.my_away_spread != null ? -currentLock.my_away_spread : currentTotalsRow?.myHomeSpread ?? null;
+    const mySplit = splitTeamTotal(myTotal, myHomeSpreadForTotals);
     const vegasSplit = splitTeamTotal(vegasTotal, currentTotalsRow?.game.homeSpread ?? null);
     const totalAmountOff = myTotal != null && vegasTotal != null ? myTotal - vegasTotal : null;
     const totalCall: "Over" | "Under" | null = totalAmountOff == null || totalAmountOff === 0 ? null : totalAmountOff > 0 ? "Over" : "Under";

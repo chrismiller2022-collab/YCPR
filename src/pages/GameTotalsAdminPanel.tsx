@@ -346,7 +346,27 @@ function sortValue(b: BetRow, key: SortKey, absMode: boolean): number | string {
 
 const GRADE_COLOR: Record<string, string> = { win: "#8fd39a", loss: "#e07a7a", push: "var(--chalk-dim)" };
 
-export function TotalsTab({ rows, settings, poolRows }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[] }) {
+
+// Click-to-open for Totals / Team Totals rows (Admin Matchups opens the totals popup). A click on a link or
+// button inside the row (a team link) keeps its own behavior instead of opening the popup.
+export interface TotalsRowOpen {
+  week: number;
+  awayTeam: string;
+  homeTeam: string;
+}
+function rowOpenProps(open: ((g: TotalsRowOpen) => void) | undefined, g: TotalsRowOpen) {
+  if (!open) return {};
+  return {
+    style: { cursor: "pointer" } as CSSProperties,
+    title: "View totals breakdown",
+    onClick: (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest("a, button")) return;
+      open(g);
+    },
+  };
+}
+
+export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[]; onOpenTotals?: (g: TotalsRowOpen) => void }) {
   const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
   const [absMode, setAbsMode] = useState(false);
 
@@ -403,7 +423,7 @@ export function TotalsTab({ rows, settings, poolRows }: { rows: EnrichedGameRow[
           </thead>
           <tbody>
             {sorted.map((b) => (
-              <tr key={b.row.game.id}>
+              <tr key={b.row.game.id} {...rowOpenProps(onOpenTotals, { week: b.row.game.week, awayTeam: b.row.game.awayTeam, homeTeam: b.row.game.homeTeam })}>
                 <td style={CP}>{b.row.game.week}</td>
                 <td style={CP}>{dateLabel(b.row.game.startDate)}</td>
                 <td style={CP}>{kickoffLabel(b.row.game.startDate)}</td>
@@ -607,7 +627,7 @@ function maxAbsAmountOff(r: CombinedTeamRow): number {
   return Math.max(a, h);
 }
 
-function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRow[]; absMode: boolean }) {
+function TeamTotalsStackedView({ combined, absMode, onOpenTotals }: { combined: CombinedTeamRow[]; absMode: boolean; onOpenTotals?: (g: TotalsRowOpen) => void }) {
   const [sortMode, setSortMode] = useState<"week" | "amountOff">("week");
   const sorted = useMemo(() => {
     if (sortMode === "amountOff") {
@@ -648,20 +668,20 @@ function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRo
         <tbody>
           {sorted.map((r) => (
             <Fragment key={r.game.game.id}>
-              <tr style={{ borderTop: "2px solid var(--hash)" }}>
+              <tr {...rowOpenProps(onOpenTotals, { week: r.game.game.week, awayTeam: r.game.game.awayTeam, homeTeam: r.game.game.homeTeam })} style={{ borderTop: "2px solid var(--hash)", cursor: onOpenTotals ? "pointer" : undefined }}>
                 <td colSpan={12} style={{ ...CP, padding: "0.6rem 0.5rem 0.3rem", fontWeight: 700 }}>
                   Wk {r.game.game.week} · {dateLabel(r.game.game.startDate)} · {kickoffLabel(r.game.game.startDate)} — {r.game.game.awayTeam} @{" "}
                   {r.game.game.homeTeam}
                 </td>
               </tr>
-              <tr>
+              <tr {...rowOpenProps(onOpenTotals, { week: r.game.game.week, awayTeam: r.game.game.awayTeam, homeTeam: r.game.game.homeTeam })}>
                 <td style={CP} colSpan={2}>
                   <TeamLink team={r.game.game.awayTeam} />
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (away)</span>
                 </td>
                 <TeamTotalsStatCells t={r.away} absMode={absMode} />
               </tr>
-              <tr style={{ borderBottom: "1px solid var(--hash)" }}>
+              <tr {...rowOpenProps(onOpenTotals, { week: r.game.game.week, awayTeam: r.game.game.awayTeam, homeTeam: r.game.game.homeTeam })} style={{ borderBottom: "1px solid var(--hash)", cursor: onOpenTotals ? "pointer" : undefined }}>
                 <td style={CP} colSpan={2}>
                   <TeamLink team={r.game.game.homeTeam} />
                   <span style={{ color: "var(--chalk-dim)", fontSize: "0.7rem" }}> (home)</span>
@@ -683,7 +703,7 @@ function TeamTotalsStackedView({ combined, absMode }: { combined: CombinedTeamRo
   );
 }
 
-function TeamTotalsDetailedTable({ combined, absMode }: { combined: CombinedTeamRow[]; absMode: boolean }) {
+function TeamTotalsDetailedTable({ combined, absMode, onOpenTotals }: { combined: CombinedTeamRow[]; absMode: boolean; onOpenTotals?: (g: TotalsRowOpen) => void }) {
   const [sortKey, setSortKey] = useState<TeamSortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -743,7 +763,7 @@ function TeamTotalsDetailedTable({ combined, absMode }: { combined: CombinedTeam
         </thead>
         <tbody>
           {sorted.map((r) => (
-            <tr key={r.game.game.id}>
+            <tr key={r.game.game.id} {...rowOpenProps(onOpenTotals, { week: r.game.game.week, awayTeam: r.game.game.awayTeam, homeTeam: r.game.game.homeTeam })}>
               <td style={CP}>{r.game.game.week}</td>
               <td style={CP}>{dateLabel(r.game.game.startDate)}</td>
               <td style={CP}>{kickoffLabel(r.game.game.startDate)}</td>
@@ -771,11 +791,13 @@ export function TeamTotalsTab({
   settings,
   actualVegasTTByKey,
   poolRows,
+  onOpenTotals,
 }: {
   rows: EnrichedGameRow[];
   settings: GameTotalsSettings;
   actualVegasTTByKey?: Map<string, number>;
   poolRows?: EnrichedGameRow[];
+  onOpenTotals?: (g: TotalsRowOpen) => void;
 }) {
   const betRows = useMemo(
     () => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier, actualVegasTTByKey, poolRows),
@@ -802,7 +824,11 @@ export function TeamTotalsTab({
           {detailed ? "Back to game view" : "Detailed sortable table"}
         </button>
       </div>
-      {detailed ? <TeamTotalsDetailedTable combined={combined} absMode={absMode} /> : <TeamTotalsStackedView combined={combined} absMode={absMode} />}
+      {detailed ? (
+        <TeamTotalsDetailedTable combined={combined} absMode={absMode} onOpenTotals={onOpenTotals} />
+      ) : (
+        <TeamTotalsStackedView combined={combined} absMode={absMode} onOpenTotals={onOpenTotals} />
+      )}
     </div>
   );
 }
