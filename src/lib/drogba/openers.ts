@@ -55,8 +55,18 @@ export const SNAPSHOT_SLOTS: SnapshotSlot[] = [
   { id: "sun-8", label: "Sunday 8:00am ET", day: -6, hourEt: 8, isClose: false },
   { id: "sun-10", label: "Sunday 10:00am ET", day: -6, hourEt: 10, isClose: false },
   { id: "sun-11", label: "Sunday 11:00am ET", day: -6, hourEt: 11, isClose: false },
+  // Later looks, for games FanDuel hadn't posted by 11am. A game first seen here has a later "open" than the
+  // morning ones, so they're off by default.
+  { id: "sun-12", label: "Sunday 12:00pm ET", day: -6, hourEt: 12, isClose: false },
+  { id: "sun-13", label: "Sunday 1:00pm ET", day: -6, hourEt: 13, isClose: false },
+  { id: "sun-14", label: "Sunday 2:00pm ET", day: -6, hourEt: 14, isClose: false },
+  { id: "sun-16", label: "Sunday 4:00pm ET", day: -6, hourEt: 16, isClose: false },
+  // Smaller-conference games often aren't posted until Monday or Tuesday (FanDuel lines were on file for 85-91% of
+  // Power-conference games in 2024-25 but only 37-50% of MAC / Sun Belt / C-USA / MWC / AAC games).
+  { id: "mon-10", label: "Monday 10:00am ET", day: -5, hourEt: 10, isClose: false },
+  { id: "tue-10", label: "Tuesday 10:00am ET", day: -4, hourEt: 10, isClose: false },
 ];
-export const DEFAULT_SLOT_IDS = SNAPSHOT_SLOTS.map((s) => s.id);
+export const DEFAULT_SLOT_IDS = ["sun-6", "sun-8", "sun-10", "sun-11"];
 
 export const slotTargetMs = (anchorMs: number, slot: SnapshotSlot) => etWallToUtcMs(anchorMs + slot.day * DAY, slot.hourEt);
 

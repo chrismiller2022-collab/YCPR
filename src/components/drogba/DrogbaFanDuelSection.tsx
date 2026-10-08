@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { fetchPulledTargets, pullBookSpreads, saveBookSnapshots, type SpreadPull } from "../../lib/api/bookSnapshots";
-import { SNAPSHOT_SLOTS, matchEvents, slotTargetMs, weekAnchors } from "../../lib/drogba/openers";
+import { DEFAULT_SLOT_IDS, SNAPSHOT_SLOTS, matchEvents, slotTargetMs, weekAnchors } from "../../lib/drogba/openers";
 import type { DGame } from "../../lib/drogba/dataset";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { CELL, DIM, H3, NUM, P, f1, sgn } from "./shared";
@@ -34,7 +34,7 @@ export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) 
   const [summary, setSummary] = useState<PullSummary | null>(null);
 
   const [seasons, setSeasons] = useState<Record<number, boolean>>({ 2021: true, 2022: true, 2023: true, 2024: true, 2025: true, 2026: true });
-  const [slots, setSlots] = useState<Record<string, boolean>>(Object.fromEntries(SNAPSHOT_SLOTS.map((s) => [s.id, true])));
+  const [slots, setSlots] = useState<Record<string, boolean>>(Object.fromEntries(SNAPSHOT_SLOTS.map((s) => [s.id, DEFAULT_SLOT_IDS.includes(s.id)])));
   const [firstWeek, setFirstWeek] = useState(1);
   const [lastWeek, setLastWeek] = useState(15);
   const [cap, setCap] = useState(1500);
@@ -74,6 +74,28 @@ export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) 
     }
     return Array.from(out.entries()).sort((a, b) => b[0] - a[0]);
   }, [weeks]);
+
+  // How many games had their FanDuel open first seen at each Eastern hour (everything before 6am and after 4pm is grouped).
+  const firstSeen = useMemo(() => {
+    const counts = new Map<string, number>();
+    let total = 0;
+    for (const w of weeks) {
+      for (const g of w.games) {
+        const f = state.fanduelLines.get(g.id);
+        if (!f) continue;
+        // Snapshots land a few minutes before their target time (5:55 for a 6:00 slot), so round to the nearest hour.
+        const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", hour12: false }).formatToParts(new Date(f.openAt));
+        const h0 = Number(parts.find((p) => p.type === "hour")?.value) % 24;
+        const m0 = Number(parts.find((p) => p.type === "minute")?.value);
+        const hour = (h0 + (m0 >= 30 ? 1 : 0)) % 24;
+        const label = hour < 6 ? "Before 6am" : hour > 16 ? "After 4pm" : `${hour === 12 ? 12 : hour % 12}${hour < 12 ? "am" : "pm"} hour`;
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+        total++;
+      }
+    }
+    const order = ["Before 6am", "6am hour", "7am hour", "8am hour", "9am hour", "10am hour", "11am hour", "12pm hour", "1pm hour", "2pm hour", "3pm hour", "4pm hour", "After 4pm"];
+    return { rows: order.filter((l) => counts.has(l)).map((l) => ({ label: l, n: counts.get(l)! })), total };
+  }, [weeks, state.fanduelLines]);
 
   // One snapshot: pull, match to our games, save the rows and log the call.
   async function pullOne(targetMs: number | null, season: number | null, week: number | null): Promise<{ pull: SpreadPull; summary: PullSummary; matchedIds: string[]; snapMs: number }> {
@@ -302,7 +324,30 @@ export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) 
         </details>
       ))}
 
-      <h3 style={{ ...H3, fontSize: "0.9rem" }}>1. Fill the gaps (Sunday 6, 8, 10 and 11am ET)</h3>
+      <h3 style={{ ...H3, fontSize: "0.9rem" }}>When FanDuel's open was first seen (Eastern time, Sunday)</h3>
+      <p style={DIM}>Each game's FanDuel open is the earliest snapshot we have. This shows which looks are doing the work, so you can tell whether a later one is worth pulling.</p>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style={CELL}>First seen at</th>
+              <th style={NUM}>Games</th>
+              <th style={NUM}>Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {firstSeen.rows.map((r) => (
+              <tr key={r.label}>
+                <td style={CELL}>{r.label}</td>
+                <td style={NUM}>{r.n}</td>
+                <td style={NUM}>{firstSeen.total ? Math.round((100 * r.n) / firstSeen.total) : 0}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style={{ ...H3, fontSize: "0.9rem" }}>1. Fill the gaps (Sunday 6am – 4pm ET)</h3>
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "0.4rem" }}>
         {ALL_SEASONS.map((s) => (
           <label key={s} style={{ fontSize: "0.85rem" }}>
