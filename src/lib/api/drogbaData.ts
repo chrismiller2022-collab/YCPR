@@ -2,7 +2,8 @@ import { supabase } from "../supabaseClient";
 import { fetchAllRows } from "./fetchAll";
 import { cachedFetch, invalidateCacheKey } from "./cache";
 import type { RawGameRow, RawLineRow } from "../drogba/dataset";
-import type { RawAdvRow } from "../drogba/efficiencyRatings";
+import type { RawAdvRow, RawPlayAggRow } from "../drogba/efficiencyRatings";
+import type { RawCoachSeason } from "../drogba/preseasonPrior";
 import type { RawPreseasonRow } from "../drogba/preseason";
 
 export const DROGBA_FIRST_SEASON = 2021;
@@ -43,6 +44,26 @@ export async function fetchDrogbaAdv(): Promise<RawAdvRow[]> {
         .order("team")
         .range(from, to)
     )
+  );
+}
+
+export async function fetchDrogbaPlays(): Promise<RawPlayAggRow[]> {
+  return cachedFetch("drogba-plays", () =>
+    fetchAllRows<RawPlayAggRow>((from, to) =>
+      supabase
+        .from("team_game_play_agg")
+        .select("game_id, team, season, week, f_plays, f_success, f_ppa_success_sum, f_ppa_success_n, st_fg_att, st_fg_pts_over, st_ppa_sum, st_n")
+        .gte("season", DROGBA_FIRST_SEASON)
+        .order("game_id")
+        .order("team")
+        .range(from, to)
+    )
+  );
+}
+
+export async function fetchDrogbaCoaches(): Promise<RawCoachSeason[]> {
+  return cachedFetch("drogba-coaches", () =>
+    fetchAllRows<RawCoachSeason>((from, to) => supabase.from("team_coach_seasons").select("team, year, coach_id, games").order("team").order("year").range(from, to))
   );
 }
 
@@ -90,12 +111,22 @@ function adminPassword(): string {
 export interface DrogbaPullResult {
   gameAdv?: { fetched: number; saved: number; withPpa: number; sample: Record<string, unknown> | null };
   preseason?: { teams: number; saved: number; counts: Record<string, number>; sample: Record<string, unknown> | null };
+  plays?: {
+    fetched: number;
+    teamGames: number;
+    saved: number;
+    scrimmage: number;
+    garbageDropped: number;
+    ppaCoverage: { scrimmage: number | null; specialTeams: number | null };
+    topPlayTypes: [string, number][];
+    sample: Record<string, unknown> | null;
+  };
   warnings?: string[];
 }
 
 // One CFBD pull: one week of per-game advanced stats, or one season of preseason inputs. Needs
 // CFBD_API_KEY on the server; the page loops these so each request stays small.
-export async function pullDrogba(part: "gameadv" | "preseason", season: number, week: number | null): Promise<DrogbaPullResult> {
+export async function pullDrogba(part: "gameadv" | "preseason" | "plays", season: number, week: number | null): Promise<DrogbaPullResult> {
   const res = await fetch("/api/cfbd-sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

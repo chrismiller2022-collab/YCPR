@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchDrogbaAdv, fetchDrogbaPreseason, fetchDrogbaRaw, invalidateDrogbaCache, type DrogbaRaw } from "../api/drogbaData";
+import { fetchDrogbaAdv, fetchDrogbaCoaches, fetchDrogbaPlays, fetchDrogbaPreseason, fetchDrogbaRaw, invalidateDrogbaCache, type DrogbaRaw } from "../api/drogbaData";
 import { fetchBookSnapshots } from "../api/bookSnapshots";
 import { buildEngine, type Engine } from "./engine";
 import { buildGames, type DGame, type OpenMode } from "./dataset";
 import { buildBookLines, type BookLine } from "./openers";
-import type { RawAdvRow } from "./efficiencyRatings";
+import type { RawAdvRow, RawPlayAggRow } from "./efficiencyRatings";
+import type { RawCoachSeason } from "./preseasonPrior";
 import type { RawPreseasonRow } from "./preseason";
 
 export interface DrogbaState {
@@ -36,6 +37,8 @@ interface Loaded {
   raw: DrogbaRaw;
   adv: RawAdvRow[];
   pre: RawPreseasonRow[];
+  plays: RawPlayAggRow[];
+  coaches: RawCoachSeason[];
   fdRows: Awaited<ReturnType<typeof fetchBookSnapshots>>;
 }
 
@@ -59,10 +62,10 @@ export function useDrogba(): DrogbaState {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([fetchDrogbaRaw(), fetchDrogbaAdv(), fetchDrogbaPreseason(), fetchBookSnapshots("fanduel")])
-      .then(([raw, adv, pre, fdRows]) => {
+    Promise.all([fetchDrogbaRaw(), fetchDrogbaAdv(), fetchDrogbaPreseason(), fetchDrogbaPlays().catch(() => [] as RawPlayAggRow[]), fetchDrogbaCoaches().catch(() => [] as RawCoachSeason[]), fetchBookSnapshots("fanduel")])
+      .then(([raw, adv, pre, plays, coaches, fdRows]) => {
         if (cancelled) return;
-        setLoaded({ raw, adv, pre, fdRows });
+        setLoaded({ raw, adv, pre, plays, coaches, fdRows });
         setLoading(false);
       })
       .catch((e: any) => {
@@ -91,7 +94,7 @@ export function useDrogba(): DrogbaState {
         setBovadaOpen(new Map(base.filter((b) => b.open != null).map((b) => [b.id, b.open as number])));
         const g = buildGames(loaded.raw.games, loaded.raw.lines, fd, openMode);
         setGames(g);
-        setEngine(buildEngine({ games: g, adv: loaded.adv, preseason: loaded.pre }));
+        setEngine(buildEngine({ games: g, adv: loaded.adv, preseason: loaded.pre, plays: loaded.plays, coaches: loaded.coaches }));
         setError(null);
       } catch (e: any) {
         setError(e?.message ?? "Building DROGBA ratings failed");

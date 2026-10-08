@@ -9,7 +9,7 @@
 //     honest answer to "how much of a disagreement with the market is real".
 import { fitDenseRidge } from "./ridgeSolve";
 import { margin, isFbsGame, type DGame } from "./dataset";
-import { EFF_METRICS, netEff, type EffMetric, type EffSnapshot } from "./efficiencyRatings";
+import { netEff, type EffSnapshot } from "./efficiencyRatings";
 import type { RatingSnapshot } from "./marginRatings";
 import { earlyWeight, PRESEASON_FEATURES, type PreseasonZ } from "./preseason";
 
@@ -17,7 +17,8 @@ export interface GameSignals {
   g: DGame;
   late: boolean; // week >= 4
   mrMargin: number | null; // scoreboard-rating predicted home margin
-  effDiff: Partial<Record<EffMetric, number>>; // home net efficiency − away net efficiency (metric units)
+  effDiff: Record<string, number>; // home net efficiency − away net efficiency, per metric (metric units)
+  extra: Record<string, number>; // other pairwise ratings, home − away (e.g. "st": special teams, in points)
   preDiff: number[]; // home − away preseason z-scores (talent, returning, portal, recruiting), already faded by week
 }
 
@@ -26,8 +27,9 @@ export const LATE_WEEK = 4;
 export function buildSignals(
   games: DGame[],
   marginSnaps: Map<string, RatingSnapshot>,
-  effSnaps: Partial<Record<EffMetric, Map<string, EffSnapshot>>>,
-  preseason: Map<string, PreseasonZ> = new Map()
+  effSnaps: Record<string, Map<string, EffSnapshot>>,
+  preseason: Map<string, PreseasonZ> = new Map(),
+  pairSnaps: Record<string, Map<string, RatingSnapshot>> = {}
 ): GameSignals[] {
   const out: GameSignals[] = [];
   for (const g of games) {
@@ -35,19 +37,26 @@ export function buildSignals(
     const key = `${g.season}|${g.week}`;
     const ms = marginSnaps.get(key);
     const mrMargin = ms ? (ms.ratings.get(g.home) ?? NaN) - (ms.ratings.get(g.away) ?? NaN) + (g.neutral ? 0 : ms.hfa) : null;
-    const effDiff: Partial<Record<EffMetric, number>> = {};
-    for (const m of EFF_METRICS) {
-      const s = effSnaps[m]?.get(key);
+    const effDiff: Record<string, number> = {};
+    for (const [m, snaps] of Object.entries(effSnaps)) {
+      const s = snaps.get(key);
       if (!s) continue;
       const h = netEff(s, g.home);
       const a = netEff(s, g.away);
       if (h != null && a != null) effDiff[m] = h - a;
     }
+    const extra: Record<string, number> = {};
+    for (const [name, snaps] of Object.entries(pairSnaps)) {
+      const s = snaps.get(key);
+      const h = s?.ratings.get(g.home);
+      const a = s?.ratings.get(g.away);
+      if (h != null && a != null) extra[name] = h - a;
+    }
     const ph = preseason.get(`${g.season}|${g.home}`);
     const pa = preseason.get(`${g.season}|${g.away}`);
     const ew = earlyWeight(g.week);
     const preDiff = [0, 1, 2, 3].map((j) => (ph && pa ? (ph[j] - pa[j]) * ew : 0));
-    out.push({ g, late: g.week >= LATE_WEEK, mrMargin: mrMargin != null && Number.isFinite(mrMargin) ? mrMargin : null, effDiff, preDiff });
+    out.push({ g, late: g.week >= LATE_WEEK, mrMargin: mrMargin != null && Number.isFinite(mrMargin) ? mrMargin : null, effDiff, extra, preDiff });
   }
   return out;
 }
@@ -59,24 +68,41 @@ export interface Layer1 {
   sd: number[];
   intercept: number;
   coef: number[];
+  fallback?: Layer1; // the base-feature model, used for games that lack the richer inputs (e.g. no play-level data yet)
 }
-const L1_FEATURES = ["effSr", "effExpl", "effPpa", "scoreboard", "homeField", ...PRESEASON_FEATURES];
-const l1Row = (s: GameSignals): number[] | null => {
-  const { sr, expl, ppa } = s.effDiff;
-  if (sr == null || expl == null || ppa == null || s.mrMargin == null) return null;
-  return [sr, expl, ppa, s.mrMargin, s.g.neutral ? 0 : 1, ...s.preDiff];
+const BASE_EFF = ["sr", "expl", "ppa"];
+const PLAY_EFF = ["srf", "isof"];
+const TAIL = ["scoreboard", "homeField", ...PRESEASON_FEATURES];
+
+function featureValue(s: GameSignals, name: string): number | null {
+  if (name === "scoreboard") return s.mrMargin;
+  if (name === "homeField") return s.g.neutral ? 0 : 1;
+  if (name === "st") return s.extra.st ?? null;
+  const pi = PRESEASON_FEATURES.indexOf(name);
+  if (pi >= 0) return s.preDiff[pi];
+  return s.effDiff[name] ?? null;
+}
+const l1Row = (s: GameSignals, names: string[]): number[] | null => {
+  const row: number[] = [];
+  for (const n of names) {
+    const v = featureValue(s, n);
+    if (v == null) return null;
+    row.push(v);
+  }
+  return row;
 };
 
 // alpha 300 came out of the bake-off: stronger shrinkage than the first version's 30 predicted held-out
 // seasons better (tuned on 2022-23 only, then confirmed on 2024-26).
 export const LAYER1_ALPHA = 300;
+const MIN_RICH_ROWS = 600; // a richer feature set needs about a season of games that have every one of its inputs
 
-export function fitLayer1(train: GameSignals[], alpha = LAYER1_ALPHA): Layer1 | null {
+function fitOn(train: GameSignals[], names: string[], alpha: number): Layer1 | null {
   const X: number[][] = [];
   const y: number[] = [];
   for (const s of train) {
     if (!s.g.completed) continue;
-    const r = l1Row(s);
+    const r = l1Row(s, names);
     if (!r) continue;
     X.push(r);
     y.push(margin(s.g));
@@ -87,12 +113,29 @@ export function fitLayer1(train: GameSignals[], alpha = LAYER1_ALPHA): Layer1 | 
   const sd = new Array(p).fill(0).map((_, j) => Math.sqrt(X.reduce((a, r) => a + (r[j] - mean[j]) ** 2, 0) / X.length) || 1);
   const Z = X.map((r) => r.map((v, j) => (v - mean[j]) / sd[j]));
   const f = fitDenseRidge(Z, y, alpha);
-  return { features: [...L1_FEATURES], mean, sd, intercept: f.intercept, coef: f.coef };
+  return { features: names, mean, sd, intercept: f.intercept, coef: f.coef };
+}
+
+// Fits the richest feature set the training data supports (base + play-level + special teams), keeping the base
+// model as a fallback for games that lack the extra inputs.
+export function fitLayer1(train: GameSignals[], alpha = LAYER1_ALPHA): Layer1 | null {
+  const base = fitOn(train, [...BASE_EFF, ...TAIL], alpha);
+  if (!base) return null;
+  const have = (names: string[]) => train.filter((s) => s.g.completed && l1Row(s, names) != null).length;
+  const candidates: string[][] = [];
+  const richest = [...BASE_EFF, ...PLAY_EFF, "st", ...TAIL];
+  candidates.push(richest, [...BASE_EFF, ...PLAY_EFF, ...TAIL], [...BASE_EFF, "st", ...TAIL]);
+  for (const names of candidates) {
+    if (have(names) < MIN_RICH_ROWS) continue;
+    const rich = fitOn(train, names, alpha);
+    if (rich) return { ...rich, fallback: base };
+  }
+  return base;
 }
 
 export function predictLayer1(m: Layer1, s: GameSignals): number | null {
-  const r = l1Row(s);
-  if (!r) return null;
+  const r = l1Row(s, m.features);
+  if (!r) return m.fallback ? predictLayer1(m.fallback, s) : null;
   return m.intercept + r.reduce((a, v, j) => a + ((v - m.mean[j]) / m.sd[j]) * m.coef[j], 0);
 }
 

@@ -33,7 +33,7 @@ export default function DrogbaMethodologyTab() {
         <ul style={{ ...P, paddingLeft: "1.2rem" }}>
           <li><strong>Tuning (adopted):</strong> more regularization on the margin model (alpha 30 → 300), weaker in-season shrinkage and longer memory of last season in the ratings. Held-out MAE 12.61 → 12.50 and line-move slope 0.052 → 0.063. Small, but it held up.</li>
           <li><strong>Confidence filter (not adopted):</strong> ranking edges by edge ÷ rating standard error (the McIllece idea) helped on 2022–23 and did nothing on 2024–26. Requiring the scoreboard rating to agree on the side also failed to hold up.</li>
-          <li><strong>Better preseason prior (not adopted):</strong> a model predicting a team's full-season strength from last year's rating, returning production, talent, portal and recruiting beat the old carry-over by about 0.3–0.4 points per team every year — but plugging it into game predictions made early-season misses worse, not better.</li>
+          <li><strong>Better preseason prior (not adopted):</strong> a model predicting a team's full-season strength from last year's rating, returning production, talent, portal, recruiting (and the new-coach flag, once coach history is loaded) beat the old carry-over by about 0.3–0.4 points per team every year. Tried two ways: as extra game-model features (early-season misses got worse), and as each team's starting rating in the walk-forward engines the way SP+/JP+ do. The second does carry the preseason information into the ratings (weeks 1–3 miss 13.4 instead of 13.8 when the preseason features are removed), but with the preseason features already in the game model it adds nothing (12.57 vs 12.47 average miss, same closing-line value), so the default stays carry-over + features. It is built (engine option) and worth re-testing once play-level priors and coaching data exist.</li>
           <li><strong>Where the weakness is:</strong> weeks 1–3, where it misses by about 12.9 against the open's 12.1. The market's preseason view (priors, portal, coaching changes) is stronger than anything built here so far.</li>
         </ul>
       </S>
@@ -58,6 +58,10 @@ export default function DrogbaMethodologyTab() {
           FCS opponents are pooled into one team. The ridge penalty shrinks each effect toward 85% of last season's final effect (not toward zero), so week 1 is mostly last season and the prior is replaced by this season's games as they accumulate. Only each team's own offensive numbers are used, since a game's offense stat for A is the same plays as B's defense stat.
           A separate scoreboard-margin rating (final margins, capped at 28, opponent-adjusted the same way) is built alongside.
         </p>
+        <p style={P}>
+          <strong>Play-level metrics (built; they switch on once the play-level pull has been run for two seasons).</strong> From CFBD's play data, each team-game gets a garbage-time-filtered success rate (1st down gains ≥50% of the distance, 2nd ≥70%, 3rd/4th ≥100%, touchdowns count, turnovers never do; plays with the scoring margin beyond 43/37/27/22 points by quarter are dropped) and an isolated explosiveness (the average PPA of the successful plays only, so turnovers and failures can't dilute it). These go through the same opponent-adjusted ridge as the other metrics, weighted by the number of plays behind each game.
+          <strong> Special teams:</strong> each team-game's special-teams value is its field goals against what an average kicker makes from those distances, plus the PPA CFBD attaches to its punts and kickoffs when it supplies one; a pairwise rating (home minus away, like the scoreboard rating) turns that into a per-team special-teams rating in points.
+        </p>
       </S>
 
       <S title="6. Margin model">
@@ -81,8 +85,8 @@ export default function DrogbaMethodologyTab() {
 
       <S title="9. What is not built">
         <ul style={{ ...P, paddingLeft: "1.2rem" }}>
-          <li><strong>Play-level inputs</strong> (CFBD play data, aggregated when pulled): garbage-time-filtered success rate and isolated explosiveness adjusted for opponent at the play level, and special-teams ratings. This is the biggest likely upgrade and costs about one CFBD call per week per season (~96 calls).</li>
-          <li>Coaching-change and fuller portal/roster priors; a win-probability ("game control") rating like McIllece's π; injury, QB and weather information.</li>
+          <li><strong>Waiting on data:</strong> the play-level and special-teams code is built and tested for plumbing, but not on real data until the play-level pull has been run (Data & sync tab, about 96 CFBD calls). Until then the model runs on the per-game aggregates.</li>
+          <li>A win-probability ("game control") rating like McIllece's π; injury, QB and weather information; opponent adjustment at the individual-play level (the play pull stores per-game sums, not every play).</li>
         </ul>
         <p style={DIM}>JP+ for reference: 52.4% ATS on all games against the open, 56–58% at a 5+ point edge, 61.6% on a heavily filtered ~19% of games (weakest blind season 53.7%). Those are their figures and I cannot verify them.</p>
       </S>

@@ -6,18 +6,55 @@ import { CELL, DIM, H3, NUM, P } from "./shared";
 
 const SEASONS = [2021, 2022, 2023, 2024, 2025, 2026];
 const MAX_WEEK = 15; // regular season weeks CFBD uses for FBS (week 15 = championship games / Army-Navy)
+const PLAY_MAX_WEEK = 16; // a couple of seasons have a week-16 game
 
 export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
   const [picked, setPicked] = useState<Record<number, boolean>>({ 2021: true, 2022: true, 2023: true, 2024: true, 2025: true, 2026: true });
-  const [doAdv, setDoAdv] = useState(true);
-  const [doPre, setDoPre] = useState(true);
+  // Per-game advanced stats and preseason inputs are already loaded for 2021-26, so only the play-level pull is on by
+  // default — each of these is a CFBD call and the free plan has 1,000 a month.
+  const [doAdv, setDoAdv] = useState(false);
+  const [doPre, setDoPre] = useState(false);
+  const [doPlays, setDoPlays] = useState(true);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const stop = useRef(false);
+  const [testSeason, setTestSeason] = useState(2025);
+  const [testWeek, setTestWeek] = useState(6);
+  const [testing, setTesting] = useState(false);
+  const [testOut, setTestOut] = useState<string | null>(null);
+
+  // One play-level call (1 CFBD call) so the response shape can be checked before the full pull.
+  async function runPlayTest() {
+    setTesting(true);
+    setTestOut(null);
+    setError(null);
+    try {
+      const r = await pullDrogba("plays", testSeason, testWeek);
+      const p = r.plays;
+      if (!p) throw new Error("No plays section in the response");
+      const cov = p.ppaCoverage;
+      setTestOut(
+        `${testSeason} week ${testWeek}: ${p.fetched.toLocaleString()} plays pulled → ${p.teamGames} team-games saved (${p.scrimmage.toLocaleString()} scrimmage plays kept, ${p.garbageDropped.toLocaleString()} garbage-time dropped). ` +
+          `PPA present on ${cov.scrimmage == null ? "?" : Math.round(cov.scrimmage * 100)}% of scrimmage plays and ${cov.specialTeams == null ? "?" : Math.round(cov.specialTeams * 100)}% of special-teams plays. ` +
+          `Play types: ${p.topPlayTypes.map(([t, n]) => `${t} ${n}`).join(", ")}.${r.warnings?.length ? ` Warnings: ${r.warnings.join("; ")}` : ""}\nSample row: ${JSON.stringify(p.sample)}`
+      );
+      state.reload();
+    } catch (e: any) {
+      setError(e?.message ?? "Test failed");
+    } finally {
+      setTesting(false);
+    }
+  }
 
   const seasons = SEASONS.filter((s) => picked[s]);
-  const requests = (doAdv ? seasons.length * MAX_WEEK : 0) + (doPre ? seasons.length : 0);
+  // Don't spend calls on weeks that haven't been played yet.
+  const lastWeekOf = (season: number, cap: number) => {
+    const done = state.games.filter((g) => g.season === season && g.completed).map((g) => g.week);
+    return done.length ? Math.min(cap, Math.max(...done)) : cap;
+  };
+  const requests = seasons.reduce((n, season) => n + (doAdv ? lastWeekOf(season, MAX_WEEK) : 0) + (doPre ? 1 : 0) + (doPlays ? lastWeekOf(season, PLAY_MAX_WEEK) : 0), 0);
+  const playCalls = seasons.reduce((n, season) => n + lastWeekOf(season, PLAY_MAX_WEEK), 0);
 
   async function run() {
     stop.current = false;
@@ -35,13 +72,34 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
         if (doAdv) {
           let total = 0;
           let withPpa = 0;
-          for (let w = 1; w <= MAX_WEEK; w++) {
+          for (let w = 1; w <= lastWeekOf(season, MAX_WEEK); w++) {
             if (stop.current) break;
             const r = await pullDrogba("gameadv", season, w);
             total += r.gameAdv?.saved ?? 0;
             withPpa += r.gameAdv?.withPpa ?? 0;
           }
           add(`${season} per-game advanced: ${total} team-games saved (${withPpa} with PPA)`);
+        }
+        if (doPlays) {
+          let teamGames = 0;
+          let plays = 0;
+          let garbage = 0;
+          let firstDiag: string | null = null;
+          for (let w = 1; w <= lastWeekOf(season, PLAY_MAX_WEEK); w++) {
+            if (stop.current) break;
+            const r = await pullDrogba("plays", season, w);
+            const p = r.plays;
+            if (!p) continue;
+            teamGames += p.saved;
+            plays += p.fetched;
+            garbage += p.garbageDropped;
+            if (!firstDiag && p.fetched > 0) {
+              const cov = p.ppaCoverage;
+              firstDiag = `PPA on ${cov.scrimmage == null ? "?" : Math.round(cov.scrimmage * 100)}% of scrimmage plays and ${cov.specialTeams == null ? "?" : Math.round(cov.specialTeams * 100)}% of special-teams plays; most common play types: ${p.topPlayTypes.slice(0, 8).map(([t, n]) => `${t} ${n}`).join(", ")}${r.warnings?.length ? ` — ${r.warnings.join("; ")}` : ""}`;
+            }
+          }
+          add(`${season} plays: ${plays.toLocaleString()} plays pulled, ${teamGames} team-games saved, ${garbage.toLocaleString()} garbage-time plays dropped`);
+          if (firstDiag) add(`   ${firstDiag}`);
         }
       }
       add(stop.current ? "Stopped." : "Done — reloading ratings…");
@@ -72,6 +130,7 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
               <th style={NUM}>Games</th>
               <th style={NUM}>With opening line</th>
               <th style={NUM}>With per-game advanced</th>
+              <th style={NUM}>With play-level</th>
               <th style={NUM}>Preseason teams</th>
             </tr>
           </thead>
@@ -82,12 +141,13 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
                 <td style={NUM}>{c.fbsGames}</td>
                 <td style={NUM}>{c.withOpen} ({c.fbsGames ? Math.round((100 * c.withOpen) / c.fbsGames) : 0}%)</td>
                 <td style={NUM}>{c.withAdv} ({c.fbsGames ? Math.round((100 * c.withAdv) / c.fbsGames) : 0}%)</td>
+                <td style={NUM}>{c.withPlays} ({c.fbsGames ? Math.round((100 * c.withPlays) / c.fbsGames) : 0}%)</td>
                 <td style={NUM}>{c.preseasonTeams}</td>
               </tr>
             ))}
             {cov.length === 0 && (
               <tr>
-                <td style={CELL} colSpan={5}>{state.loading ? "Loading…" : state.building ? "Building ratings…" : "No data"}</td>
+                <td style={CELL} colSpan={6}>{state.loading ? "Loading…" : state.building ? "Building ratings…" : "No data"}</td>
               </tr>
             )}
           </tbody>
@@ -109,11 +169,32 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
         <label style={{ fontSize: "0.85rem" }}>
           <input type="checkbox" checked={doPre} onChange={(e) => setDoPre(e.target.checked)} disabled={running} /> Preseason inputs (4 CFBD calls per season in one request)
         </label>
+        <label style={{ fontSize: "0.85rem" }}>
+          <input type="checkbox" checked={doPlays} onChange={(e) => setDoPlays(e.target.checked)} disabled={running} /> Play-level (one request per week: garbage-time-filtered success rate, isolated explosiveness, special teams)
+        </label>
       </div>
       <p style={DIM}>
-        This will make {requests} requests to the sync endpoint{doAdv ? ` (each week of per-game stats is one CFBD call; ${seasons.length * MAX_WEEK} total)` : ""}
-        {doPre ? ` plus ${seasons.length * 4} CFBD calls for preseason inputs` : ""}. Weeks with no games just return empty. Safe to stop and resume.
+        This will make {requests} requests to the sync endpoint, each one CFBD call
+        {doPlays ? ` (${playCalls} of them play-level: each is a big download, a few seconds)` : ""}. Only weeks that have been played are pulled. Safe to stop and resume. The free CFBD plan is 1,000 calls a month, so check your CFBD dashboard first;
+        a full play-level pull for 2021–26 is about {playCalls} calls. Per-game advanced stats and preseason inputs are already loaded for every season, so they're off by default — tick them only to refresh.
       </p>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
+        <span style={{ fontSize: "0.85rem" }}>Test the play-level pull first (1 CFBD call):</span>
+        <select className="filter" value={testSeason} onChange={(e) => setTestSeason(Number(e.target.value))} disabled={testing || running}>
+          {SEASONS.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+        <select className="filter" value={testWeek} onChange={(e) => setTestWeek(Number(e.target.value))} disabled={testing || running}>
+          {Array.from({ length: PLAY_MAX_WEEK }, (_, i) => i + 1).map((w) => (
+            <option key={w} value={w}>Week {w}</option>
+          ))}
+        </select>
+        <button className="menu-btn" onClick={runPlayTest} disabled={testing || running}>
+          {testing ? "Testing…" : "Test one week"}
+        </button>
+      </div>
+      {testOut && <pre style={{ fontSize: "0.75rem", whiteSpace: "pre-wrap", color: "var(--chalk-dim)", marginTop: 0 }}>{testOut}</pre>}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <button className="menu-btn" onClick={run} disabled={running || requests === 0}>
           {running ? "Pulling…" : "Run backfill"}

@@ -111,6 +111,7 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
         Every number uses only information available before each game: ratings for week W come from games before week W, and each season is predicted by models fit on earlier seasons only. The model never sees a line or anyone else's projection while rating teams.
         The main yardstick is <strong>closing-line value</strong> (how far the line moves toward the model between the open and the close, in points) because it settles in a few hundred games; ATS vs the open needs thousands. 52.4% ATS is break-even at −110. The opening line used is the one chosen at the top of the page; the Methodology figures are against Bovada's open (FanDuel's earlier open adds more line movement, partly just from being earlier, and only covers part of the games).
         {engine.hasEff ? "" : " The efficiency layer is off until per-game advanced stats are backfilled for at least two seasons (Data & sync tab)."}
+        {" "}Inputs in the model now: per-game efficiency{engine.hasPlays ? ", play-level success rate and isolated explosiveness" : " (play-level metrics not loaded yet)"}{engine.hasSt ? ", special teams" : ""}, scoreboard rating and preseason inputs.
       </p>
       <button className="menu-btn" onClick={() => setRan(true)} disabled={ran}>
         {ran ? "Backtest run" : "Run backtest"}

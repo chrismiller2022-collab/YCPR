@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { aggregatePlays } from "./_playsAggregate";
 
 // This runs on Vercel's servers, not in the browser — CFBD_API_KEY and the
 // Supabase service role key never ship in the client bundle. Mirrors
@@ -399,6 +400,45 @@ async function syncDrogba(res: any, year: number, week: number | null, part: str
     if (rows.length === 0) warnings.push("CFBD returned no advanced game stats for that year/week.");
   }
 
+  if (part === "plays") {
+    if (week == null) throw new Error("'week' is required for the plays part");
+    // One request = one week of every FBS offense's plays (roughly 20k plays). They are aggregated here into per
+    // team-game numbers and only those are stored. Falls back to an unfiltered request if the classification filter
+    // is rejected.
+    const base = `/plays?year=${year}&week=${week}&seasonType=regular`;
+    let plays: any[];
+    try {
+      plays = await cfbdFetch(`${base}&classification=fbs`);
+    } catch (e: any) {
+      if (!/\(400\)|\(422\)/.test(String(e?.message))) throw e;
+      warnings.push(`classification filter rejected (${e.message}); pulled every classification`);
+      plays = await cfbdFetch(base);
+    }
+    const { rows: aggRows, diag } = aggregatePlays(plays ?? []);
+    const now = new Date().toISOString();
+    const rows = aggRows.map((r) => ({ ...r, season: year, week, updated_at: now }));
+    let saved = 0;
+    for (let i = 0; i < rows.length; i += 300) {
+      const { error, count } = await supabaseAdmin
+        .from("team_game_play_agg")
+        .upsert(rows.slice(i, i + 300), { onConflict: "game_id,team", count: "exact" });
+      if (error) throw new Error(`Saving play aggregates failed: ${error.message}`);
+      saved += count ?? 0;
+    }
+    const topTypes = Object.entries(diag.byType).sort((a, b) => b[1] - a[1]).slice(0, 25);
+    out.plays = {
+      fetched: (plays ?? []).length,
+      teamGames: rows.length,
+      saved,
+      scrimmage: diag.scrimmage,
+      garbageDropped: diag.garbage,
+      ppaCoverage: { scrimmage: diag.scrimmage ? diag.withPpaScrimmage / diag.scrimmage : null, specialTeams: diag.specialPlays ? diag.withPpaSpecial / diag.specialPlays : null },
+      topPlayTypes: topTypes,
+      sample: rows[0] ?? null,
+    };
+    if (rows.length === 0) warnings.push("CFBD returned no plays for that year/week.");
+  }
+
   if (part === "preseason") {
     const byTeam = new Map<string, any>();
     const entry = (team: string) => {
@@ -545,8 +585,8 @@ export default async function handler(req: any, res: any) {
       res.status(400).json({ error: "Missing or invalid 'year'" });
       return;
     }
-    if (part !== "gameadv" && part !== "preseason") {
-      res.status(400).json({ error: "'part' must be 'gameadv' or 'preseason'" });
+    if (part !== "gameadv" && part !== "preseason" && part !== "plays") {
+      res.status(400).json({ error: "'part' must be 'gameadv', 'preseason' or 'plays'" });
       return;
     }
     try {
