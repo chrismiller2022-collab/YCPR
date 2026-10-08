@@ -52,7 +52,7 @@ export async function fetchDrogbaPlays(): Promise<RawPlayAggRow[]> {
     fetchAllRows<RawPlayAggRow>((from, to) =>
       supabase
         .from("team_game_play_agg")
-        .select("game_id, team, season, week, f_plays, f_success, f_ppa_success_sum, f_ppa_success_n, st_fg_att, st_fg_pts_over, st_ppa_sum, st_n")
+        .select("game_id, team, season, week, f_plays, f_success, f_ppa_success_sum, f_ppa_success_n, st_fg_att, st_fg_pts_over, st_ppa_sum, st_n, st_punt_net_yds, st_punt_net_n, st_ko_net_yds, st_ko_net_n")
         .gte("season", DROGBA_FIRST_SEASON)
         .order("game_id")
         .order("team")
@@ -118,6 +118,7 @@ export interface DrogbaPullResult {
     scrimmage: number;
     garbageDropped: number;
     ppaCoverage: { scrimmage: number | null; specialTeams: number | null };
+    kicks: { puntNetAvg: number | null; puntNetCoverage: number | null; koNetAvg: number | null; koNetCoverage: number | null };
     topPlayTypes: [string, number][];
     sample: Record<string, unknown> | null;
   };

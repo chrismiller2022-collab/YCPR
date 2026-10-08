@@ -66,11 +66,33 @@ export function computeCoverage(games: DGame[], adv: RawAdvRow[], preseason: Raw
   });
 }
 
-// Special-teams value a team produced in a game, in points: field goals over what an average kicker makes from those
-// distances, plus the PPA CFBD assigns to its punts and kickoffs when it supplies one.
-function stValue(p: RawPlayAggRow): number | null {
+// Special-teams value a team produced in a game, in points: field goals against what an average kicker makes from
+// those distances, plus its punts and kickoffs measured by net field position against the league average (CFBD gives
+// no PPA on special-teams plays, and punt/kickoff yardage on those plays isn't kick distance, so the net spot is taken
+// from where the receiving offense started its next drive). A yard of field position is worth about 0.05 points.
+const PTS_PER_YARD = 0.05;
+interface KickAverages {
+  punt: number;
+  ko: number;
+}
+function kickAverages(plays: RawPlayAggRow[]): KickAverages {
+  let ps = 0, pn = 0, ks = 0, kn = 0;
+  for (const p of plays) {
+    ps += Number(p.st_punt_net_yds ?? 0);
+    pn += Number(p.st_punt_net_n ?? 0);
+    ks += Number(p.st_ko_net_yds ?? 0);
+    kn += Number(p.st_ko_net_n ?? 0);
+  }
+  return { punt: pn >= 300 ? ps / pn : NaN, ko: kn >= 300 ? ks / kn : NaN };
+}
+function stValue(p: RawPlayAggRow, avg: KickAverages): number | null {
   if (p.st_n == null && p.st_fg_att == null) return null;
-  return (p.st_fg_pts_over ?? 0) + (p.st_ppa_sum ?? 0);
+  let v = (p.st_fg_pts_over ?? 0) + (p.st_ppa_sum ?? 0);
+  const pn = Number(p.st_punt_net_n ?? 0);
+  const kn = Number(p.st_ko_net_n ?? 0);
+  if (pn > 0 && !Number.isNaN(avg.punt)) v += PTS_PER_YARD * (Number(p.st_punt_net_yds ?? 0) - pn * avg.punt);
+  if (kn > 0 && !Number.isNaN(avg.ko)) v += PTS_PER_YARD * (Number(p.st_ko_net_yds ?? 0) - kn * avg.ko);
+  return v;
 }
 
 const ST_CONFIG: MarginRatingConfig = { lambda: 6, rho: 0.5, cap: 10, hfa: 0, newTeamPrior: 0 };
@@ -98,8 +120,9 @@ export function buildEngine(inp: EngineInputs, opts: EngineOptions = {}): Engine
   let hasSt = false;
   if (hasPlays && opts.useSt !== false && inp.plays) {
     const stBy = new Map<string, number>();
+    const kavg = kickAverages(inp.plays);
     for (const p of inp.plays) {
-      const v = stValue(p);
+      const v = stValue(p, kavg);
       if (v != null) stBy.set(`${p.game_id}|${p.team}`, v);
     }
     if (stBy.size > 500) {

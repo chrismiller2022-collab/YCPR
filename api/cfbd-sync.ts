@@ -38,6 +38,9 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 //    CFBD attaches to them, when it does.
 
 export interface PlayLike {
+  id?: number | string;
+  driveNumber?: number | null;
+  playNumber?: number | null;
   gameId?: number | string;
   offense?: string;
   defense?: string;
@@ -81,6 +84,10 @@ export interface PlayAgg {
   st_ko_ppa: number;
   st_ppa_sum: number;
   st_n: number;
+  st_punt_net_yds: number; // net field position gained by this team's punts: where the receiving offense started vs where the punt was kicked from
+  st_punt_net_n: number;
+  st_ko_net_yds: number;
+  st_ko_net_n: number;
 }
 
 export interface PlayDiagnostics {
@@ -90,6 +97,10 @@ export interface PlayDiagnostics {
   withPpaScrimmage: number;
   withPpaSpecial: number;
   specialPlays: number;
+  puntNetAvg: number | null; // should land near 38-42
+  puntNetCoverage: number | null; // share of punts whose next offensive snap was found
+  koNetAvg: number | null; // should land near 38-42
+  koNetCoverage: number | null;
   byType: Record<string, number>;
 }
 
@@ -149,6 +160,10 @@ const blank = (game_id: string, team: string): PlayAgg => ({
   st_ko_ppa: 0,
   st_ppa_sum: 0,
   st_n: 0,
+  st_punt_net_yds: 0,
+  st_punt_net_n: 0,
+  st_ko_net_yds: 0,
+  st_ko_net_n: 0,
 });
 
 const numOrNull = (x: unknown): number | null => {
@@ -168,56 +183,113 @@ export function aggregatePlays(plays: PlayLike[]): { rows: PlayAgg[]; diag: Play
     }
     return a;
   };
-  const diag: PlayDiagnostics = { plays: 0, scrimmage: 0, garbage: 0, withPpaScrimmage: 0, withPpaSpecial: 0, specialPlays: 0, byType: {} };
+  const diag: PlayDiagnostics = { plays: 0, scrimmage: 0, garbage: 0, withPpaScrimmage: 0, withPpaSpecial: 0, specialPlays: 0, puntNetAvg: null, puntNetCoverage: null, koNetAvg: null, koNetCoverage: null, byType: {} };
 
+  // Plays in game order, so a punt or kickoff can be followed to the next offensive snap.
+  const order = (p: PlayLike) => {
+    const d = numOrNull(p.driveNumber);
+    const n = numOrNull(p.playNumber);
+    return d != null && n != null ? d * 1000 + n : Number(p.id ?? 0) % 1e9;
+  };
+  const byGame = new Map<string, PlayLike[]>();
   for (const p of plays) {
     if (p.gameId == null || !p.offense) continue;
-    diag.plays++;
-    const type = String(p.playType ?? "");
-    diag.byType[type] = (diag.byType[type] ?? 0) + 1;
-    const text = String(p.playText ?? "");
-    const gameId = String(p.gameId);
-    const ppa = numOrNull(p.ppa);
-    const agg = get(gameId, p.offense);
+    const k = String(p.gameId);
+    const list = byGame.get(k);
+    if (list) list.push(p);
+    else byGame.set(k, [p]);
+  }
+  let puntN = 0, puntFound = 0, puntSum = 0, koN = 0, koFound = 0, koSum = 0;
 
-    // ---- special teams (credited to the team whose kicking unit is on the field = the play's offense)
-    if (/field goal/i.test(type) && !/return/i.test(type)) {
-      const ytg = numOrNull(p.yardsToGoal);
-      if (ytg != null) {
-        const made = /good/i.test(type) || (p.scoring === true && !/missed|blocked/i.test(type));
-        agg.st_fg_att++;
-        if (made) agg.st_fg_made++;
-        agg.st_fg_pts_over += (made ? 3 : 0) - 3 * fgMakeProb(ytg + 17);
+  // Net field position of a kick: where the kicking team kicked from (its yards to goal) plus where the receiving team
+  // started its next scrimmage drive (its yards to goal), minus the 100 yards of the field.
+  const netKick = (list: PlayLike[], i: number): number | null => {
+    const kicker = list[i].offense;
+    const y = numOrNull(list[i].yardsToGoal);
+    if (y == null) return null;
+    for (let j = i + 1; j < Math.min(list.length, i + 9); j++) {
+      const q = list[j];
+      if (q.offense === kicker) {
+        if (/punt|kickoff|field goal/i.test(String(q.playType ?? ""))) return null;
+        continue;
+      }
+      const qType = String(q.playType ?? "");
+      if (SCRIMMAGE.test(qType) && !NON_SCRIMMAGE.test(qType) && numOrNull(q.down) != null) {
+        const z = numOrNull(q.yardsToGoal);
+        return z == null ? null : y + z - 100;
+      }
+      if (/kickoff|punt/i.test(qType) && !/return/i.test(qType)) return null; // the receiver kicked: a score or turnover intervened
+    }
+    return null;
+  };
+
+  for (const list of byGame.values()) {
+    list.sort((a, b) => order(a) - order(b));
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      diag.plays++;
+      const type = String(p.playType ?? "");
+      diag.byType[type] = (diag.byType[type] ?? 0) + 1;
+      const text = String(p.playText ?? "");
+      const gameId = String(p.gameId);
+      const ppa = numOrNull(p.ppa);
+      const agg = get(gameId, p.offense!);
+
+      // ---- special teams (credited to the team whose kicking unit is on the field = the play's offense)
+      if (/field goal/i.test(type) && !/return/i.test(type)) {
+        const ytg = numOrNull(p.yardsToGoal);
+        if (ytg != null) {
+          const made = /good/i.test(type) || (p.scoring === true && !/missed|blocked/i.test(type));
+          agg.st_fg_att++;
+          if (made) agg.st_fg_made++;
+          agg.st_fg_pts_over += (made ? 3 : 0) - 3 * fgMakeProb(ytg + 17);
+          agg.st_n++;
+          diag.specialPlays++;
+        }
+        continue;
+      }
+      // Punts and kickoffs by the kicking team only: "Kickoff Return (Offense)" and punt returns are the receiving
+      // team's snap and must not count as a kick.
+      if (/^(blocked )?punt$/i.test(type.trim())) {
+        agg.st_punt_n++;
+        agg.st_punt_yds += numOrNull(p.yardsGained) ?? 0;
+        if (ppa != null) {
+          agg.st_punt_ppa += ppa;
+          agg.st_ppa_sum += ppa;
+          diag.withPpaSpecial++;
+        }
+        const net = netKick(list, i);
+        puntN++;
+        if (net != null) {
+          agg.st_punt_net_yds += net;
+          agg.st_punt_net_n++;
+          puntFound++;
+          puntSum += net;
+        }
         agg.st_n++;
         diag.specialPlays++;
+        continue;
       }
-      continue;
-    }
-    if (/^punt/i.test(type) || /punt/i.test(type)) {
-      if (/return/i.test(type) && !/^punt/i.test(type)) continue;
-      agg.st_punt_n++;
-      agg.st_punt_yds += numOrNull(p.yardsGained) ?? 0;
-      if (ppa != null) {
-        agg.st_punt_ppa += ppa;
-        agg.st_ppa_sum += ppa;
-        diag.withPpaSpecial++;
+      if (/^(kickoff|onside kick)$/i.test(type.trim())) {
+        agg.st_ko_n++;
+        agg.st_ko_yds += numOrNull(p.yardsGained) ?? 0;
+        if (ppa != null) {
+          agg.st_ko_ppa += ppa;
+          agg.st_ppa_sum += ppa;
+          diag.withPpaSpecial++;
+        }
+        const net = netKick(list, i);
+        koN++;
+        if (net != null) {
+          agg.st_ko_net_yds += net;
+          agg.st_ko_net_n++;
+          koFound++;
+          koSum += net;
+        }
+        agg.st_n++;
+        diag.specialPlays++;
+        continue;
       }
-      agg.st_n++;
-      diag.specialPlays++;
-      continue;
-    }
-    if (/kickoff/i.test(type)) {
-      agg.st_ko_n++;
-      agg.st_ko_yds += numOrNull(p.yardsGained) ?? 0;
-      if (ppa != null) {
-        agg.st_ko_ppa += ppa;
-        agg.st_ppa_sum += ppa;
-        diag.withPpaSpecial++;
-      }
-      agg.st_n++;
-      diag.specialPlays++;
-      continue;
-    }
 
     // ---- scrimmage plays
     if (!SCRIMMAGE.test(type) || NON_SCRIMMAGE.test(type)) continue;
@@ -258,7 +330,12 @@ export function aggregatePlays(plays: PlayLike[]): { rows: PlayAgg[]; diag: Play
         else agg.r_ppa_success_sum += ppa;
       }
     }
+    }
   }
+  diag.puntNetAvg = puntFound ? puntSum / puntFound : null;
+  diag.puntNetCoverage = puntN ? puntFound / puntN : null;
+  diag.koNetAvg = koFound ? koSum / koFound : null;
+  diag.koNetCoverage = koN ? koFound / koN : null;
   return { rows: Array.from(by.values()), diag };
 }
 
@@ -676,6 +753,7 @@ async function syncDrogba(res: any, year: number, week: number | null, part: str
       scrimmage: diag.scrimmage,
       garbageDropped: diag.garbage,
       ppaCoverage: { scrimmage: diag.scrimmage ? diag.withPpaScrimmage / diag.scrimmage : null, specialTeams: diag.specialPlays ? diag.withPpaSpecial / diag.specialPlays : null },
+      kicks: { puntNetAvg: diag.puntNetAvg, puntNetCoverage: diag.puntNetCoverage, koNetAvg: diag.koNetAvg, koNetCoverage: diag.koNetCoverage },
       topPlayTypes: topTypes,
       sample: rows[0] ?? null,
     };

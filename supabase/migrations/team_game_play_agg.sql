@@ -18,3 +18,9 @@ create table if not exists team_game_play_agg (
 create index if not exists team_game_play_agg_season_week on team_game_play_agg (season, week);
 alter table team_game_play_agg enable row level security;
 create policy "Public read access to team_game_play_agg" on team_game_play_agg for select using (true);
+
+-- Added after the first real test pull: punt/kickoff yardage from CFBD isn't kick distance, so special-teams kicks are
+-- measured by the field position the receiving offense starts from (net of where the kick was taken).
+alter table team_game_play_agg
+  add column if not exists st_punt_net_yds numeric, add column if not exists st_punt_net_n int,
+  add column if not exists st_ko_net_yds numeric, add column if not exists st_ko_net_n int;

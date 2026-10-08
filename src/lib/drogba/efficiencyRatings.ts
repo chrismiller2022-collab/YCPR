@@ -49,6 +49,10 @@ export interface RawPlayAggRow {
   st_fg_pts_over: number | null; // field-goal points over expected for this team's kicker
   st_ppa_sum: number | null; // PPA summed over this team's kicking plays (punts / kickoffs), when CFBD supplies it
   st_n: number | null;
+  st_punt_net_yds?: number | null; // net field position of this team's punts / kickoffs (from where the next offense started)
+  st_punt_net_n?: number | null;
+  st_ko_net_yds?: number | null;
+  st_ko_net_n?: number | null;
 }
 
 const num = (x: unknown): number | null => (x == null || Number.isNaN(Number(x)) ? null : Number(x));

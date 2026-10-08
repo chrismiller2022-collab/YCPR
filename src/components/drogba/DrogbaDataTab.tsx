@@ -37,6 +37,7 @@ export default function DrogbaDataTab({ state }: { state: DrogbaState }) {
       setTestOut(
         `${testSeason} week ${testWeek}: ${p.fetched.toLocaleString()} plays pulled → ${p.teamGames} team-games saved (${p.scrimmage.toLocaleString()} scrimmage plays kept, ${p.garbageDropped.toLocaleString()} garbage-time dropped). ` +
           `PPA present on ${cov.scrimmage == null ? "?" : Math.round(cov.scrimmage * 100)}% of scrimmage plays and ${cov.specialTeams == null ? "?" : Math.round(cov.specialTeams * 100)}% of special-teams plays. ` +
+          `Net punt ${p.kicks.puntNetAvg == null ? "?" : p.kicks.puntNetAvg.toFixed(1)} yds (next snap found for ${p.kicks.puntNetCoverage == null ? "?" : Math.round(p.kicks.puntNetCoverage * 100)}% of punts), net kickoff ${p.kicks.koNetAvg == null ? "?" : p.kicks.koNetAvg.toFixed(1)} yds (${p.kicks.koNetCoverage == null ? "?" : Math.round(p.kicks.koNetCoverage * 100)}%) — both should sit near 38–42. ` +
           `Play types: ${p.topPlayTypes.map(([t, n]) => `${t} ${n}`).join(", ")}.${r.warnings?.length ? ` Warnings: ${r.warnings.join("; ")}` : ""}\nSample row: ${JSON.stringify(p.sample)}`
       );
       state.reload();
