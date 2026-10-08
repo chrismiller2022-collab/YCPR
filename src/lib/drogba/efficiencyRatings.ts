@@ -48,7 +48,9 @@ export interface EffConfig {
   lambda: Record<EffMetric, number>; // ridge strength, in observations — bigger = prior lasts longer
   rho: number; // share of last season's final O/D carried into the new season
 }
-export const DEFAULT_EFF_CONFIG: EffConfig = { lambda: { sr: 4, expl: 8, ppa: 6 }, rho: 0.6 };
+// Settings from the bake-off (tuned on 2022-23, confirmed on 2024-26): weaker shrinkage within a season,
+// longer memory of last season's final ratings.
+export const DEFAULT_EFF_CONFIG: EffConfig = { lambda: { sr: 2, expl: 4, ppa: 3 }, rho: 0.85 };
 
 export interface EffSnapshot {
   off: Map<string, number>; // team -> offense effect (metric units, higher = better)

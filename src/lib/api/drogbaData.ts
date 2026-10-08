@@ -4,7 +4,6 @@ import { cachedFetch, invalidateCacheKey } from "./cache";
 import type { RawGameRow, RawLineRow } from "../drogba/dataset";
 import type { RawAdvRow } from "../drogba/efficiencyRatings";
 import type { RawPreseasonRow } from "../drogba/preseason";
-import type { LockLike } from "../drogba/consensus";
 
 export const DROGBA_FIRST_SEASON = 2021;
 
@@ -56,14 +55,6 @@ export async function fetchDrogbaPreseason(): Promise<RawPreseasonRow[]> {
         .order("season")
         .order("team")
         .range(from, to)
-    )
-  );
-}
-
-export async function fetchDrogbaLocks(): Promise<(LockLike & { season: number; week: number })[]> {
-  return cachedFetch("drogba-locks", () =>
-    fetchAllRows<LockLike & { season: number; week: number }>((from, to) =>
-      supabase.from("game_projection_locks").select("game_id, season, week, my_away_spread").order("game_id").range(from, to)
     )
   );
 }

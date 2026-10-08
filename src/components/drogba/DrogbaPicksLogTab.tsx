@@ -78,7 +78,7 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
                   <th style={NUM}>Open</th>
                   <th style={NUM}>Close</th>
                   <th style={NUM}>DROGBA</th>
-                  <th style={NUM}>Expected cover</th>
+                  <th style={NUM}>Edge (pts)</th>
                   <th style={NUM}>Line moved to us</th>
                   <th style={CELL}>vs open</th>
                   <th style={CELL}>vs close</th>

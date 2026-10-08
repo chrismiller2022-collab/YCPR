@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../../lib/adminWeek";
-import { useWeeklyStats } from "../../lib/api/weeklyStats";
 import { saveDrogbaPicks, invalidateDrogbaCache } from "../../lib/api/drogbaData";
-import { hfaFor } from "../../lib/odds";
-import { EDGE_CAP, fitLayer1, fitLayer2, predictCover, predictLayer1, type GameSignals } from "../../lib/drogba/model";
+import { fitEdgeResponse, fitLayer1, predictEdge, predictLayer1, EDGE_CAP } from "../../lib/drogba/model";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
-import { CELL, DIM, NUM, P, evAtMinus110, f1, pct, sgn, spreadLabel, winProb } from "./shared";
+import { CELL, DIM, NUM, P, f1, sgn, spreadLabel } from "./shared";
 
-export const MODEL_VERSION = "drogba-v1";
+export const MODEL_VERSION = "drogba-v2-independent";
+const DEFAULT_MIN_EDGE = 5; // JP+'s published threshold; the backtest shows what each level has actually done
 
 export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const engine = state.engine;
@@ -15,68 +14,40 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const [season, setSeason] = useState<number | null>(null);
   const [week, setWeek] = useState(1);
   useDefaultToAdminWeek(setWeek);
-  const [minCover, setMinCover] = useState(1.0);
+  const [minEdge, setMinEdge] = useState(DEFAULT_MIN_EDGE);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
   const S = season ?? seasons[0] ?? new Date().getFullYear();
 
+  // Fit only on games finished before the week being looked at.
   const fit = useMemo(() => {
-    if (!engine) return null;
+    if (!engine || !engine.hasEff) return null;
     const train = engine.signals.filter((s) => s.g.completed && (s.g.season < S || (s.g.season === S && s.g.week < week)));
-    const l1 = engine.hasEff ? fitLayer1(train) : null;
-    const l2c = fitLayer2(train.filter((s) => s.consensusMargin != null), l1, true);
-    const l2e = l1 ? fitLayer2(train, l1, false) : null;
-    return { l1, l2c, l2e, trainN: train.length };
+    const l1 = fitLayer1(train);
+    // The response (how much a disagreement is worth) is measured on the most recent three seasons: the
+    // edge was much stronger in 2023 than since, and an all-seasons average overstates today's.
+    const resp = l1 ? fitEdgeResponse(train.filter((s) => s.g.season >= S - 2), l1) : null;
+    return l1 && resp ? { l1, resp, trainN: train.length } : null;
   }, [engine, S, week]);
 
   const rows = useMemo(() => {
     if (!engine || !fit) return [];
     return engine.signals
       .filter((s) => s.g.season === S && s.g.week === week && !s.g.completed)
-      .map((s0) => {
-        const g = s0.g;
-        // Consensus: frozen lock / saved projection if there is one, otherwise today's live ratings.
-        let consSpread = engine.consensus.get(g.id) ?? null;
-        let consSource = consSpread != null ? "locked" : "";
-        if (consSpread == null) {
-          const h = liveByTeam[g.home]?.rating;
-          const a = liveByTeam[g.away]?.rating;
-          if (h != null && a != null) {
-            consSpread = h - a - (g.neutral ? 0 : hfaFor(g.home, liveByTeam));
-            consSource = "live";
-          }
-        }
-        const s: GameSignals = { ...s0, consensusMargin: consSpread == null ? null : -consSpread };
-        const l2 = s.consensusMargin != null && fit.l2c ? fit.l2c : fit.l2e;
-        const cover = l2 ? predictCover(l2, fit.l1, s) : null;
-        const effMargin = fit.l1 ? predictLayer1(fit.l1, s) : null;
-        const open = g.open!;
-        const p = cover == null ? null : winProb(cover);
-        return {
-          g,
-          open,
-          close: g.close,
-          consSpread,
-          consSource,
-          consEdge: consSpread == null ? null : -consSpread + open,
-          effSpread: effMargin == null ? null : -effMargin,
-          cover,
-          modelSpread: cover == null ? null : open - cover,
-          side: cover == null ? null : cover > 0 ? ("home" as const) : ("away" as const),
-          p,
-          ev: p == null ? null : evAtMinus110(p),
-        };
+      .map((s) => {
+        const m = predictLayer1(fit.l1, s);
+        if (m == null) return { s, g: s.g, open: s.g.open!, modelSpread: null as number | null, pred: null };
+        return { s, g: s.g, open: s.g.open!, modelSpread: -m, pred: predictEdge(fit.resp, s, m) };
       })
-      .sort((a, b) => Math.abs(b.cover ?? 0) - Math.abs(a.cover ?? 0));
-  }, [engine, fit, S, week, liveByTeam]);
+      .sort((a, b) => Math.abs(b.pred?.edge ?? 0) - Math.abs(a.pred?.edge ?? 0));
+  }, [engine, fit, S, week]);
 
   async function save(overwrite: boolean) {
     setSaving(true);
     setMsg(null);
     try {
       const picks = rows
-        .filter((r) => r.cover != null)
+        .filter((r) => r.pred && r.modelSpread != null)
         .map((r) => ({
           game_id: r.g.id,
           season: r.g.season,
@@ -86,9 +57,9 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
           model_home_spread: r.modelSpread!,
           open_spread: r.open,
           open_provider: r.g.openProvider,
-          edge: r.cover,
-          side: r.side,
-          filtered: Math.abs(r.cover!) >= minCover,
+          edge: r.pred!.edge,
+          side: r.pred!.edge > 0 ? ("home" as const) : ("away" as const),
+          filtered: Math.abs(r.pred!.edge) >= minEdge,
           model_version: MODEL_VERSION,
         }));
       const res = await saveDrogbaPicks(picks, overwrite);
@@ -103,9 +74,8 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
 
   if (state.loading || state.building) return <p style={DIM}>{state.loading ? "Loading data…" : "Building walk-forward ratings (about 5 seconds)…"}</p>;
   if (state.error) return <p style={{ color: "crimson" }}>{state.error}</p>;
-  if (!engine || !fit) return null;
+  if (!engine) return null;
 
-  const variant = fit.l2c ? (fit.l1 ? "efficiency + consensus" : "consensus only") : fit.l2e ? "efficiency only" : "none";
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>This week</h2>
@@ -121,15 +91,16 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
           ))}
         </select>
         <label style={{ fontSize: "0.85rem" }}>
-          Pick when model expects to cover by ≥{" "}
-          <input className="filter" type="number" step={0.25} value={minCover} onChange={(e) => setMinCover(Number(e.target.value))} style={{ width: "5rem" }} />
+          Pick when the model disagrees with the open by ≥{" "}
+          <input className="filter" type="number" step={0.5} value={minEdge} onChange={(e) => setMinEdge(Number(e.target.value))} style={{ width: "5rem" }} /> pts
         </label>
       </div>
       <p style={DIM}>
-        Model in use: <strong>{variant}</strong> (fit on {fit.trainN} finished games before this week). Spreads are home-relation: negative = home favored. "Expected cover" is the model's estimate of the points the home side beats the
-        open by (negative = away side). Win % assumes a 13-point standard deviation on spread results. This is the model's output, not a recommendation to bet — see the Backtest tab for how reliable each level has been.
+        DROGBA runs on CFBD data alone (no lines, no one else's ratings), so it can be run Sunday morning as soon as Saturday's stats are in. Spreads are home-relation (negative = home favored). <strong>Edge</strong> is how many points the model says the home side beats the open by
+        (negative = the away side); edges are capped at {EDGE_CAP}. "Exp. line move" is the move toward the pick the model has earned per point of edge over the last three seasons, and "Exp. cover" is the points the pick has covered by; both are small, and the cover is close to zero — see the Backtest tab for what each edge level has actually done.
+        {fit ? ` Fit on ${fit.trainN} finished games before this week.` : ""}
       </p>
-      {variant === "none" && <p style={{ color: "crimson", fontSize: "0.85rem" }}>Not enough history to fit the model yet — run the backfill on the Data & sync tab.</p>}
+      {!fit && <p style={{ color: "crimson", fontSize: "0.85rem" }}>Not enough history to fit the model yet — run the backfill on the Data & sync tab.</p>}
       <div className="table-scroll">
         <table>
           <thead>
@@ -137,55 +108,46 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
               <th style={CELL}>Matchup</th>
               <th style={NUM}>Open (home)</th>
               <th style={CELL}>Open book</th>
-              <th style={NUM}>Now (home)</th>
-              <th style={NUM}>My consensus</th>
-              <th style={NUM}>Consensus edge</th>
-              <th style={NUM}>Efficiency model</th>
-              <th style={NUM}>Expected cover</th>
               <th style={NUM}>DROGBA spread</th>
+              <th style={NUM}>Edge</th>
               <th style={CELL}>Pick (at the open)</th>
-              <th style={NUM}>Win %</th>
-              <th style={NUM}>EV @ −110</th>
+              <th style={NUM}>Exp. line move</th>
+              <th style={NUM}>Exp. cover</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
-              const hit = r.cover != null && Math.abs(r.cover) >= minCover;
+              const edge = r.pred?.edge ?? null;
+              const hit = edge != null && Math.abs(edge) >= minEdge;
+              const side = edge == null ? null : edge > 0 ? "home" : "away";
               return (
                 <tr key={r.g.id} style={hit ? { background: "rgba(120,200,120,0.10)" } : undefined}>
                   <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
                   <td style={NUM}>{f1(r.open)}</td>
                   <td style={CELL}>{r.g.openProvider ?? "–"}</td>
-                  <td style={NUM}>{f1(r.close)}</td>
-                  <td style={NUM}>{f1(r.consSpread)}{r.consSource === "live" ? "*" : ""}</td>
-                  <td style={NUM}>{sgn(r.consEdge)}{r.consEdge != null && Math.abs(r.consEdge) > EDGE_CAP ? " (capped)" : ""}</td>
-                  <td style={NUM}>{f1(r.effSpread)}</td>
-                  <td style={NUM}>{sgn(r.cover, 2)}</td>
                   <td style={NUM}>{f1(r.modelSpread)}</td>
-                  <td style={CELL}>
-                    {r.side == null ? "–" : r.side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}
-                  </td>
-                  <td style={NUM}>{r.p == null ? "–" : pct(r.p * 100)}</td>
-                  <td style={NUM}>{r.ev == null ? "–" : sgn(r.ev * 100, 1) + "%"}</td>
+                  <td style={NUM}>{sgn(edge)}</td>
+                  <td style={CELL}>{side == null ? "–" : side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}</td>
+                  <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.move), 2)}</td>
+                  <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.cover), 2)}</td>
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr>
-                <td style={CELL} colSpan={12}>No unplayed FBS-vs-FBS games with an opening line for this week.</td>
+                <td style={CELL} colSpan={8}>No unplayed FBS-vs-FBS games with an opening line for this week.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <p style={DIM}>* consensus taken from today's live ratings (not frozen yet). Games already in a Freeze Week lock use the locked number.</p>
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
-        <button className="menu-btn" disabled={saving || rows.every((r) => r.cover == null)} onClick={() => save(false)}>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+        <button className="menu-btn" disabled={saving || rows.every((r) => !r.pred)} onClick={() => save(false)}>
           Save this week's numbers to the Picks Log
         </button>
         <button
           className="menu-btn"
-          disabled={saving || rows.every((r) => r.cover == null)}
+          disabled={saving || rows.every((r) => !r.pred)}
           onClick={() => {
             if (window.confirm("Overwrite the already-logged numbers for these games? The log is meant to be a record of what the model said while the line was open.")) save(true);
           }}

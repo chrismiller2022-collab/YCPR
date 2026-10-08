@@ -11,6 +11,12 @@ export interface SparseRow {
 
 // Solves min Σ w (y − x·θ)² + Σ λ_j (θ_j − θ0_j)²  for θ. `lambda[j] = 0` leaves θ_j unpenalized.
 export function solveRidge(rows: SparseRow[], lambda: number[], prior: number[]): number[] {
+  return solveRidgeFull(rows, lambda, prior, false).theta;
+}
+
+// Same solve, optionally also returning diag((XᵀWX + Λ)⁻¹) — each parameter's posterior variance in units of the
+// observation noise variance (multiply by the noise variance to get a standard error). Costs one extra O(n³).
+export function solveRidgeFull(rows: SparseRow[], lambda: number[], prior: number[], wantVar: boolean): { theta: number[]; diagInv: number[] | null } {
   const n = lambda.length;
   const A = new Float64Array(n * n);
   const b = new Float64Array(n);
@@ -27,12 +33,23 @@ export function solveRidge(rows: SparseRow[], lambda: number[], prior: number[])
     }
   }
   for (let j = 0; j < n; j++) A[j * n + j] += lambda[j] + 1e-9;
-  const delta = choleskySolve(A, b, n);
-  return delta.map((d, j) => d + prior[j]);
+  choleskyFactor(A, n);
+  const delta = choleskyBackSolve(A, b, n);
+  let diagInv: number[] | null = null;
+  if (wantVar) {
+    diagInv = new Array<number>(n).fill(0);
+    const e = new Float64Array(n);
+    for (let j = 0; j < n; j++) {
+      e.fill(0);
+      e[j] = 1;
+      diagInv[j] = choleskyBackSolve(A, e, n)[j];
+    }
+  }
+  return { theta: delta.map((d, j) => d + prior[j]), diagInv };
 }
 
-function choleskySolve(A: Float64Array, b: Float64Array, n: number): number[] {
-  // In-place lower-triangular factor L (A = L Lᵀ).
+// In-place lower-triangular factor L (A = L Lᵀ).
+function choleskyFactor(A: Float64Array, n: number) {
   for (let i = 0; i < n; i++) {
     for (let j = 0; j <= i; j++) {
       let sum = A[i * n + j];
@@ -41,6 +58,9 @@ function choleskySolve(A: Float64Array, b: Float64Array, n: number): number[] {
       else A[i * n + j] = sum / A[j * n + j];
     }
   }
+}
+
+function choleskyBackSolve(A: Float64Array, b: Float64Array, n: number): number[] {
   const z = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     let sum = b[i];

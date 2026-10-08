@@ -3,15 +3,12 @@ import { isFbsGame, type DGame } from "./dataset";
 import { buildMarginSnapshots } from "./marginRatings";
 import { buildEffSnapshots, toTeamGameAdv, EFF_METRICS, type EffMetric, type EffSnapshot, type RawAdvRow } from "./efficiencyRatings";
 import { buildPreseasonMap, type RawPreseasonRow } from "./preseason";
-import { consensusSpreadByGame, type BetHistoryLike, type LockLike } from "./consensus";
 import { buildSignals, type GameSignals } from "./model";
 
 export interface EngineInputs {
   games: DGame[];
   adv: RawAdvRow[];
   preseason: RawPreseasonRow[];
-  history: BetHistoryLike[];
-  locks: LockLike[];
 }
 
 export interface SeasonCoverage {
@@ -26,7 +23,6 @@ export interface Engine {
   signals: GameSignals[];
   coverage: SeasonCoverage[];
   hasEff: boolean; // enough per-game data to run the efficiency layer
-  consensus: Map<string, number>;
 }
 
 export function computeCoverage(games: DGame[], adv: RawAdvRow[], preseason: RawPreseasonRow[]): SeasonCoverage[] {
@@ -57,7 +53,6 @@ export function buildEngine(inp: EngineInputs): Engine {
     const tg = toTeamGameAdv(inp.adv);
     for (const m of EFF_METRICS) effSnaps[m] = buildEffSnapshots(inp.games, tg, m);
   }
-  const consensus = consensusSpreadByGame(inp.games, inp.history, inp.locks);
-  const signals = buildSignals(inp.games, marginSnaps, effSnaps, consensus, buildPreseasonMap(inp.preseason));
-  return { signals, coverage, hasEff, consensus };
+  const signals = buildSignals(inp.games, marginSnaps, effSnaps, buildPreseasonMap(inp.preseason));
+  return { signals, coverage, hasEff };
 }

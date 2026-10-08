@@ -1,10 +1,12 @@
-// DROGBA spread model.
+// DROGBA spread model — fully independent: it never sees a betting line while rating teams, and uses no one
+// else's projections (not the site's consensus either).
 //   Layer 1 (market-blind): predicts the home margin from walk-forward ratings — efficiency (per-play
-//     success rate / explosiveness / PPA) and scoreboard margin — with a ridge fit on past seasons.
-//   Layer 2 (market-aware): predicts how much the HOME side covers the OPENING line by, from how far
-//     each signal (efficiency model, Chris's consensus) disagrees with the open, with separate weights
-//     for weeks 1-3 (preseason-driven) and week 4+ (in-season data). Heavy ridge = honest shrinkage:
-//     the fitted weights say how much of a disagreement is real.
+//     success rate / explosiveness / PPA), scoreboard margin, home field and preseason inputs — with a ridge
+//     fit on earlier seasons.
+//   Edge response: how a disagreement with the OPENING line turns into (a) the line's later move toward the
+//     model (closing-line value) and (b) the points the model's side covers by, with separate weights for
+//     weeks 1-3 (preseason-driven) and week 4+ (in-season data). Heavy shrinkage: the fitted weights are the
+//     honest answer to "how much of a disagreement with the market is real".
 import { fitDenseRidge } from "./ridgeSolve";
 import { margin, isFbsGame, type DGame } from "./dataset";
 import { EFF_METRICS, netEff, type EffMetric, type EffSnapshot } from "./efficiencyRatings";
@@ -16,7 +18,6 @@ export interface GameSignals {
   late: boolean; // week >= 4
   mrMargin: number | null; // scoreboard-rating predicted home margin
   effDiff: Partial<Record<EffMetric, number>>; // home net efficiency − away net efficiency (metric units)
-  consensusMargin: number | null; // Chris's consensus predicted home margin (= −his home spread)
   preDiff: number[]; // home − away preseason z-scores (talent, returning, portal, recruiting), already faded by week
 }
 
@@ -26,7 +27,6 @@ export function buildSignals(
   games: DGame[],
   marginSnaps: Map<string, RatingSnapshot>,
   effSnaps: Partial<Record<EffMetric, Map<string, EffSnapshot>>>,
-  consensusSpread: Map<string, number>,
   preseason: Map<string, PreseasonZ> = new Map()
 ): GameSignals[] {
   const out: GameSignals[] = [];
@@ -43,19 +43,11 @@ export function buildSignals(
       const a = netEff(s, g.away);
       if (h != null && a != null) effDiff[m] = h - a;
     }
-    const cs = consensusSpread.get(g.id);
     const ph = preseason.get(`${g.season}|${g.home}`);
     const pa = preseason.get(`${g.season}|${g.away}`);
     const ew = earlyWeight(g.week);
     const preDiff = [0, 1, 2, 3].map((j) => (ph && pa ? (ph[j] - pa[j]) * ew : 0));
-    out.push({
-      g,
-      late: g.week >= LATE_WEEK,
-      mrMargin: mrMargin != null && Number.isFinite(mrMargin) ? mrMargin : null,
-      effDiff,
-      consensusMargin: cs == null ? null : -cs,
-      preDiff,
-    });
+    out.push({ g, late: g.week >= LATE_WEEK, mrMargin: mrMargin != null && Number.isFinite(mrMargin) ? mrMargin : null, effDiff, preDiff });
   }
   return out;
 }
@@ -75,7 +67,11 @@ const l1Row = (s: GameSignals): number[] | null => {
   return [sr, expl, ppa, s.mrMargin, s.g.neutral ? 0 : 1, ...s.preDiff];
 };
 
-export function fitLayer1(train: GameSignals[], alpha = 30): Layer1 | null {
+// alpha 300 came out of the bake-off: stronger shrinkage than the first version's 30 predicted held-out
+// seasons better (tuned on 2022-23 only, then confirmed on 2024-26).
+export const LAYER1_ALPHA = 300;
+
+export function fitLayer1(train: GameSignals[], alpha = LAYER1_ALPHA): Layer1 | null {
   const X: number[][] = [];
   const y: number[] = [];
   for (const s of train) {
@@ -100,99 +96,91 @@ export function predictLayer1(m: Layer1, s: GameSignals): number | null {
   return m.intercept + r.reduce((a, v, j) => a + ((v - m.mean[j]) / m.sd[j]) * m.coef[j], 0);
 }
 
-// ---------------------------------------------------------------- layer 2
-export interface Layer2 {
-  features: string[];
-  intercept: number;
-  coef: number[];
-  useConsensus: boolean;
-}
-// Disagreements beyond 8 points are too rare in the data to extrapolate from (26 of ~1,750 games in 2024-26, with
-// no better a cover rate than smaller edges), and are more often a stale rating or news the ratings can't see.
+// ---------------------------------------------------------------- edge response
+// Disagreements beyond 8 points are too rare in the data to extrapolate from and are more often a stale rating
+// or news the ratings can't see than a real mispricing.
 export const EDGE_CAP = 8;
-// Small disagreements are mostly noise and big ones are where the signal shows up (weeks 1-3 consensus: 54% at 3+,
-// 59% at 4+, 60% at 5+, 67% at 6+), so each signal also gets a hinge term that only switches on past HINGE_KNOT.
-// The knot of 3 was read off the same 2024-26 games the model is graded on, so treat the result as optimistic.
-export const HINGE_KNOT = 3;
-const hinge = (e: number) => Math.sign(e) * Math.max(0, Math.abs(e) - HINGE_KNOT);
 const clip = (v: number, c = EDGE_CAP) => Math.max(-c, Math.min(c, v));
 
-// Edge of each signal vs the opening line = (signal's home margin) + open, i.e. the points by which that
-// signal says the home side beats the number. Positive = home.
-function l2Row(s: GameSignals, l1: Layer1 | null, useConsensus: boolean): number[] | null {
-  const open = s.g.open!;
-  const effM = l1 ? predictLayer1(l1, s) : null;
-  const effEdge = effM == null ? 0 : clip(effM + open);
-  const row: number[] = [];
-  const late = s.late ? 1 : 0;
-  if (!l1 && !useConsensus) return null;
-  if (l1) row.push(effEdge * late, effEdge * (1 - late), hinge(effEdge) * late, hinge(effEdge) * (1 - late));
-  if (useConsensus) {
-    if (s.consensusMargin == null) return null;
-    const c = clip(s.consensusMargin + open);
-    row.push(c * late, c * (1 - late), hinge(c) * late, hinge(c) * (1 - late));
-  }
-  return row;
+// Edge = the model's home margin + the opening spread: the points by which the model says the home side beats
+// the number. Positive = home side.
+export const edgeOf = (modelMargin: number, open: number) => modelMargin + open;
+
+export interface EdgeResponse {
+  // points of expected cover / line move per point of edge, separately for weeks 1-3 and week 4+
+  coverEarly: number;
+  coverLate: number;
+  moveEarly: number; // + = the line later moves toward the home side
+  moveLate: number;
 }
 
-export function fitLayer2(train: GameSignals[], l1: Layer1 | null, useConsensus: boolean, alpha = 400): Layer2 | null {
+export function fitEdgeResponse(train: GameSignals[], l1: Layer1, alpha = 100): EdgeResponse | null {
   const X: number[][] = [];
-  const y: number[] = [];
+  const yCover: number[] = [];
+  const Xm: number[][] = [];
+  const yMove: number[] = [];
   for (const s of train) {
     if (!s.g.completed) continue;
-    const r = l2Row(s, l1, useConsensus);
-    if (!r) continue;
-    X.push(r);
-    y.push(margin(s.g) + s.g.open!);
+    const m = predictLayer1(l1, s);
+    if (m == null) continue;
+    const e = clip(edgeOf(m, s.g.open!));
+    const late = s.late ? 1 : 0;
+    const row = [e * late, e * (1 - late)];
+    X.push(row);
+    yCover.push(margin(s.g) + s.g.open!);
+    if (s.g.close != null) {
+      Xm.push(row);
+      yMove.push(s.g.open! - s.g.close);
+    }
   }
-  if (X.length < 150) return null;
-  const f = fitDenseRidge(X, y, alpha);
-  const features = [
-    ...(l1 ? ["effEdge×late", "effEdge×early", "effEdge hinge×late", "effEdge hinge×early"] : []),
-    ...(useConsensus ? ["consensusEdge×late", "consensusEdge×early", "consensusEdge hinge×late", "consensusEdge hinge×early"] : []),
-  ];
-  return { features, intercept: f.intercept, coef: f.coef, useConsensus };
+  if (X.length < 300 || Xm.length < 300) return null;
+  const c = fitDenseRidge(X, yCover, alpha);
+  const mv = fitDenseRidge(Xm, yMove, alpha);
+  return { coverLate: c.coef[0], coverEarly: c.coef[1], moveLate: mv.coef[0], moveEarly: mv.coef[1] };
 }
 
-// Expected points by which the HOME side covers the opening spread (negative = the away side covers).
-export function predictCover(l2: Layer2, l1: Layer1 | null, s: GameSignals): number | null {
-  const r = l2Row(s, l1, l2.useConsensus);
-  if (!r) return null;
-  return r.reduce((a, v, j) => a + v * l2.coef[j], 0); // no intercept: a pure disagreement model
+export interface EdgePrediction {
+  edge: number; // clipped edge vs the open (positive = home side)
+  cover: number; // expected points the HOME side covers the open by (negative = away side)
+  move: number; // expected line move toward the home side, open → close
+}
+export function predictEdge(resp: EdgeResponse, s: GameSignals, modelMargin: number): EdgePrediction {
+  const edge = clip(edgeOf(modelMargin, s.g.open!));
+  return { edge, cover: edge * (s.late ? resp.coverLate : resp.coverEarly), move: edge * (s.late ? resp.moveLate : resp.moveEarly) };
 }
 
 // ---------------------------------------------------------------- walk-forward evaluation
 export interface BetResult {
   g: DGame;
-  cover: number; // predicted home cover margin
+  edge: number;
   side: 1 | -1;
   won: boolean | null; // null = push
-  closeBeat: number | null; // points the line moved toward our side open→close (CLV)
+  moveToUs: number | null; // points the line moved toward our side, open → close (closing-line value)
+  cover: number;
 }
 
-export function evaluateWalkForward(
-  signals: GameSignals[],
-  opts: { testSeasons: number[]; useConsensus: boolean; useEff: boolean; alpha1?: number; alpha2?: number; loso?: boolean }
-): BetResult[] {
+// Each test season is predicted by models fit ONLY on earlier seasons.
+export function evaluateWalkForward(signals: GameSignals[], opts: { testSeasons: number[]; alpha1?: number }): BetResult[] {
   const results: BetResult[] = [];
   for (const S of opts.testSeasons) {
-    const train = signals.filter((s) => (opts.loso ? s.g.season !== S : s.g.season < S) && s.g.completed);
-    const l1 = opts.useEff ? fitLayer1(train, opts.alpha1) : null;
-    if (opts.useEff && !l1) continue;
-    const l2 = fitLayer2(train, l1, opts.useConsensus, opts.alpha2);
-    if (!l2) continue;
+    const train = signals.filter((s) => s.g.season < S && s.g.completed);
+    const l1 = fitLayer1(train, opts.alpha1);
+    if (!l1) continue;
     for (const s of signals) {
       if (s.g.season !== S || !s.g.completed) continue;
-      const c = predictCover(l2, l1, s);
-      if (c == null || c === 0) continue;
-      const side: 1 | -1 = c > 0 ? 1 : -1;
+      const m = predictLayer1(l1, s);
+      if (m == null) continue;
+      const edge = edgeOf(m, s.g.open!);
+      if (edge === 0) continue;
+      const side: 1 | -1 = edge > 0 ? 1 : -1;
       const cov = side * (margin(s.g) + s.g.open!);
       results.push({
         g: s.g,
-        cover: c,
+        edge,
         side,
         won: cov === 0 ? null : cov > 0,
-        closeBeat: s.g.close == null ? null : side * (s.g.open! - s.g.close),
+        moveToUs: s.g.close == null ? null : side * (s.g.open! - s.g.close),
+        cover: cov,
       });
     }
   }
@@ -200,26 +188,29 @@ export function evaluateWalkForward(
 }
 
 export interface ThresholdRow {
-  minCover: number;
+  minEdge: number;
   n: number;
   w: number;
   l: number;
   atsPct: number;
-  avgMoveToUs: number;
+  avgMoveToUs: number; // closing-line value, in points
+  movedOurWayPct: number; // of games whose line moved at all
 }
 export function thresholdTable(results: BetResult[], thresholds: number[]): ThresholdRow[] {
   return thresholds.map((t) => {
-    const sub = results.filter((r) => Math.abs(r.cover) >= t);
+    const sub = results.filter((r) => Math.abs(r.edge) >= t);
     const w = sub.filter((r) => r.won === true).length;
     const l = sub.filter((r) => r.won === false).length;
-    const mv = sub.filter((r) => r.closeBeat != null);
+    const mv = sub.filter((r) => r.moveToUs != null);
+    const moved = mv.filter((r) => r.moveToUs !== 0);
     return {
-      minCover: t,
+      minEdge: t,
       n: sub.length,
       w,
       l,
       atsPct: w + l === 0 ? 0 : (100 * w) / (w + l),
-      avgMoveToUs: mv.length === 0 ? 0 : mv.reduce((a, r) => a + r.closeBeat!, 0) / mv.length,
+      avgMoveToUs: mv.length === 0 ? 0 : mv.reduce((a, r) => a + r.moveToUs!, 0) / mv.length,
+      movedOurWayPct: moved.length === 0 ? 0 : (100 * moved.filter((r) => r.moveToUs! > 0).length) / moved.length,
     };
   });
 }

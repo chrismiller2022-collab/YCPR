@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { BET_HISTORY } from "../../data/betHistory.data";
-import { fetchDrogbaAdv, fetchDrogbaLocks, fetchDrogbaPreseason, fetchDrogbaRaw, invalidateDrogbaCache, type DrogbaRaw } from "../api/drogbaData";
+import { fetchDrogbaAdv, fetchDrogbaPreseason, fetchDrogbaRaw, invalidateDrogbaCache, type DrogbaRaw } from "../api/drogbaData";
 import { fetchBookSnapshots } from "../api/bookSnapshots";
 import { buildEngine, type Engine } from "./engine";
 import { buildGames, type DGame, type OpenMode } from "./dataset";
 import { buildBookLines, type BookLine } from "./openers";
 import type { RawAdvRow } from "./efficiencyRatings";
 import type { RawPreseasonRow } from "./preseason";
-import type { LockLike } from "./consensus";
 
 export interface DrogbaState {
   loading: boolean;
@@ -38,7 +36,6 @@ interface Loaded {
   raw: DrogbaRaw;
   adv: RawAdvRow[];
   pre: RawPreseasonRow[];
-  locks: LockLike[];
   fdRows: Awaited<ReturnType<typeof fetchBookSnapshots>>;
 }
 
@@ -62,10 +59,10 @@ export function useDrogba(): DrogbaState {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([fetchDrogbaRaw(), fetchDrogbaAdv(), fetchDrogbaPreseason(), fetchDrogbaLocks(), fetchBookSnapshots("fanduel")])
-      .then(([raw, adv, pre, locks, fdRows]) => {
+    Promise.all([fetchDrogbaRaw(), fetchDrogbaAdv(), fetchDrogbaPreseason(), fetchBookSnapshots("fanduel")])
+      .then(([raw, adv, pre, fdRows]) => {
         if (cancelled) return;
-        setLoaded({ raw, adv, pre, locks, fdRows });
+        setLoaded({ raw, adv, pre, fdRows });
         setLoading(false);
       })
       .catch((e: any) => {
@@ -94,7 +91,7 @@ export function useDrogba(): DrogbaState {
         setBovadaOpen(new Map(base.filter((b) => b.open != null).map((b) => [b.id, b.open as number])));
         const g = buildGames(loaded.raw.games, loaded.raw.lines, fd, openMode);
         setGames(g);
-        setEngine(buildEngine({ games: g, adv: loaded.adv, preseason: loaded.pre, history: BET_HISTORY, locks: loaded.locks }));
+        setEngine(buildEngine({ games: g, adv: loaded.adv, preseason: loaded.pre }));
         setError(null);
       } catch (e: any) {
         setError(e?.message ?? "Building DROGBA ratings failed");

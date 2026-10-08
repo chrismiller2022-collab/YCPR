@@ -1,89 +1,22 @@
 import { useMemo, useState } from "react";
 import { isFbsGame, margin } from "../../lib/drogba/dataset";
-import {
-  evaluateWalkForward,
-  fitLayer1,
-  fitLayer2,
-  thresholdTable,
-  type GameSignals,
-  type ThresholdRow,
-} from "../../lib/drogba/model";
+import { evaluateWalkForward, fitEdgeResponse, fitLayer1, predictLayer1, thresholdTable, type BetResult, type GameSignals } from "../../lib/drogba/model";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { CELL, DIM, H3, NUM, P, f1, pct, sgn } from "./shared";
 
-interface RawEdgeRow {
-  min: number;
-  n: number;
-  w: number;
-  l: number;
-  ats: number;
-  avgCover: number;
-  avgMove: number;
-}
+const EDGES = [0, 3, 5, 7];
+const TEST_SEASONS = [2023, 2024, 2025, 2026];
 
-// Plain ATS table by the size of the raw disagreement between a signal and the opening line.
-function rawEdgeTable(signals: GameSignals[], pick: (s: GameSignals) => number | null, filter: (s: GameSignals) => boolean): RawEdgeRow[] {
-  return [0, 1, 2, 3, 4, 5, 6].map((min) => {
-    let w = 0,
-      l = 0,
-      cover = 0,
-      mv = 0,
-      mvN = 0;
-    for (const s of signals) {
-      if (!s.g.completed || !filter(s)) continue;
-      const m = pick(s);
-      if (m == null) continue;
-      const edge = m + s.g.open!;
-      if (edge === 0 || Math.abs(edge) < min) continue;
-      const side = edge > 0 ? 1 : -1;
-      const c = side * (margin(s.g) + s.g.open!);
-      cover += c;
-      if (c > 0) w++;
-      else if (c < 0) l++;
-      if (s.g.close != null) {
-        mv += side * (s.g.open! - s.g.close);
-        mvN++;
-      }
-    }
-    return { min, n: w + l, w, l, ats: w + l ? (100 * w) / (w + l) : 0, avgCover: w + l ? cover / (w + l) : 0, avgMove: mvN ? mv / mvN : 0 };
+function bySeason(results: BetResult[]) {
+  return TEST_SEASONS.map((season) => {
+    const sub = results.filter((r) => r.g.season === season);
+    const all = thresholdTable(sub, [0])[0];
+    const big = thresholdTable(sub, [5])[0];
+    return { season, games: sub.length, clvAll: all.avgMoveToUs, bets5: big.n, ats5: big.atsPct, clv5: big.avgMoveToUs };
   });
 }
 
-function RawEdgeView({ title, rows }: { title: string; rows: RawEdgeRow[] }) {
-  return (
-    <>
-      <h3 style={H3}>{title}</h3>
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th style={CELL}>Edge vs open</th>
-              <th style={NUM}>Bets</th>
-              <th style={NUM}>W–L</th>
-              <th style={NUM}>ATS vs open</th>
-              <th style={NUM}>Avg cover margin</th>
-              <th style={NUM}>Line moved to us (pts)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.min}>
-                <td style={CELL}>≥ {r.min}</td>
-                <td style={NUM}>{r.n}</td>
-                <td style={NUM}>{r.w}–{r.l}</td>
-                <td style={NUM}>{pct(r.ats)}</td>
-                <td style={NUM}>{sgn(r.avgCover, 2)}</td>
-                <td style={NUM}>{sgn(r.avgMove, 2)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
-
-function ThresholdView({ title, note, rows }: { title: string; note?: string; rows: ThresholdRow[] }) {
+function EdgeTable({ title, note, rows }: { title: string; note?: string; rows: ReturnType<typeof thresholdTable> }) {
   return (
     <>
       <h3 style={H3}>{title}</h3>
@@ -92,21 +25,23 @@ function ThresholdView({ title, note, rows }: { title: string; note?: string; ro
         <table>
           <thead>
             <tr>
-              <th style={CELL}>Model expects to cover by ≥</th>
-              <th style={NUM}>Bets</th>
+              <th style={CELL}>Model disagrees with the open by ≥</th>
+              <th style={NUM}>Games</th>
               <th style={NUM}>W–L</th>
               <th style={NUM}>ATS vs open</th>
-              <th style={NUM}>Line moved to us (pts)</th>
+              <th style={NUM}>Line moved to the model (pts)</th>
+              <th style={NUM}>Moved its way (of moved)</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.minCover}>
-                <td style={CELL}>{r.minCover}</td>
+              <tr key={r.minEdge}>
+                <td style={CELL}>{r.minEdge} pts</td>
                 <td style={NUM}>{r.n}</td>
                 <td style={NUM}>{r.w}–{r.l}</td>
                 <td style={NUM}>{pct(r.atsPct)}</td>
                 <td style={NUM}>{sgn(r.avgMoveToUs, 2)}</td>
+                <td style={NUM}>{pct(r.movedOurWayPct, 0)}</td>
               </tr>
             ))}
           </tbody>
@@ -116,57 +51,52 @@ function ThresholdView({ title, note, rows }: { title: string; note?: string; ro
   );
 }
 
-const THRESHOLDS = [0, 0.5, 1, 1.5, 2, 3];
-
 export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
   const engine = state.engine;
   const [ran, setRan] = useState(false);
 
   const out = useMemo(() => {
-    if (!engine || !ran) return null;
+    if (!engine || !ran || !engine.hasEff) return null;
     const sig = engine.signals;
-    const withC = sig.filter((s) => s.consensusMargin != null);
-    const completed = sig.filter((s) => s.g.completed && isFbsGame(s.g));
+    const results = evaluateWalkForward(sig, { testSeasons: TEST_SEASONS });
+    const completed = sig.filter((s) => s.g.completed && isFbsGame(s.g) && s.g.season >= TEST_SEASONS[0]);
 
-    const mae = (f: (s: GameSignals) => number | null) => {
-      let a = 0,
-        n = 0;
-      for (const s of completed) {
-        const v = f(s);
-        if (v == null) continue;
-        a += Math.abs(margin(s.g) - v);
-        n++;
+    // MAE of the market-blind margin vs the lines (each test season predicted by a model fit on earlier seasons only)
+    const maeRows: { open: number; close: number | null; scoreboard: number | null; model: number | null }[] = [];
+    for (const S of TEST_SEASONS) {
+      const l1 = fitLayer1(sig.filter((s) => s.g.season < S && s.g.completed));
+      if (!l1) continue;
+      for (const s of completed.filter((c) => c.g.season === S)) {
+        const m = predictLayer1(l1, s);
+        const mar = margin(s.g);
+        maeRows.push({ open: Math.abs(mar + s.g.open!), close: s.g.close == null ? null : Math.abs(mar + s.g.close), scoreboard: s.mrMargin == null ? null : Math.abs(mar - s.mrMargin), model: m == null ? null : Math.abs(mar - m) });
       }
-      return { mae: n ? a / n : 0, n };
+    }
+    const avg = (xs: (number | null)[]) => {
+      const v = xs.filter((x): x is number => x != null);
+      return { mae: v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0, n: v.length };
     };
     const baselines = [
-      { label: "Opening line", ...mae((s) => -s.g.open!) },
-      { label: "Closing line", ...mae((s) => (s.g.close == null ? null : -s.g.close)) },
-      { label: "Scoreboard rating (walk-forward)", ...mae((s) => s.mrMargin) },
-      { label: "Your consensus (2024–26)", ...mae((s) => s.consensusMargin) },
+      { label: "Opening line", ...avg(maeRows.map((r) => r.open)) },
+      { label: "Closing line (Bovada)", ...avg(maeRows.map((r) => r.close)) },
+      { label: "Scoreboard-only rating (walk-forward)", ...avg(maeRows.map((r) => r.scoreboard)) },
+      { label: "DROGBA margin (efficiency + preseason, walk-forward)", ...avg(maeRows.map((r) => r.model)) },
     ];
 
-    const consSeasons = Array.from(new Set(withC.map((s) => s.g.season))).sort();
-    const consOnly = evaluateWalkForward(withC, { testSeasons: consSeasons, useConsensus: true, useEff: false, loso: true });
-    const effOnly = engine.hasEff
-      ? evaluateWalkForward(sig, { testSeasons: [2023, 2024, 2025, 2026], useConsensus: false, useEff: true })
-      : null;
-    const both = engine.hasEff
-      ? evaluateWalkForward(withC, { testSeasons: consSeasons, useConsensus: true, useEff: true, loso: true })
-      : null;
-
-    const l1 = engine.hasEff ? fitLayer1(sig.filter((s) => s.g.completed)) : null;
-    const l2 = fitLayer2(withC.filter((s) => s.g.completed), l1, true);
-
+    const weekBuckets: [string, (r: BetResult) => boolean][] = [
+      ["Weeks 1–3", (r) => r.g.week <= 3],
+      ["Weeks 4–8", (r) => r.g.week >= 4 && r.g.week <= 8],
+      ["Week 9+", (r) => r.g.week >= 9],
+    ];
+    const l1All = fitLayer1(sig.filter((s) => s.g.completed));
+    const resp = l1All ? fitEdgeResponse(sig.filter((s) => s.g.completed && s.g.season >= TEST_SEASONS[1]), l1All) : null;
     return {
       baselines,
-      consEarly: rawEdgeTable(withC, (s) => s.consensusMargin, (s) => !s.late),
-      consLate: rawEdgeTable(withC, (s) => s.consensusMargin, (s) => s.late),
-      consOnly: thresholdTable(consOnly, THRESHOLDS),
-      effOnly: effOnly ? thresholdTable(effOnly, THRESHOLDS) : null,
-      both: both ? thresholdTable(both, THRESHOLDS) : null,
-      l1,
-      l2,
+      overall: thresholdTable(results, EDGES),
+      seasons: bySeason(results),
+      buckets: weekBuckets.map(([label, f]) => ({ label, rows: thresholdTable(results.filter(f), [0, 5]) })),
+      l1: l1All,
+      resp,
     };
   }, [engine, ran]);
 
@@ -178,8 +108,9 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
     <div style={{ maxWidth: 1000 }}>
       <h2 style={{ marginTop: 0 }}>Backtest</h2>
       <p style={P}>
-        Every number here uses only information available before each game: ratings for week W are built from games in weeks before W, and each model is fit on other seasons than the one it's graded on. "ATS vs open" grades the
-        pick against Bovada's opening spread. A 52.4% win rate is break-even at −110. {engine.hasEff ? "" : "The efficiency layer is switched off until per-game advanced stats are backfilled for at least two seasons (Data & sync tab)."}
+        Every number uses only information available before each game: ratings for week W come from games before week W, and each season is predicted by models fit on earlier seasons only. The model never sees a line or anyone else's projection while rating teams.
+        The main yardstick is <strong>closing-line value</strong> (how far the line moves toward the model between the open and the close, in points) because it settles in a few hundred games; ATS vs the open needs thousands. 52.4% ATS is break-even at −110. The opening line used is the one chosen at the top of the page; the Methodology figures are against Bovada's open (FanDuel's earlier open adds more line movement, partly just from being earlier, and only covers part of the games).
+        {engine.hasEff ? "" : " The efficiency layer is off until per-game advanced stats are backfilled for at least two seasons (Data & sync tab)."}
       </p>
       <button className="menu-btn" onClick={() => setRan(true)} disabled={ran}>
         {ran ? "Backtest run" : "Run backtest"}
@@ -187,7 +118,7 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
 
       {out && (
         <>
-          <h3 style={H3}>How good are the numbers themselves? (average miss vs the final margin)</h3>
+          <h3 style={H3}>Accuracy (average miss vs the final margin, 2023–26)</h3>
           <div className="table-scroll">
             <table>
               <thead>
@@ -208,28 +139,58 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
               </tbody>
             </table>
           </div>
-          <p style={DIM}>The market is the bar: a rating that doesn't get near the opening line's MAE has nothing to add on its own, which is why the model is built as a disagreement-with-the-open model.</p>
+          <p style={DIM}>JP+ publishes an MAE of 12.77 on its own walk-forward games. The market is the bar; being slightly worse than the open on its own is normal — the model is judged on what it does where it disagrees.</p>
 
-          <RawEdgeView title="Your consensus vs the open — weeks 1–3 (raw edge, no model)" rows={out.consEarly} />
-          <RawEdgeView title="Your consensus vs the open — week 4 on (raw edge, no model)" rows={out.consLate} />
-
-          <ThresholdView
-            title="Model: consensus only (leave-one-season-out, 2024–26)"
-            note="Expected cover is the model's shrunk estimate of how many points the side beats the open by; it is much smaller than the raw edge because most of a disagreement is noise."
-            rows={out.consOnly}
+          <EdgeTable
+            title="Does a bigger disagreement with the open mean more line movement toward the model?"
+            note="Each row is every game where the model's number differs from the opening line by at least that many points. 'Line moved to the model' is closing-line value."
+            rows={out.overall}
           />
-          {out.effOnly && <ThresholdView title="Model: efficiency ratings + preseason priors only (trained on earlier seasons, graded 2023–26)" rows={out.effOnly} />}
-          {out.both && <ThresholdView title="Model: efficiency + consensus (leave-one-season-out, 2024–26)" rows={out.both} />}
 
-          {out.l2 && (
+          <h3 style={H3}>By season (edge ≥ 5 pts)</h3>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style={CELL}>Season</th>
+                  <th style={NUM}>Games</th>
+                  <th style={NUM}>Avg CLV, all games</th>
+                  <th style={NUM}>Bets (≥5)</th>
+                  <th style={NUM}>ATS (≥5)</th>
+                  <th style={NUM}>CLV (≥5)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {out.seasons.map((r) => (
+                  <tr key={r.season}>
+                    <td style={CELL}>{r.season}</td>
+                    <td style={NUM}>{r.games}</td>
+                    <td style={NUM}>{sgn(r.clvAll, 2)}</td>
+                    <td style={NUM}>{r.bets5}</td>
+                    <td style={NUM}>{pct(r.ats5)}</td>
+                    <td style={NUM}>{sgn(r.clv5, 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p style={DIM}>The edge is uneven across seasons — 2023 was far stronger than the others — so judge it over all seasons, not the best one.</p>
+
+          {out.buckets.map((b) => (
+            <EdgeTable key={b.label} title={b.label} rows={b.rows} />
+          ))}
+
+          {out.resp && (
             <>
-              <h3 style={H3}>Layer-2 weights (points of expected cover per point of disagreement)</h3>
-              <p style={P}>{out.l2.features.map((f, i) => `${f}: ${out.l2!.coef[i].toFixed(3)}`).join("  ·  ")}</p>
+              <h3 style={H3}>What a disagreement is worth (last three seasons, 2024+)</h3>
+              <p style={P}>
+                Per point of edge, weeks 1–3: line moves {sgn(out.resp.moveEarly, 3)} pts toward the model, expected cover {sgn(out.resp.coverEarly, 3)}. Week 4+: line moves {sgn(out.resp.moveLate, 3)}, expected cover {sgn(out.resp.coverLate, 3)}. Edges are capped at 8 points.
+              </p>
             </>
           )}
           {out.l1 && (
             <>
-              <h3 style={H3}>Layer-1 weights (standardized features → home margin)</h3>
+              <h3 style={H3}>Margin model weights (standardized features → home margin)</h3>
               <p style={P}>{out.l1.features.map((f, i) => `${f}: ${out.l1!.coef[i].toFixed(2)}`).join("  ·  ")}</p>
             </>
           )}
