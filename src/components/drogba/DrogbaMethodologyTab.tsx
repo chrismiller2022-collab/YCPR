@@ -29,6 +29,16 @@ export default function DrogbaMethodologyTab() {
         </ul>
       </S>
 
+      <S title="1b. Power vs power is where it works (and how picks are grouped)">
+        <p style={P}>
+          Split by matchup, the picture changes sharply. When both teams are in the SEC, Big Ten, Big 12 or ACC (or Notre Dame; the Pac-12 only in 2023, since the label means something different after that), edges of 6+ points went 68–39 (63.6%) against FanDuel's open, with +1.39 points of closing-line value, and were 58% or better in every season; against Bovada's open it is 64.8% and +2.13. In every other game the same edges went 47.8% with about +0.5 closing-line value. The model's accuracy tells the same story: in power-vs-power games its average miss is within 0.14 points of the opening line's (12.15 vs 12.01), elsewhere it is 0.55 worse (12.67 vs 12.12) — dense schedules and plenty of cross-comparisons versus thin, poorly connected data.
+          The closing-line value is the sturdier evidence (it is far less noisy than a win rate); the win rate carries about ±4.7 points at 107 bets, and the split was found after looking at many slices, so it needs to keep holding on new games.
+        </p>
+        <p style={P}>
+          So picks are <strong>grouped, not filtered</strong>: power vs power is the primary list on the This week tab, other games sit below it, and both are saved to the Picks log with their group so each group's record builds separately. The Buckets tab slices every graded pick by role (home/away × favorite/underdog), conference, matchup type and line value, with ATS and closing-line value colored and the same numbers for 2023–24 vs 2025–26.
+        </p>
+      </S>
+
       <S title="2. What was tried to improve it (bake-off, tuned only on 2022–23 and confirmed on 2024–26)">
         <ul style={{ ...P, paddingLeft: "1.2rem" }}>
           <li><strong>Tuning (adopted):</strong> more regularization on the margin model (alpha 30 → 300), weaker in-season shrinkage and longer memory of last season in the ratings. Held-out MAE 12.61 → 12.50 and line-move slope 0.052 → 0.063. Small, but it held up.</li>

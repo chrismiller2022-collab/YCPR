@@ -33,7 +33,9 @@ export function buildSignals(
 ): GameSignals[] {
   const out: GameSignals[] = [];
   for (const g of games) {
-    if (!isFbsGame(g) || g.open == null) continue;
+    // Every FBS game is kept (even one with no opening line on file) so the margin model trains on all of them; only games
+    // with an open can be graded or picked.
+    if (!isFbsGame(g)) continue;
     const key = `${g.season}|${g.week}`;
     const ms = marginSnaps.get(key);
     const mrMargin = ms ? (ms.ratings.get(g.home) ?? NaN) - (ms.ratings.get(g.away) ?? NaN) + (g.neutral ? 0 : ms.hfa) : null;
@@ -164,6 +166,7 @@ export function fitEdgeResponse(train: GameSignals[], l1: Layer1, alpha = 100): 
   const yMove: number[] = [];
   for (const s of train) {
     if (!s.g.completed) continue;
+    if (s.g.open == null) continue;
     const m = predictLayer1(l1, s);
     if (m == null) continue;
     const e = clip(edgeOf(m, s.g.open!));
@@ -210,7 +213,7 @@ export function evaluateWalkForward(signals: GameSignals[], opts: { testSeasons:
     const l1 = fitLayer1(train, opts.alpha1);
     if (!l1) continue;
     for (const s of signals) {
-      if (s.g.season !== S || !s.g.completed) continue;
+      if (s.g.season !== S || !s.g.completed || s.g.open == null) continue;
       const m = predictLayer1(l1, s);
       if (m == null) continue;
       const edge = edgeOf(m, s.g.open!);

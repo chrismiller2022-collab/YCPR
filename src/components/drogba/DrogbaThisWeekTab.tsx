@@ -3,6 +3,7 @@ import { useDefaultToAdminWeek } from "../../lib/adminWeek";
 import { saveDrogbaPicks, invalidateDrogbaCache } from "../../lib/api/drogbaData";
 import { fitEdgeResponse, fitLayer1, predictEdge, predictLayer1, EDGE_CAP } from "../../lib/drogba/model";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
+import { gameTier, TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import { CELL, DIM, NUM, P, f1, sgn, spreadLabel } from "./shared";
 
 export const MODEL_VERSION = "drogba-v2-independent";
@@ -33,11 +34,12 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const rows = useMemo(() => {
     if (!engine || !fit) return [];
     return engine.signals
-      .filter((s) => s.g.season === S && s.g.week === week && !s.g.completed)
+      .filter((s) => s.g.season === S && s.g.week === week && !s.g.completed && s.g.open != null)
       .map((s) => {
         const m = predictLayer1(fit.l1, s);
-        if (m == null) return { s, g: s.g, open: s.g.open!, modelSpread: null as number | null, pred: null };
-        return { s, g: s.g, open: s.g.open!, modelSpread: -m, pred: predictEdge(fit.resp, s, m) };
+        const tier = gameTier(s.g);
+        if (m == null) return { s, g: s.g, tier, open: s.g.open!, modelSpread: null as number | null, pred: null };
+        return { s, g: s.g, tier, open: s.g.open!, modelSpread: -m, pred: predictEdge(fit.resp, s, m) };
       })
       .sort((a, b) => Math.abs(b.pred?.edge ?? 0) - Math.abs(a.pred?.edge ?? 0));
   }, [engine, fit, S, week]);
@@ -58,6 +60,7 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
           open_spread: r.open,
           open_provider: r.g.openProvider,
           edge: r.pred!.edge,
+          tier: r.tier,
           side: r.pred!.edge > 0 ? ("home" as const) : ("away" as const),
           filtered: Math.abs(r.pred!.edge) >= minEdge,
           model_version: MODEL_VERSION,
@@ -97,50 +100,68 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
       </div>
       <p style={DIM}>
         DROGBA runs on CFBD data alone (no lines, no one else's ratings), so it can be run Sunday morning as soon as Saturday's stats are in. Spreads are home-relation (negative = home favored). <strong>Edge</strong> is how many points the model says the home side beats the open by
-        (negative = the away side); edges are capped at {EDGE_CAP}. "Exp. line move" is the move toward the pick the model has earned per point of edge over the last three seasons, and "Exp. cover" is the points the pick has covered by; both are small, and the cover is close to zero — see the Backtest tab for what each edge level has actually done.
+        (negative = the away side); edges are capped at {EDGE_CAP}. "Exp. line move" is the move toward the pick the model has earned per point of edge over the last three seasons, and "Exp. cover" is the points the pick has covered by; both are modest estimates that move with the opening line used — see the Backtest and Buckets tabs for what each edge level has actually done.
         {fit ? ` Fit on ${fit.trainN} finished games before this week.` : ""}
       </p>
       {!fit && <p style={{ color: "crimson", fontSize: "0.85rem" }}>Not enough history to fit the model yet — run the backfill on the Data & sync tab.</p>}
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th style={CELL}>Matchup</th>
-              <th style={NUM}>Open (home)</th>
-              <th style={CELL}>Open book</th>
-              <th style={NUM}>DROGBA spread</th>
-              <th style={NUM}>Edge</th>
-              <th style={CELL}>Pick (at the open)</th>
-              <th style={NUM}>Exp. line move</th>
-              <th style={NUM}>Exp. cover</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const edge = r.pred?.edge ?? null;
-              const hit = edge != null && Math.abs(edge) >= minEdge;
-              const side = edge == null ? null : edge > 0 ? "home" : "away";
-              return (
-                <tr key={r.g.id} style={hit ? { background: "rgba(120,200,120,0.10)" } : undefined}>
-                  <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
-                  <td style={NUM}>{f1(r.open)}</td>
-                  <td style={CELL}>{r.g.openProvider ?? "–"}</td>
-                  <td style={NUM}>{f1(r.modelSpread)}</td>
-                  <td style={NUM}>{sgn(edge)}</td>
-                  <td style={CELL}>{side == null ? "–" : side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}</td>
-                  <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.move), 2)}</td>
-                  <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.cover), 2)}</td>
-                </tr>
-              );
-            })}
-            {rows.length === 0 && (
-              <tr>
-                <td style={CELL} colSpan={8}>No unplayed FBS-vs-FBS games with an opening line for this week.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {(["power", "other"] as Tier[]).map((tier) => {
+        const tierRows = rows.filter((r) => r.tier === tier);
+        const picks = tierRows.filter((r) => r.pred && Math.abs(r.pred.edge) >= minEdge).length;
+        return (
+          <div key={tier} style={{ marginTop: tier === "power" ? "0.5rem" : "1.5rem" }}>
+            <h3 style={{ margin: "0 0 0.3rem", fontSize: tier === "power" ? "1.05rem" : "0.95rem", color: tier === "power" ? undefined : "var(--chalk-dim)" }}>
+              {TIER_LABELS[tier]}
+              {tier === "power" ? " — primary" : " — also tracked"}
+              <span style={{ fontWeight: 400, fontSize: "0.78rem", color: "var(--chalk-dim)" }}> · {tierRows.length} games, {picks} at or above {minEdge} pts</span>
+            </h3>
+            <p style={{ ...DIM, margin: "0 0 0.4rem" }}>
+              {tier === "power"
+                ? "Both teams in the SEC, Big Ten, Big 12, ACC or Notre Dame. Over 2023–26 this is where the model's disagreements paid off (63.6% ATS and +1.4 points of closing-line value at 6+ point edges vs FanDuel's open)."
+                : "Everything else. Over 2023–26 the model's disagreements here were at or below break-even (47.8% at 6+ points), so these are shown and logged but not the main list."}
+            </p>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={CELL}>Matchup</th>
+                    <th style={NUM}>Open (home)</th>
+                    <th style={CELL}>Open book</th>
+                    <th style={NUM}>DROGBA spread</th>
+                    <th style={NUM}>Edge</th>
+                    <th style={CELL}>Pick (at the open)</th>
+                    <th style={NUM}>Exp. line move</th>
+                    <th style={NUM}>Exp. cover</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tierRows.map((r) => {
+                    const edge = r.pred?.edge ?? null;
+                    const hit = edge != null && Math.abs(edge) >= minEdge;
+                    const side = edge == null ? null : edge > 0 ? "home" : "away";
+                    return (
+                      <tr key={r.g.id} style={hit ? { background: tier === "power" ? "rgba(120,200,120,0.14)" : "rgba(120,200,120,0.06)" } : undefined}>
+                        <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
+                        <td style={NUM}>{f1(r.open)}</td>
+                        <td style={CELL}>{r.g.openProvider ?? "–"}</td>
+                        <td style={NUM}>{f1(r.modelSpread)}</td>
+                        <td style={NUM}>{sgn(edge)}</td>
+                        <td style={CELL}>{side == null ? "–" : side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}</td>
+                        <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.move), 2)}</td>
+                        <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.cover), 2)}</td>
+                      </tr>
+                    );
+                  })}
+                  {tierRows.length === 0 && (
+                    <tr>
+                      <td style={CELL} colSpan={8}>No unplayed games in this group with an opening line for this week.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
         <button className="menu-btn" disabled={saving || rows.every((r) => !r.pred)} onClick={() => save(false)}>
           Save this week's numbers to the Picks Log

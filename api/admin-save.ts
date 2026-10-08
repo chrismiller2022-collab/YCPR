@@ -141,6 +141,7 @@ export default async function handler(req: any, res: any) {
       open_spread: p.open_spread == null ? null : Number(p.open_spread),
       open_provider: p.open_provider ?? null,
       edge: p.edge == null ? null : Number(p.edge),
+      tier: p.tier === "power" || p.tier === "other" ? p.tier : null,
       side: p.side === "home" || p.side === "away" ? p.side : null,
       filtered: !!p.filtered,
       model_version: p.model_version ?? null,

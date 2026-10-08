@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDrogbaPicks, type DrogbaPickRow } from "../../lib/api/drogbaData";
 import { margin } from "../../lib/drogba/dataset";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
+import { atsColor, clvColor } from "../../lib/drogba/colors";
+import { TIER_LABELS } from "../../lib/drogba/tiers";
 import { CELL, DIM, H3, NUM, P, f1, pct, sgn, spreadLabel } from "./shared";
 
 // What the model said while the line was open, graded against the open it was compared with AND the close.
@@ -38,17 +40,27 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
       });
   }, [picks, gameById, onlyFiltered]);
 
-  const tally = (key: "result" | "vsClose") => {
-    const w = graded.filter((r) => r[key] === "W").length;
-    const l = graded.filter((r) => r[key] === "L").length;
-    return { w, l, pct: w + l ? (100 * w) / (w + l) : 0 };
+  const summarize = (rows: typeof graded) => {
+    const count = (key: "result" | "vsClose") => {
+      const w = rows.filter((r) => r[key] === "W").length;
+      const l = rows.filter((r) => r[key] === "L").length;
+      return { w, l, n: w + l, pct: w + l ? (100 * w) / (w + l) : 0 };
+    };
+    const clvRows = rows.filter((r) => r.clv != null);
+    return {
+      n: rows.length,
+      open: count("result"),
+      close: count("vsClose"),
+      clv: clvRows.length ? clvRows.reduce((a, r) => a + r.clv!, 0) / clvRows.length : null,
+      movedOur: clvRows.filter((r) => r.clv! > 0).length,
+      movedAgainst: clvRows.filter((r) => r.clv! < 0).length,
+    };
   };
-  const open = tally("result");
-  const close = tally("vsClose");
-  const clvRows = graded.filter((r) => r.clv != null);
-  const avgClv = clvRows.length ? clvRows.reduce((a, r) => a + r.clv!, 0) / clvRows.length : null;
-  const movedOurWay = clvRows.filter((r) => r.clv! > 0).length;
-  const movedAgainst = clvRows.filter((r) => r.clv! < 0).length;
+  const tierSummary = [
+    { label: TIER_LABELS.power + " (primary)", ...summarize(graded.filter((r) => r.p.tier === "power")) },
+    { label: TIER_LABELS.other + " (tracked)", ...summarize(graded.filter((r) => r.p.tier !== "power")) },
+    { label: "All picks", ...summarize(graded) },
+  ];
 
   return (
     <div>
@@ -65,14 +77,40 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
       {picks != null && (
         <>
           <h3 style={H3}>Record</h3>
-          <p style={P}>
-            vs open: <strong>{open.w}–{open.l}</strong> ({pct(open.pct)}) · vs close: <strong>{close.w}–{close.l}</strong> ({pct(close.pct)}) · line moved our way in {movedOurWay} of {movedOurWay + movedAgainst} games that moved, average {sgn(avgClv, 2)} pts
-          </p>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style={CELL}>Group</th>
+                  <th style={NUM}>Picks</th>
+                  <th style={NUM}>vs open</th>
+                  <th style={NUM}>ATS</th>
+                  <th style={NUM}>vs close</th>
+                  <th style={NUM}>Line moved to us</th>
+                  <th style={NUM}>Closing-line value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tierSummary.map((t) => (
+                  <tr key={t.label}>
+                    <td style={{ ...CELL, fontWeight: t.label === "All picks" ? 700 : 400 }}>{t.label}</td>
+                    <td style={NUM}>{t.n}</td>
+                    <td style={NUM}>{t.open.w}–{t.open.l}</td>
+                    <td style={{ ...NUM, color: atsColor(t.open.n ? t.open.pct : null), fontWeight: 700 }}>{t.open.n ? pct(t.open.pct) : "–"}</td>
+                    <td style={NUM}>{t.close.w}–{t.close.l}</td>
+                    <td style={NUM}>{t.movedOur} of {t.movedOur + t.movedAgainst}</td>
+                    <td style={{ ...NUM, color: clvColor(t.clv), fontWeight: 700 }}>{t.clv == null ? "–" : sgn(t.clv, 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
                   <th style={CELL}>Wk</th>
+                  <th style={CELL}>Group</th>
                   <th style={CELL}>Matchup</th>
                   <th style={CELL}>Pick</th>
                   <th style={NUM}>Open</th>
@@ -88,20 +126,21 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
                 {graded.map(({ p, g, result, vsClose, clv }) => (
                   <tr key={p.game_id}>
                     <td style={CELL}>{p.week}</td>
+                    <td style={{ ...CELL, color: p.tier === "power" ? undefined : "var(--chalk-dim)" }}>{p.tier === "power" ? "Power" : "Other"}</td>
                     <td style={CELL}>{p.away_team} @ {p.home_team}</td>
                     <td style={CELL}>{p.side === "home" ? spreadLabel(p.home_team, p.open_spread!) : spreadLabel(p.away_team, -p.open_spread!)}</td>
                     <td style={NUM}>{f1(p.open_spread)}</td>
                     <td style={NUM}>{f1(g?.close)}</td>
                     <td style={NUM}>{f1(p.model_home_spread)}</td>
                     <td style={NUM}>{sgn(p.edge, 2)}</td>
-                    <td style={NUM}>{sgn(clv, 1)}</td>
-                    <td style={CELL}>{result ?? "–"}</td>
-                    <td style={CELL}>{vsClose ?? "–"}</td>
+                    <td style={{ ...NUM, color: clvColor(clv) }}>{sgn(clv, 1)}</td>
+                    <td style={{ ...CELL, color: result === "W" ? "#8fd39a" : result === "L" ? "#e07a7a" : undefined, fontWeight: 700 }}>{result ?? "–"}</td>
+                    <td style={{ ...CELL, color: vsClose === "W" ? "#8fd39a" : vsClose === "L" ? "#e07a7a" : undefined, fontWeight: 700 }}>{vsClose ?? "–"}</td>
                   </tr>
                 ))}
                 {graded.length === 0 && (
                   <tr>
-                    <td style={CELL} colSpan={10}>Nothing logged yet.</td>
+                    <td style={CELL} colSpan={11}>Nothing logged yet.</td>
                   </tr>
                 )}
               </tbody>

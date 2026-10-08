@@ -11,6 +11,8 @@ export interface DGame {
   away: string;
   homeFbs: boolean;
   awayFbs: boolean;
+  homeConf: string | null;
+  awayConf: string | null;
   homePts: number | null;
   awayPts: number | null;
   completed: boolean;
@@ -30,6 +32,8 @@ export interface RawGameRow {
   away_team: string;
   home_classification: string | null;
   away_classification: string | null;
+  home_conference?: string | null;
+  away_conference?: string | null;
   home_points: number | null;
   away_points: number | null;
   completed: boolean | null;
@@ -111,6 +115,8 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Ma
       away: g.away_team,
       homeFbs: g.home_classification === "fbs",
       awayFbs: g.away_classification === "fbs",
+      homeConf: g.home_conference ?? null,
+      awayConf: g.away_conference ?? null,
       homePts: g.home_points,
       awayPts: g.away_points,
       completed: !!g.completed && g.home_points != null && g.away_points != null,

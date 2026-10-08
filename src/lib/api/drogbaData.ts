@@ -20,7 +20,7 @@ export async function fetchDrogbaRaw(): Promise<DrogbaRaw> {
       fetchAllRows<RawGameRow>((from, to) =>
         supabase
           .from("games")
-          .select("id, season, week, season_type, start_date, neutral_site, home_team, away_team, home_classification, away_classification, home_points, away_points, completed")
+          .select("id, season, week, season_type, start_date, neutral_site, home_team, away_team, home_classification, away_classification, home_conference, away_conference, home_points, away_points, completed")
           .gte("season", DROGBA_FIRST_SEASON)
           .order("id")
           .range(from, to)
@@ -90,6 +90,7 @@ export interface DrogbaPickRow {
   open_spread: number | null;
   open_provider: string | null;
   edge: number | null;
+  tier: string | null;
   side: "home" | "away" | null;
   filtered: boolean;
   model_version: string | null;

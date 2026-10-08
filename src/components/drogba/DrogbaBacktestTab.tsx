@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { isFbsGame, margin } from "../../lib/drogba/dataset";
 import { evaluateWalkForward, fitEdgeResponse, fitLayer1, predictLayer1, thresholdTable, type BetResult, type GameSignals } from "../../lib/drogba/model";
+import { atsColor, clvColor } from "../../lib/drogba/colors";
+import { gameTier, TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { CELL, DIM, H3, NUM, P, f1, pct, sgn } from "./shared";
 
@@ -39,8 +41,8 @@ function EdgeTable({ title, note, rows }: { title: string; note?: string; rows: 
                 <td style={CELL}>{r.minEdge} pts</td>
                 <td style={NUM}>{r.n}</td>
                 <td style={NUM}>{r.w}–{r.l}</td>
-                <td style={NUM}>{pct(r.atsPct)}</td>
-                <td style={NUM}>{sgn(r.avgMoveToUs, 2)}</td>
+                <td style={{ ...NUM, color: r.n ? atsColor(r.atsPct) : undefined }}>{pct(r.atsPct)}</td>
+                <td style={{ ...NUM, color: r.n ? clvColor(r.avgMoveToUs) : undefined }}>{sgn(r.avgMoveToUs, 2)}</td>
                 <td style={NUM}>{pct(r.movedOurWayPct, 0)}</td>
               </tr>
             ))}
@@ -59,7 +61,7 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
     if (!engine || !ran || !engine.hasEff) return null;
     const sig = engine.signals;
     const results = evaluateWalkForward(sig, { testSeasons: TEST_SEASONS });
-    const completed = sig.filter((s) => s.g.completed && isFbsGame(s.g) && s.g.season >= TEST_SEASONS[0]);
+    const completed = sig.filter((s) => s.g.completed && isFbsGame(s.g) && s.g.season >= TEST_SEASONS[0] && s.g.open != null);
 
     // MAE of the market-blind margin vs the lines (each test season predicted by a model fit on earlier seasons only)
     const maeRows: { open: number; close: number | null; scoreboard: number | null; model: number | null }[] = [];
@@ -93,6 +95,7 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
     return {
       baselines,
       overall: thresholdTable(results, EDGES),
+      tiers: (['power', 'other'] as Tier[]).map((t) => ({ t, rows: thresholdTable(results.filter((r) => gameTier(r.g) === t), EDGES) })),
       seasons: bySeason(results),
       buckets: weekBuckets.map(([label, f]) => ({ label, rows: thresholdTable(results.filter(f), [0, 5]) })),
       l1: l1All,
@@ -148,6 +151,15 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
             rows={out.overall}
           />
 
+          {out.tiers.map(({ t, rows }) => (
+            <EdgeTable
+              key={t}
+              title={`${TIER_LABELS[t]}${t === "power" ? " (primary)" : " (tracked)"}`}
+              note={t === "power" ? "Both teams in the SEC, Big Ten, Big 12, ACC or Notre Dame (Pac-12 in 2023)." : "Every other game."}
+              rows={rows}
+            />
+          ))}
+
           <h3 style={H3}>By season (edge ≥ 5 pts)</h3>
           <div className="table-scroll">
             <table>
@@ -168,8 +180,8 @@ export default function DrogbaBacktestTab({ state }: { state: DrogbaState }) {
                     <td style={NUM}>{r.games}</td>
                     <td style={NUM}>{sgn(r.clvAll, 2)}</td>
                     <td style={NUM}>{r.bets5}</td>
-                    <td style={NUM}>{pct(r.ats5)}</td>
-                    <td style={NUM}>{sgn(r.clv5, 2)}</td>
+                    <td style={{ ...NUM, color: atsColor(r.ats5) }}>{pct(r.ats5)}</td>
+                    <td style={{ ...NUM, color: clvColor(r.clv5) }}>{sgn(r.clv5, 2)}</td>
                   </tr>
                 ))}
               </tbody>

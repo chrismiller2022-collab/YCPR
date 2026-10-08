@@ -43,3 +43,6 @@ create table if not exists drogba_picks (
 );
 alter table drogba_picks enable row level security;
 create policy "Public read access to drogba_picks" on drogba_picks for select using (true);
+
+-- Added with the power-vs-power split: which group a pick belongs to ('power' = both teams power-conference; 'other').
+alter table drogba_picks add column if not exists tier text;

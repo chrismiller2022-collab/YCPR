@@ -3,15 +3,17 @@ import { useDrogba } from "../lib/drogba/useDrogba";
 import { OPEN_MODE_LABELS, type OpenMode } from "../lib/drogba/dataset";
 import DrogbaDataTab from "../components/drogba/DrogbaDataTab";
 import DrogbaBacktestTab from "../components/drogba/DrogbaBacktestTab";
+import DrogbaBucketsTab from "../components/drogba/DrogbaBucketsTab";
 import DrogbaThisWeekTab from "../components/drogba/DrogbaThisWeekTab";
 import DrogbaPicksLogTab from "../components/drogba/DrogbaPicksLogTab";
 import DrogbaMethodologyTab from "../components/drogba/DrogbaMethodologyTab";
 
-const TABS = ["thisweek", "backtest", "log", "data", "methodology"] as const;
+const TABS = ["thisweek", "backtest", "buckets", "log", "data", "methodology"] as const;
 type Tab = (typeof TABS)[number];
 const LABELS: Record<Tab, string> = {
   thisweek: "This week",
   backtest: "Backtest",
+  buckets: "Buckets",
   log: "Picks log",
   data: "Data & sync",
   methodology: "Methodology",
@@ -50,6 +52,7 @@ export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
       </div>
       {tab === "thisweek" && <DrogbaThisWeekTab state={state} />}
       {tab === "backtest" && <DrogbaBacktestTab state={state} />}
+      {tab === "buckets" && <DrogbaBucketsTab state={state} />}
       {tab === "log" && <DrogbaPicksLogTab state={state} />}
       {tab === "data" && <DrogbaDataTab state={state} />}
       {tab === "methodology" && <DrogbaMethodologyTab />}
