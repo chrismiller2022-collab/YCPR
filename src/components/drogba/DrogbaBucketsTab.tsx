@@ -5,6 +5,7 @@ import { atsColor, clvColor, isSmallSample } from "../../lib/drogba/colors";
 import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import DrogbaAgreementSection from "./DrogbaAgreementSection";
+import DrogbaTeamTotalsSection from "./DrogbaTeamTotalsSection";
 import { CELL, DIM, H3, NUM, P, sgn } from "./shared";
 
 const EDGES = [0, 3, 4, 5, 6, 7];
@@ -201,6 +202,7 @@ export default function DrogbaBucketsTab({ state }: { state: DrogbaState }) {
         </>
       )}
       <DrogbaAgreementSection state={state} />
+      <DrogbaTeamTotalsSection state={state} />
     </div>
   );
 }
