@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import { fetchPulledTargets, pullBookSpreads, saveBookSnapshots, type SpreadPull } from "../../lib/api/bookSnapshots";
-import { DEFAULT_SLOT_IDS, SNAPSHOT_SLOTS, matchEvents, slotTargetMs, weekAnchors } from "../../lib/drogba/openers";
+import { fetchPulledTargets } from "../../lib/api/bookSnapshots";
+import { pullFanDuelSnapshot, type PullSummary } from "../../lib/drogba/fanduelPull";
+import { DEFAULT_SLOT_IDS, SNAPSHOT_SLOTS, slotTargetMs, weekAnchors } from "../../lib/drogba/openers";
 import type { DGame } from "../../lib/drogba/dataset";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { CELL, DIM, H3, NUM, P, f1, sgn } from "./shared";
@@ -9,17 +10,6 @@ const BOOK = "fanduel";
 const DAY = 86_400_000;
 const CREDITS_PER_SNAPSHOT = 10; // 1 market x 1 bookmaker, historical endpoint
 const ALL_SEASONS = [2026, 2025, 2024, 2023, 2022, 2021];
-
-interface PullSummary {
-  events: number;
-  withLine: number;
-  matched: number;
-  unmatched: number;
-  snapshotAt: string | null;
-  remaining: string | null;
-  last: string | null;
-  compare: { game: string; fd: number; bov: number | null }[];
-}
 
 const etTime = (ms: number | null) =>
   ms == null ? "TBD" : new Date(ms).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -97,45 +87,7 @@ export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) 
     return { rows: order.filter((l) => counts.has(l)).map((l) => ({ label: l, n: counts.get(l)! })), total };
   }, [weeks, state.fanduelLines]);
 
-  // One snapshot: pull, match to our games, save the rows and log the call.
-  async function pullOne(targetMs: number | null, season: number | null, week: number | null): Promise<{ pull: SpreadPull; summary: PullSummary; matchedIds: string[]; snapMs: number }> {
-    const pull = await pullBookSpreads(BOOK, targetMs == null ? null : new Date(targetMs).toISOString());
-    const snapAt = pull.timestamp ?? new Date().toISOString();
-    const snapMs = Date.parse(snapAt);
-    const candidates = state.games.filter((g) => g.startMs != null && g.startMs >= snapMs - DAY && g.startMs <= snapMs + 21 * DAY && (season == null || g.season === season));
-    const { matched, unmatched } = matchEvents(pull.events, candidates);
-    const rows = matched.map((m) => ({
-      game_id: m.game.id,
-      book: BOOK,
-      snapshot_at: snapAt,
-      season: m.game.season,
-      week: m.game.week,
-      home_spread: m.homeSpread,
-      home_price: m.homePrice,
-      away_price: m.awayPrice,
-      is_historical: targetMs != null,
-    }));
-    await saveBookSnapshots(rows, {
-      book: BOOK,
-      target_at: new Date(targetMs ?? snapMs).toISOString(),
-      snapshot_at: snapAt,
-      season,
-      week,
-      events: pull.totalEvents,
-      matched: matched.length,
-      credits_last: pull.quota.last,
-      credits_remaining: pull.quota.remaining,
-    });
-    const compare = matched
-      .filter((m) => week == null || m.game.week === week)
-      .map((m) => ({ game: `${m.game.away} @ ${m.game.home}`, fd: m.homeSpread, bov: state.bovadaOpen.get(m.game.id) ?? null }));
-    return {
-      pull,
-      matchedIds: matched.map((m) => m.game.id),
-      snapMs,
-      summary: { events: pull.totalEvents, withLine: pull.events.length, matched: matched.length, unmatched: unmatched.length, snapshotAt: snapAt, remaining: pull.quota.remaining, last: pull.quota.last, compare },
-    };
-  }
+  const pullOne = (targetMs: number | null, season: number | null, week: number | null) => pullFanDuelSnapshot(state.games, state.bovadaOpen, targetMs, season, week);
 
   async function runTest() {
     setBusy(true);

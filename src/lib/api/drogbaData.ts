@@ -158,3 +158,16 @@ export async function saveDrogbaPicks(
   if (!res.ok) throw new Error(data.error ?? `Save failed (${res.status})`);
   return data as SavePicksResult;
 }
+
+// Refreshes one week's games (scores, schedule) and betting lines from CFBD through the existing sync endpoint:
+// 3 CFBD calls (games, TV, lines). Closing lines land here once a week's games are played.
+export async function syncGamesWeek(season: number, week: number): Promise<{ gamesUpserted: number; linesUpserted: number }> {
+  const res = await fetch("/api/cfbd-sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: adminPassword(), year: season, week }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Games sync failed (${res.status})`);
+  return { gamesUpserted: Number(data.gamesUpserted ?? 0), linesUpserted: Number(data.linesUpserted ?? 0) };
+}

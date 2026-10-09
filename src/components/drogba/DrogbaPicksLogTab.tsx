@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchDrogbaPicks, type DrogbaPickRow } from "../../lib/api/drogbaData";
-import { margin } from "../../lib/drogba/dataset";
+import { gradePicks, summarizePicks } from "../../lib/drogba/picksGrading";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { atsColor, clvColor } from "../../lib/drogba/colors";
 import { TIER_LABELS } from "../../lib/drogba/tiers";
@@ -18,44 +18,9 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
 
   const gameById = useMemo(() => new Map(state.games.map((g) => [g.id, g])), [state.games]);
 
-  const graded = useMemo(() => {
-    return (picks ?? [])
-      .filter((p) => p.side && p.open_spread != null && (!onlyFiltered || p.filtered))
-      .map((p) => {
-        const g = gameById.get(p.game_id);
-        const side = p.side === "home" ? 1 : -1;
-        let result: "W" | "L" | "P" | null = null;
-        let vsClose: "W" | "L" | "P" | null = null;
-        let clv: number | null = null;
-        if (g?.completed) {
-          const c = side * (margin(g) + p.open_spread!);
-          result = c > 0 ? "W" : c < 0 ? "L" : "P";
-          if (g.close != null) {
-            const cc = side * (margin(g) + g.close);
-            vsClose = cc > 0 ? "W" : cc < 0 ? "L" : "P";
-          }
-        }
-        if (g?.close != null) clv = side * (p.open_spread! - g.close);
-        return { p, g, result, vsClose, clv };
-      });
-  }, [picks, gameById, onlyFiltered]);
+  const graded = useMemo(() => gradePicks(picks ?? [], gameById, onlyFiltered), [picks, gameById, onlyFiltered]);
 
-  const summarize = (rows: typeof graded) => {
-    const count = (key: "result" | "vsClose") => {
-      const w = rows.filter((r) => r[key] === "W").length;
-      const l = rows.filter((r) => r[key] === "L").length;
-      return { w, l, n: w + l, pct: w + l ? (100 * w) / (w + l) : 0 };
-    };
-    const clvRows = rows.filter((r) => r.clv != null);
-    return {
-      n: rows.length,
-      open: count("result"),
-      close: count("vsClose"),
-      clv: clvRows.length ? clvRows.reduce((a, r) => a + r.clv!, 0) / clvRows.length : null,
-      movedOur: clvRows.filter((r) => r.clv! > 0).length,
-      movedAgainst: clvRows.filter((r) => r.clv! < 0).length,
-    };
-  };
+  const summarize = summarizePicks;
   const tierSummary = [
     { label: TIER_LABELS.power + " (primary)", ...summarize(graded.filter((r) => r.p.tier === "power")) },
     { label: TIER_LABELS.other + " (tracked)", ...summarize(graded.filter((r) => r.p.tier !== "power")) },

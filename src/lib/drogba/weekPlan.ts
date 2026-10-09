@@ -58,9 +58,9 @@ export interface WeekRow {
 
 // Every unplayed FBS-vs-FBS game of the week, with or without an opening line (the Sunday checklist needs the ones
 // without; the This week tab filters to games that have one).
-export function projectWeek(engine: Engine, fit: WeekFit | null, season: number, week: number): WeekRow[] {
+export function projectWeek(engine: Engine, fit: WeekFit | null, season: number, week: number, includeCompleted = false): WeekRow[] {
   return engine.signals
-    .filter((s) => s.g.season === season && s.g.week === week && !s.g.completed)
+    .filter((s) => s.g.season === season && s.g.week === week && (includeCompleted || !s.g.completed))
     .map((s) => {
       const tier = gameTier(s.g);
       const m = fit ? predictLayer1(fit.l1, s) : null;
@@ -81,4 +81,63 @@ export function projectionGaps(s: GameSignals, hasPlays: boolean, hasSt: boolean
   if (hasPlays && (s.effDiff.srf == null || s.effDiff.isof == null)) degraded.push("no play-level rating for a team (uses the base model)");
   if (hasSt && s.extra.st == null) degraded.push("no special-teams rating for a team");
   return { blocking, degraded };
+}
+
+export const MODEL_VERSION = "drogba-v2-independent";
+export const DEFAULT_MIN_EDGE = 5; // JP+'s published threshold; the backtest shows what each level has actually done
+
+// The rows saved to the picks log: every projected game with an opening line, flagged when its edge passes the filter.
+export function buildPickRows(rows: WeekRow[], minEdge: number) {
+  return rows
+    .filter((r) => r.pred && r.modelSpread != null && r.open != null)
+    .map((r) => ({
+      game_id: r.g.id,
+      season: r.g.season,
+      week: r.g.week,
+      home_team: r.g.home,
+      away_team: r.g.away,
+      model_home_spread: r.modelSpread!,
+      open_spread: r.open!,
+      open_provider: r.g.openProvider,
+      edge: r.pred!.edge,
+      tier: r.tier,
+      side: r.pred!.edge > 0 ? ("home" as const) : ("away" as const),
+      filtered: Math.abs(r.pred!.edge) >= minEdge,
+      model_version: MODEL_VERSION,
+    }));
+}
+
+export interface GapPlan {
+  gamesWeeks: number[]; // weeks whose games have no final score long after kickoff
+  advWeeks: number[]; // weeks with finished games missing per-game advanced stats
+  playWeeks: number[]; // weeks with finished games missing play-level data
+  needOpeners: boolean; // the upcoming week has games with no FanDuel opener
+}
+
+// What a "fill gaps" run has to fetch: only weeks of the current season, before the upcoming one, plus the openers.
+export function findGaps(
+  games: DGame[],
+  gameStats: Map<string, { adv: number; plays: number }>,
+  split: WeekSplit,
+  fanduel: Map<string, unknown>,
+  hasPlays: boolean,
+  nowMs: number
+): GapPlan {
+  const inSeason = games.filter((g) => g.season === split.season && isFbsGame(g));
+  const gamesWeeks = new Set<number>();
+  const advWeeks = new Set<number>();
+  const playWeeks = new Set<number>();
+  for (const g of inSeason) {
+    if (g.week >= split.upcoming) continue;
+    if (!g.completed) {
+      if (g.startMs != null && nowMs - g.startMs > 6 * 3600_000) gamesWeeks.add(g.week);
+      continue;
+    }
+    const st = gameStats.get(g.id);
+    if ((st?.adv ?? 0) < 2) advWeeks.add(g.week);
+    if (hasPlays && (st?.plays ?? 0) < 2) playWeeks.add(g.week);
+  }
+  const needOpeners = inSeason.some((g) => g.week === split.upcoming && !g.completed && !fanduel.has(g.id));
+  const sorted = (x: Set<number>) => Array.from(x).sort((a, b) => a - b);
+  return { gamesWeeks: sorted(gamesWeeks), advWeeks: sorted(advWeeks), playWeeks: sorted(playWeeks), needOpeners };
 }

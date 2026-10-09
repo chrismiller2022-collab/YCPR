@@ -2,13 +2,11 @@ import { useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../../lib/adminWeek";
 import { saveDrogbaPicks, invalidateDrogbaCache } from "../../lib/api/drogbaData";
 import { EDGE_CAP } from "../../lib/drogba/model";
-import { fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
+import { buildPickRows, DEFAULT_MIN_EDGE, fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import { CELL, DIM, NUM, P, f1, sgn, spreadLabel } from "./shared";
 
-export const MODEL_VERSION = "drogba-v2-independent";
-const DEFAULT_MIN_EDGE = 5; // JP+'s published threshold; the backtest shows what each level has actually done
 
 export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const engine = state.engine;
@@ -28,23 +26,7 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
     setSaving(true);
     setMsg(null);
     try {
-      const picks = rows
-        .filter((r) => r.pred && r.modelSpread != null)
-        .map((r) => ({
-          game_id: r.g.id,
-          season: r.g.season,
-          week: r.g.week,
-          home_team: r.g.home,
-          away_team: r.g.away,
-          model_home_spread: r.modelSpread!,
-          open_spread: r.open,
-          open_provider: r.g.openProvider,
-          edge: r.pred!.edge,
-          tier: r.tier,
-          side: r.pred!.edge > 0 ? ("home" as const) : ("away" as const),
-          filtered: Math.abs(r.pred!.edge) >= minEdge,
-          model_version: MODEL_VERSION,
-        }));
+      const picks = buildPickRows(rows, minEdge);
       const res = await saveDrogbaPicks(picks, overwrite);
       invalidateDrogbaCache();
       setMsg(`Saved ${res.saved} new${res.skippedExisting ? `, left ${res.skippedExisting} already-logged games untouched` : ""}${res.overwritten ? `, overwrote ${res.overwritten}` : ""}.`);

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDrogbaPicks, type DrogbaPickRow } from "../../lib/api/drogbaData";
 import { fetchGameProjectionLocks, type GameProjectionLockRow } from "../../lib/api/gameProjectionLocks";
 import { buildHealth, type Check, type Status } from "../../lib/drogba/health";
-import { currentWeekSplit, fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
+import { currentWeekSplit, DEFAULT_MIN_EDGE, fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
+import SundayBetList from "./SundayBetList";
+import SundayReports from "./SundayReports";
+import SundayRunner, { type RunDiff } from "./SundayRunner";
 import { DIM, H3, P } from "./shared";
 
 const COLORS: Record<Status, string> = { ok: "#8fd39a", warn: "#e8c84a", bad: "#e07a7a", info: "var(--chalk-dim)" };
@@ -45,6 +48,8 @@ export default function DrogbaSundayTab({ state }: { state: DrogbaState }) {
   const [locks, setLocks] = useState<Record<string, GameProjectionLockRow>>({});
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [minEdge, setMinEdge] = useState(DEFAULT_MIN_EDGE);
+  const [diff, setDiff] = useState<RunDiff | null>(null);
 
   const effective = useMemo(() => {
     if (!split) return null;
@@ -89,8 +94,9 @@ export default function DrogbaSundayTab({ state }: { state: DrogbaState }) {
     });
   }, [state.engine, state.games, state.gameStats, state.fanduelLines, effective, picks, locks, upcomingRows]);
 
-  if (state.loading || state.building) return <p style={DIM}>{state.loading ? "Loading data…" : "Building walk-forward ratings (about 5 seconds)…"}</p>;
-  if (state.error) return <p style={{ color: "crimson" }}>{state.error}</p>;
+  // Only block the whole tab on the very first load: during a reload the run's progress has to stay on screen.
+  if (!state.engine && (state.loading || state.building)) return <p style={DIM}>{state.loading ? "Loading data…" : "Building walk-forward ratings (about 5 seconds)…"}</p>;
+  if (state.error && !state.engine) return <p style={{ color: "crimson" }}>{state.error}</p>;
   if (!effective) return <p style={DIM}>No games loaded.</p>;
 
   const bad = checks?.filter((c) => c.status === "bad").length ?? 0;
@@ -102,8 +108,8 @@ export default function DrogbaSundayTab({ state }: { state: DrogbaState }) {
     <div style={{ maxWidth: 1000 }}>
       <h2 style={{ marginTop: 0 }}>Sunday check</h2>
       <p style={P}>
-        Reads the database and the model and tells you whether last week's results and stats are all in, whether this week can be projected, and whether the openers are on file. It changes nothing. Sunday order: pull Saturday's results, stats and play-by-play (Data &
-        sync) → check this list → pull FanDuel openers (Data & sync) → check again → This week tab for the bet list.
+        One place for the Sunday routine. <strong>Run Sunday routine</strong> pulls last week's results, advanced stats and play-by-play, this week's schedule and lines, and FanDuel's openers, then rebuilds the ratings and shows what moved. <strong>Fill gaps only</strong> fetches
+        just what the checklist says is missing (a game whose stats hadn't arrived yet, openers FanDuel hadn't posted). Everything below the buttons updates from the fresh data: the checklist, this week's bet list, last week's report and the season so far.
       </p>
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.5rem" }}>
         <span style={{ fontSize: "0.9rem" }}>
@@ -127,7 +133,9 @@ export default function DrogbaSundayTab({ state }: { state: DrogbaState }) {
           Re-check
         </button>
       </div>
-      <div style={{ fontSize: "1rem", fontWeight: 700, color: verdictColor, margin: "0.4rem 0 0.2rem" }}>{verdict}</div>
+      <SundayRunner state={state} split={effective} onDiff={setDiff} />
+      {(state.loading || state.building) && <p style={{ ...DIM, color: "#e8c84a" }}>{state.loading ? "Reloading data…" : "Rebuilding ratings…"}</p>}
+      <div style={{ fontSize: "1rem", fontWeight: 700, color: verdictColor, margin: "0.8rem 0 0.2rem" }}>{verdict}</div>
       {error && <p style={{ color: "crimson", fontSize: "0.85rem" }}>{error}</p>}
       {checks && (
         <>
@@ -139,6 +147,8 @@ export default function DrogbaSundayTab({ state }: { state: DrogbaState }) {
           )}
           <h3 style={H3}>This week (week {effective.upcoming})</h3>
           {checks.filter((c) => c.group === "upcoming").map((c) => <CheckRow key={c.id} c={c} />)}
+          <SundayBetList state={state} split={effective} picks={picks ?? []} minEdge={minEdge} setMinEdge={setMinEdge} diff={diff} onSaved={() => setNonce((n) => n + 1)} />
+          <SundayReports state={state} split={effective} picks={picks ?? []} minEdge={minEdge} />
           <p style={DIM}>
             Stats for a game can arrive from CFBD a day or more after it ends; re-run the pull and click Re-check. Ratings for the betting week only use games whose stats are on file, so a missing game above makes the numbers below slightly less sharp until it's pulled.
           </p>

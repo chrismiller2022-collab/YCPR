@@ -2,7 +2,7 @@
 // projections and openers, and whether the logged numbers have drifted from what the model says now.
 import { isFbsGame, type DGame } from "./dataset";
 import type { BookLine } from "./openers";
-import { projectionGaps, type WeekRow, type WeekSplit } from "./weekPlan";
+import { MODEL_VERSION, projectionGaps, type WeekRow, type WeekSplit } from "./weekPlan";
 import type { DrogbaPickRow } from "../api/drogbaData";
 import type { GameProjectionLockRow } from "../api/gameProjectionLocks";
 
@@ -155,15 +155,16 @@ export function buildHealth(inp: HealthInput): Check[] {
     if (Math.abs(d) >= DRIFT_PTS || moved) drifted.push(`${name(r.g)} — logged ${p.model_home_spread.toFixed(1)} at ${p.open_spread?.toFixed(1)}, now ${r.modelSpread.toFixed(1)}${moved ? ` at ${r.open?.toFixed(1)}` : ""} (${d > 0 ? "+" : ""}${d.toFixed(1)})`);
   }
   const unsaved = rows.filter((r) => r.pred && !savedById.has(r.g.id)).length;
+  const oldVersion = saved.filter((p) => p.model_version !== MODEL_VERSION);
   checks.push({
     id: "drift",
     group: "upcoming",
     label: `Week ${w} logged vs current`,
-    status: saved.length === 0 ? "info" : drifted.length ? "warn" : "ok",
+    status: saved.length === 0 ? "info" : drifted.length || oldVersion.length ? "warn" : "ok",
     summary:
       saved.length === 0
         ? "Nothing is logged for this week yet."
-        : `${saved.length} logged; ${drifted.length} differ from the current model number by ${DRIFT_PTS}+ points or sit on a different opening line${unsaved ? `; ${unsaved} projected games not logged yet` : ""}. The log keeps the first save, so these differences show what changed since.`,
+        : `${saved.length} logged; ${drifted.length} differ from the current model number by ${DRIFT_PTS}+ points or sit on a different opening line${unsaved ? `; ${unsaved} projected games not logged yet` : ""}${oldVersion.length ? `; ${oldVersion.length} were logged by an older model version (${Array.from(new Set(oldVersion.map((p) => p.model_version ?? "unknown"))).join(", ")}), not the current ${MODEL_VERSION}` : ""}. The log keeps the first save, so these differences show what changed since. To replace the logged numbers with the current ones, use "Overwrite existing" on the This week tab.`,
     items: cap(drifted),
   });
 

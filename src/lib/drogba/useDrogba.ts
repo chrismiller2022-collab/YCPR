@@ -20,6 +20,7 @@ export interface DrogbaState {
   fanduelLines: Map<string, BookLine>; // per game id: FanDuel's open and when it was first seen
   bovadaOpen: Map<string, number>; // Bovada's open per game id, for comparing books
   gameStats: Map<string, { adv: number; plays: number }>; // per game id: how many teams have per-game advanced rows / play-level rows on file
+  version: number; // bumps each time ratings finish rebuilding, so a caller can wait for fresh data after reload()
   reload: () => void;
 }
 
@@ -59,6 +60,7 @@ export function useDrogba(): DrogbaState {
   const [gameStats, setGameStats] = useState<Map<string, { adv: number; plays: number }>>(new Map());
   const [openMode, setOpenModeState] = useState<OpenMode>(readMode);
   const [nonce, setNonce] = useState(0);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +113,7 @@ export function useDrogba(): DrogbaState {
         setError(e?.message ?? "Building DROGBA ratings failed");
       }
       setBuilding(false);
+      setVersion((v) => v + 1);
     }, 30);
     return () => {
       cancelled = true;
@@ -131,5 +134,5 @@ export function useDrogba(): DrogbaState {
     setNonce((n) => n + 1);
   }, []);
 
-  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, fanduelLines, bovadaOpen, gameStats, reload };
+  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, fanduelLines, bovadaOpen, gameStats, version, reload };
 }
