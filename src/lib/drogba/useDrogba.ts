@@ -19,6 +19,7 @@ export interface DrogbaState {
   fanduelGames: number; // games with a FanDuel open on file
   fanduelLines: Map<string, BookLine>; // per game id: FanDuel's open and when it was first seen
   bovadaOpen: Map<string, number>; // Bovada's open per game id, for comparing books
+  gameStats: Map<string, { adv: number; plays: number }>; // per game id: how many teams have per-game advanced rows / play-level rows on file
   reload: () => void;
 }
 
@@ -55,6 +56,7 @@ export function useDrogba(): DrogbaState {
   const [fanduelGames, setFanduelGames] = useState(0);
   const [fanduelLines, setFanduelLines] = useState<Map<string, BookLine>>(new Map());
   const [bovadaOpen, setBovadaOpen] = useState<Map<string, number>>(new Map());
+  const [gameStats, setGameStats] = useState<Map<string, { adv: number; plays: number }>>(new Map());
   const [openMode, setOpenModeState] = useState<OpenMode>(readMode);
   const [nonce, setNonce] = useState(0);
 
@@ -92,6 +94,15 @@ export function useDrogba(): DrogbaState {
         setFanduelGames(fd.size);
         setFanduelLines(fd);
         setBovadaOpen(new Map(base.filter((b) => b.open != null).map((b) => [b.id, b.open as number])));
+        const stats = new Map<string, { adv: number; plays: number }>();
+        const bump = (id: string, k: "adv" | "plays") => {
+          const e = stats.get(id) ?? { adv: 0, plays: 0 };
+          e[k] += 1;
+          stats.set(id, e);
+        };
+        for (const r of loaded.adv) if (r.off_ppa != null || r.off_success_rate != null) bump(r.game_id, "adv");
+        for (const r of loaded.plays) if (r.f_plays != null && r.f_plays >= 20) bump(r.game_id, "plays");
+        setGameStats(stats);
         const g = buildGames(loaded.raw.games, loaded.raw.lines, fd, openMode);
         setGames(g);
         setEngine(buildEngine({ games: g, adv: loaded.adv, preseason: loaded.pre, plays: loaded.plays, coaches: loaded.coaches }));
@@ -120,5 +131,5 @@ export function useDrogba(): DrogbaState {
     setNonce((n) => n + 1);
   }, []);
 
-  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, fanduelLines, bovadaOpen, reload };
+  return { loading, building, error, games, engine, openMode, setOpenMode, fanduelGames, fanduelLines, bovadaOpen, gameStats, reload };
 }

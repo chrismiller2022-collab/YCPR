@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../../lib/adminWeek";
 import { saveDrogbaPicks, invalidateDrogbaCache } from "../../lib/api/drogbaData";
-import { fitEdgeResponse, fitLayer1, predictEdge, predictLayer1, EDGE_CAP } from "../../lib/drogba/model";
+import { EDGE_CAP } from "../../lib/drogba/model";
+import { fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
-import { gameTier, TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
+import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import { CELL, DIM, NUM, P, f1, sgn, spreadLabel } from "./shared";
 
 export const MODEL_VERSION = "drogba-v2-independent";
@@ -20,29 +21,8 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const [saving, setSaving] = useState(false);
   const S = season ?? seasons[0] ?? new Date().getFullYear();
 
-  // Fit only on games finished before the week being looked at.
-  const fit = useMemo(() => {
-    if (!engine || !engine.hasEff) return null;
-    const train = engine.signals.filter((s) => s.g.completed && (s.g.season < S || (s.g.season === S && s.g.week < week)));
-    const l1 = fitLayer1(train);
-    // The response (how much a disagreement is worth) is measured on the most recent three seasons: the
-    // edge was much stronger in 2023 than since, and an all-seasons average overstates today's.
-    const resp = l1 ? fitEdgeResponse(train.filter((s) => s.g.season >= S - 2), l1) : null;
-    return l1 && resp ? { l1, resp, trainN: train.length } : null;
-  }, [engine, S, week]);
-
-  const rows = useMemo(() => {
-    if (!engine || !fit) return [];
-    return engine.signals
-      .filter((s) => s.g.season === S && s.g.week === week && !s.g.completed && s.g.open != null)
-      .map((s) => {
-        const m = predictLayer1(fit.l1, s);
-        const tier = gameTier(s.g);
-        if (m == null) return { s, g: s.g, tier, open: s.g.open!, modelSpread: null as number | null, pred: null };
-        return { s, g: s.g, tier, open: s.g.open!, modelSpread: -m, pred: predictEdge(fit.resp, s, m) };
-      })
-      .sort((a, b) => Math.abs(b.pred?.edge ?? 0) - Math.abs(a.pred?.edge ?? 0));
-  }, [engine, fit, S, week]);
+  const fit = useMemo(() => (engine ? fitForWeek(engine, S, week) : null), [engine, S, week]);
+  const rows = useMemo(() => (engine ? projectWeek(engine, fit, S, week).flatMap((r) => (r.open == null ? [] : [{ ...r, open: r.open }])) : []), [engine, fit, S, week]);
 
   async function save(overwrite: boolean) {
     setSaving(true);

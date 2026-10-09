@@ -4,13 +4,15 @@ import { OPEN_MODE_LABELS, type OpenMode } from "../lib/drogba/dataset";
 import DrogbaDataTab from "../components/drogba/DrogbaDataTab";
 import DrogbaBacktestTab from "../components/drogba/DrogbaBacktestTab";
 import DrogbaBucketsTab from "../components/drogba/DrogbaBucketsTab";
+import DrogbaSundayTab from "../components/drogba/DrogbaSundayTab";
 import DrogbaThisWeekTab from "../components/drogba/DrogbaThisWeekTab";
 import DrogbaPicksLogTab from "../components/drogba/DrogbaPicksLogTab";
 import DrogbaMethodologyTab from "../components/drogba/DrogbaMethodologyTab";
 
-const TABS = ["thisweek", "backtest", "buckets", "log", "data", "methodology"] as const;
+const TABS = ["sunday", "thisweek", "backtest", "buckets", "log", "data", "methodology"] as const;
 type Tab = (typeof TABS)[number];
 const LABELS: Record<Tab, string> = {
+  sunday: "Sunday check",
   thisweek: "This week",
   backtest: "Backtest",
   buckets: "Buckets",
@@ -21,7 +23,7 @@ const LABELS: Record<Tab, string> = {
 
 // DROGBA — Data Ridge on Games By Agent. Spread model aimed at the OPENING line.
 export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<Tab>("thisweek");
+  const [tab, setTab] = useState<Tab>("sunday");
   const state = useDrogba();
   return (
     <div>
@@ -50,6 +52,7 @@ export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
           </button>
         ))}
       </div>
+      {tab === "sunday" && <DrogbaSundayTab state={state} />}
       {tab === "thisweek" && <DrogbaThisWeekTab state={state} />}
       {tab === "backtest" && <DrogbaBacktestTab state={state} />}
       {tab === "buckets" && <DrogbaBucketsTab state={state} />}
