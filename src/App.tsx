@@ -34,6 +34,8 @@ import WeekNavBar from "./components/WeekNavBar";
 import TopNav from "./pages/TopNav";
 import FAQPage from "./pages/FAQPage";
 const AdminPage = lazy(() => import("./pages/AdminPage"));
+const OverlayPage = lazy(() => import("./pages/OverlayPage"));
+const OverlayControlPage = lazy(() => import("./pages/OverlayControlPage"));
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
@@ -229,6 +231,10 @@ export default function App() {
           <Analytics />
         </div>
       } />
+
+      {/* TV score bug: no nav/footer/analytics — /overlay is drawn over live video by the Google TV app (overlay-tv/). */}
+      <Route path="/overlay" element={<Suspense fallback={null}><OverlayPage /></Suspense>} />
+      <Route path="/overlay/control" element={<Suspense fallback={null}><OverlayControlPage /></Suspense>} />
 
       <Route path="/survivor-pool/standings/:season/:viewerSlug" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />
       <Route path="/survivor-pool/standings/:season" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />

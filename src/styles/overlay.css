@@ -1,0 +1,219 @@
+/* TV score bug. Every size is calc(var(--u) * n), where --u is 1% of the
+   containing box's height times the chosen scale (see OverlayView.tsx). */
+
+.ob-root {
+  --ob-bg: rgba(20, 21, 43, 0.9);
+  --ob-panel: rgba(41, 42, 82, 0.92);
+  --ob-chalk: #f4f2ea;
+  --ob-dim: #8babe4;
+  --ob-gold: #ffc857;
+  --ob-green: #3fb950;
+  --ob-red: #f85149;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: 'Inter', sans-serif;
+  color: var(--ob-chalk);
+}
+
+/* TVs crop the edges (overscan), so keep everything ~4% in from each side. */
+.ob-corner {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 1);
+}
+.ob-tl { top: calc(var(--u) * 4); left: calc(var(--u) * 6); }
+.ob-tr { top: calc(var(--u) * 4); right: calc(var(--u) * 6); }
+.ob-bl { bottom: calc(var(--u) * 4); left: calc(var(--u) * 6); }
+.ob-br { bottom: calc(var(--u) * 4); right: calc(var(--u) * 6); }
+
+.ob-card {
+  width: calc(var(--u) * 30);
+  background: var(--ob-bg);
+  border-radius: calc(var(--u) * 1);
+  overflow: hidden;
+  box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 2) rgba(0, 0, 0, 0.45);
+}
+
+.ob-team {
+  display: flex;
+  align-items: center;
+  height: calc(var(--u) * 4.6);
+  padding-right: calc(var(--u) * 1.2);
+  gap: calc(var(--u) * 0.9);
+}
+.ob-team.ob-dim { opacity: 0.55; }
+.ob-stripe { align-self: stretch; width: calc(var(--u) * 0.6); flex: none; }
+.ob-logo { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); object-fit: contain; flex: none; }
+.ob-abbr {
+  font-family: 'Anton', sans-serif;
+  font-size: calc(var(--u) * 2.6);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.ob-rank {
+  font-family: 'Inter', sans-serif;
+  font-size: calc(var(--u) * 1.3);
+  font-weight: 700;
+  color: var(--ob-dim);
+  margin-right: calc(var(--u) * 0.5);
+  vertical-align: middle;
+}
+.ob-ball {
+  width: calc(var(--u) * 0.9);
+  height: calc(var(--u) * 0.9);
+  border-radius: 50%;
+  background: var(--ob-gold);
+  flex: none;
+}
+.ob-score {
+  margin-left: auto;
+  font-family: 'Anton', sans-serif;
+  font-size: calc(var(--u) * 3.2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-status {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(var(--u) * 1);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.2);
+  background: var(--ob-panel);
+  color: var(--ob-gold);
+  font-weight: 700;
+  font-size: calc(var(--u) * 1.6);
+  text-transform: uppercase;
+}
+.ob-status.ob-redzone { background: rgba(248, 81, 73, 0.85); color: #fff; }
+.ob-dd { color: var(--ob-chalk); }
+.ob-redzone .ob-dd { color: #fff; }
+
+.ob-lines {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: calc(var(--u) * 0.3) calc(var(--u) * 1);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.2);
+  font-size: calc(var(--u) * 1.4);
+  color: var(--ob-dim);
+  white-space: nowrap;
+}
+.ob-lines b { color: var(--ob-chalk); font-weight: 700; margin-right: calc(var(--u) * 0.3); }
+
+.ob-bets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 0.6);
+  padding: 0 calc(var(--u) * 1.2) calc(var(--u) * 0.9);
+}
+.ob-bet {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.5);
+  padding: calc(var(--u) * 0.3) calc(var(--u) * 0.8);
+  border-radius: calc(var(--u) * 2);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: calc(var(--u) * 1.4);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ob-dot { width: calc(var(--u) * 0.8); height: calc(var(--u) * 0.8); border-radius: 50%; background: var(--ob-dim); }
+.ob-up .ob-dot { background: var(--ob-green); }
+.ob-down .ob-dot { background: var(--ob-red); }
+.ob-up { color: #bff0c6; }
+.ob-down { color: #ffc4c0; }
+.ob-note { font-weight: 500; color: var(--ob-dim); }
+
+/* Bottom ticker */
+.ot-bar {
+  position: absolute;
+  left: calc(var(--u) * 6);
+  right: calc(var(--u) * 6);
+  bottom: calc(var(--u) * 4);
+  height: calc(var(--u) * 5.2);
+  background: var(--ob-bg);
+  border-radius: calc(var(--u) * 1);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 2) rgba(0, 0, 0, 0.45);
+}
+.ot-track { display: flex; align-items: center; white-space: nowrap; }
+.ot-track > span { display: inline-flex; }
+.ot-scroll { animation: ot-marquee linear infinite; }
+@keyframes ot-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ot-item {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 1);
+  padding: 0 calc(var(--u) * 2);
+  border-right: calc(var(--u) * 0.15) solid rgba(255, 255, 255, 0.15);
+  font-size: calc(var(--u) * 1.8);
+}
+.ot-team {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.5);
+  font-family: 'Anton', sans-serif;
+  font-size: calc(var(--u) * 2.2);
+}
+.ot-team b { font-weight: 400; margin-left: calc(var(--u) * 0.3); }
+.ot-logo { width: calc(var(--u) * 2.6); height: calc(var(--u) * 2.6); object-fit: contain; }
+.ot-status { color: var(--ob-gold); font-weight: 700; text-transform: uppercase; font-size: calc(var(--u) * 1.5); }
+
+/* /overlay/control — the remote. Sits inside .page for the site's theme. */
+.oc-page { padding: 0 0 3rem; }
+.oc-wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+.oc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.oc-head h1, .oc-gate h1 { font-family: 'Anton', sans-serif; letter-spacing: 0.02em; font-weight: 400; margin: 8px 0 12px; }
+.oc-save { color: var(--chalk-dim); font-size: 0.85rem; }
+.oc-gate { max-width: 360px; margin: 15vh auto 0; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.oc-error { color: var(--neg-red); font-size: 0.9rem; }
+.oc-hint { color: var(--chalk-dim); font-size: 0.82rem; margin: 6px 0; }
+
+.oc-page input[type="password"], .oc-page input[type="search"], .oc-page input[type="date"] {
+  background: var(--turf-panel); color: var(--chalk); border: 1px solid var(--hash);
+  border-radius: 6px; padding: 8px 10px; font: inherit; min-width: 0;
+}
+.oc-page button {
+  background: var(--turf-panel); color: var(--chalk); border: 1px solid var(--hash);
+  border-radius: 6px; padding: 8px 12px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.oc-page button.on { background: var(--gold); color: #1f2041; border-color: var(--gold); }
+.oc-link { padding: 0 !important; border: 0 !important; background: none !important; color: var(--gold) !important; text-decoration: underline; }
+
+.oc-preview {
+  position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; margin-bottom: 12px;
+  background: radial-gradient(circle at 30% 40%, #2f6b3a, #163a1e 60%, #0d2412);
+}
+.oc-hidden-tag { position: absolute; inset: auto 8px 8px auto; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; }
+
+.oc-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+.oc-big { flex: 1; padding: 14px !important; font-size: 1.05rem; }
+.oc-section { background: var(--turf-panel); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+.oc-section h2 { font-size: 1rem; margin: 0 0 8px; }
+.oc-label { font-size: 0.82rem; color: var(--chalk-dim); margin: 10px 0 4px; }
+.oc-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.oc-seg button { flex: 1; }
+.oc-corners { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.oc-slider { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 0.9rem; }
+.oc-slider input { width: 100%; }
+.oc-check { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.9rem; }
+.oc-filters input[type="search"] { flex: 1; }
+
+.oc-games { list-style: none; margin: 8px 0 0; padding: 0; }
+.oc-games li {
+  display: grid; grid-template-columns: auto 72px 1fr; gap: 4px 10px; align-items: center;
+  padding: 10px 8px; border-top: 1px solid var(--hash); cursor: pointer;
+}
+.oc-games li.on { background: rgba(255, 200, 87, 0.12); }
+.oc-time { color: var(--chalk-dim); font-size: 0.85rem; }
+.oc-match { font-weight: 600; }
+.oc-tags { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px; }
+.oc-tag { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; background: var(--hash); color: var(--chalk-dim); }
+.oc-tag.bet { background: var(--gold); color: #1f2041; font-weight: 700; }
