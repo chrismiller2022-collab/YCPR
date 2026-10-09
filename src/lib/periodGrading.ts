@@ -14,6 +14,7 @@ export interface PeriodLineRowLite {
   market_type: string;
   provider: string | null;
   point: number | null;
+  pulled_at?: string | null;
 }
 
 /** Median across books per "<period>|<market>" for one game; spread is returned as the AWAY line (negative = away favored). */
@@ -210,4 +211,23 @@ export function chartRowsFor(
     .filter((b) => b.result !== "pending" && (!filteredOnly || b.off >= minOff))
     .map((b) => ({ amountOff: b.off, stdDevOff: sd != null && sd > 0 ? b.off / sd : null, grade: b.result === "pending" ? null : (b.result as "win" | "loss" | "push") }));
   return { rows, stdDev: sd, total: cell.length };
+}
+
+// ---------------------------------------------------------------------
+// Active bets: this week's not-yet-played period bets, ranked by how far my number is from the live line.
+// ---------------------------------------------------------------------
+export interface ActiveBet extends GradedBet {
+  /** |mine - line| divided by the std dev of (mine - line) across this week's lines for the same period and market; null when the slate is too small for a std dev. */
+  stdDevOff: number | null;
+}
+
+/** Pending bets with a std-dev-off measured against the slate's own spread of disagreement, per period and market. */
+export function activeBets(bets: GradedBet[]): ActiveBet[] {
+  const pending = bets.filter((b) => b.result === "pending");
+  const sd = new Map<string, number | null>();
+  for (const period of GRADE_PERIODS) for (const market of ["spread", "total"] as GradeMarket[]) sd.set(`${period}|${market}`, diffStdDev(pending.filter((b) => b.period === period && b.market === market)));
+  return pending.map((b) => {
+    const s = sd.get(`${b.period}|${b.market}`);
+    return { ...b, stdDevOff: s != null && s > 0 ? b.off / s : null };
+  });
 }

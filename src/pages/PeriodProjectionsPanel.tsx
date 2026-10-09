@@ -13,6 +13,7 @@ import {
 } from "../lib/api/oddsHistorical";
 import {
   GRADE_PERIODS,
+  activeBets,
   SPREAD_SEGMENTS,
   TOTAL_SEGMENTS,
   chartRowsFor,
@@ -155,6 +156,137 @@ function PriceCalculator({ dist }: { dist: PeriodDistribution }) {
         <span>
           {overLabel} {pct(price.pOver)} ({fmtPrice(price.fairOver)}) · {underLabel} {pct(price.pUnder)} ({fmtPrice(price.fairUnder)}) · Push {pct(price.pPush)}
         </span>
+      )}
+    </div>
+  );
+}
+
+
+// This week's bets to make: my period numbers against the live lines pulled with "Sync lines", biggest disagreements first.
+// Std dev off is measured within this week's slate for the same period and market (the same idea as the Totals pages' pool std dev).
+function ActiveBetsSection({ items, rows, lineRows }: { items: GradeItem[]; rows: GameRowData[]; lineRows: Record<string, PeriodLineRowLite[]> }) {
+  const [sortBy, setSortBy] = useState<"std" | "off">("std");
+  const [minStd, setMinStd] = useState(1);
+  const [minOff, setMinOff] = useState(0);
+  const [period, setPeriod] = useState<PeriodFilter>("all");
+  const [market, setMarket] = useState<GradeMarket | "all">("all");
+  const [minBooks, setMinBooks] = useState(1);
+  const startById = useMemo(() => new Map(rows.map((r) => [r.gameId, r.startDate])), [rows]);
+  const pulledAt = useMemo(() => {
+    let max = 0;
+    for (const rs of Object.values(lineRows)) for (const r of rs) if (r.pulled_at) max = Math.max(max, Date.parse(r.pulled_at));
+    return max || null;
+  }, [lineRows]);
+  const all = useMemo(() => {
+    const now = Date.now();
+    return activeBets(gradeItems(items)).filter((b) => {
+      const start = startById.get(b.gameId);
+      return !(start && Date.parse(start) <= now); // already kicked off: the line is gone
+    });
+  }, [items, startById]);
+  const shown = useMemo(() => {
+    const keep = all.filter(
+      (b) =>
+        (period === "all" || b.period === period) &&
+        (market === "all" || b.market === market) &&
+        b.off >= minOff &&
+        b.books >= minBooks &&
+        (minStd <= 0 || (b.stdDevOff != null && b.stdDevOff >= minStd))
+    );
+    return keep.sort((a, b) => (sortBy === "std" ? (b.stdDevOff ?? -1) - (a.stdDevOff ?? -1) : b.off - a.off));
+  }, [all, period, market, minOff, minBooks, minStd, sortBy]);
+  const chip = { padding: "0.15rem 0.55rem", fontSize: "0.76rem" };
+  const cell = { padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", fontSize: "0.78rem", whiteSpace: "nowrap" as const };
+  const num = { ...cell, textAlign: "right" as const };
+  const pickText = (b: (typeof all)[number]) => {
+    const [away, home] = b.label.split(" @ ");
+    if (b.market === "total") return `${b.pick === "over" ? "Over" : "Under"} ${fmtNum(b.line)}`;
+    return b.pick === "away" ? `${away} ${fmtSpread(b.line)}` : `${home} ${fmtSpread(-b.line)}`;
+  };
+  return (
+    <div style={{ marginTop: "1.5rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.4rem" }}>Active bets: my period numbers vs the live lines</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Uses the lines saved by "Sync lines (manual)" above (median across books) and each game's locked or live period projection. Games already kicked off are left out.
+        {pulledAt ? ` Lines last pulled ${new Date(pulledAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}; lines move, so sync again before betting.` : ""}
+        {" "}Std dev off = amount off ÷ the std dev of (mine − line) across this week's games for that period and market.
+      </p>
+      {all.length === 0 ? (
+        <p style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>No live period lines for this week's unplayed games yet. Click "Sync lines (manual)" above (1H/2H costs 1 credit per market per game).</p>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center", fontSize: "0.8rem", marginBottom: "0.4rem" }}>
+            <span>Sort by</span>
+            {([["std", "Std dev off"], ["off", "Amount off"]] as const).map(([k, label]) => (
+              <button key={k} className={`mode-btn ${sortBy === k ? "mode-btn-active" : ""}`} style={chip} onClick={() => setSortBy(k)}>{label}</button>
+            ))}
+            <label>
+              Min std dev off <input type="number" min={0} step={0.25} value={minStd} onChange={(e) => setMinStd(parseFloat(e.target.value) || 0)} style={{ width: 60 }} />
+            </label>
+            <label>
+              Min points off <input type="number" min={0} step={0.5} value={minOff} onChange={(e) => setMinOff(parseFloat(e.target.value) || 0)} style={{ width: 60 }} />
+            </label>
+            <label>
+              Min books <input type="number" min={1} step={1} value={minBooks} onChange={(e) => setMinBooks(parseInt(e.target.value, 10) || 1)} style={{ width: 50 }} />
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.5rem" }}>
+            {(["all", ...GRADE_PERIODS] as PeriodFilter[]).map((p) => (
+              <button key={p} className={`mode-btn ${period === p ? "mode-btn-active" : ""}`} style={chip} onClick={() => setPeriod(p)}>
+                {p === "all" ? "All periods" : PERIOD_LABELS[p as GradePeriod]}
+              </button>
+            ))}
+            <span style={{ width: "0.5rem" }} />
+            {(["all", "spread", "total"] as const).map((m) => (
+              <button key={m} className={`mode-btn ${market === m ? "mode-btn-active" : ""}`} style={chip} onClick={() => setMarket(m)}>
+                {m === "all" ? "Both markets" : m === "spread" ? "Spreads" : "Totals"}
+              </button>
+            ))}
+            <span style={{ fontSize: "0.76rem", color: "var(--chalk-dim)" }}>{shown.length} of {all.length} bets shown</span>
+          </div>
+          <div style={{ maxHeight: 520, overflow: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...cell, textAlign: "right" }}>#</th>
+                  <th style={cell}>Pick</th>
+                  <th style={cell}>Game</th>
+                  <th style={cell}>Kickoff</th>
+                  <th style={cell}>Period</th>
+                  <th style={num}>Line</th>
+                  <th style={num}>Mine</th>
+                  <th style={num}>Off</th>
+                  <th style={num}>Std dev off</th>
+                  <th style={num}>Books</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((b, i) => (
+                  <tr key={`${b.gameId}|${b.period}|${b.market}`}>
+                    <td style={num}>{i + 1}</td>
+                    <td style={{ ...cell, fontWeight: 700 }}>{pickText(b)}</td>
+                    <td style={cell}>{b.label}</td>
+                    <td style={cell}>{fmtKickoff(startById.get(b.gameId) ?? null)}</td>
+                    <td style={cell}>{PERIOD_LABELS[b.period]} {b.market === "spread" ? "spread" : "total"}</td>
+                    <td style={num}>{b.market === "spread" ? fmtSpread(b.line) : fmtNum(b.line)}</td>
+                    <td style={num}>{b.market === "spread" ? fmtSpread(b.mine) : fmtNum(b.mine)}</td>
+                    <td style={num}>{b.off.toFixed(1)}</td>
+                    <td style={num}>{b.stdDevOff == null ? "–" : b.stdDevOff.toFixed(2)}</td>
+                    <td style={num}>{b.books}</td>
+                  </tr>
+                ))}
+                {shown.length === 0 && (
+                  <tr>
+                    <td style={cell} colSpan={10}>Nothing passes these filters.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", margin: "0.4rem 0 0" }}>
+            Spread picks are shown as the team and its own line. The line is the median across books, so it can be a number like 25.25; check the actual line at your book before betting. Lock the week before kickoffs so the numbers being bet are the ones that get graded later.
+          </p>
+        </>
       )}
     </div>
   );
@@ -488,7 +620,7 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
     fetchGamesWithLines(season, week).then((g) => !cancelled && setGames(g)).catch(() => !cancelled && setGames([]));
     fetchPeriodLocks(season, week).then((l) => !cancelled && setPeriodLocks(l)).catch(() => !cancelled && setPeriodLocks({}));
     fetchAllRows<PeriodLineRowLite>((from, to) =>
-      supabase.from("period_market_lines").select("game_id, period, market_type, provider, point").eq("season", season).eq("week", week).order("id").range(from, to)
+      supabase.from("period_market_lines").select("game_id, period, market_type, provider, point, pulled_at").eq("season", season).eq("week", week).order("id").range(from, to)
     )
       .then((rows) => {
         if (cancelled) return;
@@ -830,6 +962,8 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
           </table>
         </div>
       )}
+
+      <ActiveBetsSection items={weekGradeItems} rows={rows} lineRows={lineRows} />
 
       <GradeSection
         title={`Week ${week}: my period projections vs the market's period lines`}
