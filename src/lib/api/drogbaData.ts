@@ -26,7 +26,7 @@ export async function fetchDrogbaRaw(): Promise<DrogbaRaw> {
           .range(from, to)
       ),
       fetchAllRows<RawLineRow>((from, to) =>
-        supabase.from("betting_lines").select("game_id, provider, spread, opening_spread, opening_over_under").gte("season", DROGBA_FIRST_SEASON).order("id").range(from, to)
+        supabase.from("betting_lines").select("game_id, provider, spread, opening_spread, opening_over_under, over_under").gte("season", DROGBA_FIRST_SEASON).order("id").range(from, to)
       ),
     ]);
     return { games, lines };

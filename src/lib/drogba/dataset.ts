@@ -20,6 +20,7 @@ export interface DGame {
   openProvider: string | null;
   close: number | null; // closing spread from the SAME book as `open` when possible
   openTotal: number | null; // Bovada's opening game total
+  closeTotal: number | null; // Bovada's closing game total
 }
 
 export interface RawGameRow {
@@ -46,6 +47,7 @@ export interface RawLineRow {
   spread: number | null;
   opening_spread: number | null;
   opening_over_under?: number | null;
+  over_under?: number | null;
 }
 
 // Bovada is the only book with an opening line on ~99% of FBS games in every season 2021-26 (the
@@ -97,6 +99,7 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Ma
     if (bovadaClose != null) close = bovadaClose;
     if (close == null) close = ls.find((l) => l.spread != null)?.spread ?? null;
     const openTotal = ls.find((l) => l.provider === "Bovada" && l.opening_over_under != null)?.opening_over_under ?? null;
+    const closeTotal = ls.find((l) => l.provider === "Bovada" && l.over_under != null)?.over_under ?? null;
     const startMs = g.start_date ? Date.parse(g.start_date) : null;
     if (mode !== "bovada") {
       const fd = fanduel?.get(g.id);
@@ -127,6 +130,7 @@ export function buildGames(rows: RawGameRow[], lines: RawLineRow[], fanduel?: Ma
       openProvider,
       close,
       openTotal,
+      closeTotal,
     });
   }
   return out.sort((a, b) => a.season - b.season || a.week - b.week || (a.startMs ?? 0) - (b.startMs ?? 0));

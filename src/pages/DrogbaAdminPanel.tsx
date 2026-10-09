@@ -7,9 +7,10 @@ import DrogbaBucketsTab from "../components/drogba/DrogbaBucketsTab";
 import DrogbaSundayTab from "../components/drogba/DrogbaSundayTab";
 import DrogbaThisWeekTab from "../components/drogba/DrogbaThisWeekTab";
 import DrogbaPicksLogTab from "../components/drogba/DrogbaPicksLogTab";
+import DrogbaTeasersTab from "../components/drogba/DrogbaTeasersTab";
 import DrogbaMethodologyTab from "../components/drogba/DrogbaMethodologyTab";
 
-const TABS = ["sunday", "thisweek", "backtest", "buckets", "log", "data", "methodology"] as const;
+const TABS = ["sunday", "thisweek", "backtest", "buckets", "log", "teasers", "data", "methodology"] as const;
 type Tab = (typeof TABS)[number];
 const LABELS: Record<Tab, string> = {
   sunday: "Sunday check",
@@ -17,6 +18,7 @@ const LABELS: Record<Tab, string> = {
   backtest: "Backtest",
   buckets: "Buckets",
   log: "Picks log",
+  teasers: "Teasers",
   data: "Data & sync",
   methodology: "Methodology",
 };
@@ -57,6 +59,7 @@ export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
       {tab === "backtest" && <DrogbaBacktestTab state={state} />}
       {tab === "buckets" && <DrogbaBucketsTab state={state} />}
       {tab === "log" && <DrogbaPicksLogTab state={state} />}
+      {tab === "teasers" && <DrogbaTeasersTab state={state} />}
       {tab === "data" && <DrogbaDataTab state={state} />}
       {tab === "methodology" && <DrogbaMethodologyTab />}
     </div>
