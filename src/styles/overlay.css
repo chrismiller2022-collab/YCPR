@@ -126,7 +126,7 @@
 .ob-down { color: #ffc4c0; }
 .ob-note { font-weight: 500; color: var(--ob-dim); }
 
-/* Bottom ticker */
+/* Ticker (bottom by default; .ot-top moves it to the top edge) */
 .ot-bar {
   position: absolute;
   left: calc(var(--u) * 6);
@@ -140,6 +140,7 @@
   align-items: center;
   box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 2) rgba(0, 0, 0, 0.45);
 }
+.ot-bar.ot-top { bottom: auto; top: calc(var(--u) * 4); }
 .ot-track { display: flex; align-items: center; white-space: nowrap; }
 .ot-track > span { display: inline-flex; }
 .ot-scroll { animation: ot-marquee linear infinite; }

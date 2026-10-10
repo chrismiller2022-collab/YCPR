@@ -119,7 +119,7 @@ function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | u
   );
 }
 
-function Ticker({ items }: { items: JSX.Element[] }) {
+function Ticker({ items, top }: { items: JSX.Element[]; top: boolean }) {
   const outer = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState(0);
@@ -136,7 +136,7 @@ function Ticker({ items }: { items: JSX.Element[] }) {
 
   const style = scroll ? { animationDuration: `${Math.max(20, scroll / 60)}s` } : undefined;
   return (
-    <div className="ot-bar" ref={outer}>
+    <div className={`ot-bar${top ? " ot-top" : ""}`} ref={outer}>
       <div className={`ot-track${scroll ? " ot-scroll" : ""}`} ref={inner} style={style}>
         {items}
         {scroll ? items.map((el, k) => <span key={`dup${k}`}>{el}</span>) : null}
@@ -207,7 +207,7 @@ export default function OverlayView({ state, contexts, scores }: Props) {
         state.fullscreen ? (
           <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} />
         ) : state.layout === "ticker" ? (
-          <Ticker items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
+          <Ticker top={state.ticker_position === "top"} items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
             {shown.map((id) => (

@@ -189,7 +189,7 @@ export default function OverlayControlPage() {
           <div className="oc-seg">
             {(["corner", "ticker"] as const).map((l) => (
               <button key={l} className={state.layout === l ? "on" : ""} onClick={() => update({ layout: l })}>
-                {l === "corner" ? "Corner bug" : "Bottom ticker"}
+                {l === "corner" ? "Corner bug" : "Ticker"}
               </button>
             ))}
           </div>
@@ -212,7 +212,18 @@ export default function OverlayControlPage() {
                 ))}
               </div>
             </>
-          ) : null}
+          ) : (
+            <>
+              <div className="oc-label">Ticker position</div>
+              <div className="oc-seg">
+                {(["bottom", "top"] as const).map((t) => (
+                  <button key={t} className={state.ticker_position === t ? "on" : ""} onClick={() => update({ ticker_position: t })}>
+                    {t === "bottom" ? "↓ Bottom" : "↑ Top"}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <label className="oc-slider">
             <span>Size {Math.round(state.scale * 100)}%</span>
             <input type="range" min={0.6} max={1.6} step={0.05} value={state.scale} onChange={(e) => update({ scale: Number(e.target.value) })} />

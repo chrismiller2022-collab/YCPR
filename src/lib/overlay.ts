@@ -18,6 +18,7 @@ import type { PlacedBetRow } from "./api/placedBets";
 
 export type OverlayLayout = "corner" | "ticker";
 export type OverlayPosition = "tl" | "tr" | "bl" | "br";
+export type TickerPosition = "bottom" | "top";
 
 export interface OverlayState {
   id: string;
@@ -25,6 +26,7 @@ export interface OverlayState {
   visible: boolean;
   layout: OverlayLayout;
   position: OverlayPosition;
+  ticker_position: TickerPosition;
   scale: number;
   delay_seconds: number;
   rotate_seconds: number;
@@ -40,6 +42,7 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   visible: true,
   layout: "corner",
   position: "tr",
+  ticker_position: "bottom",
   scale: 1,
   delay_seconds: 0,
   rotate_seconds: 12,
