@@ -20,6 +20,8 @@
 //     futures) — no API key needed, it's the same public data ESPN's own
 //     site reads. Lets us compare NCAAF Championship pricing across
 //     Odds API's books AND ESPN's, not just one source.
+//   - mode=scoreboard&dates=YYYYMMDD[-YYYYMMDD]: ESPN's free live
+//     scoreboard for the TV score bug (/overlay). No key, no credits.
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
 //     (id/team names/kickoff only, no odds) — used to match Odds API's
 //     "School Mascot" naming against this site's own game list BEFORE
@@ -196,6 +198,64 @@ async function handleEspnFutures(res: any) {
     }));
 
   res.status(200).json({ markets: teamMarkets });
+}
+
+// Free ESPN scoreboard, trimmed to what the TV score bug draws. FBS (80)
+// and FCS (81) are separate groups on ESPN's side. Edge-cached for 10s
+// so the TV, the control page's preview and any other open screen share
+// one upstream fetch instead of each polling ESPN on its own.
+const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
+
+async function handleEspnScoreboard(req: any, res: any) {
+  const dates = String(req.query?.dates ?? "").replace(/[^0-9-]/g, "");
+  if (!/^\d{8}(-\d{8})?$/.test(dates)) {
+    res.status(400).json({ error: "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD" });
+    return;
+  }
+  const groups = await Promise.all(
+    ["80", "81"].map(async (group) => {
+      const r = await fetch(`${ESPN_SCOREBOARD}?dates=${dates}&groups=${group}&limit=400`);
+      if (!r.ok) throw new Error(`ESPN scoreboard request failed (${r.status})`);
+      return ((await r.json()).events ?? []) as any[];
+    })
+  );
+
+  const seen = new Set<string>();
+  const games = [];
+  for (const e of groups.flat()) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    const c = e.competitions?.[0] ?? {};
+    const side = (homeAway: string) => {
+      const t = (c.competitors ?? []).find((x: any) => x.homeAway === homeAway) ?? {};
+      const rank = t.curatedRank?.current;
+      return {
+        espnId: t.team?.id ?? null,
+        abbrev: t.team?.abbreviation ?? null,
+        name: t.team?.shortDisplayName ?? null,
+        color: t.team?.color ?? null,
+        score: t.score != null && t.score !== "" ? Number(t.score) : null,
+        rank: rank && rank < 99 ? rank : null,
+      };
+    };
+    const s = c.situation ?? {};
+    games.push({
+      id: e.id,
+      start: e.date,
+      state: e.status?.type?.state ?? "pre", // pre | in | post
+      detail: e.status?.type?.shortDetail ?? "",
+      period: e.status?.period ?? 0,
+      clock: e.status?.displayClock ?? null,
+      home: side("home"),
+      away: side("away"),
+      possession: s.possession ?? null,
+      downDistance: s.shortDownDistanceText ?? null,
+      redZone: !!s.isRedZone,
+    });
+  }
+
+  res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=5");
+  res.status(200).json({ games });
 }
 
 interface OddsApiEvent {
@@ -495,6 +555,11 @@ export default async function handler(req: any, res: any) {
   try {
     if (req.query?.mode === "espn-futures") {
       await handleEspnFutures(res);
+      return;
+    }
+
+    if (req.query?.mode === "scoreboard") {
+      await handleEspnScoreboard(req, res);
       return;
     }
 

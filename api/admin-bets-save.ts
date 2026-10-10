@@ -540,6 +540,25 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // TV score bug settings (/overlay/control). Only whitelisted columns
+    // are written, so a stray field in the body can't touch anything else.
+    if (action === "saveOverlayState") {
+      const { screen, patch } = req.body;
+      if (typeof screen !== "string" || !screen || typeof patch !== "object" || patch == null) {
+        res.status(400).json({ error: "screen and patch are required" });
+        return;
+      }
+      const allowed = ["game_ids", "visible", "layout", "position", "scale", "delay_seconds", "rotate_seconds", "show_lines", "show_bets"];
+      const row: Record<string, any> = { id: screen, updated_at: new Date().toISOString() };
+      for (const k of allowed) if (k in patch) row[k] = patch[k];
+
+      const { error } = await supabaseAdmin.from("overlay_state").upsert(row, { onConflict: "id" });
+      if (error) throw error;
+
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     // Explicit "commit this week's Totals numbers" snapshot — mirrors
     // Rating Systems' own "Save as week" pattern (weekly_power_ratings).
     // Snapshots the model's ALREADY-COMPUTED per-game outputs (ridge-model
