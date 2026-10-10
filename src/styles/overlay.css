@@ -126,7 +126,7 @@
 .ob-down { color: #ffc4c0; }
 .ob-note { font-weight: 500; color: var(--ob-dim); }
 
-/* Bottom ticker */
+/* Ticker (bottom by default; .ot-top moves it to the top edge) */
 .ot-bar {
   position: absolute;
   left: calc(var(--u) * 6);
@@ -140,6 +140,7 @@
   align-items: center;
   box-shadow: 0 calc(var(--u) * 0.4) calc(var(--u) * 2) rgba(0, 0, 0, 0.45);
 }
+.ot-bar.ot-top { bottom: auto; top: calc(var(--u) * 4); }
 .ot-track { display: flex; align-items: center; white-space: nowrap; }
 .ot-track > span { display: inline-flex; }
 .ot-scroll { animation: ot-marquee linear infinite; }
@@ -217,3 +218,94 @@
 .oc-tags { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px; }
 .oc-tag { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; background: var(--hash); color: var(--chalk-dim); }
 .oc-tag.bet { background: var(--gold); color: #1f2041; font-weight: 700; }
+
+/* Full scoreboard: opaque, ~90% of the screen, every selected game. */
+.ob-full {
+  position: absolute;
+  inset: 5%;
+  display: flex;
+  flex-direction: column;
+  background: #1f2041;
+  border-radius: calc(var(--u) * 1.4);
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 3) rgba(0, 0, 0, 0.6);
+  padding: calc(var(--u) * 2.2) calc(var(--u) * 2.6);
+  overflow: hidden;
+}
+.ob-full-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: calc(var(--u) * 1.6);
+}
+.ob-full-title {
+  font-family: 'Anton', sans-serif;
+  font-size: calc(var(--u) * 3.6);
+  color: var(--ob-gold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.ob-full-meta { color: var(--ob-dim); font-weight: 700; font-size: calc(var(--u) * 1.8); }
+.ob-full-grid {
+  display: grid;
+  gap: calc(var(--u) * 1.4);
+  align-content: start;
+  min-height: 0;
+}
+.ob-full .ob-card { width: auto; background: #292a52; box-shadow: none; }
+
+/* Timeouts left: three pips after the team abbreviation. */
+.ob-tos { display: inline-flex; gap: calc(var(--u) * 0.3); }
+.ob-tos span {
+  width: calc(var(--u) * 0.9);
+  height: calc(var(--u) * 0.35);
+  border-radius: calc(var(--u) * 0.2);
+  background: rgba(255, 255, 255, 0.18);
+}
+.ob-tos span.on { background: var(--ob-chalk); }
+
+/* Live win probability: away % · split bar in team colors · home %. */
+.ob-wp {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 0.8);
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.2) 0;
+  font-size: calc(var(--u) * 1.3);
+  font-weight: 700;
+  color: var(--ob-dim);
+  white-space: nowrap;
+}
+.ob-wp-bar {
+  flex: 1;
+  display: flex;
+  height: calc(var(--u) * 0.6);
+  border-radius: calc(var(--u) * 0.3);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+}
+/* Divider so two similar team colors (IU/NEB reds) still read as two sides. */
+.ob-wp-bar span + span { border-left: calc(var(--u) * 0.25) solid #14152b; }
+
+/* Last play: up to two lines, then cut off. */
+.ob-play {
+  padding: calc(var(--u) * 0.6) calc(var(--u) * 1.2) 0;
+  font-size: calc(var(--u) * 1.35);
+  line-height: 1.3;
+  color: var(--ob-chalk);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ob-play + .ob-lines, .ob-wp + .ob-lines { margin-top: calc(var(--u) * 0.2); }
+
+/* Bet-swing flash: gold border pulse on the card, the flipped chip blinks. */
+@keyframes ob-flash-card {
+  0%, 100% { box-shadow: 0 0 0 calc(var(--u) * 0.25) rgba(255, 200, 87, 0); }
+  50% { box-shadow: 0 0 0 calc(var(--u) * 0.25) rgba(255, 200, 87, 1), 0 0 calc(var(--u) * 2.5) rgba(255, 200, 87, 0.6); }
+}
+@keyframes ob-flash-chip {
+  0%, 100% { background: rgba(255, 255, 255, 0.08); }
+  50% { background: rgba(255, 200, 87, 0.45); }
+}
+.ob-card.ob-flash { animation: ob-flash-card 1s ease-in-out 8; }
+.ob-bet.ob-flip { animation: ob-flash-chip 1s ease-in-out 8; }

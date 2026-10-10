@@ -176,6 +176,12 @@ export default function OverlayControlPage() {
           <button className={`oc-big ${state.visible ? "on" : ""}`} onClick={() => update({ visible: !state.visible })}>
             {state.visible ? "Showing — tap to hide" : "Hidden — tap to show"}
           </button>
+          <button
+            className={`oc-big ${state.fullscreen ? "on" : ""}`}
+            onClick={() => update(state.fullscreen ? { fullscreen: false } : { fullscreen: true, visible: true })}
+          >
+            {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
+          </button>
         </div>
 
         <section className="oc-section">
@@ -183,7 +189,7 @@ export default function OverlayControlPage() {
           <div className="oc-seg">
             {(["corner", "ticker"] as const).map((l) => (
               <button key={l} className={state.layout === l ? "on" : ""} onClick={() => update({ layout: l })}>
-                {l === "corner" ? "Corner bug" : "Bottom ticker"}
+                {l === "corner" ? "Corner bug" : "Ticker"}
               </button>
             ))}
           </div>
@@ -206,7 +212,18 @@ export default function OverlayControlPage() {
                 ))}
               </div>
             </>
-          ) : null}
+          ) : (
+            <>
+              <div className="oc-label">Ticker position</div>
+              <div className="oc-seg">
+                {(["bottom", "top"] as const).map((t) => (
+                  <button key={t} className={state.ticker_position === t ? "on" : ""} onClick={() => update({ ticker_position: t })}>
+                    {t === "bottom" ? "↓ Bottom" : "↑ Top"}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <label className="oc-slider">
             <span>Size {Math.round(state.scale * 100)}%</span>
             <input type="range" min={0.6} max={1.6} step={0.05} value={state.scale} onChange={(e) => update({ scale: Number(e.target.value) })} />
@@ -222,6 +239,27 @@ export default function OverlayControlPage() {
           <label className="oc-check">
             <input type="checkbox" checked={state.show_bets} onChange={(e) => update({ show_bets: e.target.checked })} /> Show my bets
           </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.flash_swings} onChange={(e) => update({ flash_swings: e.target.checked })} /> Flash when a bet flips
+          </label>
+          <div className="oc-label">Live detail</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_last_play} onChange={(e) => update({ show_last_play: e.target.checked })} /> Last play
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_timeouts} onChange={(e) => update({ show_timeouts: e.target.checked })} /> Timeouts left
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_network} onChange={(e) => update({ show_network: e.target.checked })} /> TV network (before kickoff)
+          </label>
+          <div className="oc-label">Size of each game</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.compact} onChange={(e) => update({ compact: e.target.checked })} /> Compact: score and clock only
+          </label>
+          <div className="oc-hint">Compact applies to the corner bug and ticker. The full scoreboard always shows everything.</div>
         </section>
 
         <section className="oc-section">
