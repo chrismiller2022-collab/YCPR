@@ -239,6 +239,27 @@ export default function OverlayControlPage() {
           <label className="oc-check">
             <input type="checkbox" checked={state.show_bets} onChange={(e) => update({ show_bets: e.target.checked })} /> Show my bets
           </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.flash_swings} onChange={(e) => update({ flash_swings: e.target.checked })} /> Flash when a bet flips
+          </label>
+          <div className="oc-label">Live detail</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_last_play} onChange={(e) => update({ show_last_play: e.target.checked })} /> Last play
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_timeouts} onChange={(e) => update({ show_timeouts: e.target.checked })} /> Timeouts left
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_network} onChange={(e) => update({ show_network: e.target.checked })} /> TV network (before kickoff)
+          </label>
+          <div className="oc-label">Size of each game</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.compact} onChange={(e) => update({ compact: e.target.checked })} /> Compact: score and clock only
+          </label>
+          <div className="oc-hint">Compact applies to the corner bug and ticker. The full scoreboard always shows everything.</div>
         </section>
 
         <section className="oc-section">

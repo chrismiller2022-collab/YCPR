@@ -548,7 +548,8 @@ export default async function handler(req: any, res: any) {
         res.status(400).json({ error: "screen and patch are required" });
         return;
       }
-      const allowed = ["game_ids", "visible", "layout", "position", "ticker_position", "scale", "delay_seconds", "rotate_seconds", "show_lines", "show_bets", "fullscreen"];
+      const allowed = ["game_ids", "visible", "layout", "position", "ticker_position", "scale", "delay_seconds", "rotate_seconds", "show_lines", "show_bets", "fullscreen",
+        "show_last_play", "show_timeouts", "show_win_prob", "show_network", "compact", "flash_swings"];
       const row: Record<string, any> = { id: screen, updated_at: new Date().toISOString() };
       for (const k of allowed) if (k in patch) row[k] = patch[k];
 

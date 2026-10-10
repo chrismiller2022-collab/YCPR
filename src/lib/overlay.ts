@@ -33,6 +33,12 @@ export interface OverlayState {
   show_lines: boolean;
   show_bets: boolean;
   fullscreen: boolean;
+  show_last_play: boolean;
+  show_timeouts: boolean;
+  show_win_prob: boolean;
+  show_network: boolean;
+  compact: boolean;
+  flash_swings: boolean;
   updated_at: string;
 }
 
@@ -49,6 +55,12 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   show_lines: true,
   show_bets: true,
   fullscreen: false,
+  show_last_play: true,
+  show_timeouts: true,
+  show_win_prob: true,
+  show_network: true,
+  compact: false,
+  flash_swings: true,
   updated_at: "",
 };
 
@@ -131,6 +143,10 @@ export interface ScoreGame {
   possession: string | null;
   downDistance: string | null;
   redZone: boolean;
+  lastPlay?: string | null;
+  timeouts?: { home: number; away: number } | null;
+  homeWinPct?: number | null; // 0–1
+  network?: string | null;
 }
 
 /** YYYYMMDD in Eastern time — the calendar ESPN's `dates` param uses. */
@@ -232,6 +248,9 @@ export interface OverlayGameRow {
   start_date: string | null;
   home_team: string;
   away_team: string;
+  completed: boolean | null;
+  home_points: number | null;
+  away_points: number | null;
 }
 
 export interface OverlayContext {
@@ -257,7 +276,7 @@ function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
 export async function fetchOverlayContext(gameIds: string[]): Promise<Record<string, OverlayContext>> {
   if (gameIds.length === 0) return {};
   const [games, lines, locks, bets] = await Promise.all([
-    supabase.from("games").select("id, season, week, start_date, home_team, away_team").in("id", gameIds),
+    supabase.from("games").select("id, season, week, start_date, home_team, away_team, completed, home_points, away_points").in("id", gameIds),
     supabase
       .from("betting_lines")
       .select("id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under")
@@ -430,9 +449,38 @@ export function useOverlayData(state: OverlayState | null, applyDelay: boolean) 
     .filter((s): s is string => !!s)
     .map(espnDate)
     .sort();
-  const dates = starts.length ? (starts[0] === starts[starts.length - 1] ? starts[0] : `${starts[0]}-${starts[starts.length - 1]}`) : null;
+  const dates = starts.length ? Array.from(new Set(starts)).join(",") : null;
 
   const { games, fetchedAt } = useScoreboard(dates, ids);
-  const scores = useDelayed(games, fetchedAt, applyDelay ? state?.delay_seconds ?? 0 : 0);
-  return { contexts, scores };
+  const delayed = useDelayed(games, fetchedAt, applyDelay ? state?.delay_seconds ?? 0 : 0);
+  return { contexts, scores: withStoredFinals(delayed, contexts) };
+}
+
+/**
+ * A game ESPN didn't return (another day, a feed hiccup) but that our
+ * `games` table already has as final still shows its final score, so bets
+ * grade WON/LOST/PUSH instead of the card looking unplayed.
+ */
+function withStoredFinals(scores: Record<string, ScoreGame>, contexts: Record<string, OverlayContext>): Record<string, ScoreGame> {
+  let out = scores;
+  for (const [id, ctx] of Object.entries(contexts)) {
+    const g = ctx.game;
+    if (scores[id] || !g.completed || g.home_points == null || g.away_points == null) continue;
+    if (out === scores) out = { ...scores };
+    const team = (name: string, score: number): ScoreTeam => ({ espnId: null, abbrev: null, name, color: null, score, rank: null });
+    out[id] = {
+      id,
+      start: g.start_date ?? "",
+      state: "post",
+      detail: "Final",
+      period: 4,
+      clock: null,
+      home: team(g.home_team, g.home_points),
+      away: team(g.away_team, g.away_points),
+      possession: null,
+      downDistance: null,
+      redZone: false,
+    };
+  }
+  return out;
 }
