@@ -176,6 +176,12 @@ export default function OverlayControlPage() {
           <button className={`oc-big ${state.visible ? "on" : ""}`} onClick={() => update({ visible: !state.visible })}>
             {state.visible ? "Showing — tap to hide" : "Hidden — tap to show"}
           </button>
+          <button
+            className={`oc-big ${state.fullscreen ? "on" : ""}`}
+            onClick={() => update(state.fullscreen ? { fullscreen: false } : { fullscreen: true, visible: true })}
+          >
+            {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
+          </button>
         </div>
 
         <section className="oc-section">

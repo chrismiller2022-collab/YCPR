@@ -3,25 +3,24 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// "Score Bug On/Off": a no-UI shortcut app for the remote's customizable
+// button. Signed with the same key as :app so it holds the signature-level
+// TOGGLE permission that app's ToggleReceiver requires.
 android {
-    namespace = "com.ycpr.scorebug"
+    namespace = "com.ycpr.scorebug.toggle"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.ycpr.scorebug"
+        applicationId = "com.ycpr.scorebug.toggle"
         minSdk = 28
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 1
+        versionName = "1.0"
     }
 
-    // A fixed debug key checked into the repo, so every CI build is signed
-    // the same way and a new APK installs over the old one (adb install -r)
-    // instead of failing on a signature mismatch. It only matters for
-    // sideloading onto your own TV over adb; it isn't a Play Store key.
     signingConfigs {
         getByName("debug") {
-            storeFile = file("scorebug-debug.keystore")
+            storeFile = file("../app/scorebug-debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"

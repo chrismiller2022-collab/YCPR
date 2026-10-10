@@ -217,3 +217,37 @@
 .oc-tags { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px; }
 .oc-tag { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; background: var(--hash); color: var(--chalk-dim); }
 .oc-tag.bet { background: var(--gold); color: #1f2041; font-weight: 700; }
+
+/* Full scoreboard: opaque, ~90% of the screen, every selected game. */
+.ob-full {
+  position: absolute;
+  inset: 5%;
+  display: flex;
+  flex-direction: column;
+  background: #1f2041;
+  border-radius: calc(var(--u) * 1.4);
+  box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 3) rgba(0, 0, 0, 0.6);
+  padding: calc(var(--u) * 2.2) calc(var(--u) * 2.6);
+  overflow: hidden;
+}
+.ob-full-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: calc(var(--u) * 1.6);
+}
+.ob-full-title {
+  font-family: 'Anton', sans-serif;
+  font-size: calc(var(--u) * 3.6);
+  color: var(--ob-gold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.ob-full-meta { color: var(--ob-dim); font-weight: 700; font-size: calc(var(--u) * 1.8); }
+.ob-full-grid {
+  display: grid;
+  gap: calc(var(--u) * 1.4);
+  align-content: start;
+  min-height: 0;
+}
+.ob-full .ob-card { width: auto; background: #292a52; box-shadow: none; }

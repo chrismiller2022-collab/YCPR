@@ -30,6 +30,7 @@ export interface OverlayState {
   rotate_seconds: number;
   show_lines: boolean;
   show_bets: boolean;
+  fullscreen: boolean;
   updated_at: string;
 }
 
@@ -44,6 +45,7 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   rotate_seconds: 12,
   show_lines: true,
   show_bets: true,
+  fullscreen: false,
   updated_at: "",
 };
 

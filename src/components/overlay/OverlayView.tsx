@@ -42,7 +42,7 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore }: { team: ScoreT
   );
 }
 
-function Card({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState }) {
+function Card({ ctx, sb, state, maxBets = 4 }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number }) {
   const homeAbbr = sb?.home.abbrev ?? ctx.game.home_team;
   const awayAbbr = sb?.away.abbrev ?? ctx.game.away_team;
   const final = sb?.state === "post";
@@ -80,7 +80,7 @@ function Card({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefin
       ) : null}
       {bets.length ? (
         <div className="ob-bets">
-          {bets.slice(0, 4).map((b) => (
+          {bets.slice(0, maxBets).map((b) => (
             <span key={b.key} className={`ob-bet ob-${b.status}`}>
               <span className="ob-dot" />
               {b.label}
@@ -145,6 +145,36 @@ function Ticker({ items }: { items: JSX.Element[] }) {
   );
 }
 
+// "Full scoreboard": every selected game in one opaque grid covering ~90%
+// of the screen. Card size shrinks with the number of rows so up to ~16
+// games still fit without scrolling.
+function FullBoard({ ids, contexts, scores, state, unit }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number }) {
+  const n = ids.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  const rows = Math.ceil(n / cols);
+  // ~24 units is a typical card with lines and a couple of bets; fit the rows into the ~78 units below the header.
+  const fit = Math.min(1.5, 78 / (rows * 24));
+  const live = ids.filter((id) => scores[id]?.state === "in").length;
+  const final = ids.filter((id) => scores[id]?.state === "post").length;
+  return (
+    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">YCPR Scoreboard</span>
+        <span className="ob-full-meta">
+          {n} game{n === 1 ? "" : "s"}
+          {live ? ` · ${live} live` : ""}
+          {final ? ` · ${final} final` : ""}
+        </span>
+      </div>
+      <div className="ob-full-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {ids.map((id) => (
+          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function OverlayView({ state, contexts, scores }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
@@ -174,7 +204,9 @@ export default function OverlayView({ state, contexts, scores }: Props) {
   return (
     <div className="ob-root" ref={box} style={{ ["--u" as any]: `${u}px` }}>
       {state.visible && ids.length > 0 ? (
-        state.layout === "ticker" ? (
+        state.fullscreen ? (
+          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} />
+        ) : state.layout === "ticker" ? (
           <Ticker items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
