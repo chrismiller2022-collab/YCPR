@@ -33,23 +33,9 @@ No CFBD or Odds API calls.
 
 After that it starts on its own whenever the TV boots. Google TV's own Settings menu won't grant "display over other apps" to sideloaded apps, so step 4's `appops` line is the only way to grant it.
 
-## Remote button on/off (optional)
-
-Google TV only lets the remote's customizable button launch an app, so there's a second tiny app, **Score Bug On/Off** (`toggle/`, released as `scorebug-toggle.apk`). It has no screen: it flips the overlay, shows a "Score bug on/off" toast and closes, so whatever was playing comes straight back.
-
-1. Install it **after** the main app (it borrows a permission the main app defines, which only exists once the main app is installed):
-
-   ```sh
-   adb install -r scorebug.apk
-   adb install -r scorebug-toggle.apk
-   ```
-
-2. On the TV: Settings → Remotes & Accessories → **Customize remote button** (or the star / ★ button setting) → choose **Score Bug On/Off**.
-
 ## Everyday use
 
 - Open `https://ycpr.vercel.app/overlay/control` (admin password), pick games, and choose corner or ticker.
-- **Full scoreboard** button: switches the TV to an opaque grid of every selected game covering ~90% of the screen. Tap again to return to the corner bug / ticker.
 - **Spoiler delay:** YouTube TV runs ~30–90s behind live. Raise the slider until the bug stops beating your picture.
 - If the bug ever looks stuck, open the Score Bug app and press **Reload page**. The page also reloads itself overnight to pick up site deploys.
 

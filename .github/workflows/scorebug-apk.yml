@@ -1,7 +1,6 @@
 # Builds the Google TV score bug app (overlay-tv/) and publishes the APK
 # as the "scorebug-latest" release, so there's one fixed place to grab
-# it from: Releases → scorebug-latest → scorebug.apk (+ scorebug-toggle.apk,
-# the remote-button on/off shortcut).
+# it from: Releases → scorebug-latest → scorebug.apk.
 name: Score Bug APK
 
 on:
@@ -32,21 +31,17 @@ jobs:
       - name: Build APK
         run: ./gradlew assembleDebug --no-daemon
       - name: Rename
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk scorebug.apk
-          cp toggle/build/outputs/apk/debug/toggle-debug.apk scorebug-toggle.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk scorebug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: scorebug-apk
-          path: |
-            overlay-tv/scorebug.apk
-            overlay-tv/scorebug-toggle.apk
+          path: overlay-tv/scorebug.apk
       - name: Publish scorebug-latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete scorebug-latest --yes --cleanup-tag || true
-          gh release create scorebug-latest scorebug.apk scorebug-toggle.apk \
+          gh release create scorebug-latest scorebug.apk \
             --target "$GITHUB_SHA" --prerelease \
             --title "Score Bug (latest build)" \
-            --notes "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}. Install: adb install -r scorebug.apk, then adb install -r scorebug-toggle.apk (remote-button shortcut)"
+            --notes "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}. Install: adb install -r scorebug.apk"

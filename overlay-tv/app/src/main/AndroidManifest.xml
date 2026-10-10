@@ -1,12 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Only apps signed with this app's key (the Score Bug On/Off remote
-         shortcut in ../toggle) may flip the overlay. -->
-    <permission
-        android:name="com.ycpr.scorebug.permission.TOGGLE"
-        android:protectionLevel="signature" />
-
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -42,15 +36,6 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Score overlay drawn over live TV" />
         </service>
-
-        <receiver
-            android:name=".ToggleReceiver"
-            android:exported="true"
-            android:permission="com.ycpr.scorebug.permission.TOGGLE">
-            <intent-filter>
-                <action android:name="com.ycpr.scorebug.TOGGLE" />
-            </intent-filter>
-        </receiver>
 
         <receiver
             android:name=".BootReceiver"

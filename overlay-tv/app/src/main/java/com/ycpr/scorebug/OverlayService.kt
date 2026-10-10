@@ -34,11 +34,6 @@ class OverlayService : Service() {
     companion object {
         const val ACTION_RELOAD = "com.ycpr.scorebug.RELOAD"
         const val ACTION_STOP = "com.ycpr.scorebug.STOP"
-
-        /** True while the overlay window is up — read by ToggleReceiver. */
-        @Volatile
-        var running = false
-            private set
         private const val CHANNEL_ID = "overlay"
         private const val RETRY_MS = 30_000L
         private const val DAILY_CHECK_MS = 30 * 60_000L
@@ -77,7 +72,6 @@ class OverlayService : Service() {
         super.onCreate()
         startInForeground()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        running = true
         handler.postDelayed(dailyReload, DAILY_CHECK_MS)
     }
 
@@ -105,7 +99,6 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
-        running = false
         handler.removeCallbacksAndMessages(null)
         removeOverlay()
         super.onDestroy()

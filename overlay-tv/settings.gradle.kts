@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ScoreBug"
-include(":app", ":toggle")
+include(":app")

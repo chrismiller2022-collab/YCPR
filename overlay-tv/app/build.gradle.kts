@@ -11,8 +11,8 @@ android {
         applicationId = "com.ycpr.scorebug"
         minSdk = 28
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 1
+        versionName = "1.0"
     }
 
     // A fixed debug key checked into the repo, so every CI build is signed
