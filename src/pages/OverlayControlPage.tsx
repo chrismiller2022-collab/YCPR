@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import OverlayView from "../components/overlay/OverlayView";
 import { supabase } from "../lib/supabaseClient";
-import { espnDate, saveOverlayState, useOverlayData, useOverlayState, type OverlayState } from "../lib/overlay";
+import { espnDate, fetchScoreboard, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
 
 // Remote for the TV score bug — open on a laptop or phone. Every change
 // saves straight to overlay_state, and the TV picks it up over Realtime.
@@ -47,6 +47,82 @@ async function fetchSlate(day: string): Promise<SlateGame[]> {
   for (const b of bets.data ?? []) betCount[b.game_id] = (betCount[b.game_id] ?? 0) + 1;
   const locked = new Set((locks.data ?? []).map((l: any) => l.game_id));
   return (games ?? []).map((g: any) => ({ ...g, bets: betCount[g.id] ?? 0, locked: locked.has(g.id) }));
+}
+
+// NFL picker: one ESPN week at a time (no Supabase data for NFL). Changing
+// the week here also moves the TV to that week.
+function NflGames({ state, update }: { state: OverlayState; update: (p: Partial<OverlayState>) => void }) {
+  const [games, setGames] = useState<ScoreGame[]>([]);
+  const [week, setWeek] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    fetchScoreboard(`league=nfl${state.nfl_week ? `&week=${state.nfl_week}` : ""}`)
+      .then((r) => {
+        if (cancelled) return;
+        setGames([...r.games].sort((a, b) => a.start.localeCompare(b.start)));
+        setWeek(r.week);
+      })
+      .catch((e) => !cancelled && setErr(e.message ?? "Couldn't load NFL games"));
+    return () => {
+      cancelled = true;
+    };
+  }, [state.nfl_week]);
+
+  const selected = new Set(state.nfl_game_ids);
+  const toggle = (id: string) => update({ nfl_game_ids: selected.has(id) ? state.nfl_game_ids.filter((g) => g !== id) : [...state.nfl_game_ids, id] });
+  const offWeek = state.nfl_game_ids.filter((id) => !games.some((g) => g.id === id));
+  const status = (g: ScoreGame) =>
+    g.state === "pre"
+      ? new Date(g.start).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
+      : `${g.away.abbrev} ${g.away.score} – ${g.home.abbrev} ${g.home.score} · ${g.detail}`;
+
+  return (
+    <section className="oc-section">
+      <h2>NFL games ({state.nfl_game_ids.length} on TV)</h2>
+      <div className="oc-row">
+        <button disabled={!week || week <= 1} onClick={() => week && update({ nfl_week: week - 1 })}>
+          ◀
+        </button>
+        <b>Week {week ?? "…"}</b>
+        <button disabled={!week || week >= 18} onClick={() => week && update({ nfl_week: week + 1 })}>
+          ▶
+        </button>
+        {state.nfl_week != null ? <button onClick={() => update({ nfl_week: null })}>This week</button> : null}
+      </div>
+      <div className="oc-row">
+        <button onClick={() => update({ nfl_game_ids: [...state.nfl_game_ids, ...games.filter((g) => !selected.has(g.id)).map((g) => g.id)] })}>Add all</button>
+        <button onClick={() => update({ nfl_game_ids: [] })}>Clear all</button>
+      </div>
+      {offWeek.length ? (
+        <div className="oc-hint">
+          {offWeek.length} selected game{offWeek.length > 1 ? "s are" : " is"} from another week.{" "}
+          <button className="oc-link" onClick={() => update({ nfl_game_ids: state.nfl_game_ids.filter((id) => !offWeek.includes(id)) })}>
+            Remove
+          </button>
+        </div>
+      ) : null}
+      {err ? <div className="oc-error">{err}</div> : null}
+      <ul className="oc-games">
+        {games.map((g) => (
+          <li key={g.id} className={selected.has(g.id) ? "on" : ""} onClick={() => toggle(g.id)}>
+            <input type="checkbox" readOnly checked={selected.has(g.id)} />
+            <span className="oc-time">{g.state === "in" ? "LIVE" : g.state === "post" ? "Final" : ""}</span>
+            <span className="oc-match">
+              {g.away.name} @ {g.home.name}
+            </span>
+            <span className="oc-tags">
+              <span className="oc-tag">{status(g)}</span>
+              {g.odds?.details ? <span className="oc-tag bet">{g.odds.details}</span> : null}
+              {g.network ? <span className="oc-tag tv">{g.network}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function PasswordGate({ onOk }: { onOk: (pw: string) => void }) {
@@ -183,6 +259,13 @@ export default function OverlayControlPage() {
             {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
           </button>
         </div>
+        <div className="oc-seg oc-league">
+          {(["cfb", "nfl"] as const).map((l) => (
+            <button key={l} className={state.league === l ? "on" : ""} onClick={() => update({ league: l })}>
+              {l === "cfb" ? "College" : "NFL"}
+            </button>
+          ))}
+        </div>
 
         <section className="oc-section">
           <h2>Layout</h2>
@@ -266,6 +349,7 @@ export default function OverlayControlPage() {
           <div className="oc-hint">Compact applies to the corner bug and ticker. The full scoreboard always shows everything.</div>
         </section>
 
+        {state.league === "nfl" ? <NflGames state={state} update={update} /> : (
         <section className="oc-section">
           <h2>Games ({state.game_ids.length} on TV)</h2>
           <div className="oc-row oc-filters">
@@ -315,6 +399,7 @@ export default function OverlayControlPage() {
             ))}
           </ul>
         </section>
+        )}
       </div>
     </div>
   );

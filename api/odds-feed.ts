@@ -22,6 +22,7 @@
 //     Odds API's books AND ESPN's, not just one source.
 //   - mode=scoreboard&dates=YYYYMMDD[,YYYYMMDD…]: ESPN's free live
 //     scoreboard for the TV score bug (/overlay). No key, no credits.
+//     &league=nfl[&week=N] for the NFL (a whole week per request).
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
 //     (id/team names/kickoff only, no odds) — used to match Odds API's
 //     "School Mascot" naming against this site's own game list BEFORE
@@ -205,35 +206,51 @@ async function handleEspnFutures(res: any) {
 // so the TV, the control page's preview and any other open screen share
 // one upstream fetch instead of each polling ESPN on its own.
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
+const ESPN_NFL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
+
+async function espnEvents(url: string): Promise<any[]> {
+  // One failed day/division shouldn't blank the rest of the board.
+  try {
+    const r = await fetch(url);
+    return r.ok ? (((await r.json()).events ?? []) as any[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 async function handleEspnScoreboard(req: any, res: any) {
-  // One or more days as YYYYMMDD, comma-separated. ESPN's college scoreboard
-  // takes a single day per request (a "a-b" range errors), so a selection
-  // spanning Friday night and Saturday needs a fetch per day.
-  const dates = Array.from(new Set(String(req.query?.dates ?? "").split(",").map((d) => d.trim())))
-    .filter((d) => /^\d{8}$/.test(d))
-    .slice(0, 7);
-  if (!dates.length) {
-    res.status(400).json({ error: "dates must be one or more YYYYMMDD values, comma-separated" });
-    return;
+  const nfl = req.query?.league === "nfl";
+  let events: any[];
+  let week: number | null = null;
+  if (nfl) {
+    // NFL: a whole week in one request. No week = ESPN's current week.
+    const wk = parseInt(String(req.query?.week ?? ""), 10);
+    const url = Number.isFinite(wk) && wk > 0 && wk < 30 ? `${ESPN_NFL_SCOREBOARD}?seasontype=2&week=${wk}` : ESPN_NFL_SCOREBOARD;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`ESPN NFL scoreboard request failed (${r.status})`);
+    const body = await r.json();
+    events = body.events ?? [];
+    week = body.week?.number ?? null;
+  } else {
+    // College: one or more days as YYYYMMDD, comma-separated. ESPN's college
+    // scoreboard takes a single day per request (a "a-b" range errors), so a
+    // selection spanning Friday night and Saturday needs a fetch per day.
+    const dates = Array.from(new Set(String(req.query?.dates ?? "").split(",").map((d) => d.trim())))
+      .filter((d) => /^\d{8}$/.test(d))
+      .slice(0, 7);
+    if (!dates.length) {
+      res.status(400).json({ error: "dates must be one or more YYYYMMDD values, comma-separated" });
+      return;
+    }
+    const groups = await Promise.all(
+      dates.flatMap((day) => ["80", "81"].map((group) => espnEvents(`${ESPN_SCOREBOARD}?dates=${day}&groups=${group}&limit=400`)))
+    );
+    events = groups.flat();
   }
-  const groups = await Promise.all(
-    dates.flatMap((day) =>
-      ["80", "81"].map(async (group) => {
-        // One failed day/division shouldn't blank the rest of the board.
-        try {
-          const r = await fetch(`${ESPN_SCOREBOARD}?dates=${day}&groups=${group}&limit=400`);
-          return r.ok ? (((await r.json()).events ?? []) as any[]) : [];
-        } catch {
-          return [];
-        }
-      })
-    )
-  );
 
   const seen = new Set<string>();
   const games = [];
-  for (const e of groups.flat()) {
+  for (const e of events) {
     if (seen.has(e.id)) continue;
     seen.add(e.id);
     const c = e.competitions?.[0] ?? {};
@@ -245,6 +262,8 @@ async function handleEspnScoreboard(req: any, res: any) {
         abbrev: t.team?.abbreviation ?? null,
         name: t.team?.shortDisplayName ?? null,
         color: t.team?.color ?? null,
+        logo: t.team?.logo ?? null,
+        record: (t.records ?? []).find((r: any) => r.type === "total")?.summary ?? null,
         score: t.score != null && t.score !== "" ? Number(t.score) : null,
         rank: rank && rank < 99 ? rank : null,
       };
@@ -259,7 +278,9 @@ async function handleEspnScoreboard(req: any, res: any) {
       clock: e.status?.displayClock ?? null,
       home: side("home"),
       away: side("away"),
-      possession: s.possession ?? null,
+      // situation.possession is often empty on ESPN's college feed; the team
+      // holding the ball after the last play (lastPlay.end.team) fills it in.
+      possession: s.possession ?? s.lastPlay?.end?.team?.id ?? null,
       downDistance: s.shortDownDistanceText ?? null,
       redZone: !!s.isRedZone,
       // Only present while a game is live; the bug hides each line when null.
@@ -267,11 +288,21 @@ async function handleEspnScoreboard(req: any, res: any) {
       timeouts: s.homeTimeouts != null && s.awayTimeouts != null ? { home: s.homeTimeouts, away: s.awayTimeouts } : null,
       homeWinPct: typeof s.lastPlay?.probability?.homeWinPercentage === "number" ? s.lastPlay.probability.homeWinPercentage : null,
       network: c.broadcast || (c.broadcasts ?? []).flatMap((b: any) => b.names ?? []).join("/") || null,
+      // Field position: ESPN's yardLine is yards from the HOME team's goal
+      // line (checked live: "ASU 30" with ASU at home = 30; Boise kicking off
+      // from its own 35 at Fresno = 65).
+      yardLine: typeof s.yardLine === "number" ? s.yardLine : typeof s.lastPlay?.end?.yardLine === "number" ? s.lastPlay.end.yardLine : null,
+      possessionText: s.possessionText ?? null,
+      // ESPN's own line (DraftKings), home-team spread. Used for NFL, where
+      // nothing is stored in Supabase.
+      odds: c.odds?.[0]
+        ? { homeSpread: typeof c.odds[0].spread === "number" ? c.odds[0].spread : null, overUnder: c.odds[0].overUnder ?? null, details: c.odds[0].details ?? null }
+        : null,
     });
   }
 
   res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=5");
-  res.status(200).json({ games });
+  res.status(200).json({ games, week });
 }
 
 interface OddsApiEvent {

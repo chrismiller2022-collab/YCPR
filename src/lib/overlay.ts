@@ -19,10 +19,14 @@ import type { PlacedBetRow } from "./api/placedBets";
 export type OverlayLayout = "corner" | "ticker";
 export type OverlayPosition = "tl" | "tr" | "bl" | "br";
 export type TickerPosition = "bottom" | "top";
+export type League = "cfb" | "nfl";
 
 export interface OverlayState {
   id: string;
   game_ids: string[];
+  league: League;
+  nfl_game_ids: string[];
+  nfl_week: number | null;
   visible: boolean;
   layout: OverlayLayout;
   position: OverlayPosition;
@@ -46,6 +50,9 @@ export interface OverlayState {
 export const DEFAULT_OVERLAY_STATE: OverlayState = {
   id: "default",
   game_ids: [],
+  league: "cfb",
+  nfl_game_ids: [],
+  nfl_week: null,
   visible: true,
   layout: "corner",
   position: "tr",
@@ -131,6 +138,8 @@ export interface ScoreTeam {
   color: string | null;
   score: number | null;
   rank: number | null;
+  logo?: string | null;
+  record?: string | null;
 }
 
 export interface ScoreGame {
@@ -149,6 +158,14 @@ export interface ScoreGame {
   timeouts?: { home: number; away: number } | null;
   homeWinPct?: number | null; // 0–1
   network?: string | null;
+  yardLine?: number | null; // yards from the home team's goal line
+  possessionText?: string | null;
+  odds?: { homeSpread: number | null; overUnder: number | null; details: string | null } | null;
+}
+
+/** The games the TV is showing right now: college picks or NFL picks. */
+export function activeIds(state: OverlayState): string[] {
+  return state.league === "nfl" ? state.nfl_game_ids : state.game_ids;
 }
 
 /** YYYYMMDD in Eastern time — the calendar ESPN's `dates` param uses. */
@@ -159,10 +176,12 @@ export function espnDate(iso: string | Date): string {
     .replace(/-/g, "");
 }
 
-export async function fetchScoreboard(dates: string): Promise<ScoreGame[]> {
-  const res = await fetch(`/api/odds-feed?mode=scoreboard&dates=${dates}`);
+/** query: "dates=YYYYMMDD,…" for college, or "league=nfl[&week=N]". */
+export async function fetchScoreboard(query: string): Promise<{ games: ScoreGame[]; week: number | null }> {
+  const res = await fetch(`/api/odds-feed?mode=scoreboard&${query}`);
   if (!res.ok) throw new Error(`Scoreboard request failed (${res.status})`);
-  return (await res.json()).games ?? [];
+  const body = await res.json();
+  return { games: body.games ?? [], week: body.week ?? null };
 }
 
 /**
@@ -170,19 +189,19 @@ export async function fetchScoreboard(dates: string): Promise<ScoreGame[]> {
  * watched game is live or about to start, slow otherwise, so a TV left
  * on overnight costs next to nothing.
  */
-export function useScoreboard(dates: string | null, watchedIds: string[]) {
+export function useScoreboard(query: string | null, watchedIds: string[]) {
   const [games, setGames] = useState<Record<string, ScoreGame>>({});
   const [fetchedAt, setFetchedAt] = useState(0);
   const watchedKey = watchedIds.join(",");
 
   useEffect(() => {
-    if (!dates) return;
+    if (!query) return;
     let cancelled = false;
     let timer = 0;
     const tick = async () => {
       let next = 60_000;
       try {
-        const list = await fetchScoreboard(dates);
+        const { games: list } = await fetchScoreboard(query);
         if (cancelled) return;
         const map: Record<string, ScoreGame> = {};
         for (const g of list) map[g.id] = g;
@@ -203,7 +222,7 @@ export function useScoreboard(dates: string | null, watchedIds: string[]) {
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dates, watchedKey]);
+  }, [query, watchedKey]);
 
   return { games, fetchedAt };
 }
@@ -427,15 +446,18 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
  * `applyDelay` is set.
  */
 export function useOverlayData(state: OverlayState | null, applyDelay: boolean) {
-  const ids = state?.game_ids ?? [];
-  const idsKey = ids.join(",");
-  const [contexts, setContexts] = useState<Record<string, OverlayContext>>({});
+  const nfl = state?.league === "nfl";
+  const cfbIds = nfl ? [] : state?.game_ids ?? [];
+  const ids = state ? activeIds(state) : [];
+  const idsKey = cfbIds.join(",");
+  const [cfbContexts, setCfbContexts] = useState<Record<string, OverlayContext>>({});
 
+  // College: stored line / locks / bets from Supabase. NFL has none.
   useEffect(() => {
     let cancelled = false;
     const load = () =>
-      fetchOverlayContext(ids)
-        .then((c) => !cancelled && setContexts(c))
+      fetchOverlayContext(cfbIds)
+        .then((c) => !cancelled && setCfbContexts(c))
         .catch(() => {});
     load();
     const timer = window.setInterval(load, 30 * 60_000);
@@ -446,16 +468,43 @@ export function useOverlayData(state: OverlayState | null, applyDelay: boolean) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey]);
 
-  const starts = Object.values(contexts)
+  const starts = Object.values(cfbContexts)
     .map((c) => c.game.start_date)
     .filter((s): s is string => !!s)
     .map(espnDate)
     .sort();
   const dates = starts.length ? Array.from(new Set(starts)).join(",") : null;
+  const query = nfl ? `league=nfl${state?.nfl_week ? `&week=${state.nfl_week}` : ""}` : dates ? `dates=${dates}` : null;
 
-  const { games, fetchedAt } = useScoreboard(dates, ids);
+  const { games, fetchedAt } = useScoreboard(query, ids);
   const delayed = useDelayed(games, fetchedAt, applyDelay ? state?.delay_seconds ?? 0 : 0);
-  return { contexts, scores: withStoredFinals(delayed, contexts) };
+  if (nfl) {
+    const contexts: Record<string, OverlayContext> = {};
+    for (const id of ids) if (games[id]) contexts[id] = nflContext(games[id]);
+    return { contexts, scores: delayed };
+  }
+  return { contexts: cfbContexts, scores: withStoredFinals(delayed, cfbContexts) };
+}
+
+/** NFL games carry everything on the ESPN feed itself: teams, start, and ESPN's (DraftKings) line. */
+function nflContext(g: ScoreGame): OverlayContext {
+  return {
+    game: {
+      id: g.id,
+      season: 0,
+      week: 0,
+      start_date: g.start,
+      home_team: g.home.name ?? g.home.abbrev ?? "Home",
+      away_team: g.away.name ?? g.away.abbrev ?? "Away",
+      completed: g.state === "post",
+      home_points: g.home.score,
+      away_points: g.away.score,
+    },
+    line: g.odds ? ({ spread: g.odds.homeSpread, over_under: g.odds.overUnder } as BettingLineRow) : null,
+    myHomeSpread: null,
+    myTotal: null,
+    bets: [],
+  };
 }
 
 /**

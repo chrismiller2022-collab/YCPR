@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { activeIds, liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
 import "../../styles/overlay.css";
 
 // Renders the score bug(s) into whatever box it's given — the full TV
@@ -30,6 +30,8 @@ function Hit({ ok }: { ok: boolean | null }) {
 }
 
 const logoUrl = (espnId: string | null) => (espnId ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${espnId}.png` : null);
+// ESPN sends each team's logo URL (NFL logos live elsewhere than college ones); fall back to the college path.
+const teamLogo = (t: ScoreTeam | undefined) => t?.logo ?? logoUrl(t?.espnId ?? null);
 
 function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
   if (!sb || sb.state === "pre") {
@@ -43,7 +45,7 @@ function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
 }
 
 function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null }) {
-  const logo = logoUrl(team?.espnId ?? null);
+  const logo = teamLogo(team);
   return (
     <div className={`ob-team${dim ? " ob-dim" : ""}`}>
       <span className="ob-stripe" style={{ background: team?.color ? `#${team.color}` : "var(--ob-gold)" }} />
@@ -51,6 +53,7 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
       <span className="ob-abbr">
         {team?.rank ? <span className="ob-rank">{team.rank}</span> : null}
         {team?.abbrev ?? fallbackName}
+        {!showScore && team?.record ? <span className="ob-record">{team.record}</span> : null}
       </span>
       {timeouts != null ? (
         <span className="ob-tos" title={`${timeouts} timeouts left`}>
@@ -74,7 +77,7 @@ function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined
   if (p.vegasAwaySpread == null && p.myAwaySpread == null && p.vegasTotal == null && p.myTotal == null) return null;
   const team = (side: "away" | "home") => {
     const t = side === "away" ? sb?.away : sb?.home;
-    const logo = logoUrl(t?.espnId ?? null);
+    const logo = teamLogo(t);
     const name = t?.abbrev ?? (side === "away" ? ctx.game.away_team : ctx.game.home_team);
     return logo ? <img className="ob-mini-logo" src={logo} alt={name} /> : <b>{name}</b>;
   };
@@ -83,6 +86,8 @@ function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined
   const totalHit = final && p.projTotal && p.totalResult ? (p.totalResult === "Push" ? null : p.projTotal === p.totalResult) : null;
   const awayName = sb?.away.abbrev ?? ctx.game.away_team;
   const homeName = sb?.home.abbrev ?? ctx.game.home_team;
+  // NFL (and any college game without a lock) has no YCPR numbers: just Vegas, then results.
+  const mine = p.myAwaySpread != null || p.myTotal != null;
   return (
     <div className="ob-proj">
       <span>
@@ -91,6 +96,8 @@ function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined
       <span>
         <i>Vegas Total</i> {fmtTotal(p.vegasTotal)}
       </span>
+      {mine ? (
+        <>
       <span>
         <i>YCPR</i> <b style={p.myAwaySpread != null ? { color: spreadColor(p.myAwaySpread) } : undefined}>{fmtSpread(p.myAwaySpread)}</b>
       </span>
@@ -105,6 +112,8 @@ function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined
         <i>Proj</i> <b>{p.projTotal ?? "–"}</b>
         <Hit ok={totalHit} />
       </span>
+        </>
+      ) : null}
       {final ? (
         <>
           <span>
@@ -187,7 +196,7 @@ function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | u
   const network = state.show_network && (!sb || sb.state === "pre") ? sb?.network ?? null : null;
   const side = (t: ScoreTeam | undefined, fallback: string) => (
     <span className="ot-team">
-      {t?.espnId ? <img className="ot-logo" src={logoUrl(t.espnId)!} alt="" /> : null}
+      {teamLogo(t) ? <img className="ot-logo" src={teamLogo(t)!} alt="" /> : null}
       {t?.abbrev ?? fallback}
       <b>{sb && sb.state !== "pre" ? t?.score ?? "" : ""}</b>
     </span>
@@ -299,7 +308,7 @@ function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[
   return (
     <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px`, ["--ob-full-a" as any]: state.full_opacity ?? 1 }}>
       <div className="ob-full-head">
-        <span className="ob-full-title">YCPR Scoreboard</span>
+        <span className="ob-full-title">{state.league === "nfl" ? "NFL Scoreboard" : "YCPR Scoreboard"}</span>
         <span className="ob-full-meta">
           {n} game{n === 1 ? "" : "s"}
           {live ? ` · ${live} live` : ""}
@@ -329,7 +338,7 @@ export default function OverlayView({ state, contexts, scores }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const ids = state.game_ids.filter((id) => contexts[id]);
+  const ids = activeIds(state).filter((id) => contexts[id]);
   const rotate = state.layout === "corner" && state.rotate_seconds > 0 && ids.length > 1;
   const flips = useSwingFlips(ids, contexts, scores, state.flash_swings);
 

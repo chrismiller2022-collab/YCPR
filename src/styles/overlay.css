@@ -337,3 +337,13 @@
 .ob-hit { font-weight: 800; }
 .ob-hit.ok { color: var(--ob-green); }
 .ob-hit.no { color: var(--ob-red); }
+.ob-record {
+  font-family: 'Inter', sans-serif;
+  font-size: calc(var(--u) * 1.2);
+  font-weight: 600;
+  color: var(--ob-dim);
+  margin-left: calc(var(--u) * 0.6);
+  vertical-align: middle;
+}
+.oc-league { margin: 4px 0 8px; }
+.oc-page button:disabled { opacity: 0.4; cursor: default; }
