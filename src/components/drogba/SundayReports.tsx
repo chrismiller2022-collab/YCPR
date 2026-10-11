@@ -5,7 +5,7 @@ import { gradePicks, summarizePicks, type GradedPick } from "../../lib/drogba/pi
 import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import { buildPickRows, fitForWeek, projectWeek, type WeekSplit } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
-import { CELL, DIM, H3, NUM, f1, pct, sgn, spreadLabel } from "./shared";
+import { CELL, DIM, H3, NUM, away, f1, pct, sgn, spreadLabel } from "./shared";
 
 const HEAD = { ...NUM, color: "var(--chalk-dim)", fontWeight: 600 };
 
@@ -115,10 +115,10 @@ export default function SundayReports({ state, split, picks, minEdge }: { state:
                   <td style={{ ...CELL, color: p.tier === "power" ? undefined : "var(--chalk-dim)" }}>{p.tier === "power" ? "Power" : "Other"}</td>
                   <td style={CELL}>{p.away_team} @ {p.home_team}</td>
                   <td style={CELL}>{p.side === "home" ? spreadLabel(p.home_team, p.open_spread!) : spreadLabel(p.away_team, -p.open_spread!)}</td>
-                  <td style={NUM}>{f1(p.open_spread)}</td>
-                  <td style={NUM}>{f1(g?.close)}</td>
+                  <td style={NUM}>{f1(away(p.open_spread))}</td>
+                  <td style={NUM}>{f1(away(g?.close))}</td>
                   <td style={NUM}>{g?.completed ? `${g.awayPts}–${g.homePts}` : "–"}</td>
-                  <td style={NUM}>{sgn(p.edge, 1)}</td>
+                  <td style={NUM}>{sgn(away(p.edge), 1)}</td>
                   <td style={{ ...NUM, color: clvColor(clv) }}>{sgn(clv, 1)}</td>
                   <td style={{ ...CELL, color: result === "W" ? "#8fd39a" : result === "L" ? "#e07a7a" : undefined, fontWeight: 700 }}>{result ?? "–"}</td>
                 </tr>

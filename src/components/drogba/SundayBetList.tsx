@@ -4,7 +4,7 @@ import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
 import { buildPickRows, DEFAULT_MIN_EDGE, fitForWeek, projectWeek, type WeekSplit } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import type { RunDiff } from "./SundayRunner";
-import { CELL, DIM, H3, NUM, f1, sgn, spreadLabel } from "./shared";
+import { CELL, DIM, H3, NUM, away, f1, sgn, spreadLabel } from "./shared";
 
 const HEAD = { ...NUM, color: "var(--chalk-dim)", fontWeight: 600 };
 
@@ -85,9 +85,9 @@ export default function SundayBetList({ state, split, picks, minEdge, setMinEdge
                     <th style={HEAD}>#</th>
                     <th style={CELL}>Pick (at the open)</th>
                     <th style={CELL}>Matchup</th>
-                    <th style={HEAD}>Open</th>
+                    <th style={HEAD}>Open (away)</th>
                     <th style={CELL}>Open book</th>
-                    <th style={HEAD}>DROGBA</th>
+                    <th style={HEAD}>DROGBA (away)</th>
                     <th style={HEAD}>Edge</th>
                     <th style={HEAD}>Exp. line move</th>
                     <th style={HEAD} title="How much the model number moved during the last run (new stats, openers)">Moved in run</th>
@@ -106,13 +106,13 @@ export default function SundayBetList({ state, split, picks, minEdge, setMinEdge
                         <td style={NUM}>{i + 1}</td>
                         <td style={{ ...CELL, fontWeight: 700 }}>{side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}</td>
                         <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
-                        <td style={NUM}>{f1(r.open)}</td>
+                        <td style={NUM}>{f1(away(r.open))}</td>
                         <td style={{ ...CELL, color: r.g.openProvider === "FanDuel" ? undefined : "#e8c84a" }}>{r.g.openProvider ?? "–"}{r.g.openProvider === "FanDuel" ? "" : " (provisional)"}</td>
-                        <td style={NUM}>{f1(r.modelSpread)}</td>
-                        <td style={NUM}>{sgn(edge)}</td>
+                        <td style={NUM}>{f1(away(r.modelSpread))}</td>
+                        <td style={NUM}>{sgn(away(edge))}</td>
                         <td style={NUM}>{sgn(Math.abs(r.pred!.move), 2)}</td>
-                        <td style={{ ...NUM, color: mv != null && Math.abs(mv) >= 0.3 ? "#e8c84a" : "var(--chalk-dim)" }}>{mv == null ? "–" : sgn(mv, 1)}</td>
-                        <td style={{ ...CELL, color: "var(--chalk-dim)" }}>{lg ? `${f1(lg.model_home_spread)} @ ${f1(lg.open_spread)}` : "–"}</td>
+                        <td style={{ ...NUM, color: mv != null && Math.abs(mv) >= 0.3 ? "#e8c84a" : "var(--chalk-dim)" }}>{mv == null ? "–" : sgn(-mv, 1)}</td>
+                        <td style={{ ...CELL, color: "var(--chalk-dim)" }}>{lg ? `${f1(away(lg.model_home_spread))} @ ${f1(away(lg.open_spread))}` : "–"}</td>
                       </tr>
                     );
                   })}
@@ -174,9 +174,9 @@ function RunChanges({ diff, games }: { diff: RunDiff; games: DrogbaState["games"
                 return (
                   <tr key={c.id}>
                     <td style={CELL}>{g ? `${g.away} @ ${g.home}` : c.id}</td>
-                    <td style={NUM}>{c.before == null ? "none" : f1(c.before)}</td>
-                    <td style={NUM}>{f1(c.now)}</td>
-                    <td style={NUM}>{c.before == null ? "new" : sgn(c.now - c.before, 1)}</td>
+                    <td style={NUM}>{c.before == null ? "none" : f1(away(c.before))}</td>
+                    <td style={NUM}>{f1(away(c.now))}</td>
+                    <td style={NUM}>{c.before == null ? "new" : sgn(-(c.now - c.before), 1)}</td>
                   </tr>
                 );
               })}

@@ -385,7 +385,7 @@ export default function DrogbaFanDuelSection({ state }: { state: DrogbaState }) 
           </p>
           {cmp.length > 0 && (
             <p style={P}>
-              Against Bovada's open for the same games ({cmp.length} compared): identical in {same}; average gap {f1(avgAbs, 2)} pts; FanDuel minus Bovada averages {sgn(avgSigned, 2)} (negative = FanDuel makes the home team a bigger favorite).
+              Against Bovada's open for the same games ({cmp.length} compared): identical in {same}; average gap {f1(avgAbs, 2)} pts; FanDuel minus Bovada averages {sgn(avgSigned == null ? null : -avgSigned, 2)} (negative = FanDuel makes the away team a bigger favorite).
             </p>
           )}
         </div>

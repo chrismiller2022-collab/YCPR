@@ -33,6 +33,7 @@ const name = (g: DGame) => `${g.away} @ ${g.home}`;
 const MAX_ITEMS = 40;
 const cap = (xs: string[]) => (xs.length > MAX_ITEMS ? [...xs.slice(0, MAX_ITEMS), `…and ${xs.length - MAX_ITEMS} more`] : xs);
 const DRIFT_PTS = 0.5; // a logged number this far from today's counts as drifted
+const fa = (v: number) => (v === 0 ? "0.0" : v.toFixed(1)); // away-side spread text (callers pass the negated home value)
 const etTime = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" }) + " ET";
 
 export function buildHealth(inp: HealthInput): Check[] {
@@ -152,7 +153,7 @@ export function buildHealth(inp: HealthInput): Check[] {
     if (!p || r.modelSpread == null) continue;
     const d = r.modelSpread - p.model_home_spread;
     const moved = r.open != null && p.open_spread != null && r.open !== p.open_spread;
-    if (Math.abs(d) >= DRIFT_PTS || moved) drifted.push(`${name(r.g)} — logged ${p.model_home_spread.toFixed(1)} at ${p.open_spread?.toFixed(1)}, now ${r.modelSpread.toFixed(1)}${moved ? ` at ${r.open?.toFixed(1)}` : ""} (${d > 0 ? "+" : ""}${d.toFixed(1)})`);
+    if (Math.abs(d) >= DRIFT_PTS || moved) drifted.push(`${name(r.g)} — logged ${fa(-p.model_home_spread)} at ${p.open_spread == null ? "?" : fa(-p.open_spread)}, now ${fa(-r.modelSpread)}${moved ? ` at ${fa(-(r.open ?? 0))}` : ""} (${d > 0 ? "" : "+"}${(-d).toFixed(1)})`);
   }
   const unsaved = rows.filter((r) => r.pred && !savedById.has(r.g.id)).length;
   const oldVersion = saved.filter((p) => p.model_version !== MODEL_VERSION);

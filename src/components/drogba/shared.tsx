@@ -8,6 +8,9 @@ export const H3: CSSProperties = { margin: "1.4rem 0 0.3rem", fontSize: "1rem" }
 
 export const f1 = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? "–" : v.toFixed(d));
 export const sgn = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(d)}`);
+// The site shows spreads from the away team's side (negative = away favored); DROGBA stores and computes everything home-relation, so
+// this flips a stored value for display only. (Avoids printing "-0.0".)
+export const away = (v: number | null | undefined): number | null => (v == null || Number.isNaN(v) ? null : v === 0 ? 0 : -v);
 export const pct = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? "–" : `${v.toFixed(d)}%`);
 
 // Spread in the usual way a bettor reads it: "Ohio State -7.5".

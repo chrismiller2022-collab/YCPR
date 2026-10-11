@@ -4,7 +4,7 @@ import { gradePicks, summarizePicks } from "../../lib/drogba/picksGrading";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { atsColor, clvColor } from "../../lib/drogba/colors";
 import { TIER_LABELS } from "../../lib/drogba/tiers";
-import { CELL, DIM, H3, NUM, P, f1, pct, sgn, spreadLabel } from "./shared";
+import { CELL, DIM, H3, NUM, P, away, f1, pct, sgn, spreadLabel } from "./shared";
 
 // What the model said while the line was open, graded against the open it was compared with AND the close.
 export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
@@ -94,10 +94,10 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
                     <td style={{ ...CELL, color: p.tier === "power" ? undefined : "var(--chalk-dim)" }}>{p.tier === "power" ? "Power" : "Other"}</td>
                     <td style={CELL}>{p.away_team} @ {p.home_team}</td>
                     <td style={CELL}>{p.side === "home" ? spreadLabel(p.home_team, p.open_spread!) : spreadLabel(p.away_team, -p.open_spread!)}</td>
-                    <td style={NUM}>{f1(p.open_spread)}</td>
-                    <td style={NUM}>{f1(g?.close)}</td>
-                    <td style={NUM}>{f1(p.model_home_spread)}</td>
-                    <td style={NUM}>{sgn(p.edge, 2)}</td>
+                    <td style={NUM}>{f1(away(p.open_spread))}</td>
+                    <td style={NUM}>{f1(away(g?.close))}</td>
+                    <td style={NUM}>{f1(away(p.model_home_spread))}</td>
+                    <td style={NUM}>{sgn(away(p.edge), 2)}</td>
                     <td style={{ ...NUM, color: clvColor(clv) }}>{sgn(clv, 1)}</td>
                     <td style={{ ...CELL, color: result === "W" ? "#8fd39a" : result === "L" ? "#e07a7a" : undefined, fontWeight: 700 }}>{result ?? "–"}</td>
                     <td style={{ ...CELL, color: vsClose === "W" ? "#8fd39a" : vsClose === "L" ? "#e07a7a" : undefined, fontWeight: 700 }}>{vsClose ?? "–"}</td>

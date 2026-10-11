@@ -5,7 +5,7 @@ import { EDGE_CAP } from "../../lib/drogba/model";
 import { buildPickRows, DEFAULT_MIN_EDGE, fitForWeek, projectWeek } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
-import { CELL, DIM, NUM, P, f1, sgn, spreadLabel } from "./shared";
+import { CELL, DIM, NUM, P, away, f1, sgn, spreadLabel } from "./shared";
 
 
 export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
@@ -61,8 +61,8 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
         </label>
       </div>
       <p style={DIM}>
-        DROGBA runs on CFBD data alone (no lines, no one else's ratings), so it can be run Sunday morning as soon as Saturday's stats are in. Spreads are home-relation (negative = home favored). <strong>Edge</strong> is how many points the model says the home side beats the open by
-        (negative = the away side); edges are capped at {EDGE_CAP}. "Exp. line move" is the move toward the pick the model has earned per point of edge over the last three seasons, and "Exp. cover" is the points the pick has covered by; both are modest estimates that move with the opening line used — see the Backtest and Buckets tabs for what each edge level has actually done.
+        DROGBA runs on CFBD data alone (no lines, no one else's ratings), so it can be run Sunday morning as soon as Saturday's stats are in. Spreads are from the away team's side (negative = away favored), like the rest of the site. <strong>Edge</strong> is how many points the model says the away side beats the open by
+        (negative = the home side); edges are capped at {EDGE_CAP}. "Exp. line move" is the move toward the pick the model has earned per point of edge over the last three seasons, and "Exp. cover" is the points the pick has covered by; both are modest estimates that move with the opening line used — see the Backtest and Buckets tabs for what each edge level has actually done.
         {fit ? ` Fit on ${fit.trainN} finished games before this week.` : ""}
       </p>
       {!fit && <p style={{ color: "crimson", fontSize: "0.85rem" }}>Not enough history to fit the model yet — run the backfill on the Data & sync tab.</p>}
@@ -86,9 +86,9 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
                 <thead>
                   <tr>
                     <th style={CELL}>Matchup</th>
-                    <th style={NUM}>Open (home)</th>
+                    <th style={NUM}>Open (away)</th>
                     <th style={CELL}>Open book</th>
-                    <th style={NUM}>DROGBA spread</th>
+                    <th style={NUM}>DROGBA (away)</th>
                     <th style={NUM}>Edge</th>
                     <th style={CELL}>Pick (at the open)</th>
                     <th style={NUM}>Exp. line move</th>
@@ -103,10 +103,10 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
                     return (
                       <tr key={r.g.id} style={hit ? { background: tier === "power" ? "rgba(120,200,120,0.14)" : "rgba(120,200,120,0.06)" } : undefined}>
                         <td style={CELL}>{r.g.away} @ {r.g.home}{r.g.neutral ? " (N)" : ""}</td>
-                        <td style={NUM}>{f1(r.open)}</td>
+                        <td style={NUM}>{f1(away(r.open))}</td>
                         <td style={CELL}>{r.g.openProvider ?? "–"}</td>
-                        <td style={NUM}>{f1(r.modelSpread)}</td>
-                        <td style={NUM}>{sgn(edge)}</td>
+                        <td style={NUM}>{f1(away(r.modelSpread))}</td>
+                        <td style={NUM}>{sgn(away(edge))}</td>
                         <td style={CELL}>{side == null ? "–" : side === "home" ? spreadLabel(r.g.home, r.open) : spreadLabel(r.g.away, -r.open)}</td>
                         <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.move), 2)}</td>
                         <td style={NUM}>{r.pred == null ? "–" : sgn(Math.abs(r.pred.cover), 2)}</td>
