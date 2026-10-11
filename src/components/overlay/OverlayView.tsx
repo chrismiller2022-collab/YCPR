@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { activeIds, liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { playersByTeam, type CardFantasyPlayer, type FantasyLeague, type FantasySide } from "../../lib/sleeper";
 import "../../styles/overlay.css";
 
 // Renders the score bug(s) into whatever box it's given — the full TV
@@ -13,6 +14,83 @@ interface Props {
   scores: Record<string, ScoreGame>;
   /** The control page's miniature: the expanded pop-up is position:fixed and would cover the page, so show a label instead. */
   preview?: boolean;
+  fantasy?: { leagues: FantasyLeague[]; error: string | null; teamState: Record<string, "pre" | "in" | "post"> };
+}
+
+// Fantasy full screen: one panel per Sleeper league — my team vs. this
+// week's opponent, both scores, and both starting lineups with live points.
+// A green dot marks players whose NFL game is on right now.
+function FantasySideList({ side, teamState, mine }: { side: FantasySide; teamState: Record<string, string>; mine: boolean }) {
+  return (
+    <div className={`of-side${mine ? " mine" : ""}`}>
+      <div className="of-team">
+        <span className="of-name">{side.teamName}</span>
+        <span className="of-rec">{side.record}</span>
+        <span className="of-pts">{side.points.toFixed(2)}</span>
+      </div>
+      {side.starters.map((p, i) => {
+        const st = p.team ? teamState[p.team] : undefined;
+        return (
+          <div key={`${p.id}-${i}`} className={`of-player${st === "post" ? " done" : ""}`}>
+            <span className="of-slot">{p.slot.replace("SUPER_FLEX", "SF").replace("FLEX", "FLX")}</span>
+            <span className={`of-live${st === "in" ? " on" : ""}`} />
+            <span className="of-pname">
+              {p.name}
+              {p.injury ? <i className="of-inj">{p.injury.slice(0, 1)}</i> : null}
+              <i className="of-pteam">{p.team ?? ""}</i>
+            </span>
+            <span className="of-ppts">{st === "pre" && !p.pts ? "–" : p.pts.toFixed(1)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FantasyBoard({ fantasy, unit }: { fantasy: NonNullable<Props["fantasy"]>; unit: number }) {
+  const n = fantasy.leagues.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  // Same shrink-to-fit as the full scoreboard.
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  const live = Object.values(fantasy.teamState).filter((s) => s === "in").length / 2;
+  return (
+    <div className="ob-full of-board" style={{ ["--u" as any]: `${unit * Math.min(1.3, 2.2 / Math.ceil(n / cols)) * adj}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">Fantasy</span>
+        <span className="ob-full-meta">
+          {n} league{n === 1 ? "" : "s"}
+          {live ? ` · ${live} NFL game${live === 1 ? "" : "s"} live` : ""}
+        </span>
+      </div>
+      {fantasy.error && !n ? <div className="of-msg">{fantasy.error}</div> : null}
+      {!fantasy.error && !n ? <div className="of-msg">Loading Sleeper…</div> : null}
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {fantasy.leagues.map((l) => {
+          const lead = l.opp ? l.me.points - l.opp.points : null;
+          return (
+            <div key={l.id} className="of-league">
+              <div className="of-lname">
+                {l.name}
+                {lead != null ? <span className={lead >= 0 ? "of-up" : "of-down"}>{lead >= 0 ? `+${lead.toFixed(1)}` : lead.toFixed(1)}</span> : null}
+              </div>
+              <div className="of-sides">
+                <FantasySideList side={l.me} teamState={fantasy.teamState} mine />
+                {l.opp ? <FantasySideList side={l.opp} teamState={fantasy.teamState} mine={false} /> : <div className="of-msg">No head-to-head opponent this week</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // The site's matchup pop-up, loaded only when something is expanded so the
@@ -146,6 +224,21 @@ function FieldBar({ sb }: { sb: ScoreGame }) {
   );
 }
 
+// NFL cards: my fantasy starters in this game (gold) and my opponents' (dim).
+function FantasyLine({ players }: { players: CardFantasyPlayer[] }) {
+  if (!players.length) return null;
+  const sorted = [...players].sort((a, b) => Number(b.mine) - Number(a.mine) || b.pts - a.pts);
+  return (
+    <div className="ob-fantasy">
+      {sorted.map((p, i) => (
+        <span key={i} className={p.mine ? "mine" : "opp"}>
+          {p.name} <b>{p.pts.toFixed(1)}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // Tile-style block, same layout as the social graphics (MatchupGridGraphic):
 // spread on the left, total on the right; Vegas, YCPR, my call; then the
 // final ATS / O-U result with a ✓/✗ on my calls once the game is over; and
@@ -213,7 +306,7 @@ function ProjBlock({ ctx, sb, showProb }: { ctx: OverlayContext; sb: ScoreGame |
   );
 }
 
-function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string> }) {
+function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]> }) {
   // Compact (score + clock only) applies to the corner bug; the full scoreboard always shows everything.
   const compact = state.compact && !full;
   const live = sb?.state === "in";
@@ -241,6 +334,7 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
       </div>
       {live && state.show_field && !compact && sb ? <FieldBar sb={sb} /> : null}
       {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
+      {fantasy && !compact ? <FantasyLine players={[...(fantasy[sb?.away.abbrev ?? ""] ?? []), ...(fantasy[sb?.home.abbrev ?? ""] ?? [])]} /> : null}
       {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} showProb={state.show_cover_prob} /> : null}
       {bets.length ? (
         <div className="ob-bets">
@@ -353,7 +447,7 @@ function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, 
 // "Full scoreboard": every selected game in one opaque grid covering ~90%
 // of the screen. Card size shrinks with the number of rows so up to ~16
 // games still fit without scrolling.
-function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string> }) {
+function FullBoard({ ids, contexts, scores, state, unit, flips, fantasy }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]> }) {
   const n = ids.length;
   const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
   const rows = Math.ceil(n / cols);
@@ -385,14 +479,14 @@ function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[
       </div>
       <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {ids.map((id) => (
-          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} />
+          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} fantasy={fantasy} />
         ))}
       </div>
     </div>
   );
 }
 
-export default function OverlayView({ state, contexts, scores, preview = false }: Props) {
+export default function OverlayView({ state, contexts, scores, preview = false, fantasy }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [tick, setTick] = useState(0);
@@ -418,6 +512,7 @@ export default function OverlayView({ state, contexts, scores, preview = false }
 
   const u = (height / 100) * (state.scale || 1);
   const shown = rotate ? [ids[tick % ids.length]] : ids.slice(0, 4);
+  const cardFantasy = state.league === "nfl" && state.show_fantasy_players && fantasy?.leagues.length ? playersByTeam(fantasy.leagues) : undefined;
   // College only: the pop-up runs on this site's ratings.
   const expanded = state.league !== "nfl" && state.expand_game_id ? contexts[state.expand_game_id] : undefined;
 
@@ -431,15 +526,17 @@ export default function OverlayView({ state, contexts, scores, preview = false }
         ) : (
           <ExpandedMatchup ctx={expanded} />
         )
+      ) : state.visible && state.fantasy_full && fantasy ? (
+        <FantasyBoard fantasy={fantasy} unit={height / 100} />
       ) : state.visible && ids.length > 0 ? (
         state.fullscreen ? (
-          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} />
+          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} fantasy={cardFantasy} />
         ) : state.layout === "ticker" ? (
           <Ticker top={state.ticker_position === "top"} items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
             {shown.map((id) => (
-              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} />
+              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} fantasy={cardFantasy} />
             ))}
           </div>
         )

@@ -23,6 +23,8 @@
 //   - mode=scoreboard&dates=YYYYMMDD[,YYYYMMDD…]: ESPN's free live
 //     scoreboard for the TV score bug (/overlay). No key, no credits.
 //     &league=nfl[&week=N] for the NFL (a whole week per request).
+//   - mode=sleeper-players: Sleeper's NFL player list trimmed to name /
+//     team / position / injury, edge-cached a day (fantasy view).
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
 //     (id/team names/kickoff only, no odds) — used to match Odds API's
 //     "School Mascot" naming against this site's own game list BEFORE
@@ -304,6 +306,24 @@ async function handleEspnScoreboard(req: any, res: any) {
 
   res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=5");
   res.status(200).json({ games, week });
+}
+
+// Sleeper's full player list is ~15 MB — far too much for the TV to pull.
+// Trimmed here to what the fantasy view draws (name, NFL team, position,
+// injury tag) for players on an NFL team plus team defenses, and edge-cached
+// for a day (Sleeper itself asks for at most one pull a day).
+async function handleSleeperPlayers(res: any) {
+  const r = await fetch("https://api.sleeper.app/v1/players/nfl");
+  if (!r.ok) throw new Error(`Sleeper players request failed (${r.status})`);
+  const all = (await r.json()) as Record<string, any>;
+  const players: Record<string, [string, string | null, string | null, string | null]> = {};
+  for (const [id, p] of Object.entries(all)) {
+    if (!p || (!p.team && p.position !== "DEF")) continue;
+    const name = p.position === "DEF" ? `${p.last_name ?? id} D/ST` : `${(p.first_name ?? "").slice(0, 1)}. ${p.last_name ?? ""}`.trim();
+    players[id] = [name, p.team ?? (p.position === "DEF" ? id : null), p.position ?? null, p.injury_status ?? null];
+  }
+  res.setHeader("Cache-Control", "public, s-maxage=86400, stale-while-revalidate=86400");
+  res.status(200).json({ players });
 }
 
 interface OddsApiEvent {
@@ -603,6 +623,11 @@ export default async function handler(req: any, res: any) {
   try {
     if (req.query?.mode === "espn-futures") {
       await handleEspnFutures(res);
+      return;
+    }
+
+    if (req.query?.mode === "sleeper-players") {
+      await handleSleeperPlayers(res);
       return;
     }
 

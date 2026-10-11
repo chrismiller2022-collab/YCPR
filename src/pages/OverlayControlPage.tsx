@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import OverlayView from "../components/overlay/OverlayView";
 import { supabase } from "../lib/supabaseClient";
-import { espnDate, fetchScoreboard, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
+import { espnDate, fetchScoreboard, needsFantasy, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
+import { fetchSleeperLeagues, useSleeper, type SleeperLeagueInfo } from "../lib/sleeper";
 
 // Remote for the TV score bug — open on a laptop or phone. Every change
 // saves straight to overlay_state, and the TV picks it up over Realtime.
@@ -125,6 +126,62 @@ function NflGames({ state, update }: { state: OverlayState; update: (p: Partial<
   );
 }
 
+// Sleeper: username, then a checklist of that user's leagues this season.
+// No leagues ticked = all of them.
+function SleeperSection({ state, update }: { state: OverlayState; update: (p: Partial<OverlayState>) => void }) {
+  const [name, setName] = useState(state.sleeper_username ?? "");
+  const [leagues, setLeagues] = useState<SleeperLeagueInfo[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.sleeper_username) return setLeagues([]);
+    let cancelled = false;
+    setErr(null);
+    fetchSleeperLeagues(state.sleeper_username)
+      .then((l) => !cancelled && setLeagues(l))
+      .catch((e) => !cancelled && setErr(e.message ?? "Couldn't load leagues"));
+    return () => {
+      cancelled = true;
+    };
+  }, [state.sleeper_username]);
+
+  const saveName = () => {
+    const v = name.trim() || null;
+    if (v !== state.sleeper_username) update({ sleeper_username: v, sleeper_league_ids: [] });
+  };
+  const all = state.sleeper_league_ids.length === 0;
+  const isOn = (id: string) => all || state.sleeper_league_ids.includes(id);
+  const toggle = (id: string) => {
+    const current = all ? leagues.map((l) => l.id) : state.sleeper_league_ids;
+    const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+    // Everything ticked again collapses back to "all".
+    update({ sleeper_league_ids: next.length === leagues.length ? [] : next });
+  };
+
+  return (
+    <section className="oc-section">
+      <h2>Fantasy (Sleeper)</h2>
+      <div className="oc-row">
+        <input type="search" placeholder="Sleeper username" value={name} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => e.key === "Enter" && saveName()} />
+      </div>
+      {err ? <div className="oc-error">{err}</div> : null}
+      {leagues.length ? (
+        <>
+          <div className="oc-label">Leagues to include{all ? " (all)" : ` (${state.sleeper_league_ids.length} of ${leagues.length})`}</div>
+          {leagues.map((l) => (
+            <label key={l.id} className="oc-check">
+              <input type="checkbox" checked={isOn(l.id)} onChange={() => toggle(l.id)} /> {l.name}
+            </label>
+          ))}
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_fantasy_players} onChange={(e) => update({ show_fantasy_players: e.target.checked })} /> Show my players on NFL game cards
+          </label>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function PasswordGate({ onOk }: { onOk: (pw: string) => void }) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -160,6 +217,7 @@ export default function OverlayControlPage() {
   const holdUntil = useRef(0);
   const [state, setState] = useOverlayState(screen, holdUntil);
   const { contexts, scores } = useOverlayData(state, false);
+  const fantasy = useSleeper(state?.sleeper_username ?? null, state?.sleeper_league_ids ?? [], needsFantasy(state));
   const [day, setDay] = useState(() => etDateInput(new Date()));
   const [slate, setSlate] = useState<SlateGame[]>([]);
   const [slateErr, setSlateErr] = useState<string | null>(null);
@@ -244,7 +302,7 @@ export default function OverlayControlPage() {
         </div>
 
         <div className="oc-preview">
-          <OverlayView state={state} contexts={contexts} scores={scores} preview />
+          <OverlayView state={state} contexts={contexts} scores={scores} preview fantasy={fantasy} />
           {!state.visible ? <div className="oc-hidden-tag">Hidden on TV</div> : null}
         </div>
 
@@ -259,6 +317,13 @@ export default function OverlayControlPage() {
             {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
           </button>
         </div>
+        {state.sleeper_username ? (
+          <div className="oc-row">
+            <button className={`oc-big ${state.fantasy_full ? "on" : ""}`} onClick={() => update(state.fantasy_full ? { fantasy_full: false } : { fantasy_full: true, visible: true })}>
+              {state.fantasy_full ? "Fantasy full screen — tap to close" : "Fantasy full screen"}
+            </button>
+          </div>
+        ) : null}
         {state.league !== "nfl" && state.game_ids.some((id) => contexts[id]) ? (
           <div className="oc-expand">
             <div className="oc-label">Expand a game into its matchup pop-up on the TV</div>
@@ -425,6 +490,7 @@ export default function OverlayControlPage() {
           </ul>
         </section>
         )}
+        <SleeperSection state={state} update={update} />
       </div>
     </div>
   );

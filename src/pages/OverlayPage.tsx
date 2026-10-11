@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import OverlayView from "../components/overlay/OverlayView";
-import { useOverlayData, useOverlayState } from "../lib/overlay";
+import { needsFantasy, useOverlayData, useOverlayState } from "../lib/overlay";
+import { useSleeper } from "../lib/sleeper";
 
 // What the Google TV app loads into its see-through window. Must stay
 // fully transparent everywhere except the bug itself — the video is
@@ -12,6 +13,7 @@ export default function OverlayPage() {
   const screen = params.get("screen") || "default";
   const [state] = useOverlayState(screen);
   const { contexts, scores } = useOverlayData(state, true);
+  const fantasy = useSleeper(state?.sleeper_username ?? null, state?.sleeper_league_ids ?? [], needsFantasy(state));
 
   useEffect(() => {
     const els = [document.documentElement, document.body];
@@ -25,7 +27,7 @@ export default function OverlayPage() {
   if (!state) return null;
   return (
     <div style={{ position: "fixed", inset: 0 }}>
-      <OverlayView state={state} contexts={contexts} scores={scores} />
+      <OverlayView state={state} contexts={contexts} scores={scores} fantasy={fantasy} />
     </div>
   );
 }

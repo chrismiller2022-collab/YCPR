@@ -39,6 +39,10 @@ export interface OverlayState {
   fullscreen: boolean;
   full_opacity: number;
   expand_game_id: string | null;
+  sleeper_username: string | null;
+  sleeper_league_ids: string[];
+  fantasy_full: boolean;
+  show_fantasy_players: boolean;
   show_last_play: boolean;
   show_field: boolean;
   show_cover_prob: boolean;
@@ -68,6 +72,10 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   fullscreen: false,
   full_opacity: 1,
   expand_game_id: null,
+  sleeper_username: null,
+  sleeper_league_ids: [],
+  fantasy_full: false,
+  show_fantasy_players: true,
   show_last_play: true,
   show_field: true,
   show_cover_prob: true,
@@ -668,4 +676,9 @@ export function projection(ctx: OverlayContext, sb: ScoreGame | undefined): Proj
   const coverPct = m && projCover && vegasAwaySpread != null ? coverProb(m, projCover, projCover === "away" ? vegasAwaySpread : -vegasAwaySpread) : null;
   const totalPct = m && projTotal && vegasTotal != null ? totalProb(m, projTotal === "Over", vegasTotal) : null;
   return { vegasAwaySpread, myAwaySpread, vegasTotal, myTotal, projCover, projTotal, projAway, projHome, coverProb: coverPct, totalProb: totalPct, atsResult, totalResult };
+}
+
+/** Whether anything on screen needs Sleeper data (so the TV only polls Sleeper when it's used). */
+export function needsFantasy(state: OverlayState | null): boolean {
+  return !!state?.sleeper_username && state.visible && (state.fantasy_full || (state.league === "nfl" && state.show_fantasy_players));
 }
