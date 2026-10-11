@@ -20,7 +20,7 @@
 //     futures) — no API key needed, it's the same public data ESPN's own
 //     site reads. Lets us compare NCAAF Championship pricing across
 //     Odds API's books AND ESPN's, not just one source.
-//   - mode=scoreboard&dates=YYYYMMDD[-YYYYMMDD]: ESPN's free live
+//   - mode=scoreboard&dates=YYYYMMDD[,YYYYMMDD…]: ESPN's free live
 //     scoreboard for the TV score bug (/overlay). No key, no credits.
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
 //     (id/team names/kickoff only, no odds) — used to match Odds API's
@@ -207,17 +207,28 @@ async function handleEspnFutures(res: any) {
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
 
 async function handleEspnScoreboard(req: any, res: any) {
-  const dates = String(req.query?.dates ?? "").replace(/[^0-9-]/g, "");
-  if (!/^\d{8}(-\d{8})?$/.test(dates)) {
-    res.status(400).json({ error: "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD" });
+  // One or more days as YYYYMMDD, comma-separated. ESPN's college scoreboard
+  // takes a single day per request (a "a-b" range errors), so a selection
+  // spanning Friday night and Saturday needs a fetch per day.
+  const dates = Array.from(new Set(String(req.query?.dates ?? "").split(",").map((d) => d.trim())))
+    .filter((d) => /^\d{8}$/.test(d))
+    .slice(0, 7);
+  if (!dates.length) {
+    res.status(400).json({ error: "dates must be one or more YYYYMMDD values, comma-separated" });
     return;
   }
   const groups = await Promise.all(
-    ["80", "81"].map(async (group) => {
-      const r = await fetch(`${ESPN_SCOREBOARD}?dates=${dates}&groups=${group}&limit=400`);
-      if (!r.ok) throw new Error(`ESPN scoreboard request failed (${r.status})`);
-      return ((await r.json()).events ?? []) as any[];
-    })
+    dates.flatMap((day) =>
+      ["80", "81"].map(async (group) => {
+        // One failed day/division shouldn't blank the rest of the board.
+        try {
+          const r = await fetch(`${ESPN_SCOREBOARD}?dates=${day}&groups=${group}&limit=400`);
+          return r.ok ? (((await r.json()).events ?? []) as any[]) : [];
+        } catch {
+          return [];
+        }
+      })
+    )
   );
 
   const seen = new Set<string>();
@@ -251,6 +262,11 @@ async function handleEspnScoreboard(req: any, res: any) {
       possession: s.possession ?? null,
       downDistance: s.shortDownDistanceText ?? null,
       redZone: !!s.isRedZone,
+      // Only present while a game is live; the bug hides each line when null.
+      lastPlay: s.lastPlay?.text ?? null,
+      timeouts: s.homeTimeouts != null && s.awayTimeouts != null ? { home: s.homeTimeouts, away: s.awayTimeouts } : null,
+      homeWinPct: typeof s.lastPlay?.probability?.homeWinPercentage === "number" ? s.lastPlay.probability.homeWinPercentage : null,
+      network: c.broadcast || (c.broadcasts ?? []).flatMap((b: any) => b.names ?? []).join("/") || null,
     });
   }
 

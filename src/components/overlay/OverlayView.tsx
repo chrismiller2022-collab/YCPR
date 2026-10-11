@@ -26,7 +26,7 @@ function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
   return sb.detail;
 }
 
-function TeamRow({ team, fallbackName, hasBall, dim, showScore }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean }) {
+function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null }) {
   const logo = logoUrl(team?.espnId ?? null);
   return (
     <div className={`ob-team${dim ? " ob-dim" : ""}`}>
@@ -36,33 +36,64 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore }: { team: ScoreT
         {team?.rank ? <span className="ob-rank">{team.rank}</span> : null}
         {team?.abbrev ?? fallbackName}
       </span>
+      {timeouts != null ? (
+        <span className="ob-tos" title={`${timeouts} timeouts left`}>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className={i < timeouts ? "on" : ""} />
+          ))}
+        </span>
+      ) : null}
       {hasBall ? <span className="ob-ball" /> : null}
       <span className="ob-score">{showScore ? team?.score ?? "" : ""}</span>
     </div>
   );
 }
 
-function Card({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState }) {
+function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string> }) {
+  // Compact (score + clock only) applies to the corner bug; the full scoreboard always shows everything.
+  const compact = state.compact && !full;
+  const live = sb?.state === "in";
   const homeAbbr = sb?.home.abbrev ?? ctx.game.home_team;
   const awayAbbr = sb?.away.abbrev ?? ctx.game.away_team;
   const final = sb?.state === "post";
   const started = !!sb && sb.state !== "pre"; // ESPN reports 0–0 before kickoff
   const hs = sb?.home.score ?? 0;
   const as = sb?.away.score ?? 0;
-  const bets = state.show_bets ? liveBets(ctx, sb) : [];
+  const bets = state.show_bets && !compact ? liveBets(ctx, sb) : [];
+  const flashing = bets.some((b) => flips?.has(`${ctx.game.id}|${b.key}`));
+  const tos = live && state.show_timeouts && !compact ? sb?.timeouts ?? null : null;
+  const winPct = live && state.show_win_prob && !compact && sb?.homeWinPct != null ? sb.homeWinPct : null;
+  const lastPlay = live && state.show_last_play && !compact ? sb?.lastPlay ?? null : null;
+  const network = !started && state.show_network ? sb?.network ?? null : null;
   const line = spreadLabel(ctx.line?.spread ?? null, homeAbbr, awayAbbr);
   const mine = spreadLabel(ctx.myHomeSpread, homeAbbr, awayAbbr);
   const total = ctx.line?.over_under ?? null;
 
   return (
-    <div className="ob-card">
-      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={sb?.state === "in" && sb.possession === sb.away.espnId} dim={final && as < hs} showScore={started} />
-      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={sb?.state === "in" && sb.possession === sb.home.espnId} dim={final && hs < as} showScore={started} />
+    <div className={`ob-card${flashing ? " ob-flash" : ""}`}>
+      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={live && sb!.possession === sb!.away.espnId} dim={final && as < hs} showScore={started} timeouts={tos?.away} />
+      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={live && sb!.possession === sb!.home.espnId} dim={final && hs < as} showScore={started} timeouts={tos?.home} />
       <div className={`ob-status${sb?.redZone ? " ob-redzone" : ""}`}>
         <span>{statusText(sb, ctx)}</span>
-        {sb?.state === "in" && sb.downDistance ? <span className="ob-dd">{sb.downDistance}</span> : null}
+        {live && sb?.downDistance ? <span className="ob-dd">{sb.downDistance}</span> : null}
+        {network ? <span className="ob-dd">{network}</span> : null}
       </div>
-      {state.show_lines && (line || total != null || mine || ctx.myTotal != null) ? (
+      {winPct != null ? (
+        <div className="ob-wp">
+          <span>
+            {awayAbbr} {Math.round((1 - winPct) * 100)}%
+          </span>
+          <span className="ob-wp-bar">
+            <span style={{ width: `${(1 - winPct) * 100}%`, background: sb?.away.color ? `#${sb.away.color}` : "var(--ob-dim)" }} />
+            <span style={{ width: `${winPct * 100}%`, background: sb?.home.color ? `#${sb.home.color}` : "var(--ob-gold)" }} />
+          </span>
+          <span>
+            {homeAbbr} {Math.round(winPct * 100)}%
+          </span>
+        </div>
+      ) : null}
+      {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
+      {state.show_lines && !compact && (line || total != null || mine || ctx.myTotal != null) ? (
         <div className="ob-lines">
           {line || total != null ? (
             <span>
@@ -80,8 +111,8 @@ function Card({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefin
       ) : null}
       {bets.length ? (
         <div className="ob-bets">
-          {bets.slice(0, 4).map((b) => (
-            <span key={b.key} className={`ob-bet ob-${b.status}`}>
+          {bets.slice(0, maxBets).map((b) => (
+            <span key={b.key} className={`ob-bet ob-${b.status}${flips?.has(`${ctx.game.id}|${b.key}`) ? " ob-flip" : ""}`}>
               <span className="ob-dot" />
               {b.label}
               {b.count > 1 ? <span className="ob-note">×{b.count}</span> : null}
@@ -95,7 +126,8 @@ function Card({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefin
 }
 
 function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState }) {
-  const bets = state.show_bets ? liveBets(ctx, sb) : [];
+  const bets = state.show_bets && !state.compact ? liveBets(ctx, sb) : [];
+  const network = state.show_network && (!sb || sb.state === "pre") ? sb?.network ?? null : null;
   const side = (t: ScoreTeam | undefined, fallback: string) => (
     <span className="ot-team">
       {t?.espnId ? <img className="ot-logo" src={logoUrl(t.espnId)!} alt="" /> : null}
@@ -107,7 +139,10 @@ function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | u
     <span className="ot-item">
       {side(sb?.away, ctx.game.away_team)}
       {side(sb?.home, ctx.game.home_team)}
-      <span className="ot-status">{statusText(sb, ctx)}</span>
+      <span className="ot-status">
+        {statusText(sb, ctx)}
+        {network ? ` · ${network}` : ""}
+      </span>
       {bets.map((b) => (
         <span key={b.key} className={`ob-bet ob-${b.status}`}>
           <span className="ob-dot" />
@@ -119,7 +154,7 @@ function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | u
   );
 }
 
-function Ticker({ items }: { items: JSX.Element[] }) {
+function Ticker({ items, top }: { items: JSX.Element[]; top: boolean }) {
   const outer = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState(0);
@@ -136,10 +171,73 @@ function Ticker({ items }: { items: JSX.Element[] }) {
 
   const style = scroll ? { animationDuration: `${Math.max(20, scroll / 60)}s` } : undefined;
   return (
-    <div className="ot-bar" ref={outer}>
+    <div className={`ot-bar${top ? " ot-top" : ""}`} ref={outer}>
       <div className={`ot-track${scroll ? " ot-scroll" : ""}`} ref={inner} style={style}>
         {items}
         {scroll ? items.map((el, k) => <span key={`dup${k}`}>{el}</span>) : null}
+      </div>
+    </div>
+  );
+}
+
+// Bet-swing flash: remembers each live bet's last status and, when one
+// flips between covering and not covering, flags it for ~8 seconds. Runs
+// on the same (spoiler-delayed) scores the bug draws, so the flash lands
+// with the play, not before it.
+function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, scores: Record<string, ScoreGame>, enabled: boolean): Set<string> {
+  const prev = useRef<Map<string, string>>(new Map());
+  const [flips, setFlips] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const changed: string[] = [];
+    for (const id of ids) {
+      const ctx = contexts[id];
+      const sb = scores[id];
+      if (!ctx || !sb) continue;
+      for (const b of liveBets(ctx, sb)) {
+        const key = `${id}|${b.key}`;
+        const before = prev.current.get(key);
+        prev.current.set(key, b.status);
+        if (enabled && sb.state === "in" && before && before !== b.status && (before === "up" || before === "down") && (b.status === "up" || b.status === "down")) {
+          changed.push(key);
+        }
+      }
+    }
+    if (!changed.length) return;
+    setFlips((cur) => new Set([...cur, ...changed]));
+    const timer = window.setTimeout(() => setFlips((cur) => new Set([...cur].filter((k) => !changed.includes(k)))), 8000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scores, contexts, enabled]);
+
+  return flips;
+}
+
+// "Full scoreboard": every selected game in one opaque grid covering ~90%
+// of the screen. Card size shrinks with the number of rows so up to ~16
+// games still fit without scrolling.
+function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string> }) {
+  const n = ids.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  const rows = Math.ceil(n / cols);
+  // ~24 units is a typical card with lines and a couple of bets; fit the rows into the ~78 units below the header.
+  const fit = Math.min(1.5, 78 / (rows * 24));
+  const live = ids.filter((id) => scores[id]?.state === "in").length;
+  const final = ids.filter((id) => scores[id]?.state === "post").length;
+  return (
+    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">YCPR Scoreboard</span>
+        <span className="ob-full-meta">
+          {n} game{n === 1 ? "" : "s"}
+          {live ? ` · ${live} live` : ""}
+          {final ? ` · ${final} final` : ""}
+        </span>
+      </div>
+      <div className="ob-full-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {ids.map((id) => (
+          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} />
+        ))}
       </div>
     </div>
   );
@@ -161,6 +259,7 @@ export default function OverlayView({ state, contexts, scores }: Props) {
 
   const ids = state.game_ids.filter((id) => contexts[id]);
   const rotate = state.layout === "corner" && state.rotate_seconds > 0 && ids.length > 1;
+  const flips = useSwingFlips(ids, contexts, scores, state.flash_swings);
 
   useEffect(() => {
     if (!rotate) return;
@@ -174,12 +273,14 @@ export default function OverlayView({ state, contexts, scores }: Props) {
   return (
     <div className="ob-root" ref={box} style={{ ["--u" as any]: `${u}px` }}>
       {state.visible && ids.length > 0 ? (
-        state.layout === "ticker" ? (
-          <Ticker items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
+        state.fullscreen ? (
+          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} />
+        ) : state.layout === "ticker" ? (
+          <Ticker top={state.ticker_position === "top"} items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
             {shown.map((id) => (
-              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} />
+              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} />
             ))}
           </div>
         )
