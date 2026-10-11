@@ -244,7 +244,7 @@ export default function OverlayControlPage() {
         </div>
 
         <div className="oc-preview">
-          <OverlayView state={state} contexts={contexts} scores={scores} />
+          <OverlayView state={state} contexts={contexts} scores={scores} preview />
           {!state.visible ? <div className="oc-hidden-tag">Hidden on TV</div> : null}
         </div>
 
@@ -259,6 +259,25 @@ export default function OverlayControlPage() {
             {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
           </button>
         </div>
+        {state.league !== "nfl" && state.game_ids.some((id) => contexts[id]) ? (
+          <div className="oc-expand">
+            <div className="oc-label">Expand a game into its matchup pop-up on the TV</div>
+            <div className="oc-expand-list">
+              {state.game_ids
+                .filter((id) => contexts[id])
+                .map((id) => {
+                  const g = contexts[id].game;
+                  const on = state.expand_game_id === id;
+                  return (
+                    <button key={id} className={on ? "on" : ""} onClick={() => update({ expand_game_id: on ? null : id, visible: true })}>
+                      {on ? "✕ Close " : "⤢ "}
+                      {scores[id]?.away.abbrev ?? g.away_team} @ {scores[id]?.home.abbrev ?? g.home_team}
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        ) : null}
         <div className="oc-seg oc-league">
           {(["cfb", "nfl"] as const).map((l) => (
             <button key={l} className={state.league === l ? "on" : ""} onClick={() => update({ league: l })}>

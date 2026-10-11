@@ -400,3 +400,42 @@
 }
 .ob-fball.left::before { right: 100%; margin-right: calc(var(--u) * 0.25); border-right-color: #fff; }
 .ob-fball.right::before { left: 100%; margin-left: calc(var(--u) * 0.25); border-left-color: #fff; }
+
+/* Expanded matchup pop-up on the TV: the site's own pop-up needs the
+   site's theme variables (normally set on .page). */
+.ob-expand {
+  --turf: #1f2041;
+  --turf-panel: #292a52;
+  --turf-panel-2: #4b3f72;
+  --hash: #3a3a63;
+  --chalk: #f4f2ea;
+  --chalk-dim: #8babe4;
+  --gold: #ffc857;
+  --gold-dim: #19647e;
+  --good: #ffc857;
+  --bad: #19647e;
+  --danger: #4b3f72;
+  --pos-green: #3fb950;
+  --neg-red: #f85149;
+  color: var(--chalk);
+  font-family: 'Inter', sans-serif;
+}
+.ob-expand > div > div { scrollbar-width: none; }
+.ob-expand > div > div::-webkit-scrollbar { display: none; }
+.ob-expand-tag {
+  position: absolute;
+  inset: 20% 15%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 8%;
+  background: rgba(41, 42, 82, 0.95);
+  border: 2px solid var(--ob-gold);
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.oc-expand { margin: 4px 0 8px; }
+.oc-expand-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.oc-expand-list button { flex: 1 1 auto; }

@@ -38,6 +38,7 @@ export interface OverlayState {
   show_bets: boolean;
   fullscreen: boolean;
   full_opacity: number;
+  expand_game_id: string | null;
   show_last_play: boolean;
   show_field: boolean;
   show_cover_prob: boolean;
@@ -66,6 +67,7 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   show_bets: true,
   fullscreen: false,
   full_opacity: 1,
+  expand_game_id: null,
   show_last_play: true,
   show_field: true,
   show_cover_prob: true,

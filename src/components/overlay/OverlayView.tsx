@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { activeIds, liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
 import "../../styles/overlay.css";
 
@@ -11,6 +11,50 @@ interface Props {
   state: OverlayState;
   contexts: Record<string, OverlayContext>;
   scores: Record<string, ScoreGame>;
+  /** The control page's miniature: the expanded pop-up is position:fixed and would cover the page, so show a label instead. */
+  preview?: boolean;
+}
+
+// The site's matchup pop-up, loaded only when something is expanded so the
+// TV page stays light the rest of the time.
+const MatchupHandicapPopup = lazy(() => import("../MatchupHandicapPopup"));
+
+// "Expand": the same matchup pop-up as the Matchups page, over the TV. The
+// remote can't reach the overlay, so the panel scrolls itself top to bottom,
+// pauses, and starts over.
+function ExpandedMatchup({ ctx }: { ctx: OverlayContext }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let pauseUntil = Date.now() + 10000; // time to read the header first
+    let sized: HTMLElement | null = null;
+    const timer = window.setInterval(() => {
+      const panel = wrap.current?.querySelector<HTMLElement>(":scope > div > div");
+      if (!panel) return;
+      if (panel !== sized) {
+        // The pop-up is a fixed 780px wide; scale it to ~80% of the screen
+        // width (capped) so it reads from the couch, and keep it inside 90vh.
+        const z = Math.max(1, Math.min(1.8, (window.innerWidth * 0.8) / 780));
+        panel.style.setProperty("zoom", String(z));
+        panel.style.maxHeight = `${90 / z}vh`;
+        sized = panel;
+      }
+      if (Date.now() < pauseUntil) return;
+      if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 1) {
+        pauseUntil = Date.now() + 6000;
+        window.setTimeout(() => panel.scrollTo({ top: 0 }), 5000);
+      } else {
+        panel.scrollTop += 1;
+      }
+    }, 40);
+    return () => window.clearInterval(timer);
+  }, [ctx.game.id]);
+  return (
+    <div className="ob-expand" ref={wrap}>
+      <Suspense fallback={null}>
+        <MatchupHandicapPopup season={ctx.game.season} week={ctx.game.week} awayTeam={ctx.game.away_team} homeTeam={ctx.game.home_team} onClose={() => {}} />
+      </Suspense>
+    </div>
+  );
 }
 
 // Same palette as odds.ts spreadColor (green favorite → gray pick'em → red
@@ -348,7 +392,7 @@ function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[
   );
 }
 
-export default function OverlayView({ state, contexts, scores }: Props) {
+export default function OverlayView({ state, contexts, scores, preview = false }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [tick, setTick] = useState(0);
@@ -374,10 +418,20 @@ export default function OverlayView({ state, contexts, scores }: Props) {
 
   const u = (height / 100) * (state.scale || 1);
   const shown = rotate ? [ids[tick % ids.length]] : ids.slice(0, 4);
+  // College only: the pop-up runs on this site's ratings.
+  const expanded = state.league !== "nfl" && state.expand_game_id ? contexts[state.expand_game_id] : undefined;
 
   return (
     <div className="ob-root" ref={box} style={{ ["--u" as any]: `${u}px` }}>
-      {state.visible && ids.length > 0 ? (
+      {state.visible && expanded ? (
+        preview ? (
+          <div className="ob-expand-tag">
+            Matchup pop-up on TV: {expanded.game.away_team} @ {expanded.game.home_team}
+          </div>
+        ) : (
+          <ExpandedMatchup ctx={expanded} />
+        )
+      ) : state.visible && ids.length > 0 ? (
         state.fullscreen ? (
           <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} />
         ) : state.layout === "ticker" ? (
