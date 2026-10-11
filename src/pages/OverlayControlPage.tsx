@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import OverlayView from "../components/overlay/OverlayView";
 import { supabase } from "../lib/supabaseClient";
 import { espnDate, fetchScoreboard, needsFantasy, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
+import { POOLS, usePoolPicksForGames, usePoolsBoard } from "../lib/pools";
 import { fetchSleeperLeagues, useSleeper, type SleeperLeagueInfo } from "../lib/sleeper";
 
 // Remote for the TV score bug — open on a laptop or phone. Every change
@@ -218,6 +219,9 @@ export default function OverlayControlPage() {
   const [state, setState] = useOverlayState(screen, holdUntil);
   const { contexts, scores } = useOverlayData(state, false);
   const fantasy = useSleeper(state?.sleeper_username ?? null, state?.sleeper_league_ids ?? [], needsFantasy(state));
+  const cfbOn = !!state && state.league !== "nfl" && state.visible;
+  const poolPicks = usePoolPicksForGames(cfbOn ? state!.game_ids : [], state?.pool_keys ?? [], cfbOn && state!.pick_source !== "bets");
+  const pools = usePoolsBoard(state?.pool_keys ?? [], !!state?.visible && !!state?.pools_full);
   const [day, setDay] = useState(() => etDateInput(new Date()));
   const [slate, setSlate] = useState<SlateGame[]>([]);
   const [slateErr, setSlateErr] = useState<string | null>(null);
@@ -302,7 +306,7 @@ export default function OverlayControlPage() {
         </div>
 
         <div className="oc-preview">
-          <OverlayView state={state} contexts={contexts} scores={scores} preview fantasy={fantasy} />
+          <OverlayView state={state} contexts={contexts} scores={scores} preview fantasy={fantasy} poolPicks={poolPicks} pools={pools} />
           {!state.visible ? <div className="oc-hidden-tag">Hidden on TV</div> : null}
         </div>
 
@@ -317,9 +321,14 @@ export default function OverlayControlPage() {
             {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
           </button>
         </div>
+        <div className="oc-row">
+          <button className={`oc-big ${state.pools_full ? "on" : ""}`} onClick={() => update(state.pools_full ? { pools_full: false } : { pools_full: true, fantasy_full: false, visible: true })}>
+            {state.pools_full ? "Pools full screen — tap to close" : "Pools full screen"}
+          </button>
+        </div>
         {state.sleeper_username ? (
           <div className="oc-row">
-            <button className={`oc-big ${state.fantasy_full ? "on" : ""}`} onClick={() => update(state.fantasy_full ? { fantasy_full: false } : { fantasy_full: true, visible: true })}>
+            <button className={`oc-big ${state.fantasy_full ? "on" : ""}`} onClick={() => update(state.fantasy_full ? { fantasy_full: false } : { fantasy_full: true, pools_full: false, visible: true })}>
               {state.fantasy_full ? "Fantasy full screen — tap to close" : "Fantasy full screen"}
             </button>
           </div>
@@ -410,6 +419,14 @@ export default function OverlayControlPage() {
           <label className="oc-check">
             <input type="checkbox" checked={state.show_bets} onChange={(e) => update({ show_bets: e.target.checked })} /> Show my bets
           </label>
+          <div className="oc-label">Chips on each game</div>
+          <div className="oc-seg">
+            {(["bets", "pools", "both"] as const).map((k) => (
+              <button key={k} className={state.pick_source === k ? "on" : ""} onClick={() => update({ pick_source: k })}>
+                {k === "bets" ? "My bets" : k === "pools" ? "Pool picks" : "Both"}
+              </button>
+            ))}
+          </div>
           <label className="oc-check">
             <input type="checkbox" checked={state.flash_swings} onChange={(e) => update({ flash_swings: e.target.checked })} /> Flash when a bet flips
           </label>
@@ -490,6 +507,29 @@ export default function OverlayControlPage() {
           </ul>
         </section>
         )}
+        <section className="oc-section">
+          <h2>Pools</h2>
+          <div className="oc-label">Pools to include{state.pool_keys.length ? ` (${state.pool_keys.length} of ${POOLS.length})` : " (all)"}</div>
+          {POOLS.map((p) => {
+            const all = state.pool_keys.length === 0;
+            const on = all || state.pool_keys.includes(p.key);
+            return (
+              <label key={p.key} className="oc-check">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => {
+                    const cur = all ? POOLS.map((x) => x.key as string) : state.pool_keys;
+                    const next = cur.includes(p.key) ? cur.filter((k) => k !== p.key) : [...cur, p.key];
+                    update({ pool_keys: next.length === POOLS.length ? [] : next });
+                  }}
+                />{" "}
+                {p.name}
+              </label>
+            );
+          })}
+          <div className="oc-hint">Used by the Pools full screen and by "Pool picks" chips. Confidence pools and Survivor aren't included.</div>
+        </section>
         <SleeperSection state={state} update={update} />
       </div>
     </div>

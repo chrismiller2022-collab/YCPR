@@ -39,6 +39,9 @@ export interface OverlayState {
   fullscreen: boolean;
   full_opacity: number;
   expand_game_id: string | null;
+  pick_source: "bets" | "pools" | "both";
+  pool_keys: string[];
+  pools_full: boolean;
   sleeper_username: string | null;
   sleeper_league_ids: string[];
   fantasy_full: boolean;
@@ -72,6 +75,9 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   fullscreen: false,
   full_opacity: 1,
   expand_game_id: null,
+  pick_source: "bets",
+  pool_keys: [],
+  pools_full: false,
   sleeper_username: null,
   sleeper_league_ids: [],
   fantasy_full: false,
@@ -300,7 +306,7 @@ export interface OverlayContext {
 // Same provider preference as matchupsCompute.pickLine, kept local so the
 // TV page doesn't pull that module's team/ratings data into its bundle.
 const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Draft Kings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
+export function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
   for (const p of PREFERRED_PROVIDERS) {
     const match = lines.find((l) => l.provider === p);
     if (match) return match;
@@ -681,4 +687,17 @@ export function projection(ctx: OverlayContext, sb: ScoreGame | undefined): Proj
 /** Whether anything on screen needs Sleeper data (so the TV only polls Sleeper when it's used). */
 export function needsFantasy(state: OverlayState | null): boolean {
   return !!state?.sleeper_username && state.visible && (state.fantasy_full || (state.league === "nfl" && state.show_fantasy_players));
+}
+
+/**
+ * Live chance a side wins its pick, for anything graded like a bet: `sideLine`
+ * is that side's spread (null = straight up, which uses ESPN's live win %
+ * when it has one). Needs a pregame spread/total for the model; null unless live.
+ */
+export function pickChance(sb: ScoreGame | undefined, homeSpread: number | null, total: number | null, side: Side, sideLine: number | null): number | null {
+  const ctx = { line: homeSpread != null && total != null ? ({ spread: homeSpread, over_under: total } as BettingLineRow) : null, myHomeSpread: null, myTotal: null } as unknown as OverlayContext;
+  const m = liveModel(ctx, sb);
+  if (!m) return null;
+  if (sideLine == null && sb?.homeWinPct != null) return side === "home" ? sb.homeWinPct : 1 - sb.homeWinPct;
+  return coverProb(m, side, sideLine ?? 0);
 }

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { activeIds, liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { gradePick, type GameLite, type PoolPanel, type PoolPick } from "../../lib/pools";
 import { playersByTeam, type CardFantasyPlayer, type FantasyLeague, type FantasySide } from "../../lib/sleeper";
 import "../../styles/overlay.css";
 
@@ -15,6 +16,74 @@ interface Props {
   /** The control page's miniature: the expanded pop-up is position:fixed and would cover the page, so show a label instead. */
   preview?: boolean;
   fantasy?: { leagues: FantasyLeague[]; error: string | null; teamState: Record<string, "pre" | "in" | "post"> };
+  poolPicks?: Record<string, PoolPick[]>;
+  pools?: { week: { season: number; week: number } | null; panels: PoolPanel[]; error: string | null };
+}
+
+// Pools full screen: one panel per pool with this week's live record and
+// every pick graded live (score, cover status / result, live chance).
+function PoolsBoard({ pools, unit }: { pools: NonNullable<Props["pools"]>; unit: number }) {
+  const n = pools.panels.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  return (
+    <div className="ob-full op-board" style={{ ["--u" as any]: `${unit * Math.min(1.3, 2.2 / Math.ceil(n / cols || 1)) * adj}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">Pools</span>
+        <span className="ob-full-meta">{pools.week ? `Week ${pools.week.week}` : ""}</span>
+      </div>
+      {!n ? <div className="of-msg">{pools.error ?? "No pool picks saved for this week yet."}</div> : null}
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {pools.panels.map((panel) => {
+          const r = panel.record;
+          return (
+            <div key={panel.def.key} className="of-league">
+              <div className="of-lname">
+                {panel.def.name}
+                <span className="op-rec">
+                  {r.w}-{r.l}
+                  {r.p ? `-${r.p}` : ""}
+                  {r.pending ? <i> · {r.pending} left</i> : null}
+                </span>
+              </div>
+              {panel.picks.map(({ graded: g, game, sb }) => {
+                const away = sb?.away.abbrev ?? game.awayTeam;
+                const home = sb?.home.abbrev ?? game.homeTeam;
+                const scoreTxt =
+                  sb && sb.state !== "pre" ? `${away} ${sb.away.score} – ${home} ${sb.home.score}` : game.final ? `${away} ${game.final.away} – ${home} ${game.final.home}` : `${away} @ ${home}`;
+                const status = sb?.state === "in" ? sb.detail : sb?.state === "post" || game.final ? "Final" : sb ? statusTimeOnly(sb.start) : "";
+                return (
+                  <div key={`${g.pick.gameId}-${g.pick.side}`} className={`op-pick ob-${g.status}`}>
+                    <span className="ob-dot" />
+                    <span className="op-label">
+                      {g.label}
+                      {g.pick.key ? <i className="op-key">KEY</i> : null}
+                    </span>
+                    <span className="op-score">{scoreTxt}</span>
+                    <span className="op-status">{g.result ?? status}</span>
+                    <span className="ob-prob">{g.prob != null ? `${Math.round(g.prob * 100)}%` : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function statusTimeOnly(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
 // Fantasy full screen: one panel per Sleeper league — my team vs. this
@@ -306,7 +375,7 @@ function ProjBlock({ ctx, sb, showProb }: { ctx: OverlayContext; sb: ScoreGame |
   );
 }
 
-function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]> }) {
+function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy, poolPicks }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]>; poolPicks?: PoolPick[] }) {
   // Compact (score + clock only) applies to the corner bug; the full scoreboard always shows everything.
   const compact = state.compact && !full;
   const live = sb?.state === "in";
@@ -316,7 +385,15 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy }: { c
   const started = !!sb && sb.state !== "pre"; // ESPN reports 0–0 before kickoff
   const hs = sb?.home.score ?? 0;
   const as = sb?.away.score ?? 0;
-  const bets = state.show_bets && !compact ? liveBets(ctx, sb) : [];
+  const bets = state.show_bets && !compact && state.pick_source !== "pools" ? liveBets(ctx, sb) : [];
+  const lite: GameLite = {
+    homeTeam: ctx.game.home_team,
+    awayTeam: ctx.game.away_team,
+    homeSpread: ctx.line?.spread != null ? Number(ctx.line.spread) : null,
+    total: ctx.line?.over_under != null ? Number(ctx.line.over_under) : null,
+    final: ctx.game.completed && ctx.game.home_points != null && ctx.game.away_points != null ? { home: ctx.game.home_points, away: ctx.game.away_points } : null,
+  };
+  const pools = state.show_bets && !compact && state.pick_source !== "bets" ? (poolPicks ?? []).map((p) => gradePick(p, lite, sb)) : [];
   const flashing = bets.some((b) => flips?.has(`${ctx.game.id}|${b.key}`));
   const tos = live && state.show_timeouts && !compact ? sb?.timeouts ?? null : null;
   const winPct = live && state.show_win_prob && !compact && sb?.homeWinPct != null ? sb.homeWinPct : null;
@@ -336,8 +413,17 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy }: { c
       {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
       {fantasy && !compact ? <FantasyLine players={[...(fantasy[sb?.away.abbrev ?? ""] ?? []), ...(fantasy[sb?.home.abbrev ?? ""] ?? [])]} /> : null}
       {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} showProb={state.show_cover_prob} /> : null}
-      {bets.length ? (
+      {bets.length || pools.length ? (
         <div className="ob-bets">
+          {pools.map((g) => (
+            <span key={`${g.pick.pool}-${g.pick.side}`} className={`ob-bet ob-pool ob-${g.status}`}>
+              <span className="ob-dot" />
+              <i className="ob-pool-tag">{g.def.tag}</i>
+              {g.label}
+              {g.result ? <span className="ob-note">{g.result}</span> : null}
+              {state.show_cover_prob && g.prob != null ? <span className="ob-prob">{Math.round(g.prob * 100)}%</span> : null}
+            </span>
+          ))}
           {bets.slice(0, maxBets).map((b) => (
             <span key={b.key} className={`ob-bet ob-${b.status}${flips?.has(`${ctx.game.id}|${b.key}`) ? " ob-flip" : ""}`}>
               <span className="ob-dot" />
@@ -447,7 +533,7 @@ function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, 
 // "Full scoreboard": every selected game in one opaque grid covering ~90%
 // of the screen. Card size shrinks with the number of rows so up to ~16
 // games still fit without scrolling.
-function FullBoard({ ids, contexts, scores, state, unit, flips, fantasy }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]> }) {
+function FullBoard({ ids, contexts, scores, state, unit, flips, fantasy, poolPicks }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]>; poolPicks?: Record<string, PoolPick[]> }) {
   const n = ids.length;
   const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
   const rows = Math.ceil(n / cols);
@@ -479,14 +565,14 @@ function FullBoard({ ids, contexts, scores, state, unit, flips, fantasy }: { ids
       </div>
       <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {ids.map((id) => (
-          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} fantasy={fantasy} />
+          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} fantasy={fantasy} poolPicks={poolPicks?.[id]} />
         ))}
       </div>
     </div>
   );
 }
 
-export default function OverlayView({ state, contexts, scores, preview = false, fantasy }: Props) {
+export default function OverlayView({ state, contexts, scores, preview = false, fantasy, poolPicks, pools }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [tick, setTick] = useState(0);
@@ -528,15 +614,17 @@ export default function OverlayView({ state, contexts, scores, preview = false, 
         )
       ) : state.visible && state.fantasy_full && fantasy ? (
         <FantasyBoard fantasy={fantasy} unit={height / 100} />
+      ) : state.visible && state.pools_full && pools ? (
+        <PoolsBoard pools={pools} unit={height / 100} />
       ) : state.visible && ids.length > 0 ? (
         state.fullscreen ? (
-          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} fantasy={cardFantasy} />
+          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} fantasy={cardFantasy} poolPicks={poolPicks} />
         ) : state.layout === "ticker" ? (
           <Ticker top={state.ticker_position === "top"} items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
             {shown.map((id) => (
-              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} fantasy={cardFantasy} />
+              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} fantasy={cardFantasy} poolPicks={poolPicks?.[id]} />
             ))}
           </div>
         )
