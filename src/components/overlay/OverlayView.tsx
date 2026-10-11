@@ -1,5 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { liveBets, spreadLabel, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { activeIds, liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { gradePick, type GameLite, type PoolPanel, type PoolPick } from "../../lib/pools";
+import { playersByTeam, type CardFantasyPlayer, type FantasyLeague, type FantasySide } from "../../lib/sleeper";
 import "../../styles/overlay.css";
 
 // Renders the score bug(s) into whatever box it's given — the full TV
@@ -11,9 +13,216 @@ interface Props {
   state: OverlayState;
   contexts: Record<string, OverlayContext>;
   scores: Record<string, ScoreGame>;
+  /** The control page's miniature: the expanded pop-up is position:fixed and would cover the page, so show a label instead. */
+  preview?: boolean;
+  fantasy?: { leagues: FantasyLeague[]; error: string | null; teamState: Record<string, "pre" | "in" | "post"> };
+  poolPicks?: Record<string, PoolPick[]>;
+  pools?: { week: { season: number; week: number } | null; panels: PoolPanel[]; error: string | null };
+}
+
+// Pools full screen: one panel per pool with this week's live record and
+// every pick graded live (score, cover status / result, live chance).
+function PoolsBoard({ pools, unit }: { pools: NonNullable<Props["pools"]>; unit: number }) {
+  const n = pools.panels.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  return (
+    <div className="ob-full op-board" style={{ ["--u" as any]: `${unit * Math.min(1.3, 2.2 / Math.ceil(n / cols || 1)) * adj}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">Pools</span>
+        <span className="ob-full-meta">{pools.week ? `Week ${pools.week.week}` : ""}</span>
+      </div>
+      {!n ? <div className="of-msg">{pools.error ?? "No pool picks saved for this week yet."}</div> : null}
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {pools.panels.map((panel) => {
+          const r = panel.record;
+          return (
+            <div key={panel.def.key} className="of-league">
+              <div className="of-lname">
+                {panel.def.name}
+                <span className="op-rec">
+                  {r.w}-{r.l}
+                  {r.p ? `-${r.p}` : ""}
+                  {r.pending ? <i> · {r.pending} left</i> : null}
+                </span>
+              </div>
+              {panel.picks.map(({ graded: g, game, sb }) => {
+                const away = sb?.away.abbrev ?? game.awayTeam;
+                const home = sb?.home.abbrev ?? game.homeTeam;
+                const scoreTxt =
+                  sb && sb.state !== "pre" ? `${away} ${sb.away.score} – ${home} ${sb.home.score}` : game.final ? `${away} ${game.final.away} – ${home} ${game.final.home}` : `${away} @ ${home}`;
+                const status = sb?.state === "in" ? sb.detail : sb?.state === "post" || game.final ? "Final" : sb ? statusTimeOnly(sb.start) : "";
+                return (
+                  <div key={`${g.pick.gameId}-${g.pick.side}`} className={`op-pick ob-${g.status}`}>
+                    <span className="ob-dot" />
+                    <span className="op-label">
+                      {g.label}
+                      {g.pick.key ? <i className="op-key">KEY</i> : null}
+                    </span>
+                    <span className="op-score">{scoreTxt}</span>
+                    <span className="op-status">{g.result ?? status}</span>
+                    <span className="ob-prob">{g.prob != null ? `${Math.round(g.prob * 100)}%` : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function statusTimeOnly(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+// Fantasy full screen: one panel per Sleeper league — my team vs. this
+// week's opponent, both scores, and both starting lineups with live points.
+// A green dot marks players whose NFL game is on right now.
+function FantasySideList({ side, teamState, mine }: { side: FantasySide; teamState: Record<string, string>; mine: boolean }) {
+  return (
+    <div className={`of-side${mine ? " mine" : ""}`}>
+      <div className="of-team">
+        <span className="of-name">{side.teamName}</span>
+        <span className="of-rec">{side.record}</span>
+        <span className="of-pts">{side.points.toFixed(2)}</span>
+      </div>
+      {side.starters.map((p, i) => {
+        const st = p.team ? teamState[p.team] : undefined;
+        return (
+          <div key={`${p.id}-${i}`} className={`of-player${st === "post" ? " done" : ""}`}>
+            <span className="of-slot">{p.slot.replace("SUPER_FLEX", "SF").replace("FLEX", "FLX")}</span>
+            <span className={`of-live${st === "in" ? " on" : ""}`} />
+            <span className="of-pname">
+              {p.name}
+              {p.injury ? <i className="of-inj">{p.injury.slice(0, 1)}</i> : null}
+              <i className="of-pteam">{p.team ?? ""}</i>
+            </span>
+            <span className="of-ppts">{st === "pre" && !p.pts ? "–" : p.pts.toFixed(1)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FantasyBoard({ fantasy, unit }: { fantasy: NonNullable<Props["fantasy"]>; unit: number }) {
+  const n = fantasy.leagues.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  // Same shrink-to-fit as the full scoreboard.
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  const live = Object.values(fantasy.teamState).filter((s) => s === "in").length / 2;
+  return (
+    <div className="ob-full of-board" style={{ ["--u" as any]: `${unit * Math.min(1.3, 2.2 / Math.ceil(n / cols)) * adj}px` }}>
+      <div className="ob-full-head">
+        <span className="ob-full-title">Fantasy</span>
+        <span className="ob-full-meta">
+          {n} league{n === 1 ? "" : "s"}
+          {live ? ` · ${live} NFL game${live === 1 ? "" : "s"} live` : ""}
+        </span>
+      </div>
+      {fantasy.error && !n ? <div className="of-msg">{fantasy.error}</div> : null}
+      {!fantasy.error && !n ? <div className="of-msg">Loading Sleeper…</div> : null}
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {fantasy.leagues.map((l) => {
+          const lead = l.opp ? l.me.points - l.opp.points : null;
+          return (
+            <div key={l.id} className="of-league">
+              <div className="of-lname">
+                {l.name}
+                {lead != null ? <span className={lead >= 0 ? "of-up" : "of-down"}>{lead >= 0 ? `+${lead.toFixed(1)}` : lead.toFixed(1)}</span> : null}
+              </div>
+              <div className="of-sides">
+                <FantasySideList side={l.me} teamState={fantasy.teamState} mine />
+                {l.opp ? <FantasySideList side={l.opp} teamState={fantasy.teamState} mine={false} /> : <div className="of-msg">No head-to-head opponent this week</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// The site's matchup pop-up, loaded only when something is expanded so the
+// TV page stays light the rest of the time.
+const MatchupHandicapPopup = lazy(() => import("../MatchupHandicapPopup"));
+
+// "Expand": the same matchup pop-up as the Matchups page, over the TV. The
+// remote can't reach the overlay, so the panel scrolls itself top to bottom,
+// pauses, and starts over.
+function ExpandedMatchup({ ctx }: { ctx: OverlayContext }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let pauseUntil = Date.now() + 10000; // time to read the header first
+    let sized: HTMLElement | null = null;
+    const timer = window.setInterval(() => {
+      const panel = wrap.current?.querySelector<HTMLElement>(":scope > div > div");
+      if (!panel) return;
+      if (panel !== sized) {
+        // The pop-up is a fixed 780px wide; scale it to ~80% of the screen
+        // width (capped) so it reads from the couch, and keep it inside 90vh.
+        const z = Math.max(1, Math.min(1.8, (window.innerWidth * 0.8) / 780));
+        panel.style.setProperty("zoom", String(z));
+        panel.style.maxHeight = `${90 / z}vh`;
+        sized = panel;
+      }
+      if (Date.now() < pauseUntil) return;
+      if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 1) {
+        pauseUntil = Date.now() + 6000;
+        window.setTimeout(() => panel.scrollTo({ top: 0 }), 5000);
+      } else {
+        panel.scrollTop += 1;
+      }
+    }, 40);
+    return () => window.clearInterval(timer);
+  }, [ctx.game.id]);
+  return (
+    <div className="ob-expand" ref={wrap}>
+      <Suspense fallback={null}>
+        <MatchupHandicapPopup season={ctx.game.season} week={ctx.game.week} awayTeam={ctx.game.away_team} homeTeam={ctx.game.home_team} onClose={() => {}} />
+      </Suspense>
+    </div>
+  );
+}
+
+// Same palette as odds.ts spreadColor (green favorite → gray pick'em → red
+// underdog), copied so the TV bundle doesn't pull in odds.ts's tables.
+function spreadColor(v: number): string {
+  const c = Math.max(-15, Math.min(15, v));
+  const to = c <= 0 ? [90, 168, 105] : [196, 92, 82];
+  const k = Math.abs(c) / 15;
+  return `rgb(${[143, 167, 154].map((n, i) => Math.round(n + (to[i] - n) * k)).join(",")})`;
+}
+const fmtSpread = (v: number | null) => (v == null ? "–" : v === 0 ? "PK" : `${v > 0 ? "+" : ""}${v.toFixed(1)}`);
+const fmtTotal = (v: number | null) => (v == null ? "–" : v.toFixed(1));
+
+function Hit({ ok }: { ok: boolean | null }) {
+  if (ok == null) return null;
+  return <span className={`ob-hit ${ok ? "ok" : "no"}`}>{ok ? "✓" : "✗"}</span>;
 }
 
 const logoUrl = (espnId: string | null) => (espnId ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${espnId}.png` : null);
+// ESPN sends each team's logo URL (NFL logos live elsewhere than college ones); fall back to the college path.
+const teamLogo = (t: ScoreTeam | undefined) => t?.logo ?? logoUrl(t?.espnId ?? null);
 
 function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
   if (!sb || sb.state === "pre") {
@@ -26,8 +235,8 @@ function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
   return sb.detail;
 }
 
-function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null }) {
-  const logo = logoUrl(team?.espnId ?? null);
+function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts, winPct }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null; winPct?: number | null }) {
+  const logo = teamLogo(team);
   return (
     <div className={`ob-team${dim ? " ob-dim" : ""}`}>
       <span className="ob-stripe" style={{ background: team?.color ? `#${team.color}` : "var(--ob-gold)" }} />
@@ -35,6 +244,7 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
       <span className="ob-abbr">
         {team?.rank ? <span className="ob-rank">{team.rank}</span> : null}
         {team?.abbrev ?? fallbackName}
+        {!showScore && team?.record ? <span className="ob-record">{team.record}</span> : null}
       </span>
       {timeouts != null ? (
         <span className="ob-tos" title={`${timeouts} timeouts left`}>
@@ -44,12 +254,128 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
         </span>
       ) : null}
       {hasBall ? <span className="ob-ball" /> : null}
+      {winPct != null ? <span className="ob-winpct">{Math.round(winPct * 100)}%</span> : null}
       <span className="ob-score">{showScore ? team?.score ?? "" : ""}</span>
     </div>
   );
 }
 
-function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string> }) {
+// Field position: a mini field with each end zone in its team's color
+// (away on the left, home on the right, matching the card's order), the
+// ball where it is in the color of the team that has it, an arrow for the
+// direction they're going, a yellow first-down line and the red zone
+// shaded. ESPN's yardLine is yards from the home goal line.
+function FieldBar({ sb }: { sb: ScoreGame }) {
+  if (sb.yardLine == null) return null;
+  const homeBall = sb.possession != null && sb.possession === sb.home.espnId;
+  const awayBall = sb.possession != null && sb.possession === sb.away.espnId;
+  const x = (yards: number) => `${100 - Math.max(0, Math.min(100, yards))}%`; // % from the left (away) goal line
+  const color = (t: ScoreTeam) => (t.color ? `#${t.color}` : "var(--ob-dim)");
+  // Offense attacks the away goal (left) when home has the ball.
+  const toGo = sb.distance != null && (homeBall || awayBall) ? sb.yardLine + (homeBall ? sb.distance : -sb.distance) : null;
+  return (
+    <div className="ob-field">
+      <span className="ob-ez" style={{ background: color(sb.away) }}>{sb.away.abbrev}</span>
+      <span className="ob-turf">
+        {awayBall ? <span className="ob-rz" style={{ left: "80%", right: 0 }} /> : null}
+        {homeBall ? <span className="ob-rz" style={{ left: 0, right: "80%" }} /> : null}
+        {[10, 20, 30, 40, 50, 60, 70, 80, 90].map((y) => (
+          <span key={y} className={`ob-yd${y === 50 ? " mid" : ""}`} style={{ left: `${y}%` }} />
+        ))}
+        {toGo != null && toGo > 0 && toGo < 100 ? <span className="ob-togo" style={{ left: x(toGo) }} /> : null}
+        <span
+          className={`ob-fball${homeBall ? " left" : awayBall ? " right" : ""}`}
+          style={{ left: x(sb.yardLine), background: homeBall ? color(sb.home) : awayBall ? color(sb.away) : "var(--ob-chalk)" }}
+        />
+      </span>
+      <span className="ob-ez" style={{ background: color(sb.home) }}>{sb.home.abbrev}</span>
+    </div>
+  );
+}
+
+// NFL cards: my fantasy starters in this game (gold) and my opponents' (dim).
+function FantasyLine({ players }: { players: CardFantasyPlayer[] }) {
+  if (!players.length) return null;
+  const sorted = [...players].sort((a, b) => Number(b.mine) - Number(a.mine) || b.pts - a.pts);
+  return (
+    <div className="ob-fantasy">
+      {sorted.map((p, i) => (
+        <span key={i} className={p.mine ? "mine" : "opp"}>
+          {p.name} <b>{p.pts.toFixed(1)}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Tile-style block, same layout as the social graphics (MatchupGridGraphic):
+// spread on the left, total on the right; Vegas, YCPR, my call; then the
+// final ATS / O-U result with a ✓/✗ on my calls once the game is over; and
+// my projected score.
+function ProjBlock({ ctx, sb, showProb }: { ctx: OverlayContext; sb: ScoreGame | undefined; showProb: boolean }) {
+  const p = projection(ctx, sb);
+  if (p.vegasAwaySpread == null && p.myAwaySpread == null && p.vegasTotal == null && p.myTotal == null) return null;
+  const team = (side: "away" | "home") => {
+    const t = side === "away" ? sb?.away : sb?.home;
+    const logo = teamLogo(t);
+    const name = t?.abbrev ?? (side === "away" ? ctx.game.away_team : ctx.game.home_team);
+    return logo ? <img className="ob-mini-logo" src={logo} alt={name} /> : <b>{name}</b>;
+  };
+  const final = p.atsResult != null || p.totalResult != null;
+  const coverHit = final && p.projCover && p.atsResult ? (p.atsResult === "push" ? null : p.projCover === p.atsResult) : null;
+  const totalHit = final && p.projTotal && p.totalResult ? (p.totalResult === "Push" ? null : p.projTotal === p.totalResult) : null;
+  const awayName = sb?.away.abbrev ?? ctx.game.away_team;
+  const homeName = sb?.home.abbrev ?? ctx.game.home_team;
+  // NFL (and any college game without a lock) has no YCPR numbers: just Vegas, then results.
+  const mine = p.myAwaySpread != null || p.myTotal != null;
+  return (
+    <div className="ob-proj">
+      <span>
+        <i>Vegas</i> {fmtSpread(p.vegasAwaySpread)}
+      </span>
+      <span>
+        <i>Vegas Total</i> {fmtTotal(p.vegasTotal)}
+      </span>
+      {mine ? (
+        <>
+      <span>
+        <i>YCPR</i> <b style={p.myAwaySpread != null ? { color: spreadColor(p.myAwaySpread) } : undefined}>{fmtSpread(p.myAwaySpread)}</b>
+      </span>
+      <span>
+        <i>YCPR Total</i> <b>{fmtTotal(p.myTotal)}</b>
+      </span>
+      <span>
+        <i>Proj Cover</i> {p.projCover ? team(p.projCover) : "–"}
+        <Hit ok={coverHit} />
+        {showProb && p.coverProb != null ? <span className="ob-prob">{Math.round(p.coverProb * 100)}%</span> : null}
+      </span>
+      <span>
+        <i>Proj</i> <b>{p.projTotal ?? "–"}</b>
+        <Hit ok={totalHit} />
+        {showProb && p.totalProb != null ? <span className="ob-prob">{Math.round(p.totalProb * 100)}%</span> : null}
+      </span>
+        </>
+      ) : null}
+      {final ? (
+        <>
+          <span>
+            <i>ATS</i> {p.atsResult === "push" ? <b>Push</b> : p.atsResult ? team(p.atsResult) : "–"}
+          </span>
+          <span>
+            <i>Result</i> <b>{p.totalResult ?? "–"}</b>
+          </span>
+        </>
+      ) : null}
+      {p.projAway != null && p.projHome != null ? (
+        <span className="ob-proj-score">
+          <i>Proj score</i> {awayName} {Math.round(p.projAway)} – {homeName} {Math.round(p.projHome)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function Card({ ctx, sb, state, maxBets = 4, full = false, flips, fantasy, poolPicks }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]>; poolPicks?: PoolPick[] }) {
   // Compact (score + clock only) applies to the corner bug; the full scoreboard always shows everything.
   const compact = state.compact && !full;
   const live = sb?.state === "in";
@@ -59,64 +385,52 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
   const started = !!sb && sb.state !== "pre"; // ESPN reports 0–0 before kickoff
   const hs = sb?.home.score ?? 0;
   const as = sb?.away.score ?? 0;
-  const bets = state.show_bets && !compact ? liveBets(ctx, sb) : [];
+  const bets = state.show_bets && !compact && state.pick_source !== "pools" ? liveBets(ctx, sb) : [];
+  const lite: GameLite = {
+    homeTeam: ctx.game.home_team,
+    awayTeam: ctx.game.away_team,
+    homeSpread: ctx.line?.spread != null ? Number(ctx.line.spread) : null,
+    total: ctx.line?.over_under != null ? Number(ctx.line.over_under) : null,
+    final: ctx.game.completed && ctx.game.home_points != null && ctx.game.away_points != null ? { home: ctx.game.home_points, away: ctx.game.away_points } : null,
+  };
+  const pools = state.show_bets && !compact && state.pick_source !== "bets" ? (poolPicks ?? []).map((p) => gradePick(p, lite, sb)) : [];
   const flashing = bets.some((b) => flips?.has(`${ctx.game.id}|${b.key}`));
   const tos = live && state.show_timeouts && !compact ? sb?.timeouts ?? null : null;
   const winPct = live && state.show_win_prob && !compact && sb?.homeWinPct != null ? sb.homeWinPct : null;
   const lastPlay = live && state.show_last_play && !compact ? sb?.lastPlay ?? null : null;
   const network = !started && state.show_network ? sb?.network ?? null : null;
-  const line = spreadLabel(ctx.line?.spread ?? null, homeAbbr, awayAbbr);
-  const mine = spreadLabel(ctx.myHomeSpread, homeAbbr, awayAbbr);
-  const total = ctx.line?.over_under ?? null;
 
   return (
     <div className={`ob-card${flashing ? " ob-flash" : ""}`}>
-      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={live && sb!.possession === sb!.away.espnId} dim={final && as < hs} showScore={started} timeouts={tos?.away} />
-      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={live && sb!.possession === sb!.home.espnId} dim={final && hs < as} showScore={started} timeouts={tos?.home} />
+      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={live && sb!.possession === sb!.away.espnId} dim={final && as < hs} showScore={started} timeouts={tos?.away} winPct={winPct != null ? 1 - winPct : null} />
+      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={live && sb!.possession === sb!.home.espnId} dim={final && hs < as} showScore={started} timeouts={tos?.home} winPct={winPct} />
       <div className={`ob-status${sb?.redZone ? " ob-redzone" : ""}`}>
         <span>{statusText(sb, ctx)}</span>
         {live && sb?.downDistance ? <span className="ob-dd">{sb.downDistance}</span> : null}
         {network ? <span className="ob-dd">{network}</span> : null}
       </div>
-      {winPct != null ? (
-        <div className="ob-wp">
-          <span>
-            {awayAbbr} {Math.round((1 - winPct) * 100)}%
-          </span>
-          <span className="ob-wp-bar">
-            <span style={{ width: `${(1 - winPct) * 100}%`, background: sb?.away.color ? `#${sb.away.color}` : "var(--ob-dim)" }} />
-            <span style={{ width: `${winPct * 100}%`, background: sb?.home.color ? `#${sb.home.color}` : "var(--ob-gold)" }} />
-          </span>
-          <span>
-            {homeAbbr} {Math.round(winPct * 100)}%
-          </span>
-        </div>
-      ) : null}
+      {live && state.show_field && !compact && sb ? <FieldBar sb={sb} /> : null}
       {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
-      {state.show_lines && !compact && (line || total != null || mine || ctx.myTotal != null) ? (
-        <div className="ob-lines">
-          {line || total != null ? (
-            <span>
-              <b>Line</b> {line ?? ""}
-              {total != null ? ` · ${total}` : ""}
-            </span>
-          ) : null}
-          {mine || ctx.myTotal != null ? (
-            <span>
-              <b>Mine</b> {mine ?? ""}
-              {ctx.myTotal != null ? ` · ${Math.round(ctx.myTotal * 2) / 2}` : ""}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {bets.length ? (
+      {fantasy && !compact ? <FantasyLine players={[...(fantasy[sb?.away.abbrev ?? ""] ?? []), ...(fantasy[sb?.home.abbrev ?? ""] ?? [])]} /> : null}
+      {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} showProb={state.show_cover_prob} /> : null}
+      {bets.length || pools.length ? (
         <div className="ob-bets">
+          {pools.map((g) => (
+            <span key={`${g.pick.pool}-${g.pick.side}`} className={`ob-bet ob-pool ob-${g.status}`}>
+              <span className="ob-dot" />
+              <i className="ob-pool-tag">{g.def.tag}</i>
+              {g.label}
+              {g.result ? <span className="ob-note">{g.result}</span> : null}
+              {state.show_cover_prob && g.prob != null ? <span className="ob-prob">{Math.round(g.prob * 100)}%</span> : null}
+            </span>
+          ))}
           {bets.slice(0, maxBets).map((b) => (
             <span key={b.key} className={`ob-bet ob-${b.status}${flips?.has(`${ctx.game.id}|${b.key}`) ? " ob-flip" : ""}`}>
               <span className="ob-dot" />
               {b.label}
               {b.count > 1 ? <span className="ob-note">×{b.count}</span> : null}
               {b.note ? <span className="ob-note">{b.note}</span> : null}
+              {state.show_cover_prob && b.prob != null ? <span className="ob-prob">{Math.round(b.prob * 100)}%</span> : null}
             </span>
           ))}
         </div>
@@ -130,7 +444,7 @@ function TickerItem({ ctx, sb, state }: { ctx: OverlayContext; sb: ScoreGame | u
   const network = state.show_network && (!sb || sb.state === "pre") ? sb?.network ?? null : null;
   const side = (t: ScoreTeam | undefined, fallback: string) => (
     <span className="ot-team">
-      {t?.espnId ? <img className="ot-logo" src={logoUrl(t.espnId)!} alt="" /> : null}
+      {teamLogo(t) ? <img className="ot-logo" src={teamLogo(t)!} alt="" /> : null}
       {t?.abbrev ?? fallback}
       <b>{sb && sb.state !== "pre" ? t?.score ?? "" : ""}</b>
     </span>
@@ -196,9 +510,12 @@ function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, 
       if (!ctx || !sb) continue;
       for (const b of liveBets(ctx, sb)) {
         const key = `${id}|${b.key}`;
+        // Remember the game state too: only a change seen while the game was
+        // live both times counts (not e.g. a stored final giving way to ESPN).
+        const now = `${sb.state}:${b.status}`;
         const before = prev.current.get(key);
-        prev.current.set(key, b.status);
-        if (enabled && sb.state === "in" && before && before !== b.status && (before === "up" || before === "down") && (b.status === "up" || b.status === "down")) {
+        prev.current.set(key, now);
+        if (enabled && (now === "in:up" || now === "in:down") && (before === "in:up" || before === "in:down") && before !== now) {
           changed.push(key);
         }
       }
@@ -216,34 +533,46 @@ function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, 
 // "Full scoreboard": every selected game in one opaque grid covering ~90%
 // of the screen. Card size shrinks with the number of rows so up to ~16
 // games still fit without scrolling.
-function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string> }) {
+function FullBoard({ ids, contexts, scores, state, unit, flips, fantasy, poolPicks }: { ids: string[]; contexts: Record<string, OverlayContext>; scores: Record<string, ScoreGame>; state: OverlayState; unit: number; flips: Set<string>; fantasy?: Record<string, CardFantasyPlayer[]>; poolPicks?: Record<string, PoolPick[]> }) {
   const n = ids.length;
   const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
   const rows = Math.ceil(n / cols);
-  // ~24 units is a typical card with lines and a couple of bets; fit the rows into the ~78 units below the header.
-  const fit = Math.min(1.5, 78 / (rows * 24));
+  // Start from an estimate (~30 units per card), then measure: if the grid
+  // overflows the panel, shrink until it fits; if there's lots of room
+  // after a shrink, grow back. Card heights vary with bets/last play.
+  const guess = Math.min(1.5, 78 / (rows * 30));
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  const fit = guess * adj;
   const live = ids.filter((id) => scores[id]?.state === "in").length;
   const final = ids.filter((id) => scores[id]?.state === "post").length;
   return (
-    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px` }}>
+    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px`, ["--ob-full-a" as any]: state.full_opacity ?? 1 }}>
       <div className="ob-full-head">
-        <span className="ob-full-title">YCPR Scoreboard</span>
+        <span className="ob-full-title">{state.league === "nfl" ? "NFL Scoreboard" : "YCPR Scoreboard"}</span>
         <span className="ob-full-meta">
           {n} game{n === 1 ? "" : "s"}
           {live ? ` · ${live} live` : ""}
           {final ? ` · ${final} final` : ""}
         </span>
       </div>
-      <div className="ob-full-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {ids.map((id) => (
-          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} />
+          <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} fantasy={fantasy} poolPicks={poolPicks?.[id]} />
         ))}
       </div>
     </div>
   );
 }
 
-export default function OverlayView({ state, contexts, scores }: Props) {
+export default function OverlayView({ state, contexts, scores, preview = false, fantasy, poolPicks, pools }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [tick, setTick] = useState(0);
@@ -257,7 +586,7 @@ export default function OverlayView({ state, contexts, scores }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const ids = state.game_ids.filter((id) => contexts[id]);
+  const ids = activeIds(state).filter((id) => contexts[id]);
   const rotate = state.layout === "corner" && state.rotate_seconds > 0 && ids.length > 1;
   const flips = useSwingFlips(ids, contexts, scores, state.flash_swings);
 
@@ -269,18 +598,33 @@ export default function OverlayView({ state, contexts, scores }: Props) {
 
   const u = (height / 100) * (state.scale || 1);
   const shown = rotate ? [ids[tick % ids.length]] : ids.slice(0, 4);
+  const cardFantasy = state.league === "nfl" && state.show_fantasy_players && fantasy?.leagues.length ? playersByTeam(fantasy.leagues) : undefined;
+  // College only: the pop-up runs on this site's ratings.
+  const expanded = state.league !== "nfl" && state.expand_game_id ? contexts[state.expand_game_id] : undefined;
 
   return (
     <div className="ob-root" ref={box} style={{ ["--u" as any]: `${u}px` }}>
-      {state.visible && ids.length > 0 ? (
+      {state.visible && expanded ? (
+        preview ? (
+          <div className="ob-expand-tag">
+            Matchup pop-up on TV: {expanded.game.away_team} @ {expanded.game.home_team}
+          </div>
+        ) : (
+          <ExpandedMatchup ctx={expanded} />
+        )
+      ) : state.visible && state.fantasy_full && fantasy ? (
+        <FantasyBoard fantasy={fantasy} unit={height / 100} />
+      ) : state.visible && state.pools_full && pools ? (
+        <PoolsBoard pools={pools} unit={height / 100} />
+      ) : state.visible && ids.length > 0 ? (
         state.fullscreen ? (
-          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} />
+          <FullBoard ids={ids} contexts={contexts} scores={scores} state={state} unit={height / 100} flips={flips} fantasy={cardFantasy} poolPicks={poolPicks} />
         ) : state.layout === "ticker" ? (
           <Ticker top={state.ticker_position === "top"} items={ids.map((id) => <TickerItem key={id} ctx={contexts[id]} sb={scores[id]} state={state} />)} />
         ) : (
           <div className={`ob-corner ob-${state.position}`}>
             {shown.map((id) => (
-              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} />
+              <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} flips={flips} fantasy={cardFantasy} poolPicks={poolPicks?.[id]} />
             ))}
           </div>
         )
