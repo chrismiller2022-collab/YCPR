@@ -33,6 +33,7 @@ export interface OverlayState {
   show_lines: boolean;
   show_bets: boolean;
   fullscreen: boolean;
+  full_opacity: number;
   show_last_play: boolean;
   show_timeouts: boolean;
   show_win_prob: boolean;
@@ -55,6 +56,7 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   show_lines: true,
   show_bets: true,
   fullscreen: false,
+  full_opacity: 1,
   show_last_play: true,
   show_timeouts: true,
   show_win_prob: true,
@@ -65,7 +67,7 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
 };
 
 function normalizeState(row: any): OverlayState {
-  return { ...DEFAULT_OVERLAY_STATE, ...row, scale: Number(row?.scale ?? 1) };
+  return { ...DEFAULT_OVERLAY_STATE, ...row, scale: Number(row?.scale ?? 1), full_opacity: Number(row?.full_opacity ?? 1) };
 }
 
 export async function fetchOverlayState(screen: string): Promise<OverlayState> {
@@ -483,4 +485,50 @@ function withStoredFinals(scores: Record<string, ScoreGame>, contexts: Record<st
     };
   }
   return out;
+}
+
+// --- Tile-style projection block (mirrors MatchupGridGraphic) ----------
+
+export type Side = "away" | "home";
+
+export interface Projection {
+  vegasAwaySpread: number | null;
+  myAwaySpread: number | null;
+  vegasTotal: number | null;
+  myTotal: number | null;
+  projCover: Side | null; // ATS pick vs. the Vegas line
+  projTotal: "Over" | "Under" | null;
+  projAway: number | null; // projected score split from my total + spread
+  projHome: number | null;
+  // Final-game results (null until the game is over)
+  atsResult: Side | "push" | null;
+  totalResult: "Over" | "Under" | "Push" | null;
+}
+
+export function projection(ctx: OverlayContext, sb: ScoreGame | undefined): Projection {
+  const vegasAwaySpread = ctx.line?.spread != null ? -Number(ctx.line.spread) : null;
+  const myAwaySpread = ctx.myHomeSpread != null ? -ctx.myHomeSpread : null;
+  const vegasTotal = ctx.line?.over_under != null ? Number(ctx.line.over_under) : null;
+  const myTotal = ctx.myTotal;
+  // Same rule as matchupsCompute.ts: positive (vegas - mine) = I give the away side more than Vegas does.
+  const diff = vegasAwaySpread != null && myAwaySpread != null ? vegasAwaySpread - myAwaySpread : null;
+  const projCover: Side | null = diff == null ? null : diff > 0 ? "away" : diff < 0 ? "home" : null;
+  const projTotal = myTotal != null && vegasTotal != null ? (myTotal > vegasTotal ? "Over" : myTotal < vegasTotal ? "Under" : null) : null;
+  // Same split as gameTotals.ts splitTeamTotal (favorite gets the spread on top of an even half), floored at 0.
+  const projAway = myTotal != null && myAwaySpread != null ? Math.max(0, (myTotal - myAwaySpread) / 2) : null;
+  const projHome = myTotal != null && myAwaySpread != null ? Math.max(0, (myTotal + myAwaySpread) / 2) : null;
+
+  let atsResult: Projection["atsResult"] = null;
+  let totalResult: Projection["totalResult"] = null;
+  if (sb?.state === "post" && sb.away.score != null && sb.home.score != null) {
+    if (vegasAwaySpread != null) {
+      const m = sb.away.score - sb.home.score + vegasAwaySpread;
+      atsResult = m > 0 ? "away" : m < 0 ? "home" : "push";
+    }
+    if (vegasTotal != null) {
+      const t = sb.away.score + sb.home.score;
+      totalResult = t > vegasTotal ? "Over" : t < vegasTotal ? "Under" : "Push";
+    }
+  }
+  return { vegasAwaySpread, myAwaySpread, vegasTotal, myTotal, projCover, projTotal, projAway, projHome, atsResult, totalResult };
 }

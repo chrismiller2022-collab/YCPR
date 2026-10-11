@@ -225,7 +225,8 @@
   inset: 5%;
   display: flex;
   flex-direction: column;
-  background: #1f2041;
+  /* --ob-full-a: background opacity slider (text stays solid). */
+  background: rgba(31, 32, 65, var(--ob-full-a, 1));
   border-radius: calc(var(--u) * 1.4);
   box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 3) rgba(0, 0, 0, 0.6);
   padding: calc(var(--u) * 2.2) calc(var(--u) * 2.6);
@@ -249,9 +250,16 @@
   display: grid;
   gap: calc(var(--u) * 1.4);
   align-content: start;
+  /* Cards have overflow:hidden, which would let auto rows squash them;
+     max-content keeps each row as tall as its card so the fit check can
+     see the overflow and scale everything down instead. */
+  grid-auto-rows: max-content;
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
-.ob-full .ob-card { width: auto; background: #292a52; box-shadow: none; }
+.ob-full .ob-card { width: auto; background: rgba(41, 42, 82, calc(var(--ob-full-a, 1) + 0.15)); box-shadow: none; }
+.ob-full { text-shadow: 0 1px calc(var(--u) * 0.4) rgba(0, 0, 0, calc(1 - var(--ob-full-a, 1))); }
 
 /* Timeouts left: three pips after the team abbreviation. */
 .ob-tos { display: inline-flex; gap: calc(var(--u) * 0.3); }
@@ -309,3 +317,23 @@
 }
 .ob-card.ob-flash { animation: ob-flash-card 1s ease-in-out 8; }
 .ob-bet.ob-flip { animation: ob-flash-chip 1s ease-in-out 8; }
+
+/* Tile-style projection block: spread column | total column. */
+.ob-proj {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--u) * 0.35) calc(var(--u) * 1);
+  padding: calc(var(--u) * 0.7) calc(var(--u) * 1.2) calc(var(--u) * 0.4);
+  font-size: calc(var(--u) * 1.4);
+  color: var(--ob-chalk);
+  white-space: nowrap;
+}
+.ob-proj > span { display: flex; align-items: center; gap: calc(var(--u) * 0.4); min-width: 0; }
+.ob-proj i { font-style: normal; color: var(--ob-dim); }
+.ob-proj b { font-weight: 700; }
+.ob-proj-score { grid-column: 1 / -1; color: var(--ob-dim); }
+.ob-proj-score i { margin-right: calc(var(--u) * 0.2); }
+.ob-mini-logo { width: calc(var(--u) * 1.8); height: calc(var(--u) * 1.8); object-fit: contain; }
+.ob-hit { font-weight: 800; }
+.ob-hit.ok { color: var(--ob-green); }
+.ob-hit.no { color: var(--ob-red); }

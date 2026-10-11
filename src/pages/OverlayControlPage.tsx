@@ -225,6 +225,10 @@ export default function OverlayControlPage() {
             </>
           )}
           <label className="oc-slider">
+            <span>Full scoreboard background {Math.round((state.full_opacity ?? 1) * 100)}%</span>
+            <input type="range" min={0.3} max={1} step={0.05} value={state.full_opacity ?? 1} onChange={(e) => update({ full_opacity: Number(e.target.value) })} />
+          </label>
+          <label className="oc-slider">
             <span>Size {Math.round(state.scale * 100)}%</span>
             <input type="range" min={0.6} max={1.6} step={0.05} value={state.scale} onChange={(e) => update({ scale: Number(e.target.value) })} />
           </label>
@@ -234,7 +238,7 @@ export default function OverlayControlPage() {
           </label>
           <div className="oc-hint">Holds score updates back so the bug doesn't beat your stream. YouTube TV usually runs 30–90s behind.</div>
           <label className="oc-check">
-            <input type="checkbox" checked={state.show_lines} onChange={(e) => update({ show_lines: e.target.checked })} /> Show line and my numbers
+            <input type="checkbox" checked={state.show_lines} onChange={(e) => update({ show_lines: e.target.checked })} /> Show Vegas vs. my numbers (spread, total, proj cover, proj score)
           </label>
           <label className="oc-check">
             <input type="checkbox" checked={state.show_bets} onChange={(e) => update({ show_bets: e.target.checked })} /> Show my bets

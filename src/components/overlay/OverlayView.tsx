@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { liveBets, spreadLabel, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
+import { liveBets, projection, type OverlayContext, type OverlayState, type ScoreGame, type ScoreTeam } from "../../lib/overlay";
 import "../../styles/overlay.css";
 
 // Renders the score bug(s) into whatever box it's given — the full TV
@@ -11,6 +11,22 @@ interface Props {
   state: OverlayState;
   contexts: Record<string, OverlayContext>;
   scores: Record<string, ScoreGame>;
+}
+
+// Same palette as odds.ts spreadColor (green favorite → gray pick'em → red
+// underdog), copied so the TV bundle doesn't pull in odds.ts's tables.
+function spreadColor(v: number): string {
+  const c = Math.max(-15, Math.min(15, v));
+  const to = c <= 0 ? [90, 168, 105] : [196, 92, 82];
+  const k = Math.abs(c) / 15;
+  return `rgb(${[143, 167, 154].map((n, i) => Math.round(n + (to[i] - n) * k)).join(",")})`;
+}
+const fmtSpread = (v: number | null) => (v == null ? "–" : v === 0 ? "PK" : `${v > 0 ? "+" : ""}${v.toFixed(1)}`);
+const fmtTotal = (v: number | null) => (v == null ? "–" : v.toFixed(1));
+
+function Hit({ ok }: { ok: boolean | null }) {
+  if (ok == null) return null;
+  return <span className={`ob-hit ${ok ? "ok" : "no"}`}>{ok ? "✓" : "✗"}</span>;
 }
 
 const logoUrl = (espnId: string | null) => (espnId ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${espnId}.png` : null);
@@ -49,6 +65,65 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
   );
 }
 
+// Tile-style block, same layout as the social graphics (MatchupGridGraphic):
+// spread on the left, total on the right; Vegas, YCPR, my call; then the
+// final ATS / O-U result with a ✓/✗ on my calls once the game is over; and
+// my projected score.
+function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined }) {
+  const p = projection(ctx, sb);
+  if (p.vegasAwaySpread == null && p.myAwaySpread == null && p.vegasTotal == null && p.myTotal == null) return null;
+  const team = (side: "away" | "home") => {
+    const t = side === "away" ? sb?.away : sb?.home;
+    const logo = logoUrl(t?.espnId ?? null);
+    const name = t?.abbrev ?? (side === "away" ? ctx.game.away_team : ctx.game.home_team);
+    return logo ? <img className="ob-mini-logo" src={logo} alt={name} /> : <b>{name}</b>;
+  };
+  const final = p.atsResult != null || p.totalResult != null;
+  const coverHit = final && p.projCover && p.atsResult ? (p.atsResult === "push" ? null : p.projCover === p.atsResult) : null;
+  const totalHit = final && p.projTotal && p.totalResult ? (p.totalResult === "Push" ? null : p.projTotal === p.totalResult) : null;
+  const awayName = sb?.away.abbrev ?? ctx.game.away_team;
+  const homeName = sb?.home.abbrev ?? ctx.game.home_team;
+  return (
+    <div className="ob-proj">
+      <span>
+        <i>Vegas</i> {fmtSpread(p.vegasAwaySpread)}
+      </span>
+      <span>
+        <i>Vegas Total</i> {fmtTotal(p.vegasTotal)}
+      </span>
+      <span>
+        <i>YCPR</i> <b style={p.myAwaySpread != null ? { color: spreadColor(p.myAwaySpread) } : undefined}>{fmtSpread(p.myAwaySpread)}</b>
+      </span>
+      <span>
+        <i>YCPR Total</i> <b>{fmtTotal(p.myTotal)}</b>
+      </span>
+      <span>
+        <i>Proj Cover</i> {p.projCover ? team(p.projCover) : "–"}
+        <Hit ok={coverHit} />
+      </span>
+      <span>
+        <i>Proj</i> <b>{p.projTotal ?? "–"}</b>
+        <Hit ok={totalHit} />
+      </span>
+      {final ? (
+        <>
+          <span>
+            <i>ATS</i> {p.atsResult === "push" ? <b>Push</b> : p.atsResult ? team(p.atsResult) : "–"}
+          </span>
+          <span>
+            <i>Result</i> <b>{p.totalResult ?? "–"}</b>
+          </span>
+        </>
+      ) : null}
+      {p.projAway != null && p.projHome != null ? (
+        <span className="ob-proj-score">
+          <i>Proj score</i> {awayName} {Math.round(p.projAway)} – {homeName} {Math.round(p.projHome)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: OverlayContext; sb: ScoreGame | undefined; state: OverlayState; maxBets?: number; full?: boolean; flips?: Set<string> }) {
   // Compact (score + clock only) applies to the corner bug; the full scoreboard always shows everything.
   const compact = state.compact && !full;
@@ -65,9 +140,6 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
   const winPct = live && state.show_win_prob && !compact && sb?.homeWinPct != null ? sb.homeWinPct : null;
   const lastPlay = live && state.show_last_play && !compact ? sb?.lastPlay ?? null : null;
   const network = !started && state.show_network ? sb?.network ?? null : null;
-  const line = spreadLabel(ctx.line?.spread ?? null, homeAbbr, awayAbbr);
-  const mine = spreadLabel(ctx.myHomeSpread, homeAbbr, awayAbbr);
-  const total = ctx.line?.over_under ?? null;
 
   return (
     <div className={`ob-card${flashing ? " ob-flash" : ""}`}>
@@ -93,22 +165,7 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
         </div>
       ) : null}
       {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
-      {state.show_lines && !compact && (line || total != null || mine || ctx.myTotal != null) ? (
-        <div className="ob-lines">
-          {line || total != null ? (
-            <span>
-              <b>Line</b> {line ?? ""}
-              {total != null ? ` · ${total}` : ""}
-            </span>
-          ) : null}
-          {mine || ctx.myTotal != null ? (
-            <span>
-              <b>Mine</b> {mine ?? ""}
-              {ctx.myTotal != null ? ` · ${Math.round(ctx.myTotal * 2) / 2}` : ""}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} /> : null}
       {bets.length ? (
         <div className="ob-bets">
           {bets.slice(0, maxBets).map((b) => (
@@ -196,9 +253,12 @@ function useSwingFlips(ids: string[], contexts: Record<string, OverlayContext>, 
       if (!ctx || !sb) continue;
       for (const b of liveBets(ctx, sb)) {
         const key = `${id}|${b.key}`;
+        // Remember the game state too: only a change seen while the game was
+        // live both times counts (not e.g. a stored final giving way to ESPN).
+        const now = `${sb.state}:${b.status}`;
         const before = prev.current.get(key);
-        prev.current.set(key, b.status);
-        if (enabled && sb.state === "in" && before && before !== b.status && (before === "up" || before === "down") && (b.status === "up" || b.status === "down")) {
+        prev.current.set(key, now);
+        if (enabled && (now === "in:up" || now === "in:down") && (before === "in:up" || before === "in:down") && before !== now) {
           changed.push(key);
         }
       }
@@ -220,12 +280,24 @@ function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[
   const n = ids.length;
   const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
   const rows = Math.ceil(n / cols);
-  // ~24 units is a typical card with lines and a couple of bets; fit the rows into the ~78 units below the header.
-  const fit = Math.min(1.5, 78 / (rows * 24));
+  // Start from an estimate (~30 units per card), then measure: if the grid
+  // overflows the panel, shrink until it fits; if there's lots of room
+  // after a shrink, grow back. Card heights vary with bets/last play.
+  const guess = Math.min(1.5, 78 / (rows * 30));
+  const grid = useRef<HTMLDivElement>(null);
+  const [adj, setAdj] = useState(1);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || !el.clientHeight) return;
+    const ratio = el.clientHeight / el.scrollHeight;
+    if (ratio < 0.995) setAdj((a) => a * ratio * 0.98);
+    else if (ratio > 1.2 && adj < 1) setAdj((a) => Math.min(1, a * Math.min(ratio, 1.15)));
+  });
+  const fit = guess * adj;
   const live = ids.filter((id) => scores[id]?.state === "in").length;
   const final = ids.filter((id) => scores[id]?.state === "post").length;
   return (
-    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px` }}>
+    <div className="ob-full" style={{ ["--u" as any]: `${unit * fit}px`, ["--ob-full-a" as any]: state.full_opacity ?? 1 }}>
       <div className="ob-full-head">
         <span className="ob-full-title">YCPR Scoreboard</span>
         <span className="ob-full-meta">
@@ -234,7 +306,7 @@ function FullBoard({ ids, contexts, scores, state, unit, flips }: { ids: string[
           {final ? ` · ${final} final` : ""}
         </span>
       </div>
-      <div className="ob-full-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      <div className="ob-full-grid" ref={grid} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {ids.map((id) => (
           <Card key={id} ctx={contexts[id]} sb={scores[id]} state={state} maxBets={8} full flips={flips} />
         ))}
