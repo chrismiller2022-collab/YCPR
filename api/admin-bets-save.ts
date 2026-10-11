@@ -549,7 +549,7 @@ export default async function handler(req: any, res: any) {
         return;
       }
       const allowed = ["game_ids", "league", "nfl_game_ids", "nfl_week", "visible", "layout", "position", "ticker_position", "scale", "delay_seconds", "rotate_seconds", "show_lines", "show_bets", "fullscreen", "full_opacity",
-        "show_last_play", "show_timeouts", "show_win_prob", "show_network", "compact", "flash_swings"];
+        "show_last_play", "show_field", "show_cover_prob", "show_timeouts", "show_win_prob", "show_network", "compact", "flash_swings"];
       const row: Record<string, any> = { id: screen, updated_at: new Date().toISOString() };
       for (const k of allowed) if (k in patch) row[k] = patch[k];
 

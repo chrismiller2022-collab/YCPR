@@ -44,7 +44,7 @@ function statusText(sb: ScoreGame | undefined, ctx: OverlayContext): string {
   return sb.detail;
 }
 
-function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null }) {
+function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts, winPct }: { team: ScoreTeam | undefined; fallbackName: string; hasBall: boolean; dim: boolean; showScore: boolean; timeouts?: number | null; winPct?: number | null }) {
   const logo = teamLogo(team);
   return (
     <div className={`ob-team${dim ? " ob-dim" : ""}`}>
@@ -63,7 +63,41 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
         </span>
       ) : null}
       {hasBall ? <span className="ob-ball" /> : null}
+      {winPct != null ? <span className="ob-winpct">{Math.round(winPct * 100)}%</span> : null}
       <span className="ob-score">{showScore ? team?.score ?? "" : ""}</span>
+    </div>
+  );
+}
+
+// Field position: a mini field with each end zone in its team's color
+// (away on the left, home on the right, matching the card's order), the
+// ball where it is in the color of the team that has it, an arrow for the
+// direction they're going, a yellow first-down line and the red zone
+// shaded. ESPN's yardLine is yards from the home goal line.
+function FieldBar({ sb }: { sb: ScoreGame }) {
+  if (sb.yardLine == null) return null;
+  const homeBall = sb.possession != null && sb.possession === sb.home.espnId;
+  const awayBall = sb.possession != null && sb.possession === sb.away.espnId;
+  const x = (yards: number) => `${100 - Math.max(0, Math.min(100, yards))}%`; // % from the left (away) goal line
+  const color = (t: ScoreTeam) => (t.color ? `#${t.color}` : "var(--ob-dim)");
+  // Offense attacks the away goal (left) when home has the ball.
+  const toGo = sb.distance != null && (homeBall || awayBall) ? sb.yardLine + (homeBall ? sb.distance : -sb.distance) : null;
+  return (
+    <div className="ob-field">
+      <span className="ob-ez" style={{ background: color(sb.away) }}>{sb.away.abbrev}</span>
+      <span className="ob-turf">
+        {awayBall ? <span className="ob-rz" style={{ left: "80%", right: 0 }} /> : null}
+        {homeBall ? <span className="ob-rz" style={{ left: 0, right: "80%" }} /> : null}
+        {[10, 20, 30, 40, 50, 60, 70, 80, 90].map((y) => (
+          <span key={y} className={`ob-yd${y === 50 ? " mid" : ""}`} style={{ left: `${y}%` }} />
+        ))}
+        {toGo != null && toGo > 0 && toGo < 100 ? <span className="ob-togo" style={{ left: x(toGo) }} /> : null}
+        <span
+          className={`ob-fball${homeBall ? " left" : awayBall ? " right" : ""}`}
+          style={{ left: x(sb.yardLine), background: homeBall ? color(sb.home) : awayBall ? color(sb.away) : "var(--ob-chalk)" }}
+        />
+      </span>
+      <span className="ob-ez" style={{ background: color(sb.home) }}>{sb.home.abbrev}</span>
     </div>
   );
 }
@@ -72,7 +106,7 @@ function TeamRow({ team, fallbackName, hasBall, dim, showScore, timeouts }: { te
 // spread on the left, total on the right; Vegas, YCPR, my call; then the
 // final ATS / O-U result with a ✓/✗ on my calls once the game is over; and
 // my projected score.
-function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined }) {
+function ProjBlock({ ctx, sb, showProb }: { ctx: OverlayContext; sb: ScoreGame | undefined; showProb: boolean }) {
   const p = projection(ctx, sb);
   if (p.vegasAwaySpread == null && p.myAwaySpread == null && p.vegasTotal == null && p.myTotal == null) return null;
   const team = (side: "away" | "home") => {
@@ -107,10 +141,12 @@ function ProjBlock({ ctx, sb }: { ctx: OverlayContext; sb: ScoreGame | undefined
       <span>
         <i>Proj Cover</i> {p.projCover ? team(p.projCover) : "–"}
         <Hit ok={coverHit} />
+        {showProb && p.coverProb != null ? <span className="ob-prob">{Math.round(p.coverProb * 100)}%</span> : null}
       </span>
       <span>
         <i>Proj</i> <b>{p.projTotal ?? "–"}</b>
         <Hit ok={totalHit} />
+        {showProb && p.totalProb != null ? <span className="ob-prob">{Math.round(p.totalProb * 100)}%</span> : null}
       </span>
         </>
       ) : null}
@@ -152,29 +188,16 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
 
   return (
     <div className={`ob-card${flashing ? " ob-flash" : ""}`}>
-      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={live && sb!.possession === sb!.away.espnId} dim={final && as < hs} showScore={started} timeouts={tos?.away} />
-      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={live && sb!.possession === sb!.home.espnId} dim={final && hs < as} showScore={started} timeouts={tos?.home} />
+      <TeamRow team={sb?.away} fallbackName={ctx.game.away_team} hasBall={live && sb!.possession === sb!.away.espnId} dim={final && as < hs} showScore={started} timeouts={tos?.away} winPct={winPct != null ? 1 - winPct : null} />
+      <TeamRow team={sb?.home} fallbackName={ctx.game.home_team} hasBall={live && sb!.possession === sb!.home.espnId} dim={final && hs < as} showScore={started} timeouts={tos?.home} winPct={winPct} />
       <div className={`ob-status${sb?.redZone ? " ob-redzone" : ""}`}>
         <span>{statusText(sb, ctx)}</span>
         {live && sb?.downDistance ? <span className="ob-dd">{sb.downDistance}</span> : null}
         {network ? <span className="ob-dd">{network}</span> : null}
       </div>
-      {winPct != null ? (
-        <div className="ob-wp">
-          <span>
-            {awayAbbr} {Math.round((1 - winPct) * 100)}%
-          </span>
-          <span className="ob-wp-bar">
-            <span style={{ width: `${(1 - winPct) * 100}%`, background: sb?.away.color ? `#${sb.away.color}` : "var(--ob-dim)" }} />
-            <span style={{ width: `${winPct * 100}%`, background: sb?.home.color ? `#${sb.home.color}` : "var(--ob-gold)" }} />
-          </span>
-          <span>
-            {homeAbbr} {Math.round(winPct * 100)}%
-          </span>
-        </div>
-      ) : null}
+      {live && state.show_field && !compact && sb ? <FieldBar sb={sb} /> : null}
       {lastPlay ? <div className="ob-play">{lastPlay}</div> : null}
-      {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} /> : null}
+      {state.show_lines && !compact ? <ProjBlock ctx={ctx} sb={sb} showProb={state.show_cover_prob} /> : null}
       {bets.length ? (
         <div className="ob-bets">
           {bets.slice(0, maxBets).map((b) => (
@@ -183,6 +206,7 @@ function Card({ ctx, sb, state, maxBets = 4, full = false, flips }: { ctx: Overl
               {b.label}
               {b.count > 1 ? <span className="ob-note">×{b.count}</span> : null}
               {b.note ? <span className="ob-note">{b.note}</span> : null}
+              {state.show_cover_prob && b.prob != null ? <span className="ob-prob">{Math.round(b.prob * 100)}%</span> : null}
             </span>
           ))}
         </div>

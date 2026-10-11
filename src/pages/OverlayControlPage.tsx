@@ -337,7 +337,13 @@ export default function OverlayControlPage() {
             <input type="checkbox" checked={state.show_timeouts} onChange={(e) => update({ show_timeouts: e.target.checked })} /> Timeouts left
           </label>
           <label className="oc-check">
-            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability
+            <input type="checkbox" checked={state.show_field} onChange={(e) => update({ show_field: e.target.checked })} /> Field position
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability (beside the score)
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_cover_prob} onChange={(e) => update({ show_cover_prob: e.target.checked })} /> Live cover / over % on my bets and calls
           </label>
           <label className="oc-check">
             <input type="checkbox" checked={state.show_network} onChange={(e) => update({ show_network: e.target.checked })} /> TV network (before kickoff)

@@ -293,6 +293,7 @@ async function handleEspnScoreboard(req: any, res: any) {
       // from its own 35 at Fresno = 65).
       yardLine: typeof s.yardLine === "number" ? s.yardLine : typeof s.lastPlay?.end?.yardLine === "number" ? s.lastPlay.end.yardLine : null,
       possessionText: s.possessionText ?? null,
+      distance: typeof s.distance === "number" && s.down ? s.distance : null, // yards to a first down
       // ESPN's own line (DraftKings), home-team spread. Used for NFL, where
       // nothing is stored in Supabase.
       odds: c.odds?.[0]

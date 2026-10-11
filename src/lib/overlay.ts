@@ -39,6 +39,8 @@ export interface OverlayState {
   fullscreen: boolean;
   full_opacity: number;
   show_last_play: boolean;
+  show_field: boolean;
+  show_cover_prob: boolean;
   show_timeouts: boolean;
   show_win_prob: boolean;
   show_network: boolean;
@@ -65,6 +67,8 @@ export const DEFAULT_OVERLAY_STATE: OverlayState = {
   fullscreen: false,
   full_opacity: 1,
   show_last_play: true,
+  show_field: true,
+  show_cover_prob: true,
   show_timeouts: true,
   show_win_prob: true,
   show_network: true,
@@ -160,6 +164,7 @@ export interface ScoreGame {
   network?: string | null;
   yardLine?: number | null; // yards from the home team's goal line
   possessionText?: string | null;
+  distance?: number | null;
   odds?: { homeSpread: number | null; overUnder: number | null; details: string | null } | null;
 }
 
@@ -345,6 +350,69 @@ export interface BetLine {
   status: BetStatus;
   note: string | null;
   count: number;
+  /** Live chance this bet cashes (0–1); null before kickoff, after the final, or without a line. */
+  prob: number | null;
+}
+
+// --- Live cover / over probability -------------------------------------
+// ESPN publishes win probability but nothing against the spread, so this
+// estimates it: final = current score + the pregame expectation for the
+// time that's left, with the spread of outcomes shrinking as the clock runs
+// down (sd × √fraction left). Full-game SDs are typical college values.
+const SD_MARGIN = 16;
+const SD_TOTAL = 15;
+const SD_TEAM = 10;
+
+function normCdf(z: number): number {
+  // Abramowitz–Stegun 7.1.26 erf approximation (|error| < 1.5e-7).
+  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(z * z) / 2);
+  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+}
+
+/** P(final > line) for a normal final with this mean and sd (sd 0 = already decided). */
+function probAbove(mean: number, sd: number, line: number): number {
+  if (sd < 0.01) return mean > line ? 1 : mean < line ? 0 : 0.5;
+  return 1 - normCdf((line - mean) / sd);
+}
+
+interface LiveModel {
+  left: number; // fraction of regulation left, 0–1
+  homeMargin: number; // expected final home margin
+  total: number; // expected final total
+  home: number; // expected final home points
+  away: number;
+}
+
+/** Expected finals from the score so far plus the pregame line for the time left. Null unless the game is live. */
+function liveModel(ctx: OverlayContext, sb: ScoreGame | undefined): LiveModel | null {
+  if (!sb || sb.state !== "in" || sb.home.score == null || sb.away.score == null) return null;
+  const played = minutesPlayed(sb);
+  if (played == null) return null;
+  const spread = ctx.line?.spread != null ? Number(ctx.line.spread) : ctx.myHomeSpread;
+  const total = ctx.line?.over_under != null ? Number(ctx.line.over_under) : ctx.myTotal;
+  if (spread == null || total == null) return null;
+  const left = Math.max(0, Math.min(1, (60 - played) / 60));
+  const preHome = (total - spread) / 2;
+  const preAway = (total + spread) / 2;
+  return {
+    left,
+    homeMargin: sb.home.score - sb.away.score - spread * left,
+    total: sb.home.score + sb.away.score + total * left,
+    home: sb.home.score + preHome * left,
+    away: sb.away.score + preAway * left,
+  };
+}
+
+/** Live chance a side covers `line` (that side's spread, e.g. -3.5). */
+function coverProb(m: LiveModel, side: "home" | "away", line: number): number {
+  const mean = side === "home" ? m.homeMargin : -m.homeMargin;
+  return probAbove(mean, SD_MARGIN * Math.sqrt(m.left), -line);
+}
+
+function totalProb(m: LiveModel, over: boolean, line: number): number {
+  const p = probAbove(m.total, SD_TOTAL * Math.sqrt(m.left), line);
+  return over ? p : 1 - p;
 }
 
 /** Minutes of regulation played, or null before kickoff. OT counts as 60. */
@@ -373,6 +441,7 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
   const ap = sb?.away.score ?? 0;
   const played = sb ? minutesPlayed(sb) : null;
   const pace = (pts: number) => (sb?.state === "in" && played != null && played >= 6 ? Math.round((pts * 60) / played) : null);
+  const model = liveModel(ctx, sb);
 
   const grouped = new Map<string, BetLine>();
   for (const b of ctx.bets) {
@@ -387,6 +456,7 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
     let label = "";
     let status: BetStatus = "pending";
     let note: string | null = null;
+    let prob: number | null = null;
 
     if (b.bet_type === "spread" || b.bet_type === "moneyline") {
       const side = teamSide(b.side);
@@ -396,6 +466,11 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
       if (live && side) {
         const margin = side === "home" ? hp - ap : ap - hp;
         status = cmp(margin + line);
+        if (model) {
+          // Moneyline: ESPN's own live win % when it has one.
+          const espnWin = sb?.homeWinPct != null ? (side === "home" ? sb.homeWinPct : 1 - sb.homeWinPct) : null;
+          prob = b.bet_type === "moneyline" && espnWin != null ? espnWin : coverProb(model, side, line);
+        }
       }
     } else if (b.bet_type === "total") {
       const line = Number(b.line_value ?? 0);
@@ -409,6 +484,7 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
           note = `pace ${p}`;
           status = cmp(over ? p - line : line - p);
         }
+        if (model) prob = totalProb(model, over, line);
       }
     } else if (b.bet_type === "team_total") {
       const [team, dir] = b.side.split("|");
@@ -425,6 +501,10 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
           note = `pace ${p}`;
           status = cmp(over ? p - line : line - p);
         }
+        if (model) {
+          const pOver = probAbove(side === "home" ? model.home : model.away, SD_TEAM * Math.sqrt(model.left), line);
+          prob = over ? pOver : 1 - pOver;
+        }
       }
     } else {
       continue;
@@ -434,7 +514,7 @@ export function liveBets(ctx: OverlayContext, sb: ScoreGame | undefined): BetLin
     // hasn't been settled yet.
     if (sb?.state === "post") note = status === "up" ? "WON" : status === "down" ? "LOST" : status === "push" ? "PUSH" : null;
 
-    grouped.set(key, { key, label, status, note, count: 1 });
+    grouped.set(key, { key, label, status, note, count: 1, prob });
   }
   return Array.from(grouped.values());
 }
@@ -549,6 +629,9 @@ export interface Projection {
   projTotal: "Over" | "Under" | null;
   projAway: number | null; // projected score split from my total + spread
   projHome: number | null;
+  // Live chance my two calls hit (null unless live)
+  coverProb: number | null;
+  totalProb: number | null;
   // Final-game results (null until the game is over)
   atsResult: Side | "push" | null;
   totalResult: "Over" | "Under" | "Push" | null;
@@ -579,5 +662,8 @@ export function projection(ctx: OverlayContext, sb: ScoreGame | undefined): Proj
       totalResult = t > vegasTotal ? "Over" : t < vegasTotal ? "Under" : "Push";
     }
   }
-  return { vegasAwaySpread, myAwaySpread, vegasTotal, myTotal, projCover, projTotal, projAway, projHome, atsResult, totalResult };
+  const m = liveModel(ctx, sb);
+  const coverPct = m && projCover && vegasAwaySpread != null ? coverProb(m, projCover, projCover === "away" ? vegasAwaySpread : -vegasAwaySpread) : null;
+  const totalPct = m && projTotal && vegasTotal != null ? totalProb(m, projTotal === "Over", vegasTotal) : null;
+  return { vegasAwaySpread, myAwaySpread, vegasTotal, myTotal, projCover, projTotal, projAway, projHome, coverProb: coverPct, totalProb: totalPct, atsResult, totalResult };
 }
