@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import SplashLinePaste from "../components/SplashLinePaste";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import SortHeader from "../components/SortHeader";
@@ -440,6 +441,20 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         >
           Time
         </button>
+        <SplashLinePaste
+          format="cbs"
+          disabled={loading}
+          games={rows.map((r) => ({
+            id: r.game_id,
+            away_team: r.game.away_team,
+            home_team: r.game.home_team,
+            currentLine: r.splash_line,
+            vegasLine: r.vegasAwaySpread,
+          }))}
+          onApply={(lineByGame) =>
+            setRows((prev) => prev.map((r) => (lineByGame.has(r.game_id) ? { ...r, splash_line: lineByGame.get(r.game_id)! } : r)))
+          }
+        />
       </div>
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}

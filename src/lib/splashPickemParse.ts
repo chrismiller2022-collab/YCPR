@@ -72,6 +72,59 @@ export function parseSplashPickemText(text: string): SplashParsedGame[] {
   return games;
 }
 
+// The CBS/Kelly picks page uses a different layout, and its lines can't
+// be selected, so the text comes from a console snippet that dumps the
+// page's text nodes one per line. Each game reads:
+//
+//   Sat, Oct 17 • 3:30 PM
+//   Preview
+//   Arizona State
+//   (+12.5)
+//   (
+//   3-2-0
+//   )
+//   (
+//   10          <- ranking, only when ranked
+//   )
+//   Texas Tech
+//   (-12.5)
+//   ...
+//
+// Within each block (one "Preview" to the next), the line right before
+// the first "(±n.n)" is the first-listed team and that number is its spread.
+const PAREN_SPREAD_RE = /^\(([+-]\d+(\.\d+)?|pk|pick|even|ev)\)$/i;
+
+export function parseSplashCbsText(text: string): SplashParsedGame[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  const previewIdx: number[] = [];
+  lines.forEach((l, i) => {
+    if (l === "Preview") previewIdx.push(i);
+  });
+
+  const games: SplashParsedGame[] = [];
+  previewIdx.forEach((p, n) => {
+    const end = n + 1 < previewIdx.length ? previewIdx[n + 1] : lines.length;
+    const spreads: { team: string; line: number }[] = [];
+    for (let i = p + 2; i < end && spreads.length < 2; i++) {
+      const m = lines[i].match(PAREN_SPREAD_RE);
+      if (m) spreads.push({ team: lines[i - 1], line: /^[+-]/.test(m[1]) ? Number(m[1]) : 0 });
+    }
+    if (spreads.length < 2) return; // no line posted for this game
+    games.push({
+      rawTeamA: spreads[0].team,
+      rawTeamB: spreads[1].team,
+      teamA: matchTeamName(spreads[0].team).matched,
+      teamB: matchTeamName(spreads[1].team).matched,
+      teamALine: spreads[0].line,
+    });
+  });
+  return games;
+}
+
 export interface SplashLineMatch {
   gameId: string;
   awayLine: number; // away-perspective, the site's convention

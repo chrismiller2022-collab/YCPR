@@ -9,7 +9,7 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
-import { parseSplashPickemText, matchSplashLines } from "../lib/splashPickemParse";
+import SplashLinePaste from "../components/SplashLinePaste";
 
 const POOL_URL =
   "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
@@ -79,9 +79,6 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [gameSearch, setGameSearch] = useState("");
   const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
-  const [showPaste, setShowPaste] = useState(false);
-  const [pasteText, setPasteText] = useState("");
-  const [pasteResult, setPasteResult] = useState<{ summary: string; details: string[] } | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
@@ -140,35 +137,6 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         return { ...r, ...patch };
       })
     );
-  }
-
-  // Fills Peay lines from a select-all/copy of the Splash picks page.
-  // Only touches peay_line, and only in local state — nothing is saved
-  // until Save is clicked, so the changes can be reviewed first.
-  function applyPaste() {
-    const parsed = parseSplashPickemText(pasteText);
-    if (parsed.length === 0) {
-      setPasteResult({ summary: "No games found — copy the whole Splash picks page (Ctrl+A, Ctrl+C) and paste it in.", details: [] });
-      return;
-    }
-    const { matches, unmatched } = matchSplashLines(parsed, rows.map((r) => r.game));
-    const lineByGame = new Map(matches.map((m) => [m.gameId, m.awayLine]));
-    const details: string[] = [];
-    for (const r of rows) {
-      const next = lineByGame.get(r.game_id);
-      if (next == null) continue;
-      if (r.peay_line !== next) details.push(`${r.game.away_team} @ ${r.game.home_team}: ${fmt(r.peay_line)} → ${fmt(next)}`);
-      if (r.vegasAwaySpread != null && r.vegasAwaySpread !== next)
-        details.push(`  ↳ differs from Vegas (${fmt(r.vegasAwaySpread)})`);
-    }
-    for (const u of unmatched) details.push(`Not matched to a game this week: ${u.rawTeamA} vs ${u.rawTeamB} (${fmt(u.teamALine)})`);
-    const missing = rows.filter((r) => !lineByGame.has(r.game_id));
-    for (const r of missing) details.push(`No pasted line for: ${r.game.away_team} @ ${r.game.home_team}`);
-    setRows((prev) => prev.map((r) => (lineByGame.has(r.game_id) ? { ...r, peay_line: lineByGame.get(r.game_id)! } : r)));
-    setPasteResult({
-      summary: `Filled ${matches.length} of ${rows.length} games from ${parsed.length} pasted. ${unmatched.length} unmatched, ${missing.length} without a pasted line. Review, then Save.`,
-      details,
-    });
   }
 
   async function handleSave() {
@@ -381,54 +349,21 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         >
           Time
         </button>
-        <button className={`mode-btn ${showPaste ? "mode-btn-active" : ""}`} onClick={() => setShowPaste((v) => !v)}>
-          Paste Splash lines
-        </button>
+        <SplashLinePaste
+          format="peay"
+          disabled={loading}
+          games={rows.map((r) => ({
+            id: r.game_id,
+            away_team: r.game.away_team,
+            home_team: r.game.home_team,
+            currentLine: r.peay_line,
+            vegasLine: r.vegasAwaySpread,
+          }))}
+          onApply={(lineByGame) =>
+            setRows((prev) => prev.map((r) => (lineByGame.has(r.game_id) ? { ...r, peay_line: lineByGame.get(r.game_id)! } : r)))
+          }
+        />
       </div>
-
-      {showPaste && (
-        <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem" }}>
-          <p style={{ margin: "0 0 0.5rem", fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-            On the Splash picks page press Ctrl+A, Ctrl+C, then paste here. Fills in Peay's line for every game it
-            recognizes (nothing is saved until you click Save).
-          </p>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            rows={6}
-            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.75rem" }}
-            placeholder="Paste the Splash picks page here…"
-          />
-          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-            <button className="menu-btn" onClick={applyPaste} disabled={loading || rows.length === 0 || pasteText.trim() === ""}>
-              Fill lines
-            </button>
-            <button
-              className="menu-btn"
-              onClick={() => {
-                setPasteText("");
-                setPasteResult(null);
-              }}
-            >
-              Clear
-            </button>
-          </div>
-          {pasteResult && (
-            <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-              <strong>{pasteResult.summary}</strong>
-              {pasteResult.details.length > 0 && (
-                <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.1rem" }}>
-                  {pasteResult.details.map((d, i) => (
-                    <li key={i} style={{ listStyle: d.startsWith("  ") ? "none" : undefined, color: d.startsWith("  ") ? "#a15c00" : undefined }}>
-                      {d.trim()}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       {ratingsLoading && <p>Loading live ratings…</p>}
