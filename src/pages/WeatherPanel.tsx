@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
-import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
@@ -190,11 +189,8 @@ function MatchupCard({ c }: { c: Card }) {
           { team: g.home_team, points: g.home_points },
         ].map((t, i) => (
           <div key={t.team} style={{ display: "flex", alignItems: "center", gap: "0.45rem", fontWeight: 700 }}>
-            <span style={{ width: 22, display: "inline-flex", justifyContent: "center" }}>
-              <TeamLogo team={t.team} size={22} />
-            </span>
             <span style={{ fontSize: "0.68rem", color: "var(--chalk-dim)", width: 14 }}>{i === 0 ? "" : g.neutral_site ? "vs" : "@"}</span>
-            <TeamLink team={t.team} />
+            <TeamLink team={t.team} size={22} />
             {g.completed && t.points != null && <span style={{ marginLeft: "auto" }}>{t.points}</span>}
           </div>
         ))}
