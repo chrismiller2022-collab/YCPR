@@ -9,6 +9,7 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import SplashLinePaste from "../components/SplashLinePaste";
 
 const POOL_URL =
   "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
@@ -348,6 +349,20 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         >
           Time
         </button>
+        <SplashLinePaste
+          format="peay"
+          disabled={loading}
+          games={rows.map((r) => ({
+            id: r.game_id,
+            away_team: r.game.away_team,
+            home_team: r.game.home_team,
+            currentLine: r.peay_line,
+            vegasLine: r.vegasAwaySpread,
+          }))}
+          onApply={(lineByGame) =>
+            setRows((prev) => prev.map((r) => (lineByGame.has(r.game_id) ? { ...r, peay_line: lineByGame.get(r.game_id)! } : r)))
+          }
+        />
       </div>
 
       {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
