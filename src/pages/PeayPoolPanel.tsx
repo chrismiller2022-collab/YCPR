@@ -319,11 +319,11 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={hideCompleted} onChange={(e) => setHideCompleted(e.target.checked)} />
           Hide completed games
         </label>
-        <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
+        <span style={{ fontSize: "0.82rem", color: keyPickCount === KEY_PICKS_TARGET ? "var(--c-ok)" : "var(--c-warn)" }}>
           Key Picks: {keyPickCount}/{KEY_PICKS_TARGET}
         </span>
         <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Possible: {possibleCount}</span>
-        <span style={{ fontSize: "0.82rem", color: pickedCount === PICK_LIMIT ? "green" : "#a15c00" }}>
+        <span style={{ fontSize: "0.82rem", color: pickedCount === PICK_LIMIT ? "var(--c-ok)" : "var(--c-warn)" }}>
           Picked: {pickedCount}/{PICK_LIMIT} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""}
         </span>
@@ -350,7 +350,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {ratingsLoading && <p>Loading live ratings…</p>}
       {loading && <p>Loading…</p>}
 
@@ -441,7 +441,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                   return (
                     <tr
                       key={r.game_id}
-                      style={{ background: r.is_key_pick ? "var(--gold-dim)" : r.is_possible_pick ? "rgba(255,255,255,0.04)" : undefined }}
+                      style={{ background: r.is_key_pick ? "var(--gold-dim)" : r.is_possible_pick ? "var(--a-tint-1)" : undefined }}
                     >
                       <td
                         style={{ ...cellStyle, cursor: "pointer" }}
@@ -572,14 +572,14 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           </div>
 
           {isDirty && (
-            <p style={{ color: "#e0a030", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
+            <p style={{ color: "var(--c-warn)", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
               ⚠ You have unsaved picks and/or lines — click Save below before leaving this page, or they'll be lost.
             </p>
           )}
           <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
             {saving ? "Saving…" : "Save Lines & Picks"}
           </button>
-          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "green" : "#e0a030", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "var(--c-ok)" : "var(--c-warn)", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
       )}
 

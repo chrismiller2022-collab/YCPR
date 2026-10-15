@@ -368,7 +368,7 @@ export default function SplashSurvivorPanel({ onBack }: { onBack?: () => void })
         </span>
       </div>
 
-      {pathError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{pathError}</p>}
+      {pathError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{pathError}</p>}
 
       {showOptimizer && (
         <div
@@ -561,7 +561,7 @@ export default function SplashSurvivorPanel({ onBack }: { onBack?: () => void })
                       textAlign: "center",
                       minWidth: 92,
                       borderBottom: "1px solid var(--hash)",
-                      background: locked ? "rgba(255,255,255,0.06)" : "var(--turf-panel-2)",
+                      background: locked ? "var(--a-tint-2)" : "var(--turf-panel-2)",
                       textDecoration: locked ? "line-through" : "none",
                       color: locked ? "var(--chalk-dim)" : "var(--chalk)",
                       cursor: "pointer",
@@ -633,7 +633,7 @@ export default function SplashSurvivorPanel({ onBack }: { onBack?: () => void })
                     status === "selected"
                       ? "var(--gold-dim)"
                       : status === "ineligible" || status === "team-used" || status === "week-locked"
-                      ? "rgba(255,255,255,0.03)"
+                      ? "var(--a-tint-1)"
                       : heatBg(winPct, isOptimal);
 
                   const tip =
@@ -700,7 +700,7 @@ export default function SplashSurvivorPanel({ onBack }: { onBack?: () => void })
                             style={{
                               padding: "0.05rem 0.3rem",
                               borderRadius: 999,
-                              background: "rgba(255,255,255,0.08)",
+                              background: "var(--a-tint-3)",
                               color: "var(--chalk-dim)",
                             }}
                           >
@@ -712,7 +712,7 @@ export default function SplashSurvivorPanel({ onBack }: { onBack?: () => void })
                             style={{
                               padding: "0.05rem 0.3rem",
                               borderRadius: 999,
-                              background: rank.seasonRank === 1 ? "var(--gold-dim)" : "rgba(255,255,255,0.08)",
+                              background: rank.seasonRank === 1 ? "var(--gold-dim)" : "var(--a-tint-3)",
                               color: rank.seasonRank === 1 ? "var(--chalk)" : "var(--chalk-dim)",
                             }}
                           >

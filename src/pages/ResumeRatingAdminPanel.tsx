@@ -254,9 +254,6 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Resume Rating</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
@@ -303,7 +300,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         </label>
       </div>
 
-      {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
+      {loadError && <p style={{ color: "var(--c-err)" }}>{loadError}</p>}
 
       <div
         style={{
@@ -341,7 +338,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         <button className="menu-btn" onClick={() => setWeights({ ...DEFAULT_RESUME_WEIGHTS })} disabled={saving}>
           Reset to 1x Each
         </button>
-        {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{saveMessage}</span>}
+        {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{saveMessage}</span>}
       </div>
 
       <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap" }}>
@@ -371,7 +368,7 @@ export default function ResumeRatingAdminPanel({ onBack }: { onBack: () => void 
         >
           {savingFinished ? "Saving…" : "Save finished-games-only snapshot"}
         </button>
-        <span style={{ fontSize: "0.78rem", color: saveFinishedMsg?.startsWith("Error") ? "#c45c52" : "var(--chalk-dim)" }}>
+        <span style={{ fontSize: "0.78rem", color: saveFinishedMsg?.startsWith("Error") ? "var(--c-err)" : "var(--chalk-dim)" }}>
           {saveFinishedMsg ?? "Check \"Completed games only\" above, then save — stored in its own table for the week above, separate from the published Resume Rating."}
         </span>
       </div>

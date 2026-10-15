@@ -635,7 +635,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
                   padding: "0.35rem 0.6rem",
                   borderBottom: "1px solid var(--hash)",
                   textAlign: "right",
-                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "var(--c-ok)" : "var(--c-err)",
                 }}
               >
                 {fmtDelta(errorStats.absErrorOverVegasYc)}
@@ -645,7 +645,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
                   padding: "0.35rem 0.6rem",
                   borderBottom: "1px solid var(--hash)",
                   textAlign: "right",
-                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                  color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "var(--c-ok)" : "var(--c-err)",
                 }}
               >
                 {fmtDelta(errorStats.absErrorOverVegasYc != null ? -errorStats.absErrorOverVegasYc : null)}
@@ -657,7 +657,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
                 style={{
                   padding: "0.35rem 0.6rem",
                   textAlign: "right",
-                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "var(--c-ok)" : "var(--c-err)",
                 }}
               >
                 {fmtDelta(errorStats.mseOverVegasYc)}
@@ -666,7 +666,7 @@ function ErrorStatsBlock({ errorStats }: { errorStats: ReturnType<typeof compute
                 style={{
                   padding: "0.35rem 0.6rem",
                   textAlign: "right",
-                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                  color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "var(--c-ok)" : "var(--c-err)",
                 }}
               >
                 {fmtDelta(errorStats.mseOverVegasYc != null ? -errorStats.mseOverVegasYc : null)}
@@ -1049,7 +1049,7 @@ function WfbMatrixSection({ points, params }: { points: WfbPoint[]; params: Cust
     const n = t.w + t.l;
     if (n < 10) return undefined;
     const p = winPct(t);
-    return p >= 55 ? "#8fd39a" : p < 50 ? "#e07a7a" : undefined;
+    return p >= 55 ? "var(--c-ok)" : p < 50 ? "var(--c-err)" : undefined;
   }
   return (
     <div>
@@ -1494,9 +1494,6 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Bet History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>

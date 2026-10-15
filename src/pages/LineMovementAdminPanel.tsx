@@ -5,7 +5,7 @@ import { fetchGamesForTotals, type GameForTotals } from "../lib/api/gameTotalsDa
 import { buildTeamMovementRows, computeTeamMovementSummaries, type TeamMovementSummary } from "../lib/lineMovement";
 import { SeasonPicker, DivisionPicker } from "./GameTotalsAdminPanel";
 
-const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
+const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid var(--a-tint-2)", whiteSpace: "nowrap" };
 
 function fmt(v: number | null | undefined, digits = 1): string {
   return v == null || Number.isNaN(v) ? "–" : v.toFixed(digits);
@@ -114,11 +114,11 @@ function TeamListView({ summaries, onSelectTeam }: { summaries: TeamMovementSumm
                   {s.team}
                 </button>
               </td>
-              <td style={{ ...CP, textAlign: "right", color: "#8fd39a" }}>{s.moneyOn > 0 ? fmt(s.moneyOn) : "–"}</td>
-              <td style={{ ...CP, textAlign: "right", color: "#e07a7a" }}>{s.moneyAgainst > 0 ? fmt(s.moneyAgainst) : "–"}</td>
+              <td style={{ ...CP, textAlign: "right", color: "var(--c-ok)" }}>{s.moneyOn > 0 ? fmt(s.moneyOn) : "–"}</td>
+              <td style={{ ...CP, textAlign: "right", color: "var(--c-err)" }}>{s.moneyAgainst > 0 ? fmt(s.moneyAgainst) : "–"}</td>
               <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmtSigned(s.netSpreadMoney)}</td>
-              <td style={{ ...CP, textAlign: "right", color: "#8fd39a" }}>{s.moneyOver > 0 ? fmt(s.moneyOver) : "–"}</td>
-              <td style={{ ...CP, textAlign: "right", color: "#e07a7a" }}>{s.moneyUnder > 0 ? fmt(s.moneyUnder) : "–"}</td>
+              <td style={{ ...CP, textAlign: "right", color: "var(--c-ok)" }}>{s.moneyOver > 0 ? fmt(s.moneyOver) : "–"}</td>
+              <td style={{ ...CP, textAlign: "right", color: "var(--c-err)" }}>{s.moneyUnder > 0 ? fmt(s.moneyUnder) : "–"}</td>
               <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmtSigned(s.netTotalMoney)}</td>
               <td style={CP}>
                 {s.actualOverCount}-{s.actualUnderCount}
@@ -217,10 +217,10 @@ function TeamDetailView({ games, team, onBack }: { games: GameForTotals[]; team:
       <h3 style={{ marginTop: 0 }}>{team}</h3>
       {summary && (
         <p style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>
-          Season: <strong style={{ color: "#8fd39a" }}>{fmt(summary.moneyOn)} on</strong> /{" "}
-          <strong style={{ color: "#e07a7a" }}>{fmt(summary.moneyAgainst)} against</strong> ({fmtSigned(summary.netSpreadMoney)} net) —{" "}
-          <strong style={{ color: "#8fd39a" }}>{fmt(summary.moneyOver)} over</strong> /{" "}
-          <strong style={{ color: "#e07a7a" }}>{fmt(summary.moneyUnder)} under</strong> ({fmtSigned(summary.netTotalMoney)} net) — actual{" "}
+          Season: <strong style={{ color: "var(--c-ok)" }}>{fmt(summary.moneyOn)} on</strong> /{" "}
+          <strong style={{ color: "var(--c-err)" }}>{fmt(summary.moneyAgainst)} against</strong> ({fmtSigned(summary.netSpreadMoney)} net) —{" "}
+          <strong style={{ color: "var(--c-ok)" }}>{fmt(summary.moneyOver)} over</strong> /{" "}
+          <strong style={{ color: "var(--c-err)" }}>{fmt(summary.moneyUnder)} under</strong> ({fmtSigned(summary.netTotalMoney)} net) — actual{" "}
           {summary.actualOverCount}-{summary.actualUnderCount}
           {summary.actualPushCount > 0 ? `-${summary.actualPushCount}` : ""} O/U
         </p>
@@ -249,13 +249,13 @@ function TeamDetailView({ games, team, onBack }: { games: GameForTotals[]; team:
                 <td style={CP}>{r.opponent}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.openSpread)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmtSpread(r.closeSpread)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.moneyOn != null ? "#8fd39a" : undefined }}>{fmt(r.moneyOn)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.moneyAgainst != null ? "#e07a7a" : undefined }}>{fmt(r.moneyAgainst)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.moneyOn != null ? "var(--c-ok)" : undefined }}>{fmt(r.moneyOn)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.moneyAgainst != null ? "var(--c-err)" : undefined }}>{fmt(r.moneyAgainst)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmtSigned(r.spreadChange)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(r.openTotal)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(r.closeTotal)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.moneyOver != null ? "#8fd39a" : undefined }}>{fmt(r.moneyOver)}</td>
-                <td style={{ ...CP, textAlign: "right", color: r.moneyUnder != null ? "#e07a7a" : undefined }}>{fmt(r.moneyUnder)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.moneyOver != null ? "var(--c-ok)" : undefined }}>{fmt(r.moneyOver)}</td>
+                <td style={{ ...CP, textAlign: "right", color: r.moneyUnder != null ? "var(--c-err)" : undefined }}>{fmt(r.moneyUnder)}</td>
               </tr>
             ))}
             {sorted.length === 0 && (
@@ -295,9 +295,6 @@ export default function LineMovementAdminPanel({ onBack }: { onBack: () => void 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Line Movement</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Vegas open/close lines only — no model here. "Money on" / "money against" tracks how far the spread
@@ -312,7 +309,7 @@ export default function LineMovementAdminPanel({ onBack }: { onBack: () => void 
         <DivisionPicker division={division} setDivision={setDivision} />
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <div className="empty">Loading…</div>
       ) : selectedTeam ? (

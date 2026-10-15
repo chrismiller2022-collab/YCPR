@@ -373,9 +373,6 @@ export default function MatchupHistoryPanel({ onBack }: { onBack: () => void }) 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Matchup History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Pick a week's matchups, then read them as they looked in every earlier week: the Wk N column uses the numbers from week N
@@ -416,7 +413,7 @@ export default function MatchupHistoryPanel({ onBack }: { onBack: () => void }) 
         </div>
       )}
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 720, overflowY: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>

@@ -194,9 +194,15 @@ async function withCapturePrep<T>(
   // existing call site (which never passed this) keeps behaving exactly
   // as before.
   const removeBranding = includeBranding ? appendBrandingFooter(node) : () => {};
+  // Share graphics always use the site's dark look, even when they're
+  // captured from an admin page that's showing the light theme (see
+  // .export-surface in styles/admin.css).
+  const hadSurface = node.classList.contains("export-surface");
+  node.classList.add("export-surface");
   try {
     return await capture();
   } finally {
+    if (!hadSurface) node.classList.remove("export-surface");
     removeBranding();
     restoreScroll();
     restoreTighten();

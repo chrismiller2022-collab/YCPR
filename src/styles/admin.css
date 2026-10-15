@@ -1,0 +1,418 @@
+/* =====================================================================
+   Admin design (LTP-style shell in YCPR navy + gold).
+
+   Everything is scoped to .admin-shell, so the public site is untouched.
+   Two themes, chosen in the admin top bar and saved per browser
+   (localStorage "admin_theme", default light).
+
+   Admin panels mostly color themselves through the site's original
+   variables (--turf, --turf-panel, --hash, --chalk, --chalk-dim, --gold…)
+   in inline styles. Redefining those here is what re-themes all ~47
+   panels at once without touching their logic: the light theme maps them
+   to the light palette, the dark theme keeps the original values.
+
+   New code should use the --a-* tokens (surfaces/ink/lines) and the
+   --c-* tokens (good/bad/warning/info status colors).
+   ===================================================================== */
+
+.admin-shell {
+  /* surfaces + ink */
+  --a-bg: #f4f5f9;
+  --a-surface: #ffffff;
+  --a-inset: #f7f8fb;
+  --a-line: #e1e3ec;
+  --a-row: #eef0f5;
+  --a-ink: #16172e;
+  --a-ink-2: #4d5070;
+  --a-muted: #6e7294;
+  --a-accent: #3b3d8f;
+  --a-accent-soft: #ecedfa;
+  --a-hover: #f6f7fb;
+  --a-field: #ffffff;
+  --a-field-line: #cfd3df;
+  --a-focus: #8babe4;
+  --a-primary: #1f2041;
+  --a-primary-ink: #ffffff;
+  --a-shadow: 0 1px 2px rgba(20, 22, 50, 0.05);
+
+  /* sidebar (dark in both themes) */
+  --side: #1f2041;
+  --side-ink: #d9def0;
+  --side-dim: #8babe4;
+  --side-hover: #2a2b52;
+  --side-active: #4b3f72;
+  --brand-gold: #ffc857;
+
+  /* status */
+  --c-ok: #157a3a;
+  --c-ok-bg: #e5f4ea;
+  --c-err: #b4282e;
+  --c-err-bg: #fbe8e8;
+  --c-warn: #8a5a00;
+  --c-warn-bg: #fff3d6;
+  --c-info: #2f4fa6;
+  --c-info-bg: #e8eefb;
+
+  /* the site's original variables, remapped for the light theme */
+  --turf: #f4f5f9;
+  --turf-panel: #ffffff;
+  --turf-panel-2: #e9eaf6;
+  --hash: #e1e3ec;
+  --chalk: #16172e;
+  --chalk-dim: #5b5f82;
+  --gold: #8a5a00;
+  --gold-dim: #3b3d8f;
+  --good: #8a5a00;
+  --pos-green: #157a3a;
+  --neg-red: #c62828;
+
+  color-scheme: light;
+}
+
+.admin-shell[data-admin-theme="dark"],
+.export-surface {
+  --a-bg: #1f2041;
+  --a-surface: #292a52;
+  --a-inset: #24254b;
+  --a-line: #3a3a63;
+  --a-row: #32335e;
+  --a-ink: #f4f2ea;
+  --a-ink-2: #c2c6e4;
+  --a-muted: #8babe4;
+  --a-accent: #ffc857;
+  --a-accent-soft: #3a3270;
+  --a-hover: #2f3060;
+  --a-field: #23244a;
+  --a-field-line: #4a4c80;
+  --a-focus: #ffc857;
+  --a-primary: #ffc857;
+  --a-primary-ink: #1f2041;
+  --a-shadow: none;
+
+  --side: #16172e;
+  --side-hover: #23244a;
+  --side-active: #4b3f72;
+
+  --c-ok: #8fd39a;
+  --c-ok-bg: rgba(63, 185, 80, 0.16);
+  --c-err: #ff8a80;
+  --c-err-bg: rgba(248, 81, 73, 0.16);
+  --c-warn: #ffd27a;
+  --c-warn-bg: rgba(255, 200, 87, 0.14);
+  --c-info: #a9c1ff;
+  --c-info-bg: rgba(120, 150, 255, 0.16);
+
+  --turf: #1f2041;
+  --turf-panel: #292a52;
+  --turf-panel-2: #4b3f72;
+  --hash: #3a3a63;
+  --chalk: #f4f2ea;
+  --chalk-dim: #8babe4;
+  --gold: #ffc857;
+  --gold-dim: #19647e;
+  --good: #ffc857;
+  --pos-green: #3fb950;
+  --neg-red: #f85149;
+
+  color-scheme: dark;
+}
+
+/* Public share graphics (PNG/PDF exports) always render in the site's
+   dark look, whatever the admin theme. exportPng adds this class to the
+   node for the moment of capture; off-screen capture stages carry it
+   permanently. */
+.export-surface { color: var(--chalk); }
+
+/* ---------------------------------------------------------------------
+   Shell layout
+   --------------------------------------------------------------------- */
+body:has(.admin-shell) { margin: 0; background: var(--a-bg, #f4f5f9); }
+.page:has(> .admin-shell) { padding: 0; background: none; min-height: 0; }
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--a-bg);
+  background-image: none;
+  color: var(--a-ink);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14.5px;
+}
+.admin-shell[data-sidebar="collapsed"] { grid-template-columns: minmax(0, 1fr); }
+.admin-shell[data-sidebar="collapsed"] .admin-side { display: none; }
+
+.admin-side {
+  background: var(--side);
+  color: var(--side-ink);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 16px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3b6b transparent;
+}
+.admin-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 4px 6px; }
+.admin-brand { display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; text-align: left; }
+.admin-brand i { width: 30px; height: 30px; border-radius: 8px; background: var(--brand-gold); color: var(--side); font-style: normal; font-family: 'Anton', Impact, sans-serif; display: grid; place-items: center; font-size: 0.95rem; flex-shrink: 0; }
+.admin-brand b { display: block; font-family: 'Anton', Impact, sans-serif; font-weight: 400; color: #fff; letter-spacing: 0.04em; font-size: 1.05rem; line-height: 1; }
+.admin-brand small { display: block; font-size: 0.64rem; color: var(--side-dim); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 3px; }
+.admin-icon-btn { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: inherit; cursor: pointer; padding: 0; flex-shrink: 0; }
+.admin-side .admin-icon-btn { color: var(--side-dim); }
+.admin-side .admin-icon-btn:hover { background: var(--side-hover); color: #fff; }
+.admin-nav-group { display: grid; gap: 1px; }
+.admin-nav-label { display: flex; justify-content: space-between; align-items: center; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--side-dim); margin: 0 8px 3px; font-weight: 700; background: none; border: 0; padding: 0; text-align: left; font-family: inherit; }
+button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
+.admin-nav-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; color: var(--side-ink); background: transparent; border: 0; text-decoration: none; padding: 6px 8px; border-radius: 6px; font-size: 0.86rem; font-family: inherit; text-align: left; cursor: pointer; line-height: 1.3; }
+.admin-nav-item:hover { background: var(--side-hover); color: #fff; }
+.admin-nav-item.on { background: var(--side-active); color: var(--brand-gold); font-weight: 600; }
+.admin-nav-count { background: var(--brand-gold); color: var(--side); border-radius: 999px; font-size: 0.68rem; padding: 0 7px; font-weight: 800; line-height: 1.5; }
+.admin-side-foot { margin-top: auto; border-top: 1px solid var(--side-hover); padding-top: 10px; }
+
+.admin-main { min-width: 0; display: flex; flex-direction: column; }
+.admin-top {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 28px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--a-line);
+  background: var(--a-surface);
+}
+.admin-top-left, .admin-top-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.admin-top .admin-icon-btn { border-color: var(--a-line); color: var(--a-ink-2); width: auto; padding: 0 10px; gap: 6px; display: inline-flex; align-items: center; height: 32px; font: inherit; font-size: 0.82rem; font-weight: 600; }
+.admin-top .admin-icon-btn:hover { background: var(--a-hover); color: var(--a-ink); }
+.admin-crumbs { display: flex; align-items: center; gap: 6px; font-size: 0.86rem; color: var(--a-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-crumbs b { color: var(--a-ink); font-weight: 600; }
+.admin-crumbs button { background: none; border: 0; padding: 0; font: inherit; color: var(--a-accent); cursor: pointer; }
+.admin-crumbs button:hover { text-decoration: underline; }
+.admin-content { padding: 24px 28px 64px; min-width: 0; }
+
+/* ---------------------------------------------------------------------
+   Page header: each panel's first h2 is its title, the paragraph right
+   after it is the description.
+   --------------------------------------------------------------------- */
+.admin-view > div > h2:first-of-type,
+.admin-view > div > div:first-child:not(.export-surface) > h2:first-child,
+.admin-page-title {
+  font-family: 'Anton', Impact, sans-serif;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 1.9rem;
+  line-height: 1.05;
+  margin: 0 0 6px;
+  color: var(--a-ink);
+}
+.admin-view > div > h2:first-of-type + p {
+  color: var(--a-ink-2) !important;
+  font-size: 0.88rem !important;
+  max-width: 110ch;
+  margin-top: 0;
+  line-height: 1.5;
+}
+.admin-view h2, .admin-view h3 { color: var(--a-ink); }
+.admin-view h3 { font-size: 1rem; }
+
+/* ---------------------------------------------------------------------
+   Shared controls
+   --------------------------------------------------------------------- */
+.admin-shell .menu-btn,
+.admin-shell .admin-btn,
+.admin-view button:not([class]):not(:where(.admin-tabs, .admin-seg, .admin-quicklinks) *) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--a-field-line);
+  background: var(--a-surface);
+  color: var(--a-ink);
+  cursor: pointer;
+  line-height: 1.25;
+  box-shadow: var(--a-shadow);
+}
+.admin-shell .menu-btn:hover,
+.admin-shell .admin-btn:hover,
+.admin-view button:not([class]):not(:where(.admin-tabs, .admin-seg, .admin-quicklinks) *):hover { background: var(--a-hover); border-color: var(--a-accent); }
+.admin-shell .menu-btn:disabled,
+.admin-shell .admin-btn:disabled,
+.admin-view button:not([class]):not(:where(.admin-tabs, .admin-seg, .admin-quicklinks) *):disabled { opacity: 0.5; cursor: default; }
+.admin-shell .admin-btn.primary { background: var(--a-primary); border-color: var(--a-primary); color: var(--a-primary-ink); }
+.admin-shell .admin-btn.primary:hover { filter: brightness(1.1); }
+
+.admin-shell .mode-btn {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 6px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--a-field-line);
+  background: var(--a-field);
+  color: var(--a-ink-2);
+}
+.admin-shell .mode-btn:hover { color: var(--a-ink); border-color: var(--a-accent); }
+.admin-shell .mode-btn-active,
+.admin-shell .mode-btn-active:hover { background: var(--a-primary); border-color: var(--a-primary); color: var(--a-primary-ink); }
+
+.admin-view input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+.admin-view select,
+.admin-view textarea,
+.admin-shell .search,
+.admin-shell select.filter {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.86rem;
+  padding: 6px 10px;
+  border: 1px solid var(--a-field-line);
+  border-radius: 8px;
+  background: var(--a-field);
+  color: var(--a-ink);
+  outline: none;
+  min-height: 32px;
+}
+.admin-view textarea { line-height: 1.45; }
+.admin-view input:focus, .admin-view select:focus, .admin-view textarea:focus,
+.admin-shell .search:focus, .admin-shell select.filter:focus { border-color: var(--a-focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a-focus) 30%, transparent); }
+.admin-shell .search::placeholder, .admin-view input::placeholder, .admin-view textarea::placeholder { color: var(--a-muted); }
+.admin-view input[type="checkbox"], .admin-view input[type="radio"], .admin-view input[type="range"] { accent-color: var(--a-accent); }
+.admin-view input[type="file"] { font-size: 0.84rem; color: var(--a-ink-2); }
+.admin-view label { color: var(--a-ink-2); }
+
+.admin-shell .controls { max-width: none; margin: 0 0 14px; padding: 12px 14px; background: var(--a-surface); border: 1px solid var(--a-line); border-radius: 12px; align-items: center; gap: 10px 12px; }
+.admin-shell .controls .search { flex: 0 1 260px; }
+.admin-shell .controls label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.84rem; color: var(--a-ink-2); }
+.admin-shell .mode-toggle { justify-content: flex-start; margin: 0 0 14px; padding: 0; max-width: none; }
+.admin-shell .footer-note { max-width: none; text-align: left; padding: 0; color: var(--a-muted); }
+.admin-shell .empty { color: var(--a-muted); }
+.admin-shell .section-label { color: var(--a-muted); letter-spacing: 0.12em; font-weight: 700; }
+.admin-shell .table-wrap { max-width: none; margin: 0; padding: 0; }
+
+/* ---------------------------------------------------------------------
+   Tables
+   --------------------------------------------------------------------- */
+.admin-shell table { color: var(--a-ink); }
+.admin-shell thead th {
+  background: var(--a-surface);
+  color: var(--a-muted);
+  font-weight: 600;
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--a-line);
+}
+.admin-shell .th-arrow-active { color: var(--a-accent); }
+.admin-shell tbody tr:hover > td { background-color: var(--a-hover); }
+.admin-shell .table-scroll { background: var(--a-surface); border-color: var(--a-line); border-radius: 12px; }
+.admin-shell .table-scroll thead th { background: var(--a-surface); box-shadow: inset 0 -1px 0 var(--a-line); }
+
+/* Admin Matchups table cells defined in the global sheet */
+.admin-shell .matchups-table td { border-bottom: 1px solid var(--a-row); }
+
+/* ---------------------------------------------------------------------
+   Shared building blocks for redesigned pages
+   --------------------------------------------------------------------- */
+.admin-panel { background: var(--a-surface); border: 1px solid var(--a-line); border-radius: 12px; padding: 16px 18px; min-width: 0; box-shadow: var(--a-shadow); }
+.admin-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.admin-panel-head h3 { margin: 0; font-size: 0.98rem; font-weight: 700; color: var(--a-ink); }
+.admin-panel-head .admin-link { font-size: 0.8rem; }
+.admin-link { background: none; border: 0; padding: 0; font: inherit; color: var(--a-accent); font-weight: 600; cursor: pointer; text-decoration: none; }
+.admin-link:hover { text-decoration: underline; }
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.admin-stat { background: var(--a-surface); border: 1px solid var(--a-line); border-radius: 12px; padding: 12px 14px; box-shadow: var(--a-shadow); min-width: 0; }
+.admin-stat .l { color: var(--a-ink-2); font-size: 0.78rem; }
+.admin-stat .v { font-size: 1.5rem; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; color: var(--a-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-stat .d { font-size: 0.76rem; color: var(--a-muted); }
+.admin-stat .d.up { color: var(--c-ok); }
+.admin-stat .d.down { color: var(--c-err); }
+.admin-cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .admin-cols { grid-template-columns: minmax(0, 1fr); } }
+.admin-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--a-row); color: var(--a-ink-2); white-space: nowrap; }
+.admin-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.75; }
+.admin-pill.ok { background: var(--c-ok-bg); color: var(--c-ok); }
+.admin-pill.bad { background: var(--c-err-bg); color: var(--c-err); }
+.admin-pill.warn { background: var(--c-warn-bg); color: var(--c-warn); }
+.admin-pill.info { background: var(--c-info-bg); color: var(--c-info); }
+.admin-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--a-line); margin: 4px 0 16px; flex-wrap: wrap; }
+.admin-tabs button { padding: 8px 14px; font: inherit; font-weight: 600; font-size: 0.88rem; color: var(--a-ink-2); background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.admin-tabs button:hover { color: var(--a-ink); }
+.admin-tabs button.on { color: var(--a-ink); border-color: var(--brand-gold); }
+.admin-seg { display: inline-flex; border: 1px solid var(--a-field-line); border-radius: 8px; overflow: hidden; }
+.admin-seg button { padding: 6px 12px; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--a-ink-2); background: var(--a-field); border: 0; border-right: 1px solid var(--a-field-line); cursor: pointer; }
+.admin-seg button:last-child { border-right: 0; }
+.admin-seg button:hover { color: var(--a-ink); }
+.admin-seg button.on { background: var(--a-primary); color: var(--a-primary-ink); }
+.admin-callout { border-left: 3px solid var(--c-info); background: var(--c-info-bg); padding: 8px 12px; border-radius: 6px; font-size: 0.84rem; color: var(--a-ink); }
+.admin-callout.ok { border-color: var(--c-ok); background: var(--c-ok-bg); }
+.admin-callout.bad { border-color: var(--c-err); background: var(--c-err-bg); }
+.admin-callout.warn { border-color: var(--c-warn); background: var(--c-warn-bg); }
+.admin-field { display: grid; gap: 3px; font-size: 0.74rem; font-weight: 600; color: var(--a-ink-2); }
+.admin-toolbar { display: flex; gap: 10px 12px; align-items: end; flex-wrap: wrap; }
+.admin-progress { height: 6px; border-radius: 999px; background: var(--a-row); overflow: hidden; }
+.admin-progress span { display: block; height: 100%; background: var(--brand-gold); border-radius: inherit; transition: width 0.3s ease; }
+.admin-muted { color: var(--a-muted); }
+@media (prefers-reduced-motion: reduce) { .admin-progress span { transition: none; } }
+
+/* Overview pieces */
+.admin-quicklinks { display: grid; gap: 8px; }
+.admin-quicklinks button { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid var(--a-line); border-radius: 9px; color: var(--a-ink); background: var(--a-surface); font: inherit; font-weight: 600; font-size: 0.88rem; cursor: pointer; text-align: left; }
+.admin-quicklinks button:hover { border-color: var(--a-accent); background: var(--a-hover); }
+.admin-quicklinks button span { color: var(--a-muted); font-weight: 400; font-size: 0.78rem; }
+.admin-mini-table { width: 100% !important; font-size: 0.84rem; border-collapse: collapse; }
+.admin-mini-table td { padding: 7px 4px; border-bottom: 1px solid var(--a-row); white-space: nowrap; }
+.admin-mini-table td:nth-child(2) { white-space: normal; padding-left: 10px; padding-right: 10px; }
+.admin-mini-table tr:last-child td { border-bottom: 0; }
+.admin-checklist { font-size: 0.92rem; }
+.admin-checklist input[type="checkbox"] { width: 15px; height: 15px; }
+
+/* Faint tints that used to be white-on-dark overlays in panel inline styles */
+.admin-shell { --a-tint-1: rgba(31, 32, 65, 0.035); --a-tint-2: rgba(31, 32, 65, 0.07); --a-tint-3: rgba(31, 32, 65, 0.1); }
+.admin-shell[data-admin-theme="dark"], .export-surface { --a-tint-1: rgba(255, 255, 255, 0.035); --a-tint-2: rgba(255, 255, 255, 0.05); --a-tint-3: rgba(255, 255, 255, 0.08); }
+
+/* Collapsible notes under a page description */
+.admin-details { margin: -4px 0 14px; font-size: 0.84rem; color: var(--a-ink-2); }
+.admin-details summary { cursor: pointer; color: var(--a-accent); font-weight: 600; width: max-content; }
+.admin-details p { margin: 8px 0 0; max-width: 110ch; line-height: 1.5; }
+
+/* Save bar that appears under a table when rows are selected */
+.admin-selbar { position: sticky; bottom: 12px; z-index: 30; display: flex; align-items: center; gap: 12px; margin: 12px 0; padding: 10px 14px; background: var(--a-accent-soft); border: 1px solid var(--a-accent); border-radius: 10px; box-shadow: 0 6px 20px rgba(20, 22, 50, 0.12); font-size: 0.88rem; color: var(--a-ink); }
+
+/* ---------------------------------------------------------------------
+   Admin Matchups (Spreads): pinned matchup columns, grouped headers,
+   pick tags. The column widths match the pinned offsets below.
+   --------------------------------------------------------------------- */
+.admin-shell .admin-mu-controls .admin-seg { box-shadow: none; }
+.admin-shell .mu-sticky .mu-stk { position: sticky; z-index: 3; background-color: var(--a-surface); }
+.admin-shell .mu-sticky thead th.mu-stk { z-index: 25; }
+.admin-shell .mu-sticky .mu-c0 { left: 0; width: 44px; min-width: 44px; }
+.admin-shell .mu-sticky .mu-c1 { left: 44px; width: 140px; min-width: 140px; }
+.admin-shell .mu-sticky .mu-c2 { left: 184px; width: 52px; min-width: 52px; }
+.admin-shell .mu-sticky .mu-c3 { left: 236px; width: 190px; min-width: 190px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.admin-shell .mu-sticky .mu-c4 { left: 426px; width: 190px; min-width: 190px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; box-shadow: 6px 0 8px -6px rgba(20, 22, 50, 0.22); }
+.admin-shell .mu-sticky tr.mu-groups th { position: static; padding: 8px 8px 4px; font-size: 0.62rem; letter-spacing: 0.1em; color: var(--a-muted); border-bottom: 2px solid var(--a-line); cursor: default; background: var(--a-surface); box-shadow: none; text-align: left; }
+.admin-shell .mu-sticky tr.mu-groups th.mu-g-picks { border-color: var(--brand-gold); color: var(--a-ink-2); }
+.admin-shell .mu-sticky tr.mu-groups th.mu-c-span { position: static; width: auto; }
+.admin-shell .mu-row-bet td.mu-c0 { box-shadow: inset 3px 0 0 var(--brand-gold); }
+.admin-shell .mu-row-sel > td, .admin-shell .mu-row-sel > td.mu-stk { background-color: var(--a-accent-soft); }
+.admin-shell .mu-team { font-weight: 600; }
+.mu-check { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--c-ok-bg); color: var(--c-ok); font-weight: 800; font-size: 0.7rem; }
+.mu-dash { color: var(--a-muted); opacity: 0.6; }
+.mu-bet-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: rgba(255, 200, 87, 0.3); color: var(--a-ink); font-weight: 700; }
+.admin-shell[data-admin-theme="dark"] .mu-bet-tag { background: rgba(255, 200, 87, 0.18); color: var(--brand-gold); }
+.mu-tag-warn { display: inline-block; padding: 2px 7px; border-radius: 6px; background: var(--c-warn-bg); color: var(--c-warn); font-weight: 600; }
+.mu-res { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-weight: 800; font-size: 0.7rem; margin-left: 4px; }
+.mu-res.ok { background: var(--c-ok-bg); color: var(--c-ok); }
+.mu-res.bad { background: var(--c-err-bg); color: var(--c-err); }

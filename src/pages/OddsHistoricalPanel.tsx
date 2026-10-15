@@ -209,9 +209,6 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Historical Odds Pull</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Manual, one-time pull of PAST games' game-level team totals and 1H/2H/quarter markets from The Odds API's historical endpoint.

@@ -391,7 +391,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                       }
                     />
                   </td>
-                  <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", color: started ? "#e07a7a" : undefined }} title={started ? "Already kicked off — freezing now captures the current ratings, not the pregame ones" : undefined}>
+                  <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", color: started ? "var(--c-err)" : undefined }} title={started ? "Already kicked off — freezing now captures the current ratings, not the pregame ones" : undefined}>
                     {g.start_date ? new Date(g.start_date).toLocaleString() : "–"}
                     {started ? " ⚠" : ""}
                   </td>
@@ -515,9 +515,6 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Freeze Week</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0, maxWidth: 640 }}>
         Freezes "my" spread, total, win% and the 1H/2H/quarter projections for the games you choose (tick
@@ -546,7 +543,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {games != null && (
         <>
@@ -588,13 +585,13 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     overwrites the frozen value permanently with whatever you enter, it isn't re-derived
                     from ratings.
                   </p>
-                  {correctionMsg && <p style={{ color: "#8fd39a" }}>{correctionMsg}</p>}
+                  {correctionMsg && <p style={{ color: "var(--c-ok)" }}>{correctionMsg}</p>}
                   {lockedGames.some((g) => existingLocks[g.id]?.my_total == null) && (
                     <div style={{ marginBottom: "1rem" }}>
                       <button onClick={fillAllMissingTotals} disabled={fillingTotals}>
                         {fillingTotals ? "Filling…" : "Fill All Missing Totals From Current Model"}
                       </button>
-                      {fillTotalsMsg && <span style={{ marginLeft: "0.6rem", color: "#8fd39a" }}>{fillTotalsMsg}</span>}
+                      {fillTotalsMsg && <span style={{ marginLeft: "0.6rem", color: "var(--c-ok)" }}>{fillTotalsMsg}</span>}
                     </div>
                   )}
                   {(["fbsVfbs", "cross", "fcsVfcs"] as DivBucket[]).map((b) => (
@@ -622,10 +619,10 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
                     {csvBusy && <p style={{ fontSize: "0.82rem" }}>Processing…</p>}
                     {csvResult && (
                       <div style={{ marginTop: "0.6rem", fontSize: "0.82rem" }}>
-                        <p style={{ color: "#8fd39a", margin: 0 }}>Applied {csvResult.applied} correction(s).</p>
+                        <p style={{ color: "var(--c-ok)", margin: 0 }}>Applied {csvResult.applied} correction(s).</p>
                         {csvResult.skipped.length > 0 && (
                           <>
-                            <p style={{ color: "#a15c00", margin: "0.4rem 0 0.2rem" }}>Skipped {csvResult.skipped.length} row(s):</p>
+                            <p style={{ color: "var(--c-warn)", margin: "0.4rem 0 0.2rem" }}>Skipped {csvResult.skipped.length} row(s):</p>
                             <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
                               {csvResult.skipped.map((s, i) => (
                                 <li key={i}>
@@ -647,7 +644,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
 
       {result && (
         <div style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--hash)", borderRadius: 8, maxWidth: 700 }}>
-          <p style={{ color: "#8fd39a", fontWeight: 700, margin: 0 }}>
+          <p style={{ color: "var(--c-ok)", fontWeight: 700, margin: 0 }}>
             Froze {result.locked} new game{result.locked === 1 ? "" : "s"} for Week {week}.
           </p>
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.82rem", margin: "0.3rem 0 0" }}>
@@ -662,7 +659,7 @@ export default function LockGamesPanel({ onBack }: { onBack: () => void }) {
           )}
           {result.missing.length > 0 && (
             <div style={{ marginTop: "0.5rem" }}>
-              <p style={{ color: "#e0a030", fontWeight: 700, margin: 0, fontSize: "0.85rem" }}>
+              <p style={{ color: "var(--c-warn)", fontWeight: 700, margin: 0, fontSize: "0.85rem" }}>
                 {result.missing.length} game{result.missing.length === 1 ? "" : "s"} could NOT be frozen —
                 not silently skipped, flagging so you know these still need attention:
               </p>

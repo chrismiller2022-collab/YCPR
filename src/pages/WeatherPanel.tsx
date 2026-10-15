@@ -82,19 +82,19 @@ function WeatherIcon({ code, isDay, size = 20 }: { code: number | null; isDay?: 
   const night = isDay === false;
   switch (weatherKind(code)) {
     case "clear":
-      return night ? <Moon {...props} color="#d8dcff" /> : <Sun {...props} color="#ffc857" />;
+      return night ? <Moon {...props} color="#8a90c8" /> : <Sun {...props} color="#f0a500" />;
     case "partly":
-      return night ? <CloudMoon {...props} color="#d8dcff" /> : <CloudSun {...props} color="#ffd98a" />;
+      return night ? <CloudMoon {...props} color="#8a90c8" /> : <CloudSun {...props} color="#e7a923" />;
     case "cloudy":
-      return <Cloud {...props} color="#c9cbe0" />;
+      return <Cloud {...props} color="#9a9cb8" />;
     case "fog":
-      return <CloudFog {...props} color="#c9cbe0" />;
+      return <CloudFog {...props} color="#9a9cb8" />;
     case "drizzle":
       return <CloudDrizzle {...props} color="#8fbef0" />;
     case "rain":
       return <CloudRain {...props} color="#5b9bd5" />;
     case "snow":
-      return <CloudSnow {...props} color="#e8f1ff" />;
+      return <CloudSnow {...props} color="#7fa6d6" />;
     case "storm":
       return <CloudLightning {...props} color="#ffc857" />;
     default:
@@ -234,7 +234,7 @@ function MatchupCard({ c }: { c: Card }) {
             <Stat
               label="Wind"
               value={
-                <span style={{ color: windy ? "#7fc8f8" : undefined }}>
+                <span style={{ color: windy ? "var(--c-info)" : undefined }}>
                   {fmtMph(w.avgWind)} <span style={{ fontSize: "0.7rem", fontWeight: 400 }}>mph</span>
                 </span>
               }
@@ -421,9 +421,6 @@ export default function WeatherPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Game Weather</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Weather for each game from Open-Meteo, at the venue CFBD lists for the game (neutral sites included), or the home team's stadium when no
@@ -471,10 +468,10 @@ export default function WeatherPanel({ onBack }: { onBack: () => void }) {
           whose neutral-site games show no venue.
         </span>
       </div>
-      {pullMsg && <p style={{ color: "#8fd39a", fontSize: "0.82rem" }}>{pullMsg}</p>}
-      {pullError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{pullError}</p>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {weatherError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{weatherError}</p>}
+      {pullMsg && <p style={{ color: "var(--c-ok)", fontSize: "0.82rem" }}>{pullMsg}</p>}
+      {pullError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{pullError}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
+      {weatherError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{weatherError}</p>}
 
       {!loading && cards.length > 0 && (
         <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>

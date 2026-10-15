@@ -166,7 +166,7 @@ function AutoPullStatus() {
         Refreshes the live ratings above on a schedule during the season (Aug 1 – Feb 10). It never saves a week, overwrites a saved week or changes the public
         ratings — Save as Week and Push YC stay manual.
       </p>
-      {error && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)", fontSize: "0.8rem" }}>{error}</p>}
       {runs && runs.length === 0 && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>No scheduled runs recorded yet.</p>}
       <div className="table-scroll" style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", fontSize: "0.76rem", width: "100%" }}>
@@ -184,7 +184,7 @@ function AutoPullStatus() {
               <tr key={source} style={{ borderTop: "1px solid var(--hash)" }}>
                 <td style={{ padding: "0.25rem 0.6rem", fontWeight: 700, whiteSpace: "nowrap" }}>{AUTO_SOURCE_LABELS[source]}</td>
                 <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>{last ? fmtWhen(last.ran_at) : "–"}</td>
-                <td style={{ padding: "0.25rem 0.6rem", color: last ? (last.ok ? "#8fd39a" : "#e07a7a") : undefined }} title={last?.error ?? undefined}>
+                <td style={{ padding: "0.25rem 0.6rem", color: last ? (last.ok ? "var(--c-ok)" : "var(--c-err)") : undefined }} title={last?.error ?? undefined}>
                   {last ? (last.ok ? `OK — ${last.changed ?? 0} changed${last.label ? ` (${last.label})` : ""}` : `FAILED${last.error ? `: ${last.error.slice(0, 60)}` : ""}`) : "–"}
                 </td>
                 <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>
@@ -610,7 +610,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       </div>
       {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0, whiteSpace: "pre-line" }}>{log}</p>}
       {unmatched && (
-        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.5rem" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--c-warn)", marginTop: "0.5rem" }}>
           {unmatched.source}: {unmatched.names.length} team name(s) couldn't be matched and were skipped —{" "}
           {unmatched.names.join(", ")}
         </p>
@@ -686,7 +686,7 @@ function SystemPerformanceSummary({ season }: { season: number }) {
       <div className="section-label" style={{ marginBottom: "0.6rem" }}>
         Win % by system ({season} season-to-date)
       </div>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Loading…</p>
       ) : (
@@ -784,7 +784,7 @@ function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season:
         )}
       </div>
       {willOverwrite && !saving && (
-        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.4rem" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--c-warn)", marginTop: "0.4rem" }}>
           Week {week} already has a saved snapshot — saving again will overwrite it.
         </p>
       )}
@@ -1071,7 +1071,7 @@ function HistoryTable({
   // number means the team improved.
   function diffColor(v: number | null): string | undefined {
     if (!isDiff || v == null || v === 0) return undefined;
-    return v < 0 ? "#8fd39a" : "#e07a7a";
+    return v < 0 ? "var(--c-ok)" : "var(--c-err)";
   }
 
   return (
@@ -1241,7 +1241,7 @@ function PowerRatingsHistorySection() {
         {loadingWeeks && <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Loading weeks…</span>}
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {!loadingWeeks && savedWeeks.length === 0 && (
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
@@ -1314,9 +1314,6 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
         <button className={`mode-btn ${panelTab === "manage" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("manage")}>
@@ -1338,7 +1335,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
             Each system's live win % this season, and the weight editor for YC's customizable weighted average.
           </p>
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
           {loading ? (
             <p>Loading…</p>
           ) : (
@@ -1357,7 +1354,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
             source systems). Save the current table to a specific week once you're happy with it.
           </p>
 
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
           {loading ? (
             <p>Loading…</p>
           ) : (

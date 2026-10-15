@@ -619,7 +619,7 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                     <td
                       style={{
                         ...tdRight,
-                        color: impliedA != null ? (model.pAOverB / 100 - impliedA > 0 ? "#8fd39a" : "#c45c52") : undefined,
+                        color: impliedA != null ? (model.pAOverB / 100 - impliedA > 0 ? "var(--c-ok)" : "var(--c-err)") : undefined,
                       }}
                     >
                       {impliedA != null ? `${((model.pAOverB / 100 - impliedA) * 100).toFixed(1)} pts` : "–"}
@@ -648,7 +648,7 @@ function HeadToHeadTab({ run, mode }: { run: ReturnType<typeof useLoadedRun>; mo
                     <td
                       style={{
                         ...tdRight,
-                        color: impliedB != null ? (model.pBOverA / 100 - impliedB > 0 ? "#8fd39a" : "#c45c52") : undefined,
+                        color: impliedB != null ? (model.pBOverA / 100 - impliedB > 0 ? "var(--c-ok)" : "var(--c-err)") : undefined,
                       }}
                     >
                       {impliedB != null ? `${((model.pBOverA / 100 - impliedB) * 100).toFixed(1)} pts` : "–"}
@@ -674,9 +674,6 @@ export default function PmAdminPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Prediction Markets</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.8rem", marginTop: "-0.5rem" }}>

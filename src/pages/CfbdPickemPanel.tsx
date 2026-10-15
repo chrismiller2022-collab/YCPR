@@ -114,10 +114,10 @@ function HistoryBackfill({ season, onImported }: { season: number; onImported: (
             {importing ? "Saving…" : `Save ${result.resolved.length} prediction${result.resolved.length === 1 ? "" : "s"}`}
           </button>
         )}
-        {msg && <span style={{ color: msg.startsWith("Saved") ? "#8fd39a" : "#e0a030" }}>{msg}</span>}
+        {msg && <span style={{ color: msg.startsWith("Saved") ? "var(--c-ok)" : "var(--c-warn)" }}>{msg}</span>}
       </div>
       {result && result.errors.length > 0 && (
-        <div style={{ marginTop: "0.5rem", color: "#e0a030", fontSize: "0.78rem" }}>
+        <div style={{ marginTop: "0.5rem", color: "var(--c-warn)", fontSize: "0.78rem" }}>
           {result.errors.length} row{result.errors.length === 1 ? "" : "s"} couldn't be resolved:
           <ul>
             {result.errors.map((e, i) => (
@@ -287,9 +287,6 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>CFBD Pick'em</h2>
@@ -305,7 +302,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         predictions here so they can be graded once games finish.
       </p>
 
-      {statsError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{statsError}</p>}
+      {statsError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{statsError}</p>}
       {stats && <StatsBlock stats={stats} />}
 
       {details.length > 0 && (
@@ -329,8 +326,8 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
                 <tbody>
                   {details.map((d) => (
                     <tr key={d.game_id}>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{d.week ?? "–"}</td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)" }}>{d.week ?? "–"}</td>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)" }}>
                         {d.away_team} @ {d.home_team}{" "}
                         {d.week != null && (
                           <button
@@ -342,17 +339,17 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
                           </button>
                         )}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {d.predicted_margin.toFixed(2)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)" }}>
                         {d.completed && d.away_points != null && d.home_points != null ? `${d.away_points}-${d.home_points}` : "–"}
                       </td>
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
-                          color: d.suGrade === "win" ? "#8fd39a" : d.suGrade === "loss" ? "#e07a7a" : "var(--chalk-dim)",
+                          borderBottom: "1px solid var(--a-tint-2)",
+                          color: d.suGrade === "win" ? "var(--c-ok)" : d.suGrade === "loss" ? "var(--c-err)" : "var(--chalk-dim)",
                         }}
                       >
                         {d.suGrade === "pending" ? "–" : d.suGrade}
@@ -360,8 +357,8 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
-                          color: d.atsGrade === "win" ? "#8fd39a" : d.atsGrade === "loss" ? "#e07a7a" : "var(--chalk-dim)",
+                          borderBottom: "1px solid var(--a-tint-2)",
+                          color: d.atsGrade === "win" ? "var(--c-ok)" : d.atsGrade === "loss" ? "var(--c-err)" : "var(--chalk-dim)",
                         }}
                       >
                         {d.atsGrade === "pending" ? "–" : d.atsGrade}
@@ -387,8 +384,8 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
         <button onClick={handleSyncNow} disabled={syncing}>
           {syncing ? "Syncing…" : "Sync my picks now"}
         </button>
-        {syncResult && <p style={{ color: "#8fd39a", fontSize: "0.82rem" }}>{syncResult}</p>}
-        {syncError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{syncError}</p>}
+        {syncResult && <p style={{ color: "var(--c-ok)", fontSize: "0.82rem" }}>{syncResult}</p>}
+        {syncError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{syncError}</p>}
       </div>
 
       <HistoryBackfill season={currentSeason} onImported={loadStats} />
@@ -407,7 +404,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
       </button>
 
       {unmatched.length > 0 && (
-        <p style={{ color: "#a15c00", fontSize: "0.82rem" }}>
+        <p style={{ color: "var(--c-warn)", fontSize: "0.82rem" }}>
           No power rating found for: {unmatched.join(", ")}. Those rows were left blank —
           likely a name mismatch between CFBD and data/teams.ts worth reconciling.
         </p>
@@ -428,7 +425,7 @@ export default function CfbdPickemPanel({ onBack }: { onBack: () => void }) {
           <button onClick={handleSavePredictions} disabled={saving} style={{ marginTop: "0.5rem", marginLeft: "0.5rem" }}>
             {saving ? "Saving…" : "Save predictions for grading"}
           </button>
-          {saveMsg && <p style={{ color: saveMsg.startsWith("Saved") ? "#8fd39a" : "crimson", fontSize: "0.82rem" }}>{saveMsg}</p>}
+          {saveMsg && <p style={{ color: saveMsg.startsWith("Saved") ? "var(--c-ok)" : "var(--c-err)", fontSize: "0.82rem" }}>{saveMsg}</p>}
         </>
       )}
       {handicapGame && (

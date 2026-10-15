@@ -129,7 +129,7 @@ function GameSelectionStep({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="section-label">
           1. Select this week's games (FBS vs FBS){" "}
-          <span style={{ color: selected.size >= MAX_GAMES ? "#a15c00" : "var(--chalk-dim)", fontWeight: 400 }}>
+          <span style={{ color: selected.size >= MAX_GAMES ? "var(--c-warn)" : "var(--chalk-dim)", fontWeight: 400 }}>
             · {selected.size}/{MAX_GAMES}
           </span>
         </div>
@@ -206,7 +206,7 @@ function GameSelectionStep({
           {saving ? "Saving…" : "Save selected games"}
         </button>
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -464,7 +464,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.75rem" }}>
         {saving ? "Saving…" : "Save picks"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {handicapGame && (
         <MatchupHandicapPopup
           season={season}
@@ -486,9 +486,6 @@ export default function EspnSpreadPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>ESPN Spreads</h2>

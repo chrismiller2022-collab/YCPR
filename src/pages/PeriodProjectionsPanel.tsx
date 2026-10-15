@@ -411,7 +411,7 @@ export function GradeSection({ title, items, note }: { title: string; items: Gra
                       <td style={{ ...cell, textAlign: "right" }}>{b.market === "spread" ? fmtSpread(b.mine) : fmtNum(b.mine)}</td>
                       <td style={{ ...cell, textAlign: "right" }}>{b.off.toFixed(1)}</td>
                       <td style={cell}>{b.pick}</td>
-                      <td style={{ ...cell, color: b.result === "win" ? "#8fd39a" : b.result === "loss" ? "#e07a7a" : undefined }}>{b.result}</td>
+                      <td style={{ ...cell, color: b.result === "win" ? "var(--c-ok)" : b.result === "loss" ? "var(--c-err)" : undefined }}>{b.result}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -809,9 +809,6 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Period Projections</h2>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>

@@ -8,7 +8,7 @@ import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./Performance
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 
-const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
+const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid var(--a-tint-2)", whiteSpace: "nowrap" };
 
 function fmt(v: number | null | undefined, digits = 1): string {
   return v == null || Number.isNaN(v) ? "–" : v.toFixed(digits);
@@ -358,7 +358,7 @@ export function PredictionsContent() {
         ))}
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <div className="empty">Loading…</div>
       ) : topTab === "games" ? (
@@ -383,9 +383,6 @@ export function PredictionsContent() {
 export default function PredictionsAdminPanel({ onBack }: { onBack: () => void }) {
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Predictions</h2>
       <PredictionsContent />
     </div>
