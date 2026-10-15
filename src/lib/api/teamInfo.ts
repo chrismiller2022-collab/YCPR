@@ -89,6 +89,7 @@ export async function pullTeamInfo(season: number, week: number | null, parts: s
     pgwe?: { games: number; withPgwe: number };
     netSr?: { fetched: number; saved: number };
     coaches?: { fetched: number; historySeasons?: number; teams: number; staleTeams: number };
+    venues?: { venues: number; withCoords: number; teams: number; games: number; gamesWithVenue: number };
     warnings?: string[];
   };
 }

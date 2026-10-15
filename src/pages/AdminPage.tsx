@@ -42,6 +42,7 @@ import RatingSystemsPanel from "./RatingSystemsPanel";
 import SosAdminPanel from "./SosAdminPanel";
 import MatchupHistoryPanel from "./MatchupHistoryPanel";
 import TeamInfoPanel from "./TeamInfoPanel";
+import WeatherPanel from "./WeatherPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import DrogbaAdminPanel from "./DrogbaAdminPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
@@ -238,6 +239,7 @@ type AdminView =
   | "periodproj"
   | "matchuphistory"
   | "teaminfo"
+  | "weather"
   | "oddshistorical"
   | "periodgrading"
   | "pm"
@@ -549,6 +551,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "publish", label: "Publish" },
       { key: "montecarlo", label: "Monte Carlo" },
       { key: "gameslines", label: "Games & Lines" },
+      { key: "weather", label: "Game Weather" },
       { key: "pools", label: "Pools" },
     ],
   },
@@ -1005,6 +1008,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}
           {view === "teaminfo" && <TeamInfoPanel onBack={() => setView("home")} />}
+          {view === "weather" && <WeatherPanel onBack={() => setView("home")} />}
 
           {view === "oddshistorical" && <OddsHistoricalPanel onBack={() => setView("home")} />}
 
