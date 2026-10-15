@@ -16,22 +16,32 @@ export const PLAYOFF24_AUTO_CONFERENCES = [
   "Pac-12",
 ];
 
-export function computeAutoBidChampion(conf) {
-  const candidates = TEAMS.filter(
-    (t) => t.div === "FBS" && t.conf === conf && CONF_FUTURES_BY_TEAM[t.team]
-  );
+/** Conference-title probability (0-1) per team, e.g. from the latest Monte Carlo run. */
+export type ConfOddsByTeam = Record<string, number>;
+
+// Each conference's auto-bid goes to its team with the best odds to win the
+// conference. confOdds comes from the latest saved Monte Carlo run; without
+// one (no run saved yet this season) it falls back to the static preseason
+// conference futures.
+function confOddsFor(team: string, confOdds?: ConfOddsByTeam | null): number | null {
+  if (confOdds) return confOdds[team] ?? null;
+  return CONF_FUTURES_BY_TEAM[team]?.confWinPct ?? null;
+}
+
+export function computeAutoBidChampion(conf, confOdds?: ConfOddsByTeam | null) {
+  const candidates = TEAMS.filter((t) => t.div === "FBS" && t.conf === conf && confOddsFor(t.team, confOdds) != null);
   if (candidates.length === 0) return null;
   return candidates.reduce((best, t) => {
-    const p = CONF_FUTURES_BY_TEAM[t.team]?.confWinPct ?? 0;
-    const bestP = best ? CONF_FUTURES_BY_TEAM[best.team]?.confWinPct ?? 0 : -1;
+    const p = confOddsFor(t.team, confOdds) ?? 0;
+    const bestP = best ? confOddsFor(best.team, confOdds) ?? 0 : -1;
     return p > bestP ? t : best;
   }, null);
 }
 
-export function buildPlayoff24Field() {
+export function buildPlayoff24Field(confOdds?: ConfOddsByTeam | null) {
   const autoBids = PLAYOFF24_AUTO_CONFERENCES.map((conf) => ({
     conf,
-    team: computeAutoBidChampion(conf),
+    team: computeAutoBidChampion(conf, confOdds),
   })).filter((x) => x.team);
 
   const autoNames = new Set(autoBids.map((x) => x.team.team));

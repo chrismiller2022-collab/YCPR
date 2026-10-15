@@ -136,6 +136,59 @@ export function useLatestMonteCarloWinTotals(season: number, weekNum?: number | 
 }
 
 /**
+ * Conference-title odds from the most recently saved Monte Carlo run
+ * (same "latest run" definition as useLatestMonteCarloWinTotals), as a
+ * 0-1 probability per team. Used by the 24-team playoff tool to pick each
+ * conference's auto-bid. `run` says which run it came from; `noRunYet`
+ * is true when the season has no saved run (callers fall back to the
+ * static preseason odds).
+ */
+export function useLatestMonteCarloConfOdds(season: number) {
+  const [byTeam, setByTeam] = useState<Record<string, number>>({});
+  const [run, setRun] = useState<MonteCarloRunSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [noRunYet, setNoRunYet] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const list = await fetchMonteCarloRuns(season);
+      const latest = list[0] ? await fetchMonteCarloRun(list[0].id) : null;
+      if (cancelled) return;
+      if (!latest) {
+        setByTeam({});
+        setRun(null);
+        setNoRunYet(true);
+        return;
+      }
+      const map: Record<string, number> = {};
+      for (const r of latest.results) {
+        if (r.confTitlePct != null) map[r.team] = r.confTitlePct / 100;
+      }
+      setByTeam(map);
+      setRun({ id: latest.id, season: latest.season, week: latest.week, num_trials: latest.num_trials, run_at: latest.run_at });
+      setNoRunYet(false);
+    })()
+      .catch(() => {
+        if (!cancelled) {
+          setByTeam({});
+          setRun(null);
+          setNoRunYet(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  return { byTeam, run, loading, noRunYet };
+}
+
+/**
  * One entry per week that has at least one saved run this season, pointing
  * at that week's MOST RECENT run only — the "select week" dropdown pattern
  * used by Playoff Seeds / Betting / Conference Standings, which deliberately
