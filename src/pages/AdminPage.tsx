@@ -52,6 +52,8 @@ import AdminChecklistPage from "./AdminChecklistPage";
 import { WEEK_OPTIONS } from "../lib/weekOptions";
 import { AdminWeekProvider } from "../lib/adminWeek";
 import AdminWeekSelector from "../components/AdminWeekSelector";
+import PasskeysPanel from "./PasskeysPanel";
+import { passkeysSupported, restorePasskeySession, signInWithPasskey } from "../lib/adminAuth";
 
 // Maps flexible/human column headers (however you happen to label them when
 // pasting from a spreadsheet) to the actual database column names. Keys are
@@ -274,7 +276,8 @@ type AdminView =
   | "ratingsystems"
   | "ratingmatchups"
   | "sos"
-  | "checklist";
+  | "checklist"
+  | "passkeys";
 
 // ---------------------------------------------------------------------
 // Password gate — verifies against /api/admin-save (action: "checkPassword")
@@ -285,6 +288,19 @@ function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+
+  async function passkeyLogin() {
+    setChecking(true);
+    setError(null);
+    try {
+      await signInWithPasskey();
+      onAuthed();
+    } catch (err: any) {
+      setError(err.message ?? "Passkey sign-in failed");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function submit() {
     if (!password) {
@@ -334,6 +350,11 @@ function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?
       <button onClick={submit} disabled={checking}>
         {checking ? "Checking…" : "Continue"}
       </button>
+      {passkeysSupported() && (
+        <button onClick={passkeyLogin} disabled={checking} style={{ marginLeft: "0.5rem" }}>
+          Sign in with passkey
+        </button>
+      )}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
       <p style={{ marginTop: "2rem" }}>
         <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
@@ -568,6 +589,10 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Public tools",
     items: [{ key: "survivorpooladmin", label: "Survivor Pool (Public)" }],
+  },
+  {
+    label: "Settings",
+    items: [{ key: "passkeys", label: "Passkeys" }],
   },
   {
     label: "Archived",
@@ -851,7 +876,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   const [loadingSummary, setLoadingSummary] = useState(true);
 
   useEffect(() => {
-    if (sessionStorage.getItem(ADMIN_AUTH_KEY) === "1") setAuthed(true);
+    if (sessionStorage.getItem(ADMIN_AUTH_KEY) === "1" || restorePasskeySession()) setAuthed(true);
   }, []);
 
   function loadSummary() {
@@ -975,6 +1000,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
           {view === "drogba" && <DrogbaAdminPanel onBack={() => setView("home")} />}
+          {view === "passkeys" && <PasskeysPanel onBack={() => setView("home")} />}
 
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}

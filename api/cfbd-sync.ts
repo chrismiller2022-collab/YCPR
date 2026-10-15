@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 // This runs on Vercel's servers, not in the browser — CFBD_API_KEY and the
@@ -6,6 +7,34 @@ import { createClient } from "@supabase/supabase-js";
 // though the Admin gate already confirmed it once client-side.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const CFBD_API_KEY = process.env.CFBD_API_KEY;
 // Separate from CFBD_API_KEY on purpose — CFBD's own docs are explicit
 // that the Model Pick'em prediction token is a different credential
@@ -876,7 +905,7 @@ export default async function handler(req: any, res: any) {
 
   if (req.body?.mode === "predictions") {
     const { password } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
+    if (!(await isAdmin(password))) {
       res.status(401).json({ error: "Incorrect password" });
       return;
     }
@@ -894,7 +923,7 @@ export default async function handler(req: any, res: any) {
 
   if (req.body?.mode === "drogba") {
     const { password, year, week, part } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
+    if (!(await isAdmin(password))) {
       res.status(401).json({ error: "Incorrect password" });
       return;
     }
@@ -920,7 +949,7 @@ export default async function handler(req: any, res: any) {
 
   if (req.body?.mode === "teaminfo") {
     const { password, year, week, parts } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
+    if (!(await isAdmin(password))) {
       res.status(401).json({ error: "Incorrect password" });
       return;
     }
@@ -948,7 +977,7 @@ export default async function handler(req: any, res: any) {
 
   const { password, year, week, seasonType, syncStats } = req.body ?? {};
 
-  if (password !== ADMIN_PASSWORD) {
+  if (!(await isAdmin(password))) {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
