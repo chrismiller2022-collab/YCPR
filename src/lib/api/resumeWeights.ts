@@ -74,6 +74,26 @@ export async function fetchResumeRatingsForWeek(season: number, week: number): P
   return out;
 }
 
+/**
+ * The most recent saved Resume Ratings week, ranked (1 = best score) — what
+ * the 24-team playoff tool uses for at-large bids and seeding. Null when no
+ * week has been saved yet this season.
+ */
+export async function fetchLatestSavedResumeRanks(season: number): Promise<{ week: number; byTeam: Record<string, { rank: number; rating: number }> } | null> {
+  const weeks = await fetchResumeRatingsAvailableWeeks(season);
+  if (weeks.length === 0) return null;
+  const week = Math.max(...weeks);
+  const rows = await fetchResumeRatingsForWeek(season, week);
+  const ranked = Object.entries(rows)
+    .filter(([, r]) => r.score != null)
+    .sort((a, b) => (b[1].score as number) - (a[1].score as number));
+  const byTeam: Record<string, { rank: number; rating: number }> = {};
+  ranked.forEach(([team, r], i) => {
+    byTeam[team] = { rank: i + 1, rating: r.score as number };
+  });
+  return { week, byTeam };
+}
+
 export async function fetchResumeRatingsByWeeks(
   season: number
 ): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {

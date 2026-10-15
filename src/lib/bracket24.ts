@@ -38,7 +38,13 @@ export function computeAutoBidChampion(conf, confOdds?: ConfOddsByTeam | null) {
   }, null);
 }
 
-export function buildPlayoff24Field(confOdds?: ConfOddsByTeam | null) {
+/** Resume rank (1 = best) and rating per team, e.g. from the latest saved Resume Ratings week. */
+export type ResumeByTeam = Record<string, { rank: number; rating: number }>;
+
+// At-large bids and every seed come from resume: the latest saved Resume
+// Ratings week when given, else the static preseason resume file.
+export function buildPlayoff24Field(confOdds?: ConfOddsByTeam | null, resume?: ResumeByTeam | null) {
+  const resumeOf = resume ?? RESUME_BY_TEAM;
   const autoBids = PLAYOFF24_AUTO_CONFERENCES.map((conf) => ({
     conf,
     team: computeAutoBidChampion(conf, confOdds),
@@ -47,9 +53,9 @@ export function buildPlayoff24Field(confOdds?: ConfOddsByTeam | null) {
   const autoNames = new Set(autoBids.map((x) => x.team.team));
 
   const atLargePool = TEAMS.filter(
-    (t) => t.div === "FBS" && !autoNames.has(t.team) && RESUME_BY_TEAM[t.team]
+    (t) => t.div === "FBS" && !autoNames.has(t.team) && resumeOf[t.team]
   ).sort(
-    (a, b) => RESUME_BY_TEAM[a.team].rank - RESUME_BY_TEAM[b.team].rank
+    (a, b) => resumeOf[a.team].rank - resumeOf[b.team].rank
   );
 
   const atLarge = atLargePool.slice(0, 14);
@@ -61,8 +67,8 @@ export function buildPlayoff24Field(confOdds?: ConfOddsByTeam | null) {
 
   field.sort(
     (a, b) =>
-      (RESUME_BY_TEAM[a.team.team]?.rank ?? 999) -
-      (RESUME_BY_TEAM[b.team.team]?.rank ?? 999)
+      (resumeOf[a.team.team]?.rank ?? 999) -
+      (resumeOf[b.team.team]?.rank ?? 999)
   );
 
   return field.map((f, i) => ({ ...f, seed: i + 1 }));
