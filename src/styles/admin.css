@@ -16,6 +16,7 @@
    ===================================================================== */
 
 .admin-shell {
+  --a-hover-overlay: rgba(31, 32, 65, 0.045);
   /* surfaces + ink */
   --a-bg: #f4f5f9;
   --a-surface: #ffffff;
@@ -61,7 +62,7 @@
   --chalk: #16172e;
   --chalk-dim: #5b5f82;
   --gold: #8a5a00;
-  --gold-dim: #3b3d8f;
+  --gold-dim: #ffe3a3; /* highlight fill (key games, active chips); dark text sits on it */
   --good: #8a5a00;
   --pos-green: #157a3a;
   --neg-red: #c62828;
@@ -71,6 +72,7 @@
 
 .admin-shell[data-admin-theme="dark"],
 .export-surface {
+  --a-hover-overlay: rgba(255, 255, 255, 0.045);
   --a-bg: #1f2041;
   --a-surface: #292a52;
   --a-inset: #24254b;
@@ -315,7 +317,8 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
   border-bottom: 1px solid var(--a-line);
 }
 .admin-shell .th-arrow-active { color: var(--a-accent); }
-.admin-shell tbody tr:hover > td { background-color: var(--a-hover); }
+/* Hover darkens whatever the row already is (a key-game highlight stays visible) instead of replacing it. */
+.admin-shell tbody tr:hover > td { box-shadow: inset 0 0 0 9999px var(--a-hover-overlay); }
 .admin-shell .table-scroll { background: var(--a-surface); border-color: var(--a-line); border-radius: 12px; }
 .admin-shell .table-scroll thead th { background: var(--a-surface); box-shadow: inset 0 -1px 0 var(--a-line); }
 
@@ -376,7 +379,23 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 .admin-mini-table td:nth-child(2) { white-space: normal; padding-left: 10px; padding-right: 10px; }
 .admin-mini-table tr:last-child td { border-bottom: 0; }
 .admin-checklist { font-size: 0.92rem; }
-.admin-checklist input[type="checkbox"] { width: 15px; height: 15px; }
+.admin-checklist input[type="checkbox"] { width: 18px; height: 18px; }
+
+/* Sign-in page: a single card on the navy sidebar color */
+.admin-shell.admin-login { grid-template-columns: minmax(0, 1fr); place-items: center; background: var(--side); padding: 24px 16px; }
+.admin-login-card { width: 100%; max-width: 380px; display: grid; gap: 14px; background: var(--a-surface); border: 1px solid var(--a-line); border-radius: 16px; padding: 28px 26px 22px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); }
+.admin-login-brand { display: flex; align-items: center; gap: 10px; }
+.admin-login-brand i { width: 36px; height: 36px; border-radius: 9px; background: var(--brand-gold); color: #1f2041; font-style: normal; font-family: 'Anton', Impact, sans-serif; display: grid; place-items: center; font-size: 1.05rem; }
+.admin-login-brand b { display: block; font-family: 'Anton', Impact, sans-serif; font-weight: 400; letter-spacing: 0.04em; font-size: 1.15rem; line-height: 1; color: var(--a-ink); }
+.admin-login-brand small { display: block; font-size: 0.66rem; color: var(--a-muted); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 3px; }
+.admin-login-card .admin-page-title { margin: 4px 0 0; }
+.admin-login-card .admin-field { font-size: 0.8rem; }
+.admin-login-card input { font: inherit; font-size: 0.95rem; padding: 9px 11px; border: 1px solid var(--a-field-line); border-radius: 8px; background: var(--a-field); color: var(--a-ink); outline: none; width: 100%; }
+.admin-login-card input:focus { border-color: var(--a-focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--a-focus) 30%, transparent); }
+.admin-login-wide { width: 100%; justify-content: center; padding: 10px 14px !important; font-size: 0.92rem !important; }
+.admin-login-or { display: flex; align-items: center; gap: 10px; color: var(--a-muted); font-size: 0.78rem; }
+.admin-login-or::before, .admin-login-or::after { content: ""; flex: 1; height: 1px; background: var(--a-line); }
+.admin-login-back { justify-self: center; font-size: 0.84rem; margin-top: 2px; }
 
 /* Faint tints that used to be white-on-dark overlays in panel inline styles */
 .admin-shell { --a-tint-1: rgba(31, 32, 65, 0.035); --a-tint-2: rgba(31, 32, 65, 0.07); --a-tint-3: rgba(31, 32, 65, 0.1); }
@@ -416,3 +435,10 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 .mu-res { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-weight: 800; font-size: 0.7rem; margin-left: 4px; }
 .mu-res.ok { background: var(--c-ok-bg); color: var(--c-ok); }
 .mu-res.bad { background: var(--c-err-bg); color: var(--c-err); }
+
+/* Inputs inside table rows (pool lines, etc.): compact so the whole number fits */
+.admin-view td input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding: 3px 6px; min-height: 28px; font-size: 0.84rem; }
+
+/* Bigger checkboxes everywhere in admin; biggest in table rows (key / possible picks) */
+.admin-view input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; vertical-align: middle; }
+.admin-view td input[type="checkbox"] { width: 20px; height: 20px; }

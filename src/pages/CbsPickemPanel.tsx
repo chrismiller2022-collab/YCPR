@@ -488,7 +488,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                       step="0.5"
                       value={d.cbs_line ?? ""}
                       onChange={(e) => updateDraft(p.id, { cbs_line: e.target.value === "" ? null : Number(e.target.value) })}
-                      style={{ width: 55, textAlign: "right" }}
+                      style={{ width: 76, textAlign: "right" }}
                     />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>

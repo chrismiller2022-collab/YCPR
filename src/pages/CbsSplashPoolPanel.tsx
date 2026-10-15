@@ -586,7 +586,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           onChange={(e) =>
                             updateRow(r.game_id, { splash_line: e.target.value === "" ? null : Number(e.target.value) })
                           }
-                          style={{ width: 55, textAlign: "right" }}
+                          style={{ width: 76, textAlign: "right" }}
                         />
                         {(() => {
                           const crossed = keyNumbersBetween(r.myProjAwaySpread, r.splash_line);

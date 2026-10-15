@@ -810,7 +810,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                           onChange={(e) =>
                             updateRow(r.game_id, { westgate_line: e.target.value === "" ? null : Number(e.target.value) })
                           }
-                          style={{ width: 55, textAlign: "right" }}
+                          style={{ width: 76, textAlign: "right" }}
                         />
                         {(() => {
                           const crossed = keyNumbersBetween(r.myProjAwaySpread, r.westgate_line);

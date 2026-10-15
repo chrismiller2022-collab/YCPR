@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, Clock, ExternalLink, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
+import { ChevronRight, Clock, ExternalLink, KeyRound, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import "../styles/admin.css";
 import SurvivorPanel from "./SurvivorPanel";
 import SplashSurvivorPanel from "./SplashSurvivorPanel";
@@ -53,7 +53,7 @@ import ChecklistItemsBlock from "../components/ChecklistItemsBlock";
 import AdminChecklistPage from "./AdminChecklistPage";
 import { WEEK_OPTIONS } from "../lib/weekOptions";
 import { AdminWeekProvider, useAdminWeek } from "../lib/adminWeek";
-import { useAdminTheme, useSidebarCollapsed } from "../lib/adminPrefs";
+import { useAdminTheme, useSidebarCollapsed, type AdminTheme } from "../lib/adminPrefs";
 import { fetchPlacedBets } from "../lib/api/placedBets";
 import { addBetToRecord, emptyRecord, roi } from "../lib/betRecord";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -292,7 +292,7 @@ type AdminView =
 // on the server before granting access (previously this just checked the
 // field wasn't empty).
 // ---------------------------------------------------------------------
-function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?: () => void }) {
+function AdminPasswordGate({ onAuthed, onHome, theme }: { onAuthed: () => void; onHome?: () => void; theme: AdminTheme }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -341,34 +341,56 @@ function AdminPasswordGate({ onAuthed, onHome }: { onAuthed: () => void; onHome?
     }
   }
 
+  const canPasskey = passkeysSupported();
+
   return (
-    <div className="page" style={{ maxWidth: 420, margin: "4rem auto", padding: "0 1rem" }}>
-      <h2>Admin</h2>
-      <p>Enter the admin password to continue.</p>
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="Password"
-        style={{ width: "100%", padding: "0.6rem", marginBottom: "0.75rem" }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") submit();
+    <div className="admin-shell admin-login" data-admin-theme={theme}>
+      <form
+        className="admin-login-card"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
         }}
-      />
-      <button onClick={submit} disabled={checking}>
-        {checking ? "Checking…" : "Continue"}
-      </button>
-      {passkeysSupported() && (
-        <button onClick={passkeyLogin} disabled={checking} style={{ marginLeft: "0.5rem" }}>
-          Sign in with passkey
+      >
+        <div className="admin-login-brand">
+          <i>YC</i>
+          <span>
+            <b>YCPR</b>
+            <small>Admin</small>
+          </span>
+        </div>
+        <h1 className="admin-page-title" style={{ fontSize: "1.6rem" }}>
+          Sign in
+        </h1>
+        {canPasskey && (
+          <>
+            <button type="button" className="admin-btn primary admin-login-wide" onClick={passkeyLogin} disabled={checking}>
+              <KeyRound size={16} /> {checking ? "Checking…" : "Sign in with passkey"}
+            </button>
+            <div className="admin-login-or">
+              <span>or use the password</span>
+            </div>
+          </>
+        )}
+        <label className="admin-field" htmlFor="admin-password">
+          Password
+          <input
+            id="admin-password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus={!canPasskey}
+          />
+        </label>
+        <button type="submit" className={`admin-btn admin-login-wide${canPasskey ? "" : " primary"}`} disabled={checking}>
+          {checking ? "Checking…" : "Continue"}
         </button>
-      )}
-      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
-      <p style={{ marginTop: "2rem" }}>
-        <a href="#" onClick={(e) => { e.preventDefault(); onHome?.(); }}>
+        {error && <div className="admin-callout bad">{error}</div>}
+        <button type="button" className="admin-link admin-login-back" onClick={() => onHome?.()}>
           ← Back to site
-        </a>
-      </p>
+        </button>
+      </form>
     </div>
   );
 }
@@ -996,7 +1018,15 @@ interface AdminPageProps {
 }
 
 export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToSOS }: AdminPageProps) {
-  const [authed, setAuthed] = useState(false);
+  // Decided before the first paint: a signed-in tab (password earlier this session, or a passkey session saved on this
+  // device) goes straight to admin; anyone else sees only the sign-in page, never a flash of admin.
+  const [authed, setAuthed] = useState<boolean>(() => {
+    try {
+      return restorePasskeySession();
+    } catch {
+      return false;
+    }
+  });
   const [view, setView] = useState<AdminView>("home");
   const [lastUpload, setLastUpload] = useState<LastUpload | null>(null);
   const [currentWeek, setCurrentWeek] = useState<string | null>(null);
@@ -1006,10 +1036,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [theme, setTheme] = useAdminTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
-
-  useEffect(() => {
-    if (sessionStorage.getItem(ADMIN_AUTH_KEY) === "1" || restorePasskeySession()) setAuthed(true);
-  }, []);
 
   function navigate(v: AdminView) {
     setView(v);
@@ -1075,7 +1101,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   const checklistRemaining = currentWeek ? CHECKLIST_ITEMS.filter((item) => !checklistItemDone(item, checklist)).length : 0;
 
   if (!authed) {
-    return <AdminPasswordGate onAuthed={() => setAuthed(true)} onHome={onHome} />;
+    return <AdminPasswordGate onAuthed={() => setAuthed(true)} onHome={onHome} theme={theme} />;
   }
 
   return (
