@@ -140,7 +140,7 @@ function WeekDetailTable({ picks }: { picks: ContestSeasonResult["weeks"][number
       </thead>
       <tbody>
         {picks.map((p, i) => (
-          <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <tr key={i} style={{ borderTop: "1px solid var(--a-tint-2)" }}>
             <td style={{ padding: "0.25rem 0.5rem" }}>
               <TeamLink team={p.pick!} size={16} />
             </td>
@@ -156,7 +156,7 @@ function WeekDetailTable({ picks }: { picks: ContestSeasonResult["weeks"][number
               style={{
                 padding: "0.25rem 0.5rem",
                 textAlign: "right",
-                color: p.finalMargin == null ? undefined : p.finalMargin > 0 ? "#8fd39a" : "#c45c52",
+                color: p.finalMargin == null ? undefined : p.finalMargin > 0 ? "var(--c-ok)" : "var(--c-err)",
               }}
             >
               {p.finalMargin != null ? `${p.finalMargin > 0 ? "+" : ""}${p.finalMargin}` : "–"}
@@ -195,7 +195,7 @@ function StrategyResultCard({
           )}
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: "1.3rem", fontWeight: 800, color: winPct != null && winPct >= 52.4 ? "#8fd39a" : undefined }}>
+          <div style={{ fontSize: "1.3rem", fontWeight: 800, color: winPct != null && winPct >= 52.4 ? "var(--c-ok)" : undefined }}>
             {result.totalWins}-{result.totalLosses}
             {result.totalPushes > 0 ? `-${result.totalPushes}` : ""}
           </div>
@@ -215,7 +215,7 @@ function StrategyResultCard({
             {result.weeks.map((w) => (
               <Fragment key={w.week}>
                 <tr
-                  style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", cursor: "pointer" }}
+                  style={{ borderBottom: "1px solid var(--a-tint-2)", cursor: "pointer" }}
                   onClick={() => onExpandWeek(expandedWeek === w.week ? null : w.week)}
                 >
                   <td style={{ padding: "0.3rem 0.5rem", color: "var(--gold)" }}>Wk {w.week}</td>
@@ -228,7 +228,7 @@ function StrategyResultCard({
                           key={i}
                           style={{
                             marginRight: "0.6rem",
-                            color: p.grade === "win" ? "#8fd39a" : p.grade === "loss" ? "#c45c52" : "var(--chalk-dim)",
+                            color: p.grade === "win" ? "var(--c-ok)" : p.grade === "loss" ? "var(--c-err)" : "var(--chalk-dim)",
                           }}
                         >
                           <TeamLink team={p.pick!} size={16} />
@@ -306,9 +306,6 @@ export default function PoolHistoryPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
       <h2 style={{ marginTop: 0 }}>Pool History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         My own spread picks vs Vegas, by season — FBS vs FBS only, through Week 13 — separate from the real Spread

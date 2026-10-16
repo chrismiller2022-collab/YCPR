@@ -527,7 +527,7 @@ function OddscreenMoneyline({ rows, betSignals }: { rows: OddsMatchRow[]; betSig
                 <td style={{ ...TD, padding: 0 }}>
                   <SplitCell top={fmtPrice(my.myAwayMl)} bottom={fmtPrice(my.myHomeMl)} />
                 </td>
-                <td style={{ ...TD, color: ev != null && ev > 0 ? "#8fd39a" : undefined }}>
+                <td style={{ ...TD, color: ev != null && ev > 0 ? "var(--c-ok)" : undefined }}>
                   {ev != null ? `${ev > 0 ? "+" : ""}${ev.toFixed(1)}%` : "–"}
                 </td>
                 <td style={{ ...TD, padding: 0 }}>
@@ -811,7 +811,7 @@ function BetBadge({ label, tone }: { label: string; tone: "gold" | "green" }) {
         padding: "0.15rem 0.4rem",
         borderRadius: 4,
         background: tone === "gold" ? "rgba(255, 200, 87, 0.18)" : "rgba(63, 185, 80, 0.2)",
-        color: tone === "gold" ? "var(--gold)" : "#8fd39a",
+        color: tone === "gold" ? "var(--gold)" : "var(--c-ok)",
         whiteSpace: "nowrap",
       }}
     >
@@ -939,8 +939,8 @@ function fmtCents(p: number | null): string {
 }
 function valueColor(v: number | null): string | undefined {
   if (v == null) return undefined;
-  if (v > 0.5) return "#8fd39a";
-  if (v < -0.5) return "#c45c52";
+  if (v > 0.5) return "var(--c-ok)";
+  if (v < -0.5) return "var(--c-err)";
   return undefined;
 }
 function fmtValue(v: number | null): string {
@@ -970,24 +970,24 @@ function FuturesOutcomeCard({ row }: { row: FuturesOutcomeRow }) {
         <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{row.team}</span>
       </div>
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", fontSize: "0.72rem" }}>
-        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
+        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "var(--a-tint-1)" }}>
           <div style={{ color: "var(--chalk-dim)" }}>Me Y/N</div>
           <div style={{ fontWeight: 700 }}>
             {fmtCents(row.myYesPct)} / {fmtCents(row.myNoPct)}
           </div>
         </div>
-        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
+        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "var(--a-tint-1)" }}>
           <div style={{ color: "var(--chalk-dim)" }}>Kalshi Y/N</div>
           <div style={{ fontWeight: 700 }}>
             {fmtCents(row.kalshiYesPct)} / {fmtCents(row.kalshiNoPct)}
           </div>
         </div>
-        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
+        <div style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "var(--a-tint-1)" }}>
           <div style={{ color: "var(--chalk-dim)" }}>Value</div>
           <div style={{ fontWeight: 700, color: valueColor(row.valuePct) }}>{fmtValue(row.valuePct)}</div>
         </div>
         {row.otherSources.map((s, i) => (
-          <div key={i} style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
+          <div key={i} style={{ padding: "0.2rem 0.5rem", borderRadius: 6, background: "var(--a-tint-1)" }}>
             <div style={{ color: "var(--chalk-dim)" }}>{s.label}</div>
             <div style={{ fontWeight: 700 }}>{fmtPrice(s.americanOdds)}</div>
           </div>
@@ -1061,7 +1061,7 @@ function FuturesWinTotalsTable({ season }: { season: number }) {
   const [valueOnly, setValueOnly] = useState(false);
 
   if (loading) return <div className="empty">Loading win totals…</div>;
-  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+  if (error) return <p style={{ color: "var(--c-err)" }}>{error}</p>;
   if (rows.length === 0) return <div className="empty">No win-total markets found (KXNCAAFWINS may be closed right now).</div>;
 
   const filtered = valueOnly ? rows.filter((r) => Object.values(r.byThreshold).some((c) => hasValue(c.valuePct))) : rows;
@@ -1249,7 +1249,7 @@ function FuturesTab({ season }: { season: number }) {
       ) : !synced ? (
         <div className="empty">No futures synced yet this session — click "Sync futures" above to pull a snapshot.</div>
       ) : error ? (
-        <p style={{ color: "crimson" }}>{error}</p>
+        <p style={{ color: "var(--c-err)" }}>{error}</p>
       ) : !selectedGroup || selectedGroup.outcomes.length === 0 ? (
         <div className="empty">No prices match right now (try turning off "Only show value").</div>
       ) : view === "cards" ? (
@@ -1448,9 +1448,6 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Odds</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Snapshot from Novig, BetOnline, and Bovada (via The Odds API) plus Kalshi (moneyline only — it has no
@@ -1529,8 +1526,8 @@ export default function OddsDashboardAdminPanel({ onBack }: { onBack: () => void
         </>
       )}
 
-      {siteError && <p style={{ color: "crimson" }}>{siteError}</p>}
-      {oddsError && <p style={{ color: "crimson" }}>Odds feed: {oddsError}</p>}
+      {siteError && <p style={{ color: "var(--c-err)" }}>{siteError}</p>}
+      {oddsError && <p style={{ color: "var(--c-err)" }}>Odds feed: {oddsError}</p>}
 
       {topView === "futures" ? (
         <FuturesTab season={season} />

@@ -29,9 +29,6 @@ export default function DrogbaAdminPanel({ onBack }: { onBack: () => void }) {
   const state = useDrogba();
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h1 style={{ marginTop: 0, marginBottom: "0.2rem" }}>DROGBA</h1>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Data Ridge on Games By Agent — a spread model that looks for games where the opening line is off, built on walk-forward efficiency ratings and checked against the open and the close.

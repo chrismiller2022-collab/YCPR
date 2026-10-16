@@ -24,7 +24,7 @@ import { fetchPlacedBets, type BetType } from "../lib/api/placedBets";
 const CP: CSSProperties = {
   padding: "0.3rem 0.5rem",
   fontSize: "0.78rem",
-  borderBottom: "1px solid rgba(255,255,255,0.05)",
+  borderBottom: "1px solid var(--a-tint-2)",
   whiteSpace: "nowrap",
 };
 
@@ -223,7 +223,7 @@ export function BettingStatsBlock({ rows, title, label = "YC" }: { rows: Matchup
                   style={{
                     padding: "0.3rem 0.6rem",
                     textAlign: "right",
-                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc < 0 ? "var(--c-ok)" : "var(--c-err)",
                   }}
                 >
                   {fmtDelta(errorStats.absErrorOverVegasYc)}
@@ -232,7 +232,7 @@ export function BettingStatsBlock({ rows, title, label = "YC" }: { rows: Matchup
                   style={{
                     padding: "0.3rem 0.6rem",
                     textAlign: "right",
-                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                    color: errorStats.absErrorOverVegasYc != null && errorStats.absErrorOverVegasYc > 0 ? "var(--c-ok)" : "var(--c-err)",
                   }}
                 >
                   {fmtDelta(errorStats.absErrorOverVegasYc != null ? -errorStats.absErrorOverVegasYc : null)}
@@ -244,7 +244,7 @@ export function BettingStatsBlock({ rows, title, label = "YC" }: { rows: Matchup
                   style={{
                     padding: "0.3rem 0.6rem",
                     textAlign: "right",
-                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "#8fd39a" : "#c45c52",
+                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc < 0 ? "var(--c-ok)" : "var(--c-err)",
                   }}
                 >
                   {fmtDelta(errorStats.mseOverVegasYc)}
@@ -253,7 +253,7 @@ export function BettingStatsBlock({ rows, title, label = "YC" }: { rows: Matchup
                   style={{
                     padding: "0.3rem 0.6rem",
                     textAlign: "right",
-                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "#8fd39a" : "#c45c52",
+                    color: errorStats.mseOverVegasYc != null && errorStats.mseOverVegasYc > 0 ? "var(--c-ok)" : "var(--c-err)",
                   }}
                 >
                   {fmtDelta(errorStats.mseOverVegasYc != null ? -errorStats.mseOverVegasYc : null)}
@@ -345,10 +345,34 @@ function betTeamSpreadLabel(c: MatchupComputed, side: "away" | "home" | null): s
 }
 
 function CheckIcon({ on }: { on: boolean }) {
+  return on ? <span className="mu-check">✓</span> : <span className="mu-dash">–</span>;
+}
+
+/** Number tiles above the Spreads table: what fired this week, from the rows currently shown. */
+function SpreadSignalTiles({ rows }: { rows: MatchupComputed[] }) {
+  let final = 0, bets = 0, size = 0, filtered = 0, wfb = 0, nwfb = 0, watch = 0, wtf = 0;
+  for (const c of rows) {
+    if (c.game.completed) final++;
+    if (c.betTeam) {
+      bets++;
+      size += c.betSizePct ?? 0;
+    }
+    if (c.filteredBetTeam) filtered++;
+    if (c.weightedFilteredBetTeam) wfb++;
+    if (c.nwfbTeam) nwfb++;
+    if (c.wtfTeam) wtf++;
+    if (computeWatchSignal(c.projAwaySpread, c.vegasAwaySpread, c.projCoverTeam, !!c.filteredBetTeam || !!c.weightedFilteredBetTeam || !!c.nwfbTeam)) watch++;
+  }
+  const ofBets = (n: number) => (bets ? `${n} of ${bets} bets` : "no bets yet");
   return (
-    <span style={{ color: on ? "#8fd39a" : "var(--chalk-dim)", opacity: on ? 1 : 0.3, fontWeight: 700 }}>
-      {on ? "✓" : "–"}
-    </span>
+    <div className="admin-stats" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+      <div className="admin-stat"><div className="l">Games</div><div className="v">{rows.length}</div><div className="d">{final} final</div></div>
+      <div className="admin-stat"><div className="l">Bets</div><div className="v">{bets}</div><div className="d">{(size * 100).toFixed(1)}% of bankroll</div></div>
+      <div className="admin-stat"><div className="l">Filtered</div><div className="v">{filtered}</div><div className="d">{ofBets(filtered)}</div></div>
+      <div className="admin-stat"><div className="l">WFB</div><div className="v">{wfb}</div><div className="d">{ofBets(wfb)}</div></div>
+      <div className="admin-stat"><div className="l">NWFB</div><div className="v">{nwfb}</div><div className="d">{ofBets(nwfb)}</div></div>
+      <div className="admin-stat"><div className="l">Watch / WTF</div><div className="v">{watch} / {wtf}</div><div className="d">games to keep an eye on</div></div>
+    </div>
   );
 }
 
@@ -419,9 +443,9 @@ export function MatchupsRow({
     );
 
     return (
-      <tr>
+      <tr className={`mu-row${betTeam ? " mu-row-bet" : ""}${selected ? " mu-row-sel" : ""}`}>
         {showSelect && (
-          <td style={{ ...CP, textAlign: "center" }}>
+          <td className="mu-stk mu-c0" style={{ ...CP, textAlign: "center" }}>
             {betTeam || projCoverTeam ? (
               <input
                 type="checkbox"
@@ -437,9 +461,10 @@ export function MatchupsRow({
             )}
           </td>
         )}
-        <td style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
-        <td style={{ ...CP, color: "var(--chalk-dim)", textAlign: "center" }}>{game.week}</td>
+        <td className="mu-stk mu-c1" style={{ ...CP, color: "var(--chalk-dim)", whiteSpace: "nowrap" }}>{dateLabel}</td>
+        <td className="mu-stk mu-c2" style={{ ...CP, color: "var(--chalk-dim)", textAlign: "center" }}>{game.week}</td>
         <td
+          className="mu-stk mu-c3 mu-team"
           style={onOpenHandicap ? { ...CP, cursor: "pointer" } : CP}
           onClick={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined}
           title={onOpenHandicap ? "View handicapping preview" : undefined}
@@ -453,6 +478,7 @@ export function MatchupsRow({
           )}
         </td>
         <td
+          className="mu-stk mu-c4 mu-team"
           style={onOpenHandicap ? { ...CP, cursor: "pointer" } : CP}
           onClick={onOpenHandicap ? () => onOpenHandicap(game.away_team, game.home_team, game.week) : undefined}
           title={onOpenHandicap ? "View handicapping preview" : undefined}
@@ -483,7 +509,7 @@ export function MatchupsRow({
         <td style={{ ...CP, textAlign: "right" }}>{game.away_points ?? "–"}</td>
         <td style={{ ...CP, textAlign: "right" }}>{game.home_points ?? "–"}</td>
         <td style={CP}>{teamNameFor(computed, projCoverTeam)}</td>
-        <td style={{ ...CP, fontWeight: 700 }}>{betTeam ? `${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}` : "–"}</td>
+        <td style={{ ...CP, fontWeight: 700 }}>{betTeam ? <span className="mu-bet-tag">{`${teamNameFor(computed, betTeam)}${betTeamSpreadLabel(computed, betTeam)}`}</span> : "–"}</td>
         <td style={{ ...CP, textAlign: "right", fontWeight: 700, color: betSizePct != null ? "var(--gold)" : undefined }} title={betCategory ?? undefined}>
           {betSizePct != null ? `${(betSizePct * 100).toFixed(1)}%` : "–"}
         </td>
@@ -496,21 +522,17 @@ export function MatchupsRow({
         <td style={{ ...CP, textAlign: "center" }}>
           <CheckIcon on={!!nwfbTeam} />
         </td>
-        <td style={{ ...CP, textAlign: "center", ...(watchSignal ? { color: "#ffc857", fontWeight: 700 } : {}) }}>
-          {watchSignal ?? "–"}
-        </td>
-        <td style={{ ...CP, ...(wtfTeam ? { color: "#c45c52", fontWeight: 700 } : {}) }}>
-          {wtfTeam ? `${teamNameFor(computed, wtfTeam)}${betTeamSpreadLabel(computed, wtfTeam)} ⚠️` : "–"}
-        </td>
+        <td style={{ ...CP, textAlign: "center" }}>{watchSignal ? <span className="mu-tag-warn">{watchSignal}</span> : "–"}</td>
+        <td style={CP}>{wtfTeam ? <span className="mu-tag-warn">⚠ {`${teamNameFor(computed, wtfTeam)}${betTeamSpreadLabel(computed, wtfTeam)}`}</span> : "–"}</td>
         <td style={CP}>
           {actCoverTeam ? (
             <>
               {teamNameFor(computed, actCoverTeam)}{" "}
               {actCoverTeam !== "push" &&
                 (projCoverTeam === actCoverTeam ? (
-                  <span style={{ color: "#8fd39a", fontWeight: 700 }}>✓</span>
+                  <span className="mu-res ok" title="Projected cover team covered">✓</span>
                 ) : (
-                  <span style={{ color: "#c45c52", fontWeight: 700 }}>✗</span>
+                  <span className="mu-res bad" title="Projected cover team didn't cover">✗</span>
                 ))}
             </>
           ) : (
@@ -563,7 +585,7 @@ export function MatchupsRow({
           {projWinPct != null ? `${(projWinPct * 100).toFixed(1)}%` : "–"}
         </td>
         <td className="matchups-winpct-cell">{vegasWinPct != null ? `${(vegasWinPct * 100).toFixed(1)}%` : "–"}</td>
-        <td className="matchups-winpct-cell" style={evAway != null ? { color: evAway > 0 ? "#8fd39a" : evAway < 0 ? "#c45c52" : undefined } : undefined}>
+        <td className="matchups-winpct-cell" style={evAway != null ? { color: evAway > 0 ? "var(--c-ok)" : evAway < 0 ? "var(--c-err)" : undefined } : undefined}>
           {evAway != null ? `${evAway > 0 ? "+" : ""}${evAway.toFixed(1)}%` : "–"}
         </td>
         <td className="matchups-projected-cell" style={{ color: pseudoSpreadColor(vegasHomeWinPct) }}>
@@ -576,7 +598,7 @@ export function MatchupsRow({
           {homeWinPct != null ? `${(homeWinPct * 100).toFixed(1)}%` : "–"}
         </td>
         <td className="matchups-winpct-cell">{vegasHomeWinPct != null ? `${(vegasHomeWinPct * 100).toFixed(1)}%` : "–"}</td>
-        <td className="matchups-winpct-cell" style={evHome != null ? { color: evHome > 0 ? "#8fd39a" : evHome < 0 ? "#c45c52" : undefined } : undefined}>
+        <td className="matchups-winpct-cell" style={evHome != null ? { color: evHome > 0 ? "var(--c-ok)" : evHome < 0 ? "var(--c-err)" : undefined } : undefined}>
           {evHome != null ? `${evHome > 0 ? "+" : ""}${evHome.toFixed(1)}%` : "–"}
         </td>
         <td style={{ ...CP, fontWeight: 700 }}>
@@ -616,22 +638,34 @@ export function MatchupsHeaderRow({
   sortDir,
   onSort,
   showSelect = true,
+  grouped = false,
 }: {
   mode: string;
   sortKey: string | null;
   sortDir: "asc" | "desc";
   onSort: (key: string) => void;
   showSelect?: boolean;
+  // Adds a row above the column headers that labels the column groups (Game / Lines / Score / Picks / Result).
+  grouped?: boolean;
 }) {
   return (
     <>
+        {mode === "spreads" && grouped && (
+          <tr className="mu-groups">
+            <th className="mu-stk mu-c0 mu-c-span" colSpan={showSelect ? 5 : 4}>Game</th>
+            <th colSpan={3}>Lines</th>
+            <th colSpan={2}>Score</th>
+            <th colSpan={8} className="mu-g-picks">Picks</th>
+            <th colSpan={4}>Result</th>
+          </tr>
+        )}
         {mode === "spreads" && (
           <tr>
-            {showSelect && <th className="th">Bet?</th>}
-            <SortHeader label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={onSort} />
-            <SortHeader label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={onSort} align="right" />
-            <SortHeader label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={onSort} />
-            <SortHeader label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={onSort} />
+            {showSelect && <th className="th mu-stk mu-c0">Bet?</th>}
+            <SortHeader className="mu-stk mu-c1" label="Date" sortKey="date" active={sortKey === "date"} dir={sortDir} onClick={onSort} />
+            <SortHeader className="mu-stk mu-c2" label="Week" sortKey="week" active={sortKey === "week"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader className="mu-stk mu-c3" label="Away (PR)" sortKey="away" active={sortKey === "away"} dir={sortDir} onClick={onSort} />
+            <SortHeader className="mu-stk mu-c4" label="Home (PR)" sortKey="home" active={sortKey === "home"} dir={sortDir} onClick={onSort} />
             <SortHeader label="Opening Line" sortKey="openingLine" active={sortKey === "openingLine"} dir={sortDir} onClick={onSort} align="right" />
             <SortHeader label="Vegas Line" sortKey="vegasLine" active={sortKey === "vegasLine"} dir={sortDir} onClick={onSort} align="right" />
             <SortHeader label="Projected Spread" sortKey="projSpread" active={sortKey === "projSpread"} dir={sortDir} onClick={onSort} align="right" />
@@ -1125,23 +1159,33 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
-      <h2 style={{ marginTop: 0 }}>Matchups (Admin)</h2>
-      <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        Now populated from the synced CFBD games/lines data — Vegas Line, Score, and Cover
-        columns show real values where the public page only shows dashes. Team rows without
-        a bolded rating mean the CFBD team name didn't match a name in data/teams.ts. Click
-        any column header to sort — text columns push every non-blank pick to the top.
-        Bet Size is 1/10 Kelly, capped at 5% of bankroll, using each bet category's
-        historical win rate at standard -110 odds: Bet 1 alone 59.5%, Bet 2 or 3 alone
-        60.9%, Bets 2 & 3 both firing 70.0%, Bets 1 & 2 both firing (the strongest signal)
-        73.0% — hover a Bet Size value to see which category it used.
+      <h2>Matchups</h2>
+      <p>
+        Your projections against the synced CFBD games and lines, with each bet signal and how it graded. Click a team to open its
+        handicapping preview; click any column header to sort (text columns put picks first). Team rows without a rating mean the CFBD
+        name didn't match a name in data/teams.ts.
       </p>
+      <details className="admin-details">
+        <summary>How bet size works</summary>
+        <p>
+          Bet Size is 1/10 Kelly, capped at 5% of bankroll, using each bet category's historical win rate at standard -110 odds: Bet 1
+          alone 59.5%, Bet 2 or 3 alone 60.9%, Bets 2 &amp; 3 both firing 70.0%, Bets 1 &amp; 2 both firing (the strongest signal) 73.0%.
+          Hover a Bet Size value to see which category it used.
+        </p>
+      </details>
 
-      <div className="controls matchups-controls">
+      <nav className="admin-tabs" aria-label="Matchup views">
+        {MATCHUPS_MODES.map((m) => (
+          <button key={m.key} className={mode === m.key ? "on" : undefined} onClick={() => setMode(m.key)}>
+            {m.label}
+          </button>
+        ))}
+      </nav>
+
+      {mode === "spreads" && !loading && sortedRows.length > 0 && <SpreadSignalTiles rows={sortedRows} />}
+
+      <div className="controls matchups-controls admin-mu-controls">
         <label>
           Season{" "}
           <input
@@ -1180,7 +1224,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <option value="Cross">Cross-Division (FBS vs FCS)</option>
         </select>
         {MODE_TO_BET_TYPE[mode] && (
-          <div style={{ display: "flex", gap: "0.3rem" }} title={`Checks your placed ${MODE_TO_BET_TYPE[mode]} bets specifically — a game with a spread bet but no total bet still counts as "not bet" on the Totals tab.`}>
+          <div className="admin-seg" title={`Checks your placed ${MODE_TO_BET_TYPE[mode]} bets specifically — a game with a spread bet but no total bet still counts as "not bet" on the Totals tab.`}>
             {(
               [
                 ["all", "All games"],
@@ -1188,7 +1232,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                 ["notPlaced", "Not bet yet"],
               ] as const
             ).map(([key, label]) => (
-              <button key={key} className={`mode-btn ${betFilter === key ? "mode-btn-active" : ""}`} onClick={() => setBetFilter(key)}>
+              <button key={key} className={betFilter === key ? "on" : undefined} onClick={() => setBetFilter(key)}>
                 {label}
               </button>
             ))}
@@ -1243,15 +1287,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      <div className="mode-toggle">
-        {MATCHUPS_MODES.map((m) => (
-          <button key={m.key} className={`mode-btn ${mode === m.key ? "mode-btn-active" : ""}`} onClick={() => setMode(m.key)}>
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
+      {loadError && <p style={{ color: "var(--c-err)" }}>{loadError}</p>}
 
       {(mode === "spreads" || mode === "moneyline") && (
         <div className="table-wrap" style={{ maxWidth: "none" }}>
@@ -1266,9 +1302,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
           {!loading && sortedRows.length > 0 && (
             <div className="table-scroll">
-              <table className="matchups-table" style={{ width: "100%" }}>
+              <table className={`matchups-table${mode === "spreads" ? " mu-sticky" : ""}`} style={{ width: "100%" }}>
                 <thead>
-                  <MatchupsHeaderRow mode={mode} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <MatchupsHeaderRow mode={mode} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} grouped />
                 </thead>
                 <tbody>
                   {sortedRows.map((c) => (
@@ -1288,28 +1324,19 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             </div>
           )}
           {mode === "spreads" && selectedRows.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "1rem",
-                margin: "1rem 0",
-                padding: "0.9rem 1.1rem",
-                background: "var(--turf-panel)",
-                border: "1px solid var(--gold)",
-                borderRadius: 8,
-              }}
-            >
-              <span style={{ fontWeight: 700 }}>
+            <div className="admin-selbar">
+              <b>
                 {selectedRows.length} game{selectedRows.length === 1 ? "" : "s"} selected
+              </b>
+              {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{saveMessage}</span>}
+              <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
+                <button className="admin-btn primary" onClick={handleSaveBets} disabled={saving}>
+                  {saving ? "Saving…" : `Save ${selectedRows.length} Bet${selectedRows.length === 1 ? "" : "s"}`}
+                </button>
+                <button className="admin-btn" onClick={() => setSelectedGameIds(new Set())} disabled={saving}>
+                  Clear
+                </button>
               </span>
-              <button className="menu-btn" onClick={handleSaveBets} disabled={saving}>
-                {saving ? "Saving…" : `Save ${selectedRows.length} Bet${selectedRows.length === 1 ? "" : "s"}`}
-              </button>
-              <button className="menu-btn" onClick={() => setSelectedGameIds(new Set())} disabled={saving}>
-                Clear
-              </button>
-              {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{saveMessage}</span>}
             </div>
           )}
           {!loading && sortedRows.length > 0 && (
@@ -1374,7 +1401,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         />
       )}
       {betSavedMessage && (
-        <div style={{ position: "fixed", bottom: 20, right: 20, background: "#8fd39a", color: "#1a1b2e", padding: "0.6rem 1rem", borderRadius: 8, fontWeight: 700, zIndex: 1001 }}>
+        <div style={{ position: "fixed", bottom: 20, right: 20, background: "var(--c-ok)", color: "#1a1b2e", padding: "0.6rem 1rem", borderRadius: 8, fontWeight: 700, zIndex: 1001 }}>
           {betSavedMessage}
         </div>
       )}

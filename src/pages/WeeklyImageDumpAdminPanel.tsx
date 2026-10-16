@@ -180,7 +180,7 @@ interface DumpTarget {
 // ancestor chain does, which is the fix.
 function OffscreenStage({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1, pointerEvents: "none" }}>
+    <div className="export-surface" style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1, pointerEvents: "none" }}>
       {children}
     </div>
   );
@@ -1241,9 +1241,6 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Weekly Image Dump</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 640 }}>
@@ -1259,7 +1256,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       {loadingWeeks ? (
         <p>Loading weeks…</p>
       ) : weeks.length === 0 ? (
-        <p style={{ color: "crimson" }}>No weekly data has been uploaded yet.</p>
+        <p style={{ color: "var(--c-err)" }}>No weekly data has been uploaded yet.</p>
       ) : (
         <>
           <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", margin: "1rem 0 1.5rem" }}>
@@ -1328,10 +1325,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               Capturing {captureProgress.current}/{captureProgress.total}: {captureProgress.label}
             </p>
           )}
-          {zipDone && <p style={{ color: "green" }}>{zipDone}</p>}
-          {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
+          {zipDone && <p style={{ color: "var(--c-ok)" }}>{zipDone}</p>}
+          {zipError && <p style={{ color: "var(--c-err)" }}>{zipError}</p>}
           {publishResult && (
-            <p style={{ color: publishResult.ok ? "green" : "crimson", fontWeight: publishResult.ok ? 400 : 700 }}>
+            <p style={{ color: publishResult.ok ? "var(--c-ok)" : "var(--c-err)", fontWeight: publishResult.ok ? 400 : 700 }}>
               {publishResult.message}
             </p>
           )}

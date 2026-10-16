@@ -1,18 +1,50 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ConfLink from "../components/ConfLink";
 import TeamLogo from "../components/TeamLogo";
 import ExportPngButton from "../components/ExportPngButton";
 import { BracketGame } from "./BracketPage";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
+import { useLatestMonteCarloConfOdds } from "../lib/api/monteCarlo";
 import { RESUME_BY_TEAM } from "../data/resume";
+import { fetchLatestSavedResumeRanks } from "../lib/api/resumeWeights";
+import type { ResumeByTeam } from "../lib/bracket24";
 import { buildPlayoff24Field, pairFirstRoundNoConfConflict, playGame, reseedAndPair } from "../lib/bracket24";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fmtOdds } from "../lib/format";
+import { fairMoneylineFromWinPct } from "../lib/odds";
 
 export default function Playoff24Page({ onNavigateTeam, onNavigateConference, onHome }: any) {
   const exportRef = useRef<HTMLDivElement>(null);
-  const staticField = useMemo(() => buildPlayoff24Field(), []);
+  // Auto-bids come from the latest saved Monte Carlo run's conference-title
+  // odds; the static preseason futures are only a fallback for a season
+  // with no saved run yet.
+  const { byTeam: mcConfOdds, run: mcRun, loading: mcLoading, noRunYet } = useLatestMonteCarloConfOdds(new Date().getFullYear());
+  const confOdds = noRunYet ? null : mcConfOdds;
+  // At-large bids and seeding use the latest saved Resume Ratings week; the
+  // static preseason resume file is only a fallback when none is saved.
+  const [savedResume, setSavedResume] = useState<{ week: number; byTeam: ResumeByTeam } | null>(null);
+  const [resumeLoading, setResumeLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestSavedResumeRanks(new Date().getFullYear())
+      .then((r) => !cancelled && setSavedResume(r))
+      .catch(() => !cancelled && setSavedResume(null))
+      .finally(() => !cancelled && setResumeLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const resume: ResumeByTeam = savedResume?.byTeam ?? RESUME_BY_TEAM;
+  const resumeSource = savedResume ? `the Week ${savedResume.week} Resume Ratings` : "preseason Resume Ratings (no week saved yet)";
+  const staticField = useMemo(
+    () => (mcLoading || resumeLoading ? [] : buildPlayoff24Field(confOdds, savedResume?.byTeam ?? null)),
+    [mcLoading, resumeLoading, confOdds, savedResume]
+  );
   const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  const confOddsOf = (team: string): number | null => (confOdds ? confOdds[team] ?? null : CONF_FUTURES_BY_TEAM[team]?.confWinPct ?? null);
+  const oddsSource = mcRun
+    ? `the Week ${mcRun.week} Monte Carlo run (${new Date(mcRun.run_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })})`
+    : "preseason conference futures (no Monte Carlo run saved yet)";
 
   // Resolve every field entry's rating to its live weekly value once, so
   // seeding math, BracketGame spreads, and the field table below all agree.
@@ -36,7 +68,7 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
           <h1 className="title matchup-title">24-TEAM PLAYOFF (FCS STYLE)</h1>
         </div>
         <div className="empty matchups-empty">
-          Not enough qualifying teams yet to build a full 24-team field.
+          {mcLoading || resumeLoading ? "Loading the latest Monte Carlo run and Resume Ratings…" : "Not enough qualifying teams yet to build a full 24-team field."}
         </div>
       </div>
     );
@@ -70,8 +102,8 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
         <div className="eyebrow">Tools</div>
         <h1 className="title matchup-title">24-TEAM PLAYOFF (FCS STYLE)</h1>
         <p className="subtitle team-subtitle">
-          10 auto-bids (top team per conference by Proj Conf Odds) plus the
-          14 best remaining at-large teams by Resume Rating. Top 8 seeds get
+          10 auto-bids (top team per conference by odds to win the conference, from {oddsSource}) plus the
+          14 best remaining at-large teams by {resumeSource}. Top 8 seeds get
           a bye; the better seed hosts every round except a neutral-site
           championship. Projected champion:{" "}
           <strong style={{ color: "var(--gold)" }}>{champion.team.team}</strong>.
@@ -206,20 +238,22 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
                     </td>
                     <td className="futures-bet-cell">{f.bid}</td>
                     <td className="wintotals-total-cell">
-                      {RESUME_BY_TEAM[f.team.team]?.rating.toFixed(2) ?? "–"}
+                      {resume[f.team.team]?.rating.toFixed(2) ?? "–"}
                     </td>
                     <td className={`rating-cell ${f.team.rating < 0 ? "rating-good" : "rating-bad"}`}>
                       {f.team.rating > 0 ? "+" : ""}
                       {f.team.rating.toFixed(2)}
                     </td>
                     <td className="wintotals-total-cell">
-                      {CONF_FUTURES_BY_TEAM[f.team.team] ? (
+                      {confOddsOf(f.team.team) != null && f.team.conf !== "FBS Independents" ? (
                         <>
-                          {(CONF_FUTURES_BY_TEAM[f.team.team].confWinPct * 100).toFixed(1)}%
-                          <span className="compare-value-sub">
-                            {" "}
-                            {fmtOdds(CONF_FUTURES_BY_TEAM[f.team.team].fairPrice)}
-                          </span>
+                          {(confOddsOf(f.team.team)! * 100).toFixed(1)}%
+                          {confOddsOf(f.team.team)! > 0 && (
+                            <span className="compare-value-sub">
+                              {" "}
+                              {fmtOdds(Math.round(fairMoneylineFromWinPct(confOddsOf(f.team.team))))}
+                            </span>
+                          )}
                         </>
                       ) : (
                         "–"
@@ -235,8 +269,8 @@ export default function Playoff24Page({ onNavigateTeam, onNavigateConference, on
 
       <div className="footer-note">
         Auto-bids go to the top team in each of the 10 listed conferences by
-        Proj Conf Odds. At-large bids and overall seeding are by Resume
-        Rating. First round pairings avoid same-conference matchups where
+        odds to win the conference, from {oddsSource}. At-large bids and overall seeding are by{" "}
+        {resumeSource}. First round pairings avoid same-conference matchups where
         possible; every later round reseeds the remaining field, pairing
         the best seed against the worst, with the better seed hosting until
         a neutral-site championship.

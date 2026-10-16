@@ -52,7 +52,7 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
   useDefaultToAdminWeek(setWeek);
 
   const [wholeSeason, setWholeSeason] = useState(false);
-  const [parts, setParts] = useState<Record<string, boolean>>({ pgwe: true, netsr: true, coaches: true });
+  const [parts, setParts] = useState<Record<string, boolean>>({ pgwe: true, netsr: true, coaches: true, venues: false });
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState<string | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
@@ -123,7 +123,7 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
   async function handlePull() {
     const selected = Object.entries(parts).filter(([, on]) => on).map(([k]) => k);
     if (selected.length === 0) return;
-    if (!window.confirm(`Pull ${selected.length} CFBD dataset(s) (${selected.length} request${selected.length > 1 ? "s" : ""}) for ${season}${wholeSeason ? " (whole season)" : ` week ${week}`}?`)) return;
+    if (!window.confirm(`Pull ${selected.length} CFBD dataset(s) (${selected.length + (selected.includes("venues") ? 2 : 0)} requests) for ${season}${wholeSeason ? " (whole season)" : ` week ${week}`}?`)) return;
     setPulling(true);
     setPullMsg(null);
     setPullError(null);
@@ -132,6 +132,7 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
       const bits: string[] = [];
       if (r.pgwe) bits.push(`PGWE: ${r.pgwe.withPgwe} of ${r.pgwe.games} games have it`);
       if (r.netSr) bits.push(`Net success rate: ${r.netSr.saved} team-games saved`);
+      if (r.venues) bits.push(`Stadiums: ${r.venues.teams} teams, ${r.venues.venues} venues, ${r.venues.gamesWithVenue} of ${r.venues.games} games have a venue`);
       if (r.coaches) bits.push(`Coaches: ${r.coaches.teams} teams${r.coaches.historySeasons != null ? `, ${r.coaches.historySeasons} coach-seasons of history` : ""}${r.coaches.staleTeams ? ` (${r.coaches.staleTeams} using last season's coach)` : ""}`);
       setPullMsg(bits.join(" · ") + (r.warnings?.length ? ` — ${r.warnings.join(" ")}` : ""));
       invalidateCache();
@@ -145,9 +146,6 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Team Info</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         CFBD data for each team in a week's matchups: postgame win expectancy (PGWE) and net success rate (offense success rate minus the
@@ -174,6 +172,7 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
             ["pgwe", "PGWE"],
             ["netsr", "Net success rate"],
             ["coaches", "Coaches + tenure"],
+            ["venues", "Stadiums (coordinates)"],
           ] as const
         ).map(([k, label]) => (
           <label key={k} style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
@@ -185,11 +184,11 @@ export default function TeamInfoPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={wholeSeason} onChange={(e) => setWholeSeason(e.target.checked)} />
           Whole season (else just week {week})
         </label>
-        <span style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>One CFBD request per box checked. Coaches ignores the week (pulls the current staff either way).</span>
+        <span style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>One CFBD request per box checked, except Stadiums. Coaches ignores the week (pulls the current staff either way). Stadiums is three requests (venues, team stadiums, game venues) and feeds Game Weather.</span>
       </div>
-      {pullMsg && <p style={{ color: "#8fd39a", fontSize: "0.82rem" }}>{pullMsg}</p>}
-      {pullError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>{pullError}</p>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {pullMsg && <p style={{ color: "var(--c-ok)", fontSize: "0.82rem" }}>{pullMsg}</p>}
+      {pullError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>{pullError}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 720, overflowY: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>

@@ -162,7 +162,7 @@ function PoolTile({
                 fontSize: "0.68rem",
                 padding: "0.15rem 0.5rem",
                 borderRadius: 999,
-                background: "rgba(255,255,255,0.06)",
+                background: "var(--a-tint-2)",
                 color: "var(--chalk-dim)",
               }}
             >
@@ -212,6 +212,9 @@ function PoolTile({
     </div>
   );
 }
+
+/** Display name for each pool sub-page, keyed by its admin view key (used for the admin breadcrumbs). */
+export const POOL_LABELS: Record<string, string> = Object.fromEntries(SECTIONS.flatMap((s) => s.pools.map((p) => [p.key, p.label])));
 
 export default function PoolsMenuPanel({
   onBack,
@@ -263,9 +266,6 @@ export default function PoolsMenuPanel({
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>Pools</h2>
@@ -277,7 +277,7 @@ export default function PoolsMenuPanel({
         Each pool you're entered in, as its own tool.
         {liveScores && ` Live records below are for Week ${liveScores.week}, updating as games sync.`}
       </p>
-      {liveScoresError && <p style={{ color: "crimson", fontSize: "0.82rem" }}>Live scores: {liveScoresError}</p>}
+      {liveScoresError && <p style={{ color: "var(--c-err)", fontSize: "0.82rem" }}>Live scores: {liveScoresError}</p>}
 
       {SECTIONS.map((section) => (
         <div key={section.title} style={{ marginTop: "1.5rem" }}>

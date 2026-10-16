@@ -459,7 +459,7 @@ function PerfRow({ bucket, bold }: { bucket: PerfBucket; bold?: boolean }) {
         style={{
           ...cellStyle,
           textAlign: "right",
-          color: bucket.units > 0 ? "#8fd39a" : bucket.units < 0 ? "#c45c52" : undefined,
+          color: bucket.units > 0 ? "var(--c-ok)" : bucket.units < 0 ? "var(--c-err)" : undefined,
         }}
       >
         {bucket.units > 0 ? "+" : ""}
@@ -1034,9 +1034,6 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <div ref={exportRef}>
       <h2 style={{ marginTop: 0 }}>Weekly Betting Report</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>

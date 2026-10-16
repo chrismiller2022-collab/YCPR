@@ -21,7 +21,7 @@ import { MatchupsRow, MatchupsHeaderRow, BettingStatsBlock, sortValue as matchup
 const CP: React.CSSProperties = {
   padding: "0.3rem 0.5rem",
   fontSize: "0.76rem",
-  borderBottom: "1px solid rgba(255,255,255,0.05)",
+  borderBottom: "1px solid var(--a-tint-2)",
   whiteSpace: "nowrap",
 };
 
@@ -272,7 +272,7 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
                   alignItems: "center",
                   gap: "0.5rem",
                   padding: "0 0.5rem",
-                  borderBottom: "1px solid rgba(255,255,255,0.05)",
+                  borderBottom: "1px solid var(--a-tint-2)",
                   fontSize: "0.76rem",
                   whiteSpace: "nowrap",
                 }}
@@ -334,7 +334,7 @@ function ResultsTable({ weekRows, seasonRows }: { weekRows: MultiSystemGameRow[]
             const perfColor = (r: { w: number; l: number; push: number }) => {
               const decided = r.w + r.l;
               if (decided === 0) return undefined;
-              return winPct(r) >= ATS_BREAKEVEN_PCT * 100 ? "#8fd39a" : "#e07a7a";
+              return winPct(r) >= ATS_BREAKEVEN_PCT * 100 ? "var(--c-ok)" : "var(--c-err)";
             };
             return (
               <tr key={s.key}>
@@ -644,9 +644,6 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Rating Systems Matchups</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
@@ -693,7 +690,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         setConfFilter={setConfFilter}
       />
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p>Loading…</p>
       ) : (

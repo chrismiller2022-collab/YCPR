@@ -89,9 +89,6 @@ export default function PublishPage({ onBack, onNavigate }: { onBack: () => void
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Publish</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0, maxWidth: 700 }}>
         Status only — each column's actual save/publish action lives on its own admin page (click a
@@ -111,7 +108,7 @@ export default function PublishPage({ onBack, onNavigate }: { onBack: () => void
         <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
       </label>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p>Loading…</p>
       ) : (
@@ -150,7 +147,7 @@ export default function PublishPage({ onBack, onNavigate }: { onBack: () => void
                         <td key={c.key} style={cellStyle}>
                           {saved ? CHECK : DASH}
                           {coverage && coverage.kickedOff > 0 && (
-                            <div style={{ fontSize: "0.7rem", color: coverage.locked < coverage.kickedOff ? "#c45c52" : "var(--chalk-dim)" }}>
+                            <div style={{ fontSize: "0.7rem", color: coverage.locked < coverage.kickedOff ? "var(--c-err)" : "var(--chalk-dim)" }}>
                               {coverage.locked}/{coverage.kickedOff} locked
                             </div>
                           )}

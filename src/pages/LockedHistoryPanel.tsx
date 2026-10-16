@@ -182,7 +182,7 @@ export default function LockedHistoryPanel({ onBack }: { onBack: () => void }) {
     const cellStyle = { padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" };
     const gameCell = (
       <td style={cellStyle}>
-        {!r.frozen && <span title="Not frozen — showing live value" style={{ color: "#e0a030", marginRight: "0.3rem" }}>⚠</span>}
+        {!r.frozen && <span title="Not frozen — showing live value" style={{ color: "var(--c-warn)", marginRight: "0.3rem" }}>⚠</span>}
         <TeamLink team={r.game.away_team} size={16} /> @ <TeamLink team={r.game.home_team} size={16} />
       </td>
     );
@@ -249,9 +249,6 @@ export default function LockedHistoryPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Locked History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0, maxWidth: 700 }}>
         Past games' frozen projections (from their own week — see Freeze Week) next to what the model
@@ -306,7 +303,7 @@ export default function LockedHistoryPanel({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {!dataReady && <p>Loading…</p>}
 
       {dataReady && (

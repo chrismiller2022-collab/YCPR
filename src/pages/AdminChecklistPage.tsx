@@ -114,9 +114,6 @@ export default function AdminChecklistPage({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Weekly Checklist</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: "-0.5rem", marginBottom: "1.5rem" }}>
@@ -125,7 +122,7 @@ export default function AdminChecklistPage({ onBack }: { onBack: () => void }) {
         you click directly.
       </p>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p style={{ color: "var(--chalk-dim)" }}>Loading…</p>
       ) : (

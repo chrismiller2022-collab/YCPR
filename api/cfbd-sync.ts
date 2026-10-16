@@ -680,6 +680,101 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
     if (rows.length === 0) warnings.push("CFBD returned no coach seasons — check the response shape.");
   }
 
+  if (parts.includes("venues")) {
+    // Stadium coordinates for the admin Weather page. Three requests: every venue (so neutral sites resolve), each
+    // team's home stadium, and the week's games (to stamp each game with the venue CFBD lists for it). CFBD's newer
+    // API names coordinates latitude/longitude; the older one nested them as location {x: lat, y: lon} — both read.
+    const venueRow = (v: any, now: string) => ({
+      id: Number(v.id ?? v.venueId ?? v.venue_id),
+      name: v.name ?? null,
+      city: v.city ?? null,
+      state: v.state ?? null,
+      zip: v.zip ?? null,
+      country_code: v.countryCode ?? v.country_code ?? null,
+      timezone: v.timezone ?? null,
+      latitude: numOrNull(v.latitude ?? v.location?.x),
+      longitude: numOrNull(v.longitude ?? v.location?.y),
+      elevation: numOrNull(v.elevation),
+      capacity: numOrNull(v.capacity),
+      construction_year: numOrNull(v.constructionYear ?? v.year_constructed),
+      grass: v.grass ?? null,
+      dome: v.dome ?? null,
+      updated_at: now,
+    });
+    const now = new Date().toISOString();
+
+    const venues = await cfbdFetch(`/venues`);
+    const venueRows = (venues ?? []).map((v: any) => venueRow(v, now)).filter((v: any) => Number.isFinite(v.id));
+    let venuesSaved = 0;
+    for (let i = 0; i < venueRows.length; i += 500) {
+      const { error, count } = await supabaseAdmin.from("venues").upsert(venueRows.slice(i, i + 500), { onConflict: "id", count: "exact" });
+      if (error) throw new Error(`Saving venues failed: ${error.message}`);
+      venuesSaved += count ?? 0;
+    }
+
+    const teams = await cfbdFetch(`/teams?year=${year}`);
+    const teamRows: any[] = [];
+    for (const t of teams ?? []) {
+      const loc = t.location;
+      if (!t.school || !loc) continue;
+      const v = venueRow({ ...loc, id: loc.id ?? loc.venueId ?? loc.venue_id }, now);
+      if (v.latitude == null || v.longitude == null) continue;
+      teamRows.push({
+        team: t.school,
+        venue_id: Number.isFinite(v.id) ? v.id : null,
+        venue_name: v.name,
+        city: v.city,
+        state: v.state,
+        timezone: v.timezone,
+        latitude: v.latitude,
+        longitude: v.longitude,
+        elevation: v.elevation,
+        capacity: v.capacity,
+        grass: v.grass,
+        dome: v.dome,
+        updated_at: now,
+      });
+    }
+    let teamsSaved = 0;
+    for (let i = 0; i < teamRows.length; i += 500) {
+      const { error, count } = await supabaseAdmin.from("team_venues").upsert(teamRows.slice(i, i + 500), { onConflict: "team", count: "exact" });
+      if (error) throw new Error(`Saving team venues failed: ${error.message}`);
+      teamsSaved += count ?? 0;
+    }
+
+    // A single week stays regular season (week numbers repeat in the postseason); a whole-season pull takes bowls too.
+    const gamesPath = week != null ? `/games?year=${year}&week=${week}&seasonType=regular` : `/games?year=${year}&seasonType=both`;
+    const cfbdGames = await cfbdFetch(gamesPath);
+    const gameRows = (cfbdGames ?? []).filter(isTrackedGame).map((g: any) => ({
+      id: String(g.id),
+      season: g.season,
+      week: g.week,
+      season_type: g.seasonType ?? "regular",
+      start_date: g.startDate ?? null,
+      start_time_tbd: g.startTimeTBD ?? g.startTimeTbd ?? null,
+      neutral_site: !!g.neutralSite,
+      home_team: g.homeTeam,
+      away_team: g.awayTeam,
+      venue_id: numOrNull(g.venueId),
+      venue: g.venue ?? null,
+      updated_at: now,
+    }));
+    for (let i = 0; i < gameRows.length; i += 500) {
+      const { error } = await supabaseAdmin.from("games").upsert(gameRows.slice(i, i + 500), { onConflict: "id" });
+      if (error) throw new Error(`Saving game venues failed: ${error.message}`);
+    }
+
+    out.venues = {
+      venues: venuesSaved,
+      withCoords: venueRows.filter((v: any) => v.latitude != null && v.longitude != null).length,
+      teams: teamsSaved,
+      games: gameRows.length,
+      gamesWithVenue: gameRows.filter((g: any) => g.venue_id != null).length,
+    };
+    if (venueRows.length === 0) warnings.push("CFBD returned no venues — check the response shape.");
+    if (teamRows.length === 0) warnings.push("CFBD returned no team locations with coordinates — check the response shape.");
+  }
+
   if (warnings.length) out.warnings = warnings;
   res.status(200).json(out);
 }
@@ -961,7 +1056,7 @@ export default async function handler(req: any, res: any) {
       res.status(400).json({ error: "Missing or invalid 'year'" });
       return;
     }
-    const wanted = (Array.isArray(parts) ? parts : ["pgwe", "netsr", "coaches"]).filter((p: string) => ["pgwe", "netsr", "coaches"].includes(p));
+    const wanted = (Array.isArray(parts) ? parts : ["pgwe", "netsr", "coaches"]).filter((p: string) => ["pgwe", "netsr", "coaches", "venues"].includes(p));
     try {
       await syncTeamInfo(res, year, typeof week === "number" ? week : null, wanted);
     } catch (err: any) {
@@ -1043,6 +1138,10 @@ export default async function handler(req: any, res: any) {
         away_postgame_win_probability: g.awayPostgameWinProbability ?? null,
         tv_outlet: media?.outlet ?? null,
         media_type: media?.mediaType ?? null,
+        // Where the game is played and whether kickoff is still TBD — feeds the admin Weather page.
+        venue_id: g.venueId != null ? Number(g.venueId) : null,
+        venue: g.venue ?? null,
+        start_time_tbd: g.startTimeTBD ?? g.startTimeTbd ?? null,
         updated_at: new Date().toISOString(),
       };
     });

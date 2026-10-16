@@ -372,9 +372,6 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Strength of Schedule</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>

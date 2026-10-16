@@ -293,7 +293,7 @@ function GameSelectionStep({
             style={{ width: 200 }}
           />
           {nonFbsSearching && <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Searching…</span>}
-          {nonFbsError && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{nonFbsError}</p>}
+          {nonFbsError && <p style={{ color: "var(--c-err)", fontSize: "0.8rem" }}>{nonFbsError}</p>}
           {nonFbsResults.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginTop: "0.4rem" }}>
               {nonFbsResults.map((g) => (
@@ -325,7 +325,7 @@ function GameSelectionStep({
           {saving ? "Saving…" : "Save selected games"}
         </button>
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -597,7 +597,7 @@ function PickingStep({
       <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.75rem" }}>
         {saving ? "Saving…" : "Save picks"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {handicapGame && (
         <MatchupHandicapPopup
           season={season}
@@ -666,8 +666,8 @@ function WeeklyEntryStep({ season, week }: { season: number; week: number }) {
         <button onClick={handleSave} disabled={saving}>
           {saving ? "Saving…" : "Save"}
         </button>
-        {saved && <span style={{ color: "green" }}>Saved</span>}
-        {saveError && <span style={{ color: "crimson" }}>Error: {saveError}</span>}
+        {saved && <span style={{ color: "var(--c-ok)" }}>Saved</span>}
+        {saveError && <span style={{ color: "var(--c-err)" }}>Error: {saveError}</span>}
       </div>
     </div>
   );
@@ -764,7 +764,7 @@ function SeasonTrackingTab({ season }: { season: number }) {
                       {record.pending > 0 ? ` (${record.pending} pending)` : ""}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {entry ? `$${entry.entry_fee.toFixed(2)}` : <span style={{ color: "#a15c00" }}>not saved</span>}
+                      {entry ? `$${entry.entry_fee.toFixed(2)}` : <span style={{ color: "var(--c-warn)" }}>not saved</span>}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {entry ? `$${entry.winnings.toFixed(2)}` : "–"}
@@ -774,7 +774,7 @@ function SeasonTrackingTab({ season }: { season: number }) {
                         padding: "0.4rem 0.6rem",
                         borderBottom: "1px solid var(--hash)",
                         textAlign: "right",
-                        color: !entry ? undefined : net >= 0 ? "green" : "crimson",
+                        color: !entry ? undefined : net >= 0 ? "var(--c-ok)" : "var(--c-err)",
                       }}
                     >
                       {entry ? `${net >= 0 ? "+" : ""}${net.toFixed(2)}` : "–"}
@@ -807,8 +807,8 @@ function SeasonTrackingTab({ season }: { season: number }) {
           <button onClick={saveBonus} disabled={savingBonus}>
             {savingBonus ? "Saving…" : "Save"}
           </button>
-          {bonusSaved && <span style={{ color: "green" }}>Saved</span>}
-          {bonusError && <span style={{ color: "crimson" }}>Error: {bonusError}</span>}
+          {bonusSaved && <span style={{ color: "var(--c-ok)" }}>Saved</span>}
+          {bonusError && <span style={{ color: "var(--c-err)" }}>Error: {bonusError}</span>}
         </div>
       </div>
 
@@ -832,9 +832,6 @@ export default function BritPoolPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <h2 style={{ marginTop: 0 }}>The Brit</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
