@@ -44,6 +44,8 @@ import SosAdminPanel from "./SosAdminPanel";
 import MatchupHistoryPanel from "./MatchupHistoryPanel";
 import TeamInfoPanel from "./TeamInfoPanel";
 import WeatherPanel from "./WeatherPanel";
+import AdminToolsPanel from "./AdminToolsPanel";
+import VizBuilderPanel from "./VizBuilderPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import DrogbaAdminPanel from "./DrogbaAdminPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
@@ -246,6 +248,8 @@ type AdminView =
   | "matchuphistory"
   | "teaminfo"
   | "weather"
+  | "tools"
+  | "vizbuilder"
   | "oddshistorical"
   | "periodgrading"
   | "pm"
@@ -708,6 +712,13 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "matchups", label: "Matchups" },
       { key: "linemovement", label: "Line Movement" },
       { key: "odds", label: "Odds" },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { key: "vizbuilder", label: "Viz Builder" },
+      { key: "tools", label: "Public Tools" },
     ],
   },
   {
@@ -1232,6 +1243,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}
           {view === "teaminfo" && <TeamInfoPanel onBack={() => setView("home")} />}
           {view === "weather" && <WeatherPanel onBack={() => setView("home")} />}
+          {view === "tools" && <AdminToolsPanel onBack={() => setView("home")} />}
+          {view === "vizbuilder" && <VizBuilderPanel />}
 
           {view === "oddshistorical" && <OddsHistoricalPanel onBack={() => setView("home")} />}
 

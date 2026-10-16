@@ -442,3 +442,7 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 /* Bigger checkboxes everywhere in admin; biggest in table rows (key / possible picks) */
 .admin-view input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; vertical-align: middle; }
 .admin-view td input[type="checkbox"] { width: 20px; height: 20px; }
+
+/* Public tools embedded in admin: the admin tabs replace their "back to rankings" link and hero spacing */
+.admin-embedded-tool .back-link { display: none; }
+.admin-embedded-tool .matchups-page { padding-top: 0; }
