@@ -46,7 +46,7 @@ import {
 
 // A TBD kickoff has only a date; its weather window covers noon through 11pm Eastern (16:00–03:00 UTC).
 const TBD_WINDOW_START_UTC_HOUR = 16;
-const TBD_WINDOW_HOURS = 12;
+export const TBD_WINDOW_HOURS = 12;
 
 interface Card {
   game: GameWithLines;
@@ -77,7 +77,7 @@ function impactScore(c: Card): number {
   return c.weather.flags.reduce((a, f) => a + FLAG_WEIGHT[f], 0) + (c.weather.avgWind ?? 0) / 10;
 }
 
-function WeatherIcon({ code, isDay, size = 20 }: { code: number | null; isDay?: boolean | null; size?: number }) {
+export function WeatherIcon({ code, isDay, size = 20 }: { code: number | null; isDay?: boolean | null; size?: number }) {
   const props = { size, strokeWidth: 1.8 };
   const night = isDay === false;
   switch (weatherKind(code)) {
@@ -135,7 +135,7 @@ function lineLabel(g: GameWithLines): string | null {
   return bits.length ? bits.join(" · ") : null;
 }
 
-function windowStartFor(g: GameWithLines, tbd: boolean): string | null {
+export function windowStartFor(g: GameWithLines, tbd: boolean): string | null {
   if (!g.start_date) return null;
   if (!tbd) return g.start_date;
   // TBD start dates are stored as midnight-ish of the game date; anchor on that date's afternoon instead.

@@ -11,6 +11,7 @@ import { computeDomain, SpreadChartHeader, SpreadChartRow } from "./SystemSpread
 import type { GameWithLines } from "../lib/api/gamesLines";
 import { altSpreadRows, altTotalRows, buildPeriodDistribution, gameOutcomes, type AltRow } from "../lib/periodSim";
 import TotalsModelBlock from "./TotalsModelBlock";
+import GameWeatherStrip from "./GameWeatherStrip";
 
 function fmtRecord(su: { w: number; l: number }): string {
   return `${su.w}-${su.l}`;
@@ -784,6 +785,7 @@ export default function MatchupHandicapPopup({
           <p style={{ color: "crimson" }}>{hc.error}</p>
         ) : (
           <>
+            <GameWeatherStrip game={hc.game} season={season} week={week} />
             {hc.altInputs && <ProjectedSpreadBanner awayTeam={awayTeam} homeTeam={homeTeam} inputs={hc.altInputs} />}
             <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
               <TeamColumn
