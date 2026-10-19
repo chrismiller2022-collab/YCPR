@@ -115,3 +115,18 @@ export async function addPasskey(name: string): Promise<void> {
     throw friendly(err);
   }
 }
+
+/**
+ * The signed-in admin session (password or passkey token) for API calls, so admin actions never re-ask for the
+ * password. Null, with a notice, when the session has expired.
+ */
+export function getAdminPassword(): string | null {
+  let pw: string | null = null;
+  try {
+    pw = sessionStorage.getItem("admin_password");
+  } catch {
+    pw = null;
+  }
+  if (!pw) window.alert("Your admin session expired. Sign in again.");
+  return pw || null;
+}
