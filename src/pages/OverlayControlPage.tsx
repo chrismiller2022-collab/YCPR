@@ -295,6 +295,7 @@ export default function OverlayControlPage() {
   if (!password) return <div className="page oc-page"><PasswordGate onOk={setPassword} /></div>;
   if (!state) return <div className="page oc-page"><div className="oc-gate">Loading…</div></div>;
 
+  const cfb = state.league !== "nfl";
   const selectedOffSlate = state.game_ids.filter((id) => !slate.some((g) => g.id === id));
 
   return (
@@ -304,6 +305,24 @@ export default function OverlayControlPage() {
           <h1>TV Score Bug</h1>
           <span className="oc-save">{saveMsg}</span>
         </div>
+
+        <div className="oc-tabs" role="tablist">
+          {(["cfb", "nfl"] as const).map((l) => (
+            <button
+              key={l}
+              role="tab"
+              aria-selected={state.league === l}
+              className={state.league === l ? "on" : ""}
+              onClick={() =>
+                state.league !== l &&
+                update(l === "nfl" ? { league: l, pools_full: false, expand_game_id: null } : { league: l, fantasy_full: false })
+              }
+            >
+              {l === "cfb" ? "College" : "NFL"}
+            </button>
+          ))}
+        </div>
+        <div className="oc-hint">The tab you're on is what the TV shows.</div>
 
         <div className="oc-preview">
           <OverlayView state={state} contexts={contexts} scores={scores} preview fantasy={fantasy} poolPicks={poolPicks} pools={pools} />
@@ -321,19 +340,21 @@ export default function OverlayControlPage() {
             {state.fullscreen ? "Full scoreboard — tap for normal" : "Normal — tap for full scoreboard"}
           </button>
         </div>
+        {cfb ? (
         <div className="oc-row">
           <button className={`oc-big ${state.pools_full ? "on" : ""}`} onClick={() => update(state.pools_full ? { pools_full: false } : { pools_full: true, fantasy_full: false, visible: true })}>
             {state.pools_full ? "Pools full screen — tap to close" : "Pools full screen"}
           </button>
         </div>
-        {state.sleeper_username ? (
+        ) : null}
+        {!cfb && state.sleeper_username ? (
           <div className="oc-row">
             <button className={`oc-big ${state.fantasy_full ? "on" : ""}`} onClick={() => update(state.fantasy_full ? { fantasy_full: false } : { fantasy_full: true, pools_full: false, visible: true })}>
               {state.fantasy_full ? "Fantasy full screen — tap to close" : "Fantasy full screen"}
             </button>
           </div>
         ) : null}
-        {state.league !== "nfl" && state.game_ids.some((id) => contexts[id]) ? (
+        {cfb && state.game_ids.some((id) => contexts[id]) ? (
           <div className="oc-expand">
             <div className="oc-label">Expand a game into its matchup pop-up on the TV</div>
             <div className="oc-expand-list">
@@ -352,16 +373,9 @@ export default function OverlayControlPage() {
             </div>
           </div>
         ) : null}
-        <div className="oc-seg oc-league">
-          {(["cfb", "nfl"] as const).map((l) => (
-            <button key={l} className={state.league === l ? "on" : ""} onClick={() => update({ league: l })}>
-              {l === "cfb" ? "College" : "NFL"}
-            </button>
-          ))}
-        </div>
 
         <section className="oc-section">
-          <h2>Layout</h2>
+          <h2>Display</h2>
           <div className="oc-seg">
             {(["corner", "ticker"] as const).map((l) => (
               <button key={l} className={state.layout === l ? "on" : ""} onClick={() => update({ layout: l })}>
@@ -413,6 +427,37 @@ export default function OverlayControlPage() {
             <input type="range" min={0} max={120} step={5} value={state.delay_seconds} onChange={(e) => update({ delay_seconds: Number(e.target.value) })} />
           </label>
           <div className="oc-hint">Holds score updates back so the bug doesn't beat your stream. YouTube TV usually runs 30–90s behind.</div>
+          {cfb ? null : (
+            <label className="oc-check">
+              <input type="checkbox" checked={state.show_lines} onChange={(e) => update({ show_lines: e.target.checked })} /> Show the Vegas spread and total
+            </label>
+          )}
+          <div className="oc-label">Live detail</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_last_play} onChange={(e) => update({ show_last_play: e.target.checked })} /> Last play
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_timeouts} onChange={(e) => update({ show_timeouts: e.target.checked })} /> Timeouts left
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_field} onChange={(e) => update({ show_field: e.target.checked })} /> Field position
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability (beside the score)
+          </label>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.show_network} onChange={(e) => update({ show_network: e.target.checked })} /> TV network (before kickoff)
+          </label>
+          <div className="oc-label">Size of each game</div>
+          <label className="oc-check">
+            <input type="checkbox" checked={state.compact} onChange={(e) => update({ compact: e.target.checked })} /> Compact: score and clock only
+          </label>
+          <div className="oc-hint">Compact applies to the corner bug and ticker. The full scoreboard always shows everything.</div>
+        </section>
+
+        {cfb ? (
+        <section className="oc-section">
+          <h2>Lines, bets &amp; picks</h2>
           <label className="oc-check">
             <input type="checkbox" checked={state.show_lines} onChange={(e) => update({ show_lines: e.target.checked })} /> Show Vegas vs. my numbers (spread, total, proj cover, proj score)
           </label>
@@ -430,33 +475,13 @@ export default function OverlayControlPage() {
           <label className="oc-check">
             <input type="checkbox" checked={state.flash_swings} onChange={(e) => update({ flash_swings: e.target.checked })} /> Flash when a bet flips
           </label>
-          <div className="oc-label">Live detail</div>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.show_last_play} onChange={(e) => update({ show_last_play: e.target.checked })} /> Last play
-          </label>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.show_timeouts} onChange={(e) => update({ show_timeouts: e.target.checked })} /> Timeouts left
-          </label>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.show_field} onChange={(e) => update({ show_field: e.target.checked })} /> Field position
-          </label>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.show_win_prob} onChange={(e) => update({ show_win_prob: e.target.checked })} /> Live win probability (beside the score)
-          </label>
           <label className="oc-check">
             <input type="checkbox" checked={state.show_cover_prob} onChange={(e) => update({ show_cover_prob: e.target.checked })} /> Live cover / over % on my bets and calls
           </label>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.show_network} onChange={(e) => update({ show_network: e.target.checked })} /> TV network (before kickoff)
-          </label>
-          <div className="oc-label">Size of each game</div>
-          <label className="oc-check">
-            <input type="checkbox" checked={state.compact} onChange={(e) => update({ compact: e.target.checked })} /> Compact: score and clock only
-          </label>
-          <div className="oc-hint">Compact applies to the corner bug and ticker. The full scoreboard always shows everything.</div>
         </section>
+        ) : null}
 
-        {state.league === "nfl" ? <NflGames state={state} update={update} /> : (
+        {!cfb ? <NflGames state={state} update={update} /> : (
         <section className="oc-section">
           <h2>Games ({state.game_ids.length} on TV)</h2>
           <div className="oc-row oc-filters">
@@ -507,6 +532,7 @@ export default function OverlayControlPage() {
           </ul>
         </section>
         )}
+        {cfb ? (
         <section className="oc-section">
           <h2>Pools</h2>
           <div className="oc-label">Pools to include{state.pool_keys.length ? ` (${state.pool_keys.length} of ${POOLS.length})` : " (all)"}</div>
@@ -530,7 +556,9 @@ export default function OverlayControlPage() {
           })}
           <div className="oc-hint">Used by the Pools full screen and by "Pool picks" chips. Confidence pools and Survivor aren't included.</div>
         </section>
+        ) : (
         <SleeperSection state={state} update={update} />
+        )}
       </div>
     </div>
   );
