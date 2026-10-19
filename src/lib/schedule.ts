@@ -30,8 +30,13 @@ export function computeSwapSchedule(scheduleTeamName, ratingTeam, liveByTeam = {
 }
 
 
-export function computeNextOpponent(team, liveByTeam = {}) {
-  const schedule = gamesForTeam(team.team);
+export function computeNextOpponent(team, liveByTeam = {}, seasonGames = []) {
+  // Static bundle supplies the list of games only; when live synced games
+  // are passed in, their kickoff time / completed flag win (same CFBD ids),
+  // so a rescheduled game doesn't leave this pointing at the wrong one.
+  const liveById = new Map(seasonGames.map((g) => [g.id, g]));
+  const kickoff = (g) => new Date(liveById.get(g.id)?.start_date ?? g.date).getTime();
+  const schedule = gamesForTeam(team.team).sort((a, b) => kickoff(a) - kickoff(b));
   // schedule[0] used to mean "the next game" only on the literal first
   // week of the season — every week after that it was still Week 1's
   // opponent, since nothing here ever advanced past the front of the
@@ -39,7 +44,7 @@ export function computeNextOpponent(team, liveByTeam = {}) {
   // instead, so this tracks the actual upcoming game all season,
   // including through bye weeks.
   const now = Date.now();
-  const nextGame = schedule.find((g) => new Date(g.date).getTime() >= now) ?? null;
+  const nextGame = schedule.find((g) => !liveById.get(g.id)?.completed && kickoff(g) >= now) ?? null;
   if (!nextGame) return null;
   const isHome = nextGame.home === team.team;
   const oppName = isHome ? nextGame.away : nextGame.home;
@@ -67,7 +72,7 @@ function rankWithinConference(team, liveByTeam, metricFor) {
   return idx === -1 ? null : idx + 1;
 }
 
-export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = []) {
+export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [], savedResumeByTeam = null) {
   const liveTeamRating = liveByTeam[team.team]?.rating ?? team.rating;
   const ratingColor = spreadColor(liveTeamRating);
   const ratingBg = spreadBg(liveTeamRating, 0.16);
@@ -223,6 +228,7 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
   const confPct = live?.conf_win_pct ?? futuresData?.confWinPct;
   const vegasPct = live?.implied_pct ?? futuresData?.impliedPct;
   const seasonWinLine = live?.season_win_line;
+  const resumeEntry = savedResumeByTeam?.[team.team] ?? null;
 
   const powerRatingCard = {
     label: "Power Rating + Rank",
@@ -244,13 +250,12 @@ export function computeGraphicCardStats(team, liveByTeam = {}, seasonGames = [])
       bg: goldBg,
     },
     {
-      // Not pulled from the Resume Rating admin panel yet — that page
-      // computes live but doesn't persist per-team scores anywhere this
-      // can read from. Shows TBD until that feed exists.
+      // Latest saved Resume Ratings week (team_resume_ratings), when the
+      // caller passes it in. TBD until a week has been saved.
       label: "Resume Rating + Rank",
-      real: false,
-      value: undefined,
-      sub: undefined,
+      real: resumeEntry != null,
+      value: resumeEntry != null ? resumeEntry.rating.toFixed(2) : undefined,
+      sub: resumeEntry != null ? `#${resumeEntry.rank}` : undefined,
       color: "var(--gold)",
       bg: goldBg,
     },

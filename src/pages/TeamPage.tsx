@@ -22,6 +22,7 @@ import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 import WinDistributionBarChart from "../components/WinDistributionBarChart";
 import { TeamRatingHistoryChart, TeamWinsVsExpectedChart } from "../components/TeamTrendCharts";
+import { fetchLatestSavedResumeRanks } from "../lib/api/resumeWeights";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -69,7 +70,9 @@ function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: 
   const teamProjScore = split ? (isHome ? split.home : split.away) : null;
   const oppProjScore = split ? (isHome ? split.away : split.home) : null;
 
-  const dateObj = new Date(game.date);
+  // Live synced kickoff when the totals engine has this game (same CFBD
+  // id/week/teams); the static bundle's date is only the fallback.
+  const dateObj = new Date(projRow?.game?.startDate ?? game.date);
   const dateLabel = dateObj.toLocaleDateString(undefined, {
     weekday: "short",
     month: "numeric",
@@ -127,12 +130,7 @@ function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: 
 }
 
 
-function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
-  const next = computeNextOpponent(team, liveByTeam);
-  const nextOpp = next?.opp ?? null;
-  const nextLoc = next?.loc ?? null;
-  const nextSpread = next?.spread ?? null;
-
+function TeamGraphicCard({ team, liveByTeam, savedResumeByTeam, onNavigateTeam }: any) {
   const [cardView, setCardView] = useState("basic");
 
   const [games, setGames] = useState<GameWithLines[]>([]);
@@ -150,7 +148,13 @@ function TeamGraphicCard({ team, liveByTeam, onNavigateTeam }: any) {
       .finally(() => setGamesLoaded(true));
   }, [season, gamesLoaded]);
 
-  const { basic, betting } = computeGraphicCardStats(team, liveByTeam, games);
+  // Next game picked off live kickoff times/completed flags once games load.
+  const next = computeNextOpponent(team, liveByTeam, games);
+  const nextOpp = next?.opp ?? null;
+  const nextLoc = next?.loc ?? null;
+  const nextSpread = next?.spread ?? null;
+
+  const { basic, betting } = computeGraphicCardStats(team, liveByTeam, games, savedResumeByTeam);
   const stats = cardView === "basic" ? basic : betting;
 
   return (
@@ -486,7 +490,27 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   // uses now — was a static formula off each team's hardcoded preseason
   // rating, treating already-decided games as uncertain coin flips.
   const { byTeam: winTotalsByTeam } = useLatestMonteCarloWinTotals(season);
-  const radarMetrics = computeRadarMetrics(team, liveByTeam);
+  // Latest saved Resume Ratings week — feeds the card's Resume tile and the
+  // radar's Resume axis (radar falls back to the preseason file if none).
+  const [savedResume, setSavedResume] = useState<{ week: number; byTeam: Record<string, { rank: number; rating: number }> } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestSavedResumeRanks(season)
+      .then((r) => !cancelled && setSavedResume(r))
+      .catch(() => !cancelled && setSavedResume(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  // Conference odds come from the latest Monte Carlo run everywhere on this page (card, radar and standings), so a
+  // visitor never sees two different numbers; the weekly upload's conf_win_pct stays as the fallback.
+  const { byTeam: mcOdds, run: mcRun } = useLatestMonteCarloTeamOdds(season);
+  const liveWithMc = useMemo(() => {
+    const out: Record<string, any> = { ...liveByTeam };
+    for (const [t, o] of Object.entries(mcOdds)) if (out[t]) out[t] = { ...out[t], conf_win_pct: o.confTitle };
+    return out;
+  }, [liveByTeam, mcOdds]);
+  const radarMetrics = computeRadarMetrics(team, liveWithMc, savedResume?.byTeam);
   const { rows: totalsRows } = useGameTotalsEngine(season);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -540,7 +564,6 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
 
   // Standings: live ratings and the latest Monte Carlo run. Falls back to the live table's conference odds (then the
   // preseason futures file) only for a team the sim has no row for.
-  const { byTeam: mcOdds, run: mcRun } = useLatestMonteCarloTeamOdds(season);
   const ratingOf = (p: { team: string; rating: number }) => liveByTeam[p.team]?.rating ?? p.rating;
   const confPctOf = (t: string) => mcOdds[t]?.confTitle ?? liveByTeam[t]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[t]?.confWinPct ?? 0;
   const standingsPeers = [...peers].sort((a, b) => ratingOf(a) - ratingOf(b));
@@ -566,7 +589,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
       </div>
 
       <div className="table-wrap">
-        <TeamGraphicCard team={team} liveByTeam={liveByTeam} onNavigateTeam={onNavigateTeam} />
+        <TeamGraphicCard team={team} liveByTeam={liveWithMc} savedResumeByTeam={savedResume?.byTeam ?? null} onNavigateTeam={onNavigateTeam} />
       </div>
 
       <div className="table-wrap">
