@@ -48,7 +48,7 @@ import {
 const TBD_WINDOW_START_UTC_HOUR = 16;
 export const TBD_WINDOW_HOURS = 12;
 
-interface Card {
+export interface WeatherCard {
   game: GameWithLines;
   venue: GameVenueRow | undefined;
   location: GameLocation | null;
@@ -72,7 +72,7 @@ const FLAG_COLORS: Record<WeatherFlag, string> = {
 
 const FLAG_WEIGHT: Record<WeatherFlag, number> = { storms: 4, snow: 4, wind: 3, rain: 2, freezing: 2, cold: 1, hot: 1 };
 
-function impactScore(c: Card): number {
+function impactScore(c: WeatherCard): number {
   if (!c.weather || c.location?.dome) return -1;
   return c.weather.flags.reduce((a, f) => a + FLAG_WEIGHT[f], 0) + (c.weather.avgWind ?? 0) / 10;
 }
@@ -168,7 +168,7 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: Re
   );
 }
 
-function MatchupCard({ c }: { c: Card }) {
+function MatchupCard({ c }: { c: WeatherCard }) {
   const g = c.game;
   const w = c.weather;
   const line = lineLabel(g);
@@ -292,6 +292,57 @@ function MatchupCard({ c }: { c: Card }) {
   );
 }
 
+/**
+ * A week's games with their stadium and game-window weather. Calls onBase first with stadiums only (weather still
+ * loading), then resolves with weather filled in. Throws weatherError-tagged errors only for the weather step.
+ */
+export async function loadWeatherCards(
+  season: number,
+  week: number,
+  onBase?: (cards: WeatherCard[]) => void
+): Promise<{ cards: WeatherCard[]; weatherError: string | null }> {
+    const [games, gameVenues, teamVenues] = await Promise.all([fetchGamesWithLines(season, week), fetchGameVenues(season, week), fetchTeamVenues()]);
+    const tracked = games.filter((g) => {
+      const h = (g.home_classification ?? "").toLowerCase();
+      const a = (g.away_classification ?? "").toLowerCase();
+      return h === "fbs" || a === "fbs" || h === "fcs" || a === "fcs";
+    });
+    const venueIds = tracked.map((g) => gameVenues[g.id]?.venue_id).filter((x): x is number => x != null);
+    const venues = await fetchVenuesByIds(venueIds);
+
+    const base: WeatherCard[] = tracked.map((g) => {
+      const venue = gameVenues[g.id];
+      const tbd = !!venue?.start_time_tbd;
+      const location = resolveGameLocation(g, venue, venues, teamVenues);
+      const windowStart = windowStartFor(g, tbd);
+      let missing: string | null = null;
+      if (!location) missing = g.neutral_site ? "Neutral site with no venue coordinates — run Pull stadiums." : "No stadium coordinates for the home team — run Pull stadiums.";
+      else if (!windowStart) missing = "No kickoff date.";
+      else if (!weatherSourceFor(windowStart)) missing = "Forecast opens about 16 days before kickoff.";
+      return { game: g, venue, location, tbd, windowStart, weather: null, missing };
+    });
+    onBase?.(base);
+
+    const reqs = base
+      .filter((c) => c.location && c.windowStart && !c.missing)
+      .map((c) => ({ key: c.game.id, point: { latitude: c.location!.latitude, longitude: c.location!.longitude }, kickoff: c.windowStart! }));
+    if (reqs.length === 0) return { cards: base, weatherError: null };
+    try {
+      const series = await fetchWeatherForKickoffs(reqs);
+      return {
+        weatherError: null,
+        cards: base.map((c) => {
+          const s = series.get(c.game.id);
+          if (!s || !c.windowStart) return c;
+          const weather = summarizeGameWeather(s.series, s.source, c.windowStart, c.tbd ? TBD_WINDOW_HOURS : 4);
+          return { ...c, weather, missing: weather ? null : "Open-Meteo returned no hours for this kickoff." };
+        }),
+      };
+    } catch (e: any) {
+      return { cards: base, weatherError: e.message ?? "Weather fetch failed" };
+    }
+}
+
 export default function WeatherPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState(1);
@@ -301,7 +352,7 @@ export default function WeatherPanel({ onBack }: { onBack: () => void }) {
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [sort, setSort] = useState<"kickoff" | "impact">("kickoff");
 
-  const [cards, setCards] = useState<Card[]>([]);
+  const [cards, setCards] = useState<WeatherCard[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [weatherError, setWeatherError] = useState<string | null>(null);
@@ -318,49 +369,12 @@ export default function WeatherPanel({ onBack }: { onBack: () => void }) {
     setLoading(true);
     setError(null);
     setWeatherError(null);
-    (async () => {
-      const [games, gameVenues, teamVenues] = await Promise.all([fetchGamesWithLines(season, week), fetchGameVenues(season, week), fetchTeamVenues()]);
-      const tracked = games.filter((g) => {
-        const h = (g.home_classification ?? "").toLowerCase();
-        const a = (g.away_classification ?? "").toLowerCase();
-        return h === "fbs" || a === "fbs" || h === "fcs" || a === "fcs";
-      });
-      const venueIds = tracked.map((g) => gameVenues[g.id]?.venue_id).filter((x): x is number => x != null);
-      const venues = await fetchVenuesByIds(venueIds);
-
-      const base: Card[] = tracked.map((g) => {
-        const venue = gameVenues[g.id];
-        const tbd = !!venue?.start_time_tbd;
-        const location = resolveGameLocation(g, venue, venues, teamVenues);
-        const windowStart = windowStartFor(g, tbd);
-        let missing: string | null = null;
-        if (!location) missing = g.neutral_site ? "Neutral site with no venue coordinates — run Pull stadiums." : "No stadium coordinates for the home team — run Pull stadiums.";
-        else if (!windowStart) missing = "No kickoff date.";
-        else if (!weatherSourceFor(windowStart)) missing = "Forecast opens about 16 days before kickoff.";
-        return { game: g, venue, location, tbd, windowStart, weather: null, missing };
-      });
-      if (!isCurrent(token)) return;
-      setCards(base);
-
-      const reqs = base
-        .filter((c) => c.location && c.windowStart && !c.missing)
-        .map((c) => ({ key: c.game.id, point: { latitude: c.location!.latitude, longitude: c.location!.longitude }, kickoff: c.windowStart! }));
-      if (reqs.length === 0) return;
-      try {
-        const series = await fetchWeatherForKickoffs(reqs);
+    loadWeatherCards(season, week, (base) => isCurrent(token) && setCards(base))
+      .then((r) => {
         if (!isCurrent(token)) return;
-        setCards(
-          base.map((c) => {
-            const s = series.get(c.game.id);
-            if (!s || !c.windowStart) return c;
-            const weather = summarizeGameWeather(s.series, s.source, c.windowStart, c.tbd ? TBD_WINDOW_HOURS : 4);
-            return { ...c, weather, missing: weather ? null : "Open-Meteo returned no hours for this kickoff." };
-          })
-        );
-      } catch (e: any) {
-        if (isCurrent(token)) setWeatherError(e.message ?? "Weather fetch failed");
-      }
-    })()
+        setCards(r.cards);
+        if (r.weatherError) setWeatherError(r.weatherError);
+      })
       .catch((e: any) => {
         if (!isCurrent(token)) return;
         const msg = e?.message ?? "Failed to load";
