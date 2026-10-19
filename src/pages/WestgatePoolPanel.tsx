@@ -5,7 +5,7 @@ import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
-import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import KeyCrossSlot from "../components/KeyCrossSlot";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchWestgateWeek, fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints, WESTGATE_PICK_LIMIT, type WestgateRow } from "../lib/api/westgatePool";
@@ -812,17 +812,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                           }
                           style={{ width: 76, textAlign: "right" }}
                         />
-                        {(() => {
-                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.westgate_line);
-                          return crossed.length > 0 ? (
-                            <span
-                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.westgate_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
-                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
-                            >
-                              🔑{keyCrossLabel(crossed)}
-                            </span>
-                          ) : null;
-                        })()}
+                        <KeyCrossSlot mine={r.myProjAwaySpread} pool={r.westgate_line} />
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>

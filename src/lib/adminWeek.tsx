@@ -65,19 +65,19 @@ export function useAdminWeek(): AdminWeekContextValue {
 }
 
 /**
- * Drop-in "default this page's own week state to the site-wide Admin
- * week selector, once, without fighting the user's own later clicks" —
- * same pattern as useDefaultToCurrentWeek in currentWeek.ts, just
- * sourced from the manual admin-wide selection instead of a per-page
- * live-data guess. Call alongside your own useState for week/setWeek.
+ * Keeps a page's own week state in step with the site-wide Admin week
+ * selector: applied when the page opens, and again every time the top-bar
+ * week changes while the page is open. A page's own week dropdown still
+ * works as a local override until the top-bar week changes next. Call
+ * alongside your own useState for week/setWeek.
  */
 export function useDefaultToAdminWeek(setWeek: (week: number) => void) {
   const { week: adminWeek, ready } = useAdminWeek();
-  const applied = useRef(false);
+  const applied = useRef<number | null>(null);
 
   useEffect(() => {
-    if (applied.current || !ready) return;
-    applied.current = true;
+    if (!ready || applied.current === adminWeek) return;
+    applied.current = adminWeek;
     setWeek(adminWeek);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, adminWeek]);

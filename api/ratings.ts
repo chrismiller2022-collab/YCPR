@@ -353,10 +353,20 @@ export default async function handler(req: any, res: any) {
   // -----------------------------------------------------------------
   if (action === "jpplusProxy") {
     try {
-      const pageRes = await fetch("https://www.jpplusratings.com/", {
-        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" },
-      });
-      if (!pageRes.ok) throw new Error(`JP+ fetch failed (${pageRes.status})`);
+      // jpplusratings.com rate-limits (429) requests from shared server IPs now and then: wait as long as it asks
+      // (capped at 8s, 4s if it doesn't say) and try once more before giving up.
+      const getPage = () =>
+        fetch("https://www.jpplusratings.com/", {
+          headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+        });
+      let pageRes = await getPage();
+      if (pageRes.status === 429 || pageRes.status === 503) {
+        const retryAfter = Number(pageRes.headers.get("retry-after"));
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : 4000;
+        await new Promise((r) => setTimeout(r, waitMs));
+        pageRes = await getPage();
+      }
+      if (!pageRes.ok) throw new Error(`JP+ fetch failed (${pageRes.status}${pageRes.status === 429 ? ", rate-limited by jpplusratings.com" : ""})`);
       const html = (await pageRes.text()).replace(/\\"/g, '"');
 
       const selected = /<option value="([^"]+)" selected/.exec(html)?.[1] ?? null;
@@ -832,11 +842,10 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
-  // actions: "logPullRun" / "getPullRuns" — the run log for the scheduled
-  // pulls (scripts/pull-ratings.ts, run hourly by the GitHub Actions
-  // workflow). The scheduled job only ever calls the pull actions above plus
-  // "save"/"sync", which write rating_pulls — never weekly_power_ratings — and
-  // then records what happened here.
+  // actions: "logPullRun" / "getPullRuns" — the run log for rating pulls.
+  // Rating Systems' Sync All / Fill gaps record one row per source here
+  // (trigger "manual"); Fill gaps reads it to find sources not yet pulled
+  // successfully this week.
   // -----------------------------------------------------------------
   if (action === "logPullRun") {
     const r = req.body ?? {};
