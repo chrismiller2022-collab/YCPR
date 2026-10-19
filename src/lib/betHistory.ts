@@ -1,3 +1,4 @@
+import { LINE_PROVIDER_ORDER } from "./linePick";
 import { type BetHistoryRecord, type BetPick } from "../data/betHistory.data";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { isP4, bucketFor } from "./conferenceBuckets";
@@ -356,12 +357,11 @@ export type HfaMode = "team" | "flat";
 
 export type LineMode = "open" | "close";
 
-const LIVE_PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
 function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
   const field = lineMode === "open" ? "opening_spread" : "spread";
   const withSpread = lines.filter((l) => l[field] != null);
   if (withSpread.length === 0) return null;
-  for (const p of LIVE_PREFERRED_PROVIDERS) {
+  for (const p of LINE_PROVIDER_ORDER) {
     const match = withSpread.find((l) => l.provider === p);
     if (match) return match;
   }

@@ -1,3 +1,4 @@
+import { pickVegasLine } from "../lib/linePick";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -24,15 +25,7 @@ import {
   type BritPickWithGame,
 } from "../lib/api/britPool";
 
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+const pickLine = (lines: BettingLineRow[]): BettingLineRow | null => pickVegasLine(lines);
 
 // Shared by the auto-pick default (below) and the render — computing this
 // twice with two copies of the formula is exactly the kind of divergence
