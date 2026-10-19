@@ -1,12 +1,10 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { type BetHistoryRecord, type BetPick, BET_HISTORY } from "../data/betHistory.data";
 import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
-import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
-import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
+import { useBetHistoryRecords, BET_HISTORY_SEASONS } from "../lib/useBetHistoryRecords";
 import {
   aggregatePlain,
   aggregateCustom,
@@ -26,7 +24,6 @@ import {
   buildWfbMatrix,
   type WfbPoint,
   tallyAmountOffCustom,
-  buildLiveBetHistoryRecords,
   computeKeyNumberStudy,
   DEFAULT_CUSTOM_PARAMS,
   type RecordTally,
@@ -44,7 +41,7 @@ import {
   type LineMode,
 } from "../lib/betHistory";
 
-const SEASONS = [2024, 2025, 2026];
+const SEASONS = BET_HISTORY_SEASONS;
 
 // Any season in SEASONS with zero BET_HISTORY rows gets its data built
 // live instead, from synced games/lines + live power ratings (see
@@ -1323,70 +1320,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   // static BET_HISTORY upload only ever carried the closing line, so
   // 2024/2025 always grades against close regardless of this toggle.
   const [lineMode, setLineMode] = useState<LineMode>("close");
-  const [liveGamesBySeason, setLiveGamesBySeason] = useState<Record<number, GameWithLines[]>>({});
-
-  useEffect(() => {
-    if (LIVE_SEASONS.length === 0) return;
-    Promise.all(LIVE_SEASONS.map((s) => fetchGamesWithLines(s).then((games) => [s, games] as const)))
-      .then((pairs) => setLiveGamesBySeason(Object.fromEntries(pairs)))
-      .catch(() => setLiveGamesBySeason({}));
-  }, []);
-
-  // Week-accurate ratings, not "whatever the ratings are today" — using
-  // one blanket live snapshot for every game all season (the old
-  // behavior here) silently reprojects Week 1 with the current week's
-  // ratings once the season moves on, so this page's own performance
-  // drifted away from what Admin Matchups' bet filter shows for the
-  // exact same games. useWeekAccurateRatings is per-season, so this
-  // calls it once per SEASONS slot (bounded/fixed, matches Rules of
-  // Hooks) and only the slots actually in LIVE_SEASONS end up with any
-  // weeks requested — add another call here if SEASONS ever grows past
-  // three entries.
-  const currentSeason = new Date().getFullYear();
-  const weekNumbersBySeason = useMemo(() => {
-    const map: Record<number, number[]> = {};
-    for (const s of SEASONS) map[s] = Array.from(new Set((liveGamesBySeason[s] ?? []).map((g) => g.week)));
-    return map;
-  }, [liveGamesBySeason]);
-  const seasonRatings0 = useWeekAccurateRatings(SEASONS[0], weekNumbersBySeason[SEASONS[0]] ?? [], currentSeason);
-  const seasonRatings1 = useWeekAccurateRatings(SEASONS[1], weekNumbersBySeason[SEASONS[1]] ?? [], currentSeason);
-  const seasonRatings2 = useWeekAccurateRatings(SEASONS[2], weekNumbersBySeason[SEASONS[2]] ?? [], currentSeason);
-  const ratingsBySeasonThenWeek = useMemo(
-    () => ({
-      [SEASONS[0]]: seasonRatings0.byWeek,
-      [SEASONS[1]]: seasonRatings1.byWeek,
-      [SEASONS[2]]: seasonRatings2.byWeek,
-    }),
-    [seasonRatings0.byWeek, seasonRatings1.byWeek, seasonRatings2.byWeek]
-  );
-
-  // Frozen pregame projections for the live season. Used ONLY for the "Model record, all
-  // games" column (liveRecordsLocked below); every other number on this page — Every Bet,
-  // Filtered, WFB, NWFB, the games list — is computed exactly as before, from the
-  // week-accurate ratings.
-  const { locks: liveLocks } = useGameProjectionLocks(currentSeason, weekNumbersBySeason[currentSeason] ?? []);
-
-  const liveRecords = useMemo(() => {
-    const all: BetHistoryRecord[] = [];
-    for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode));
-    }
-    return all;
-  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
-
-  const liveRecordsLocked = useMemo(() => {
-    const all: BetHistoryRecord[] = [];
-    for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode, liveLocks));
-    }
-    return all;
-  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode, liveLocks]);
-
-  // The uploaded 2024/25 history only ever carried the closing line, so
-  // under "Opening line" it has nothing to grade against and is left out
-  // entirely rather than quietly graded on closing numbers.
-  const allRecords = useMemo(() => (lineMode === "open" ? liveRecords : [...BET_HISTORY, ...liveRecords]), [liveRecords, lineMode]);
-  const allRecordsLocked = useMemo(() => (lineMode === "open" ? liveRecordsLocked : [...BET_HISTORY, ...liveRecordsLocked]), [liveRecordsLocked, lineMode]);
+  const { records: allRecords, recordsLocked: allRecordsLocked } = useBetHistoryRecords(hfaMode, lineMode);
 
   function toggleYear(y: number) {
     setYears((prev) => {

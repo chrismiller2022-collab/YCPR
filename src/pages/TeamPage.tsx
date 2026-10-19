@@ -9,7 +9,7 @@ import { hfaFor, spreadColor, spreadToWinPct } from "../lib/odds";
 import { computeRadarMetrics } from "../lib/percentiles";
 import { computeGraphicCardStats, computeNextOpponent } from "../lib/schedule";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { useLatestMonteCarloWinTotals } from "../lib/api/monteCarlo";
+import { useLatestMonteCarloWinTotals, useLatestMonteCarloTeamOdds } from "../lib/api/monteCarlo";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
@@ -22,7 +22,6 @@ import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import { winTotalBuckets, type WinTotalBucket } from "../lib/montecarlo/distribution";
 import WinDistributionBarChart from "../components/WinDistributionBarChart";
 import { TeamRatingHistoryChart, TeamWinsVsExpectedChart } from "../components/TeamTrendCharts";
-import TeamOverviewSection from "../components/TeamOverviewSection";
 
 function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: any) {
   const isHome = game.home === team.team;
@@ -478,14 +477,6 @@ function HomeRoadSplitsBlock({ team }: { team: any }) {
   );
 }
 
-function safeAdminSession(): boolean {
-  try {
-    return !!sessionStorage.getItem("admin_password");
-  } catch {
-    return false;
-  }
-}
-
 export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
   const peers = teamsForConference(team.div, team.conf);
   const schedule = gamesForTeam(team.team);
@@ -547,10 +538,13 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
     return map;
   }, [lockedTotalsRows]);
 
-  const maxConfPct = peers.reduce((max, p) => {
-    const pct = liveByTeam[p.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[p.team]?.confWinPct ?? 0;
-    return Math.max(max, pct);
-  }, 0);
+  // Standings: live ratings and the latest Monte Carlo run. Falls back to the live table's conference odds (then the
+  // preseason futures file) only for a team the sim has no row for.
+  const { byTeam: mcOdds, run: mcRun } = useLatestMonteCarloTeamOdds(season);
+  const ratingOf = (p: { team: string; rating: number }) => liveByTeam[p.team]?.rating ?? p.rating;
+  const confPctOf = (t: string) => mcOdds[t]?.confTitle ?? liveByTeam[t]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[t]?.confWinPct ?? 0;
+  const standingsPeers = [...peers].sort((a, b) => ratingOf(a) - ratingOf(b));
+  const maxConfPct = peers.reduce((max, p) => Math.max(max, confPctOf(p.team)), 0);
 
   return (
     <div className="team-page" ref={exportRef}>
@@ -646,7 +640,14 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
       <BestWorstBlock team={team} onNavigateTeam={onNavigateTeam} />
 
       <div className="table-wrap">
-        <div className="section-label">{team.conf} standings</div>
+        <div className="section-label">
+          {team.conf} standings
+          {mcRun && (
+            <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "var(--chalk-dim)", marginLeft: "0.5rem" }}>
+              odds from the Week {mcRun.week} sim, {new Date(mcRun.run_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            </span>
+          )}
+        </div>
         <table>
           <thead>
             <tr>
@@ -654,14 +655,15 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
               <th className="th th-right">Power Rating</th>
               <th className="th">Conference Odds</th>
               <th className="th th-right">Conf. Win Proj.</th>
+              <th className="th th-right">Playoff</th>
               <th className="th th-right">Record</th>
             </tr>
           </thead>
           <tbody>
-            {peers.map((p) => {
+            {standingsPeers.map((p) => {
               const live = liveByTeam[p.team];
-              const f = CONF_FUTURES_BY_TEAM[p.team];
-              const confWinPct = live?.conf_win_pct ?? f?.confWinPct ?? 0;
+              const confWinPct = confPctOf(p.team);
+              const rating = ratingOf(p);
               const confWinTotal = winTotalsByTeam[p.team]?.meanConfWins ?? live?.conf_proj_wins ?? 0;
               const liveWins = live?.live_wins ?? 0;
               const liveLosses = live?.live_losses ?? 0;
@@ -687,13 +689,9 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                       </button>
                     )}
                   </td>
-                  <td
-                    className={`rating-cell ${
-                      p.rating < 0 ? "rating-good" : "rating-bad"
-                    }`}
-                  >
-                    {p.rating > 0 ? "+" : ""}
-                    {p.rating.toFixed(2)}
+                  <td className={`rating-cell ${rating < 0 ? "rating-good" : "rating-bad"}`}>
+                    {rating > 0 ? "+" : ""}
+                    {rating.toFixed(2)}
                   </td>
                   <td className="conf-odds-cell">
                     <div className="conf-odds-bar-track">
@@ -702,6 +700,7 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
                     <span className="conf-odds-pct">{fmtPct(confWinPct)}</span>
                   </td>
                   <td className="wintotals-total-cell">{confWinTotal.toFixed(2)}</td>
+                  <td className="wintotals-total-cell">{mcOdds[p.team] ? fmtPct(mcOdds[p.team].playoff) : "–"}</td>
                   <td className="wintotals-total-cell">{liveWins}-{liveLosses}</td>
                 </tr>
               );
@@ -710,14 +709,6 @@ export default function TeamPage({ team, onNavigateTeam, onHome }: any) {
         </table>
       </div>
 
-      {/* Admin-only: coach tenure buckets + coach history for FBS teams. Shown
-          only in a browser session that has logged in to Admin (the data is
-          public-read either way — this is just keeping it off the public view). */}
-      {team.div === "FBS" && safeAdminSession() && (
-        <div data-export-exclude="true">
-          <TeamOverviewSection season={season} fixedTeam={team.team} showCharts={false} />
-        </div>
-      )}
     </div>
   );
 }
