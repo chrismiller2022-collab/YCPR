@@ -31,7 +31,7 @@ export const RUN_STEPS: RunStep[] = [
   { key: "ycpr", label: "Save YCPR (Save as Week + Push YC)", view: "ratingsystems", due: { day: 0, hour: 11 }, auto: "ycSaved" },
   { key: "bets", label: "Make YCPR bets", view: "placedbets", due: { day: 0, hour: 15 } },
   { key: "sos", label: "Save SOS to new week", view: "sos", due: { day: 0, hour: 15 }, auto: "sosSaved" },
-  { key: "resume", label: "Save résumé to new week", view: "resumerating", due: { day: 0, hour: 15 }, auto: "resumeSaved" },
+  { key: "resume", label: "Save both résumés to new week", view: "resumerating", due: { day: 0, hour: 15 }, auto: "resumeSaved" },
   { key: "lock", label: "Lock week (freeze games before kickoff)", view: "lockgames", due: "firstKickoff", auto: "locks" },
   { key: "midweek", label: "Midweek socials post", view: "imagedump", due: { day: 3, hour: 16 } },
   { key: "cfbdpool", label: "CFBD pool picks", view: "pools", due: "firstKickoff" },
@@ -80,12 +80,13 @@ async function weekRow(table: string, season: number, week: number): Promise<any
 /** Status for every auto step, for the run whose Sunday is `sunday` and whose games are `week`. */
 export async function fetchAutoStatuses(season: number, week: number, sunday: Date): Promise<Partial<Record<AutoCheck, AutoStatus>>> {
   const since = sunday.toISOString();
-  const [pulls, mcRuns, yc, sos, resume, totals] = await Promise.all([
+  const [pulls, mcRuns, yc, sos, resume, resumeSoFar, totals] = await Promise.all([
     supabase.from("rating_pull_runs").select("source, ran_at, ok").gte("ran_at", since).order("ran_at", { ascending: false }).limit(500),
     fetchMonteCarloRuns(season).catch(() => []),
     weekRow("weekly_power_ratings", season, week),
     weekRow("team_sos", season, week),
     weekRow("team_resume_ratings", season, week),
+    weekRow("team_resume_ratings_finished", season, week),
     weekRow("game_total_snapshots", season, week),
   ]);
   const runs = (pulls.data ?? []) as { source: string; ran_at: string; ok: boolean }[];
@@ -104,7 +105,12 @@ export async function fetchAutoStatuses(season: number, week: number, sunday: Da
 
   out.ycSaved = { done: !!yc, at: stampOf(yc) };
   out.sosSaved = { done: !!sos, at: stampOf(sos) };
-  out.resumeSaved = { done: !!resume, at: stampOf(resume) };
+  // Both résumés (Projected finish and Résumé so far) saved for the week.
+  out.resumeSaved = {
+    done: !!resume && !!resumeSoFar,
+    at: resume && resumeSoFar ? [stampOf(resume), stampOf(resumeSoFar)].filter(Boolean).sort().pop() ?? null : null,
+    note: resume || resumeSoFar ? `${resume ? "Projected" : "So far"} saved; ${resume ? "so far" : "projected"} still to save` : undefined,
+  };
   out.totalsSaved = { done: !!totals, at: stampOf(totals) };
   return out;
 }
