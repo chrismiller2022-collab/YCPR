@@ -9,7 +9,7 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
-import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import KeyCrossSlot from "../components/KeyCrossSlot";
 import { TEAMS_BY_NAME } from "../data/teams";
 
 // CBS's own rules exclude games between two teams that are BOTH outside
@@ -588,17 +588,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           }
                           style={{ width: 76, textAlign: "right" }}
                         />
-                        {(() => {
-                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.splash_line);
-                          return crossed.length > 0 ? (
-                            <span
-                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.splash_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
-                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
-                            >
-                              🔑{keyCrossLabel(crossed)}
-                            </span>
-                          ) : null;
-                        })()}
+                        <KeyCrossSlot mine={r.myProjAwaySpread} pool={r.splash_line} />
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>

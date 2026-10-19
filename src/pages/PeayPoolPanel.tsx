@@ -8,7 +8,7 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
-import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import KeyCrossSlot from "../components/KeyCrossSlot";
 import SplashLinePaste from "../components/SplashLinePaste";
 
 const POOL_URL =
@@ -491,17 +491,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
                           }
                           style={{ width: 76, textAlign: "right" }}
                         />
-                        {(() => {
-                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.peay_line);
-                          return crossed.length > 0 ? (
-                            <span
-                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.peay_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
-                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
-                            >
-                              🔑{keyCrossLabel(crossed)}
-                            </span>
-                          ) : null;
-                        })()}
+                        <KeyCrossSlot mine={r.myProjAwaySpread} pool={r.peay_line} />
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>

@@ -330,7 +330,12 @@ export interface PullRunRow {
   label: string | null;
 }
 
-/** Recent scheduled-pull attempts (scripts/pull-ratings.ts), newest first. */
+/** Records one manual Sync All / Fill gaps source run in rating_pull_runs, so Fill gaps knows what already succeeded this week. */
+export function logManualPullRun(run: { source: string; ok: boolean; error?: string | null; label?: string | null; detail?: string | null }) {
+  return authedPost("logPullRun", { trigger: "manual", ...run });
+}
+
+/** Recent rating pull attempts (manual Sync All / Fill gaps runs), newest first. */
 export async function fetchRecentPullRuns(days = 14): Promise<PullRunRow[]> {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const { data, error } = await supabase

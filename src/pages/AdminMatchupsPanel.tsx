@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useDefaultToAdminWeek } from "../lib/adminWeek";
+import { useAdminWeek, useDefaultToAdminWeek } from "../lib/adminWeek";
+import MatchupReviewTable from "../components/MatchupReviewTable";
 import TeamLogo from "../components/TeamLogo";
 import { spreadColor, fairMoneylineFromWinPct } from "../lib/odds";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -718,6 +719,7 @@ const MATCHUPS_MODES = [
   { key: "totals", label: "Totals" },
   { key: "teamtotals", label: "Team Totals" },
   { key: "predictions", label: "Predictions" },
+  { key: "review", label: "Review" },
 ];
 
 const WEEK_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1);
@@ -848,6 +850,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [weekSel, setWeekSel] = useState<"all" | number>("all");
   useDefaultToAdminWeek(setWeekSel);
+  const { week: adminWeek } = useAdminWeek();
   const [query, setQuery] = useState("");
   // Defaults: FBS vs FBS, sorted by Bet Size descending (biggest bets
   // first, the rows most worth acting on) — per Chris's request, this is
@@ -1155,6 +1158,36 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  // Review: single-game PGWE / net success rate for the selected week (moved here from Team Info).
+  if (mode === "review") {
+    return (
+      <div>
+        <h2>Matchups</h2>
+        <nav className="admin-tabs" aria-label="Matchup views">
+          {MATCHUPS_MODES.map((m) => (
+            <button key={m.key} className={mode === m.key ? "on" : undefined} onClick={() => setMode(m.key)}>
+              {m.label}
+            </button>
+          ))}
+        </nav>
+        <div className="controls matchups-controls admin-mu-controls">
+          <label>
+            Week{" "}
+            <select value={weekSel === "all" ? adminWeek : weekSel} onChange={(e) => setWeekSel(Number(e.target.value))}>
+              {WEEK_OPTIONS.map((w) => (
+                <option key={w} value={w}>
+                  {w}
+                </option>
+              ))}
+            </select>
+          </label>
+          <input placeholder="Search team" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <MatchupReviewTable season={season} week={weekSel === "all" ? adminWeek : weekSel} query={query} />
+      </div>
+    );
   }
 
   return (

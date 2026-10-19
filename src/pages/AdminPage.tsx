@@ -710,6 +710,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "placedbets", label: "Placed Bets" },
       { key: "pm", label: "Prediction Markets" },
       { key: "matchups", label: "Matchups" },
+      { key: "teaminfo", label: "Teams" },
       { key: "linemovement", label: "Line Movement" },
       { key: "odds", label: "Odds" },
     ],
@@ -741,7 +742,6 @@ const NAV_GROUPS: NavGroup[] = [
     collapsible: true,
     items: [
       { key: "matchuphistory", label: "Matchup History" },
-      { key: "teaminfo", label: "Team Info" },
       { key: "upload", label: "Data Upload" },
     ],
   },

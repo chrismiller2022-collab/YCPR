@@ -265,3 +265,43 @@ export async function fetchWinTotalsByWeeks(season: number): Promise<{ weeks: nu
   }
   return { weeks: weeks.sort((a, b) => a - b), byWeek };
 }
+
+/**
+ * Conference title % and playoff % per team from the latest saved Monte Carlo run, plus the
+ * run itself (for an "as of" label). Fractions are 0–1. Used by the team page's conference standings.
+ */
+export function useLatestMonteCarloTeamOdds(season: number) {
+  const [byTeam, setByTeam] = useState<Record<string, { confTitle: number; playoff: number }>>({});
+  const [run, setRun] = useState<MonteCarloRunSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const list = await fetchMonteCarloRuns(season);
+      const latest = list[0] ? await fetchMonteCarloRun(list[0].id) : null;
+      if (cancelled) return;
+      const map: Record<string, { confTitle: number; playoff: number }> = {};
+      for (const r of latest?.results ?? []) {
+        map[r.team] = { confTitle: (r.confTitlePct ?? 0) / 100, playoff: (r.playoffPct ?? 0) / 100 };
+      }
+      setByTeam(map);
+      setRun(latest ? { id: latest.id, season: latest.season, week: latest.week, num_trials: latest.num_trials, run_at: latest.run_at } : null);
+    })()
+      .catch(() => {
+        if (!cancelled) {
+          setByTeam({});
+          setRun(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  return { byTeam, run, loading };
+}

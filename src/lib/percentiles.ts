@@ -43,14 +43,22 @@ function rankWithinDivision(
  * same for FCS) so a strong FCS team doesn't look artificially weak next
  * to the much larger FBS-scale numbers.
  */
-export function computeRadarMetrics(team: any, liveByTeam: Record<string, any> = {}): RadarMetric[] {
+export function computeRadarMetrics(
+  team: any,
+  liveByTeam: Record<string, any> = {},
+  // Latest saved Resume Ratings week when the caller has one; the static
+  // preseason file is only the fallback (whole map, not per team — the
+  // two aren't on the same scale).
+  resumeByTeam: Record<string, { rating: number }> = RESUME_BY_TEAM
+): RadarMetric[] {
   const divisionTeams = TEAMS.filter((t) => t.div === team.div);
 
   // Lower rating = better, same convention as the rest of the site.
-  const powerRank = rankWithinDivision(divisionTeams, (t) => t.rating, false);
+  // Live-preferred — was the static preseason rating for every team.
+  const powerRank = rankWithinDivision(divisionTeams, (t) => liveByTeam[t.team]?.rating ?? t.rating, false);
   const resumeRank = rankWithinDivision(
     divisionTeams,
-    (t) => RESUME_BY_TEAM[t.team]?.rating ?? null,
+    (t) => resumeByTeam[t.team]?.rating ?? null,
     true
   );
   const winsRank = rankWithinDivision(
