@@ -53,7 +53,7 @@ export default function WeeklyDataPanel() {
   }
   useEffect(reload, [season]);
 
-  const gaps = useMemo(() => (coverage ? gapsFrom(coverage, week) : []), [coverage, week]);
+  const gaps = useMemo(() => (coverage ? gapsFrom(coverage, week, runs) : []), [coverage, week, runs]);
 
   async function runSteps(steps: { week: number; step: WeeklyStep }[], label: string) {
     if (steps.length === 0) {

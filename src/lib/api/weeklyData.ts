@@ -39,6 +39,8 @@ export interface WeekCoverage {
   withLine: number;
   withGameStats: number;
   withPlays: number;
+  /** Latest kickoff in the week (counted games only). */
+  lastKickoff: string | null;
 }
 
 export interface WeeklyCoverage {
@@ -66,7 +68,11 @@ export async function fetchWeeklyCoverage(season: number): Promise<WeeklyCoverag
   let latestCompletedKickoff: string | null = null;
   for (const g of games) {
     if (g.season_type && g.season_type !== "regular") continue;
-    const w = byWeek.get(g.week) ?? { week: g.week, games: 0, started: 0, completed: 0, withPgwe: 0, withLine: 0, withGameStats: 0, withPlays: 0 };
+    // Only games with an FBS team: CFBD has no PGWE, game stats, plays or (usually) lines for FCS-only games, so
+    // counting them would leave every week looking incomplete forever.
+    if (g.home_classification !== "fbs" && g.away_classification !== "fbs") continue;
+    const w = byWeek.get(g.week) ?? { week: g.week, games: 0, started: 0, completed: 0, withPgwe: 0, withLine: 0, withGameStats: 0, withPlays: 0, lastKickoff: null };
+    if (g.start_date && (!w.lastKickoff || g.start_date > w.lastKickoff)) w.lastKickoff = g.start_date;
     w.games++;
     if (g.start_date && new Date(g.start_date).getTime() < cutoff) w.started++;
     if ((g.lines ?? []).some((l) => l.spread != null)) w.withLine++;
@@ -90,15 +96,26 @@ export async function fetchWeeklyCoverage(season: number): Promise<WeeklyCoverag
 // covered once 90% of its completed games have them.
 const COVERED = 0.9;
 
-/** The steps Fill gaps should run, week by week, from what's missing in the database. */
-export function gapsFrom(cov: WeeklyCoverage, throughWeek: number): { week: number; step: WeeklyStep }[] {
+/**
+ * The steps Fill gaps should run, week by week: something is missing in the database AND that step hasn't already
+ * run successfully since the week's last game finished. The second part stops Fill gaps from re-pulling a week
+ * forever when CFBD simply has nothing more to give (a game with no line, a game CFBD has no stats for).
+ */
+export function gapsFrom(cov: WeeklyCoverage, throughWeek: number, runs: CfbdPullRun[] = []): { week: number; step: WeeklyStep }[] {
   const out: { week: number; step: WeeklyStep }[] = [];
+  const season = new Date().getFullYear();
+  const triedSince = (week: number, step: WeeklyStep, sinceIso: string | null) =>
+    runs.some((r) => r.ok && r.source === `cfbd:${step}` && r.label === `${season} wk ${week}` && (!sinceIso || r.ran_at > sinceIso));
   for (const w of cov.weeks) {
     if (w.week > throughWeek) continue;
-    // Kicked off but not marked final, final without PGWE, or no line at all: games & lines is stale for that week.
-    if (w.started > w.completed || w.withPgwe < w.completed || w.withLine < w.games) out.push({ week: w.week, step: "games" });
-    if (w.completed > 0 && w.withGameStats < w.completed * COVERED) out.push({ week: w.week, step: "gameadv" });
-    if (w.completed > 0 && w.withPlays < w.completed * COVERED) out.push({ week: w.week, step: "plays" });
+    const finishedAt = w.lastKickoff ? new Date(new Date(w.lastKickoff).getTime() + 4 * 3600 * 1000).toISOString() : null;
+    const want = (step: WeeklyStep, missing: boolean) => {
+      if (missing && !triedSince(w.week, step, finishedAt)) out.push({ week: w.week, step });
+    };
+    // Kicked off but not marked final, final without PGWE, or games without a line.
+    want("games", w.started > w.completed || w.withPgwe < w.completed || w.withLine < w.games);
+    want("gameadv", w.completed > 0 && w.withGameStats < w.completed * COVERED);
+    want("plays", w.completed > 0 && w.withPlays < w.completed * COVERED);
   }
   const statsStale =
     cov.latestCompletedKickoff != null && (cov.seasonStatsUpdatedAt == null || cov.seasonStatsUpdatedAt < cov.latestCompletedKickoff);
@@ -116,7 +133,7 @@ export interface CfbdPullRun {
 }
 
 /** The weekly pull's log, newest first. */
-export async function fetchCfbdPullRuns(days = 21): Promise<CfbdPullRun[]> {
+export async function fetchCfbdPullRuns(days = 200): Promise<CfbdPullRun[]> {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const { data, error } = await supabase
     .from("rating_pull_runs")
@@ -124,7 +141,7 @@ export async function fetchCfbdPullRuns(days = 21): Promise<CfbdPullRun[]> {
     .like("source", "cfbd:%")
     .gte("ran_at", since)
     .order("ran_at", { ascending: false })
-    .limit(200);
+    .limit(1000);
   if (error) throw error;
   return (data ?? []) as CfbdPullRun[];
 }
