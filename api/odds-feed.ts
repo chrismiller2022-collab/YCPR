@@ -734,13 +734,15 @@ export default async function handler(req: any, res: any) {
     // client actually renders — the raw response also carries several
     // mainstream US books (DraftKings, FanDuel, BetMGM...) we don't show,
     // no sense shipping those bytes to the browser on every page open.
+    const allBooks = req.query?.books === "all";
     const trimmed = games.map((g) => ({
       id: g.id,
       commenceTime: g.commence_time,
       homeTeam: g.home_team,
       awayTeam: g.away_team,
+      // ?books=all keeps every US book (for the consensus "Vegas" median the Weekly Data panel saves).
       bookmakers: g.bookmakers
-        .filter((b) => WANTED_BOOKMAKERS.has(b.key))
+        .filter((b) => allBooks || WANTED_BOOKMAKERS.has(b.key))
         .map((b) => ({
           key: b.key,
           title: b.title,

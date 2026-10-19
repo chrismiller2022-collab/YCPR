@@ -1,3 +1,4 @@
+import { pickVegasLine } from "./linePick";
 import { useEffect, useMemo, useState } from "react";
 import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
 import { computeRow, classOf } from "./matchupsCompute";
@@ -193,15 +194,8 @@ export interface MatchupHandicap {
   error: string | null;
 }
 
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: GameWithLines["lines"]) {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+// Lines come through fetchGamesWithLines, which already drops the median row from final games.
+const pickLine = (lines: GameWithLines["lines"]) => pickVegasLine(lines);
 
 function teamSpreadFrom(rawHomeSpread: number | null, isHome: boolean): number | null {
   if (rawHomeSpread == null) return null;

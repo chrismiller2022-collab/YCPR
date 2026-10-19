@@ -25,6 +25,7 @@
 // vig eating both sides at once is the normal case when your number is close
 // to the market's).
 
+import { LINE_PROVIDER_ORDER } from "./linePick";
 import { HFA, hfaFor, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
@@ -37,12 +38,11 @@ export type BetSide = "away" | "home" | null;
 // espnMlPool.ts) for spread lines — reused here, but a line only qualifies
 // if it actually carries BOTH moneylines (some providers report spread/O-U
 // only), so this scans further down the list than pickLine() would.
-const PREFERRED_ML_PROVIDERS = ["consensus", "DraftKings", "Bovada", "ESPN Bet"];
 
 export function pickMoneylineLine(lines: BettingLineRow[]): BettingLineRow | null {
   const withBoth = lines.filter((l) => l.home_moneyline != null && l.away_moneyline != null);
   if (withBoth.length === 0) return null;
-  for (const p of PREFERRED_ML_PROVIDERS) {
+  for (const p of LINE_PROVIDER_ORDER) {
     const match = withBoth.find((l) => l.provider === p);
     if (match) return match;
   }

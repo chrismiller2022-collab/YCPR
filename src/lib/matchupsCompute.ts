@@ -1,3 +1,4 @@
+import { LINE_PROVIDER_ORDER } from "./linePick";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { HFA, hfaFor, fairMoneylineFromWinPct } from "./odds";
 import { billRAwayWinPct } from "./moneylineBetHistory";
@@ -18,11 +19,10 @@ import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
 // eyeballing one row to confirm "Act. Cover Team" comes out right.
 // ---------------------------------------------------------------------
 
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
 
 export function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
   if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
+  for (const p of LINE_PROVIDER_ORDER) {
     const match = lines.find((l) => l.provider === p);
     if (match) return match;
   }

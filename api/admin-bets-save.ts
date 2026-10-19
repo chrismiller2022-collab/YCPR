@@ -285,6 +285,56 @@ export default async function handler(req: any, res: any) {
     // FanDuel (or any book) spread snapshots from The Odds API. Snapshots are immutable: an existing
     // (game, book, snapshot time) is never rewritten. Every call is also logged in book_snapshot_pulls
     // — even when it returned nothing — so the page can skip snapshots that were already paid for.
+    // The site-wide "Vegas" line: the median across sportsbooks from The Odds API, stored in betting_lines as provider
+    // "market_median" (every line picker prefers it). Each refresh overwrites spread/total/moneylines with the latest
+    // median; opening_spread / opening_over_under are set from the first median ever saved for the game and never
+    // overwritten after that.
+    if (action === "saveMarketLines") {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (rows.length === 0) {
+        res.status(200).json({ saved: 0 });
+        return;
+      }
+      const ids = rows.map((r: any) => String(r.game_id));
+      const { data: existing, error: readError } = await supabaseAdmin
+        .from("betting_lines")
+        .select("game_id, provider, opening_spread, opening_over_under")
+        .in("game_id", ids);
+      if (readError) throw readError;
+      // Opening line: one already saved on the median row wins; else CFBD's consensus opener (the true open); else
+      // this first median.
+      const openByGame = new Map<string, { opening_spread: number | null; opening_over_under: number | null }>();
+      for (const e of (existing ?? []).filter((x: any) => x.provider === "consensus")) openByGame.set(String(e.game_id), e);
+      for (const e of (existing ?? []).filter((x: any) => x.provider === "market_median")) {
+        const cfbd = openByGame.get(String(e.game_id));
+        openByGame.set(String(e.game_id), {
+          opening_spread: e.opening_spread ?? cfbd?.opening_spread ?? null,
+          opening_over_under: e.opening_over_under ?? cfbd?.opening_over_under ?? null,
+        });
+      }
+      const now = new Date().toISOString();
+      const saveRows = rows.map((r: any) => {
+        const prior: any = openByGame.get(String(r.game_id));
+        return {
+          game_id: String(r.game_id),
+          season: r.season,
+          week: r.week,
+          provider: "market_median",
+          spread: r.spread ?? null,
+          over_under: r.over_under ?? null,
+          home_moneyline: r.home_moneyline ?? null,
+          away_moneyline: r.away_moneyline ?? null,
+          opening_spread: prior?.opening_spread ?? r.spread ?? null,
+          opening_over_under: prior?.opening_over_under ?? r.over_under ?? null,
+          pulled_at: now,
+        };
+      });
+      const { error, count } = await supabaseAdmin.from("betting_lines").upsert(saveRows, { onConflict: "game_id,provider", count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "saveBookSpreadSnapshots") {
       const { rows, pull } = req.body;
       let saved = 0;

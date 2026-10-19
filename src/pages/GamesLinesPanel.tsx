@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import TeamLink from "../components/TeamLink";
+import WeeklyDataPanel from "../components/WeeklyDataPanel";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
 
@@ -128,6 +129,7 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
     <div>
 
       <h2 style={{ marginTop: 0 }}>Games & Lines</h2>
+      <WeeklyDataPanel />
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Games and betting lines pulled from CFBD, stored in Supabase. Includes FBS vs FBS,
         FBS vs FCS, FCS vs FCS, and FCS vs other-division games — games where both sides

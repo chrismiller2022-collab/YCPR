@@ -1,4 +1,5 @@
 import { supabase } from "../supabaseClient";
+import { preferClosingForFinal } from "../linePick";
 import { fetchAllRows } from "./fetchAll";
 import { cachedFetch } from "./cache";
 
@@ -90,10 +91,7 @@ export async function fetchGamesWithLines(season: number, week?: number): Promis
       linesByGame.set(line.game_id, list);
     }
 
-    return games.map((g) => ({
-      ...g,
-      lines: linesByGame.get(g.id) ?? [],
-    }));
+    return games.map((g) => preferClosingForFinal({ ...g, lines: linesByGame.get(g.id) ?? [] }));
   });
 }
 

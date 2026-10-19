@@ -198,7 +198,7 @@ export function usePoolsBoard(poolKeys: string[], active: boolean) {
         const lines = (l.data ?? []) as BettingLineRow[];
         const map: Record<string, WeekGame> = {};
         for (const r of g.data ?? []) {
-          const line = pickLine(lines.filter((x) => x.game_id === r.id));
+          const line = pickLine(lines.filter((x) => x.game_id === r.id), r.completed);
           map[r.id] = {
             id: r.id,
             start: r.start_date,
