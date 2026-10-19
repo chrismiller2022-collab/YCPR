@@ -446,3 +446,53 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 /* Public tools embedded in admin: the admin tabs replace their "back to rankings" link and hero spacing */
 .admin-embedded-tool .back-link { display: none; }
 .admin-embedded-tool .matchups-page { padding-top: 0; }
+
+/* ---- Admin Scoreboard: tiles reflow to fill the width; --sb-tile is the slider's minimum tile width and
+   --sb-scale grows the type with it. ---- */
+.sb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--sb-tile, 280px)), 1fr));
+  gap: 12px;
+  font-size: calc(14px * var(--sb-scale, 1));
+}
+.sb-tile {
+  position: relative;
+  background: var(--turf-panel);
+  border: 1px solid var(--hash);
+  border-radius: 10px;
+  padding: 0.6em 0.75em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  min-width: 0;
+}
+.sb-tile.sb-redzone { box-shadow: inset 3px 0 0 var(--c-err); }
+.sb-head { display: flex; justify-content: space-between; font-size: 0.78em; gap: 0.5em; }
+.sb-team { display: grid; grid-template-columns: 1.6em 1fr auto; align-items: center; gap: 0.5em; font-size: 1.1em; }
+.sb-logo { width: 1.6em; height: 1.6em; object-fit: contain; display: inline-block; }
+.sb-name { display: flex; align-items: center; gap: 0.35em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-rank { font-size: 0.7em; color: var(--chalk-dim); }
+.sb-poss { width: 0.45em; height: 0.45em; border-radius: 50%; background: var(--gold); display: inline-block; }
+.sb-score { font-variant-numeric: tabular-nums; font-size: 1.15em; }
+.sb-line { font-size: 0.8em; }
+.sb-dim { color: var(--chalk-dim); }
+.sb-field { position: relative; height: 0.55em; border-radius: 3px; background: color-mix(in srgb, var(--c-ok) 22%, transparent); overflow: hidden; }
+.sb-field-rz { position: absolute; top: 0; bottom: 0; width: 20%; background: color-mix(in srgb, var(--c-err) 18%, transparent); }
+.sb-field-rz-l { left: 0; }
+.sb-field-rz-r { right: 0; }
+.sb-ball { position: absolute; top: -0.1em; width: 0.7em; height: 0.75em; margin-left: -0.35em; border-radius: 50%; background: var(--gold); }
+.sb-chips { display: flex; flex-wrap: wrap; gap: 0.3em; }
+.sb-chip { font-size: 0.72em; font-weight: 600; border: 1px solid; border-radius: 99px; padding: 0.05em 0.5em; white-space: nowrap; }
+.sb-flash-label { position: absolute; top: 0.4em; left: 50%; transform: translateX(-50%); font-size: 0.75em; font-weight: 800; padding: 0.1em 0.6em; border-radius: 99px; color: #fff; }
+.sb-flash-label-score { background: var(--c-ok); }
+.sb-flash-label-redzone { background: var(--c-err); }
+.sb-flash-label-bigplay { background: var(--gold); }
+.sb-flash-score { animation: sb-pulse-score 1s ease-in-out 4; }
+.sb-flash-redzone { animation: sb-pulse-red 1s ease-in-out 4; }
+.sb-flash-bigplay { animation: sb-pulse-gold 1s ease-in-out 4; }
+@keyframes sb-pulse-score { 50% { box-shadow: 0 0 0 3px var(--c-ok); background: color-mix(in srgb, var(--c-ok) 14%, var(--turf-panel)); } }
+@keyframes sb-pulse-red { 50% { box-shadow: 0 0 0 3px var(--c-err); background: color-mix(in srgb, var(--c-err) 12%, var(--turf-panel)); } }
+@keyframes sb-pulse-gold { 50% { box-shadow: 0 0 0 3px var(--gold); background: color-mix(in srgb, var(--gold) 14%, var(--turf-panel)); } }
+@media (prefers-reduced-motion: reduce) {
+  .sb-flash-score, .sb-flash-redzone, .sb-flash-bigplay { animation: none; box-shadow: 0 0 0 3px var(--gold); }
+}

@@ -1,3 +1,4 @@
+import ScoreboardPanel from "./ScoreboardPanel";
 import WeeklyRunPanel from "../components/WeeklyRunPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Clock, ExternalLink, KeyRound, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
@@ -248,6 +249,7 @@ type AdminView =
   | "periodproj"
   | "matchuphistory"
   | "teaminfo"
+  | "scoreboard"
   | "weather"
   | "tools"
   | "vizbuilder"
@@ -763,6 +765,7 @@ const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { key: "pools", label: "Pools" },
+      { key: "scoreboard", label: "Scoreboard" },
     ],
   },
   {
@@ -1315,6 +1318,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
 
           {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
           {view === "checklist" && <AdminChecklistPage onBack={() => setView("home")} />}
+          {view === "scoreboard" && <ScoreboardPanel />}
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
           {view === "drogba" && <DrogbaAdminPanel onBack={() => setView("home")} />}

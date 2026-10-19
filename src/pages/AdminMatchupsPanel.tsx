@@ -1,3 +1,4 @@
+import { getAdminPassword } from "../lib/adminAuth";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useAdminWeek, useDefaultToAdminWeek } from "../lib/adminWeek";
 import MatchupReviewTable from "../components/MatchupReviewTable";
@@ -1121,7 +1122,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
 
   async function handleSaveBets() {
     if (selectedRows.length === 0) return;
-    const password = window.prompt("Admin password:");
+    const password = getAdminPassword();
     if (!password) return;
 
     setSaving(true);

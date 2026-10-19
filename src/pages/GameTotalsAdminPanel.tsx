@@ -1,3 +1,4 @@
+import { getAdminPassword } from "../lib/adminAuth";
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
 import SortHeader from "../components/SortHeader";
@@ -64,7 +65,7 @@ function kickoffLabel(iso: string | null): string {
 }
 
 async function saveSettings(season: number, settings: GameTotalsSettings) {
-  const password = window.prompt("Admin password:");
+  const password = getAdminPassword();
   if (!password) return;
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
@@ -1219,7 +1220,7 @@ export function SyncControl({ season }: { season: number }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function handleSync() {
-    const password = window.prompt("Admin password:");
+    const password = getAdminPassword();
     if (!password) return;
     setSyncing(true);
     setMsg(null);
@@ -1268,7 +1269,7 @@ export function SyncControl({ season }: { season: number }) {
 // and Totals: Games Ahead tabs' week-over-week comparisons.
 // ---------------------------------------------------------------------
 async function saveGameTotalSnapshot(season: number, week: number, rows: EnrichedGameRow[]) {
-  const password = window.prompt("Admin password:");
+  const password = getAdminPassword();
   if (!password) return null;
   const payloadRows = rows.map((r) => {
     const myTotal = r.projection?.projectedTotal ?? null;
@@ -1378,7 +1379,7 @@ export function CsvImportControl({ season }: { season: number }) {
       setMsg("Error: select both season.csv and advanced.csv first.");
       return;
     }
-    const password = window.prompt("Admin password:");
+    const password = getAdminPassword();
     if (!password) return;
     setImporting(true);
     setMsg(null);
