@@ -17,6 +17,10 @@ export interface RawResumeMetrics {
   totalProjWins: number;
   totalProjLosses: number;
   winLossDiff: number;
+  // Wins Above Bubble: actual wins minus the wins a bubble team (the 12th-best FBS team by power rating) would expect
+  // against the same schedule at the same sites. Projected mode adds the rest of the season at this team's own win
+  // probability minus the bubble team's.
+  wab: number | null;
   confChampWinPct: number | null;
   powerRating: number;
   srs: number | null;
@@ -44,6 +48,7 @@ export const METRIC_KEYS: (keyof RawResumeMetrics)[] = [
   "totalProjWins",
   "totalProjLosses",
   "winLossDiff",
+  "wab",
   "confChampWinPct",
   "powerRating",
   "srs",
@@ -69,6 +74,7 @@ export const METRIC_LABELS: Record<keyof RawResumeMetrics, string> = {
   totalProjWins: "Total Projected Wins",
   totalProjLosses: "Total Projected Losses",
   winLossDiff: "W-L",
+  wab: "Wins Above Bubble",
   confChampWinPct: "Conf. Champ Win %",
   powerRating: "Power Rating",
   srs: "SRS",
@@ -100,6 +106,7 @@ export const METRIC_HIGHER_IS_BETTER: Record<keyof RawResumeMetrics, boolean> = 
   totalProjWins: true,
   totalProjLosses: false,
   winLossDiff: true,
+  wab: true,
   confChampWinPct: true,
   powerRating: false,
   srs: false,
@@ -149,7 +156,8 @@ export function computeRawResumeMetrics(
   // advanced stats pull (Team Info).
   netSrByTeam: Record<string, number | null> = {},
   // team -> latest saved SOS value from the SOS admin page's Save to Site.
-  sosByTeam: Record<string, number | null> = {}
+  sosByTeam: Record<string, number | null> = {},
+  extra: ResumeExtraInputs = {}
 ): RawResumeMetrics {
   const ratingFor = (name: string, fallback: number) => liveByTeam[name]?.rating ?? fallback;
   const teamRating = ratingFor(team.team, team.rating);
@@ -181,6 +189,13 @@ export function computeRawResumeMetrics(
   let restProjLosses = 0;
   let expWins = 0;
   let pgweGames = 0;
+  const bubble = extra.bubbleRating ?? null;
+  let wab = 0;
+  let wabN = 0;
+  // Margin of victory: real margin for played games; projected mode also counts each remaining game's projected
+  // margin. Averaged per game.
+  let sumMargin = 0;
+  let marginN = 0;
 
   for (const g of seasonWideGames) {
     const isHome = g.home_team === team.team;
@@ -199,10 +214,24 @@ export function computeRawResumeMetrics(
     sumProjMov += -projLine; // negative spread = favored, so -projLine = this game's expected margin
 
     const isCompleted = g.completed && g.home_points != null && g.away_points != null;
+    // The same game for a bubble team: its rating in place of this team's, same site.
+    const bubbleLine =
+      bubble == null ? null : isHome ? bubble - oppRating - hfaFor(team.team, liveByTeam) : bubble - oppRating + hfaFor(oppName, liveByTeam);
     if (!isCompleted) {
       const winPct = spreadToWinPct(projLine);
       restProjWins += winPct;
       restProjLosses += 1 - winPct;
+      sumMargin += -projLine;
+      marginN++;
+      if (bubbleLine != null) {
+        wab += winPct - spreadToWinPct(bubbleLine);
+        wabN++;
+      }
+    } else if (bubbleLine != null) {
+      const teamScore = isHome ? g.home_points! : g.away_points!;
+      const oppScore = isHome ? g.away_points! : g.home_points!;
+      wab += (teamScore > oppScore ? 1 : teamScore === oppScore ? 0.5 : 0) - spreadToWinPct(bubbleLine);
+      wabN++;
     }
   }
 
@@ -226,6 +255,8 @@ export function computeRawResumeMetrics(
     // start, sum these (or average, matching the original design) and
     // return that as `mov` instead of the projected-sum stand-in above.
     const mov = teamScore - oppScore;
+    sumMargin += mov;
+    marginN++;
 
     // Postgame win expectancy (CFBD): the team's win probability given how
     // the game actually played out — summed over played games it's the wins
@@ -254,22 +285,30 @@ export function computeRawResumeMetrics(
   const bwBestLoss = completedOnly ? bw.bestLoss.actual : bw.bestLoss.proj;
   const bwWorstLoss = completedOnly ? bw.worstLoss.actual : bw.worstLoss.proj;
 
+  // Projected finish: the latest Monte Carlo run's mean regular-season wins (real results so far plus the simulated
+  // rest of the season) when the sim has this team; else each remaining game's win probability.
+  const mc = extra.mc?.[team.team];
+  const totalGames = actWins + losses + restProjWins + restProjLosses;
+  const totalProjWins = mc?.meanWins != null ? mc.meanWins : actWins + restProjWins;
+  const totalProjLosses = mc?.meanWins != null ? Math.max(0, totalGames - mc.meanWins) : losses + restProjLosses;
+
   return {
     expWins: pgweGames > 0 ? expWins : null,
     actWins,
     losses,
-    projWins: restProjWins,
-    projLosses: restProjLosses,
-    totalProjWins: actWins + restProjWins,
-    totalProjLosses: losses + restProjLosses,
+    projWins: Math.max(0, totalProjWins - actWins),
+    projLosses: Math.max(0, totalProjLosses - losses),
+    totalProjWins,
+    totalProjLosses,
     winLossDiff: actWins - losses,
-    confChampWinPct: liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null,
+    wab: wabN > 0 ? wab : null,
+    confChampWinPct: mc?.confTitlePct != null ? mc.confTitlePct / 100 : (liveByTeam[team.team]?.conf_win_pct ?? CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null),
     powerRating: teamRating,
     srs: srsByTeam[team.team] ?? null,
     vsrs: vsrsByTeam[team.team] ?? null,
     avgProjLine: projLineN > 0 ? sumProjLine / projLineN : null,
     avgActLine: actLineN > 0 ? sumActLine / actLineN : null,
-    mov: sumProjMov, // TEMPORARY: sum of projected margins for now — swap to real completed-games average margin once games start
+    mov: marginN > 0 ? sumMargin / marginN : sumProjMov,
     atsMargin: atsN > 0 ? sumAts / atsN : null,
     netSr: netSrByTeam[team.team] ?? null,
     avgOppPR: oppPRN > 0 ? sumOppPR / oppPRN : null,
@@ -330,4 +369,93 @@ export function computeConglomerateScore(
   // Weighted average of 1-10 normalized metrics, times 10 — a 10-100
   // scale rather than 1-10, per instruction.
   return (weightedSum / weightTotal) * 10;
+}
+
+
+// ---------------------------------------------------------------------
+// Two résumés, scored by buckets.
+//   "sofar"     — completed games only: what the team has accomplished.
+//   "projected" — every completed game plus the rest of the season simulated (latest Monte Carlo run).
+// Metrics are normalized 1–10 across the division, averaged inside their bucket (each metric with its own weight),
+// then the buckets are combined with the bucket weights. Bucketing stops a family of near-duplicate metrics (seven
+// flavors of record, eight of team strength) from outweighing schedule just by count.
+// ---------------------------------------------------------------------
+
+export interface ResumeExtraInputs {
+  /** Power rating of the bubble team (12th-best FBS), for Wins Above Bubble. */
+  bubbleRating?: number | null;
+  /** Latest Monte Carlo run by team: mean regular-season wins and conference title % (0–100). */
+  mc?: Record<string, { meanWins: number | null; confTitlePct: number | null }>;
+}
+
+export type ResumeMode = "sofar" | "projected";
+export type BucketKey = "record" | "quality" | "schedule" | "control" | "strength" | "title";
+
+// Rest-of-season metrics only exist in the projected résumé.
+const PROJECTED_ONLY: (keyof RawResumeMetrics)[] = ["projWins", "projLosses", "totalProjWins", "totalProjLosses"];
+
+export const RESUME_BUCKETS: { key: BucketKey; label: string; metrics: (keyof RawResumeMetrics)[] }[] = [
+  { key: "record", label: "Record", metrics: ["actWins", "losses", "winLossDiff", "wab", "projWins", "projLosses", "totalProjWins", "totalProjLosses"] },
+  { key: "quality", label: "Quality results", metrics: ["bestWin", "bestLoss", "worstLoss"] },
+  { key: "schedule", label: "Schedule", metrics: ["sos", "avgOppPR"] },
+  { key: "control", label: "Game control", metrics: ["mov", "netSr", "expWins", "atsMargin"] },
+  { key: "strength", label: "Team strength", metrics: ["powerRating", "srs", "vsrs", "avgActLine", "avgProjLine"] },
+  { key: "title", label: "Title path", metrics: ["confChampWinPct"] },
+];
+
+export function bucketMetrics(bucket: BucketKey, mode: ResumeMode): (keyof RawResumeMetrics)[] {
+  const b = RESUME_BUCKETS.find((x) => x.key === bucket)!;
+  return mode === "sofar" ? b.metrics.filter((m) => !PROJECTED_ONLY.includes(m)) : b.metrics;
+}
+
+export interface ResumeWeightConfig {
+  buckets: Record<BucketKey, number>;
+  metrics: Record<string, number>;
+}
+
+export const DEFAULT_BUCKET_WEIGHTS: Record<ResumeMode, Record<BucketKey, number>> = {
+  sofar: { record: 30, quality: 25, schedule: 20, control: 15, strength: 10, title: 0 },
+  projected: { record: 30, quality: 15, schedule: 15, control: 10, strength: 20, title: 10 },
+};
+
+export function defaultResumeConfig(mode: ResumeMode): ResumeWeightConfig {
+  return { buckets: { ...DEFAULT_BUCKET_WEIGHTS[mode] }, metrics: Object.fromEntries(METRIC_KEYS.map((k) => [k, 1])) };
+}
+
+/** Saved weights (resume_rating_weights.weights) for one mode; anything missing falls back to the defaults. */
+export function resumeConfigFrom(saved: any, mode: ResumeMode): ResumeWeightConfig {
+  const base = defaultResumeConfig(mode);
+  const m = saved?.v === 2 ? saved[mode] : null;
+  if (!m) return base;
+  return { buckets: { ...base.buckets, ...(m.buckets ?? {}) }, metrics: { ...base.metrics, ...(m.metrics ?? {}) } };
+}
+
+/** Per-bucket 1–10 scores and the overall 10–100 score. */
+export function computeBucketedScore(
+  normalized: Partial<Record<keyof RawResumeMetrics, number | null>>,
+  config: ResumeWeightConfig,
+  mode: ResumeMode
+): { score: number | null; buckets: Record<BucketKey, number | null> } {
+  const buckets = {} as Record<BucketKey, number | null>;
+  let sum = 0;
+  let total = 0;
+  for (const b of RESUME_BUCKETS) {
+    let bs = 0;
+    let bw = 0;
+    for (const m of bucketMetrics(b.key, mode)) {
+      const v = normalized[m];
+      const w = config.metrics[m] ?? 0;
+      if (v == null || w <= 0) continue;
+      bs += v * w;
+      bw += w;
+    }
+    const bucketScore = bw > 0 ? bs / bw : null;
+    buckets[b.key] = bucketScore;
+    const W = config.buckets[b.key] ?? 0;
+    if (bucketScore != null && W > 0) {
+      sum += bucketScore * W;
+      total += W;
+    }
+  }
+  return { score: total > 0 ? (sum / total) * 10 : null, buckets };
 }

@@ -111,3 +111,8 @@ export async function fetchResumeRatingsByWeeks(
   }
   return { weeks: Object.keys(byWeek).map(Number).sort((a, b) => a - b), byWeek, weekInfo };
 }
+
+/** Distinct week numbers with a saved "Résumé so far" (completed games only) snapshot. */
+export async function fetchFinishedResumeAvailableWeeks(season: number): Promise<number[]> {
+  return fetchDistinctWeeks("team_resume_ratings_finished", season);
+}

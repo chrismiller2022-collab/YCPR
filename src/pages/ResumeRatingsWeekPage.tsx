@@ -3,20 +3,22 @@ import ConfLink from "../components/ConfLink";
 import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import { CONFERENCES, TEAMS } from "../data/teams";
-import { fetchResumeRatingsForWeek } from "../lib/api/resumeWeights";
+import { fetchResumeRatingsForWeek, fetchFinishedResumeForWeek } from "../lib/api/resumeWeights";
 
 type Row = { score: number | null; act_wins: number | null; losses: number | null };
 
-// A specific past week's Resume Rating, exactly as saved via "Save to
-// Site" on that week — never recomputed, never affected by anything
-// saved for a later week.
+// A specific past week's Resume Ratings, exactly as saved on that week — never recomputed, never affected by anything
+// saved for a later week. Two tabs: "Résumé so far" (completed games only) and "Projected finish" (completed games
+// plus the simulated rest of the season). Opens on Résumé so far when that week has it saved.
 export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivision, onNavigateTeam, onNavigateConference, onHome }: any) {
   const [query, setQuery] = useState("");
   const [division, setDivision] = useState(defaultDivision ?? "All");
   const [conference, setConference] = useState("All");
   const [sortKey, setSortKey] = useState("score");
   const [sortDir, setSortDir] = useState("asc");
-  const [byTeam, setByTeam] = useState<Record<string, Row>>({});
+  const [byMode, setByMode] = useState<{ sofar: Record<string, Row>; projected: Record<string, Row> }>({ sofar: {}, projected: {} });
+  const [mode, setMode] = useState<"sofar" | "projected" | null>(null);
+  const byTeam = byMode[mode ?? "sofar"];
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const season = new Date().getFullYear();
@@ -25,9 +27,11 @@ export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivisi
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchResumeRatingsForWeek(season, weekNum)
-      .then((data) => {
-        if (!cancelled) setByTeam(data);
+    Promise.all([fetchFinishedResumeForWeek(season, weekNum).catch(() => ({})), fetchResumeRatingsForWeek(season, weekNum)])
+      .then(([sofar, projected]) => {
+        if (cancelled) return;
+        setByMode({ sofar, projected });
+        setMode((m) => m ?? (Object.keys(sofar).length > 0 ? "sofar" : "projected"));
       })
       .catch((err: any) => {
         if (!cancelled) setError(err.message ?? "Failed to load Resume Ratings");
@@ -90,6 +94,22 @@ export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivisi
         {error && <p style={{ fontSize: "0.8rem", color: "#a15c00" }}>{error}</p>}
       </div>
 
+      <div className="controls matchups-controls" style={{ gap: "0.5rem" }}>
+        {(
+          [
+            ["sofar", "Résumé so far"],
+            ["projected", "Projected finish"],
+          ] as const
+        ).map(([k, label]) => (
+          <button key={k} className={`mode-btn ${(mode ?? "sofar") === k ? "mode-btn-active" : ""}`} onClick={() => setMode(k)}>
+            {label}
+          </button>
+        ))}
+        <span style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>
+          {(mode ?? "sofar") === "sofar" ? "Completed games only." : "Completed games plus the simulated rest of the season."}
+        </span>
+      </div>
+
       <div className="controls matchups-controls">
         <input className="search" placeholder="Search for a team…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <select className="filter" value={division} onChange={(e) => setDivision(e.target.value)}>
@@ -112,7 +132,7 @@ export default function ResumeRatingsWeekPage({ weekNum, subLabel, defaultDivisi
           <div className="empty matchups-empty">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="empty matchups-empty">
-            Week {weekNum} resume ratings aren't posted yet — check back soon.
+            Week {weekNum} {(mode ?? "sofar") === "sofar" ? "Résumé so far" : "Projected finish"} ratings aren't posted yet — check back soon.
           </div>
         ) : (
           <div className="table-scroll">

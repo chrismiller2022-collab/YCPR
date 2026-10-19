@@ -1,3 +1,4 @@
+import WeeklyRunPanel from "../components/WeeklyRunPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Clock, ExternalLink, KeyRound, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import "../styles/admin.css";
@@ -555,7 +556,7 @@ function AdminDashboard({
 
   return (
     <div>
-      <h2>Overview</h2>
+      <h2>Weekly Run</h2>
       <p>
         {today} · {season} season
       </p>
@@ -581,6 +582,10 @@ function AdminDashboard({
           tone={bs ? (bs.profit > 0 ? "up" : bs.profit < 0 ? "down" : undefined) : undefined}
         />
         <StatTile label="Pending bets" value={bs ? bs.pending : "—"} sub={bs && bs.pending ? `across ${bs.pendingBooks} book${bs.pendingBooks === 1 ? "" : "s"}` : undefined} />
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <WeeklyRunPanel onNavigate={(v) => onNavigate(v as AdminView)} />
       </div>
 
       <div className="admin-cols">
@@ -664,6 +669,9 @@ function AdminDashboard({
 interface NavItem {
   key: AdminView;
   label: string;
+  // Pages that live under this one entry as tabs (the first is the entry's own page). Each keeps its own view key,
+  // so links and saved views to the old page still land on the right tab.
+  tabs?: { key: AdminView; label: string }[];
 }
 interface NavGroup {
   label: string;
@@ -673,79 +681,135 @@ interface NavGroup {
   collapsible?: boolean;
 }
 
+// Grouped by when in the week each page is used (approved admin map, Oct 2026): data comes in Sunday morning, the
+// models run Sunday, betting and pools mid-week, publishing after that.
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: "This week",
+    label: "Data",
     items: [
-      { key: "checklist", label: "Weekly Checklist" },
-      { key: "lockgames", label: "Freeze Week" },
-      { key: "lockedhistory", label: "Locked History" },
-      { key: "publish", label: "Publish" },
-      { key: "montecarlo", label: "Monte Carlo" },
-      { key: "gameslines", label: "Games & Lines" },
-      { key: "weather", label: "Game Weather" },
-      { key: "pools", label: "Pools" },
+      {
+        key: "gameslines",
+        label: "Week Data",
+        tabs: [
+          { key: "gameslines", label: "Games & Lines" },
+          { key: "weather", label: "Game Weather" },
+          { key: "upload", label: "Data Upload" },
+          { key: "oddshistorical", label: "Historical Odds Pull" },
+        ],
+      },
+      { key: "teaminfo", label: "Teams" },
     ],
   },
   {
-    label: "Ratings & models",
+    label: "Models",
     items: [
-      { key: "ratingsystems", label: "Rating Systems" },
-      { key: "ratingmatchups", label: "Rating Systems Matchups" },
-      { key: "resumerating", label: "Resume Rating" },
-      { key: "sos", label: "Strength of Schedule" },
-      { key: "gametotals", label: "Totals" },
-      { key: "drogba", label: "DROGBA (Spreads)" },
-      { key: "periodproj", label: "Period Projections" },
-      { key: "periodgrading", label: "Period Grading" },
-      { key: "oddshistorical", label: "Historical Odds Pull" },
-      { key: "totalshistory", label: "Totals History" },
-      { key: "bethistory", label: "Bet History" },
-      { key: "mlbethistory", label: "Moneyline Bet History" },
+      {
+        key: "ratingsystems",
+        label: "Ratings",
+        tabs: [
+          { key: "ratingsystems", label: "Rating Systems" },
+          { key: "ratingmatchups", label: "Systems Matchups" },
+        ],
+      },
+      { key: "drogba", label: "DROGBA" },
+      {
+        key: "gametotals",
+        label: "Totals",
+        tabs: [
+          { key: "gametotals", label: "Model" },
+          { key: "totalshistory", label: "History" },
+        ],
+      },
+      { key: "montecarlo", label: "Monte Carlo" },
+      { key: "resumerating", label: "Resume" },
+      { key: "sos", label: "SOS" },
+      {
+        key: "periodproj",
+        label: "Periods",
+        tabs: [
+          { key: "periodproj", label: "Projections" },
+          { key: "periodgrading", label: "Grading" },
+        ],
+      },
     ],
   },
   {
     label: "Betting",
     items: [
-      { key: "placedbets", label: "Placed Bets" },
-      { key: "pm", label: "Prediction Markets" },
-      { key: "matchups", label: "Matchups" },
-      { key: "teaminfo", label: "Teams" },
-      { key: "linemovement", label: "Line Movement" },
-      { key: "odds", label: "Odds" },
+      {
+        key: "matchups",
+        label: "Matchups",
+        tabs: [
+          { key: "matchups", label: "This week" },
+          { key: "matchuphistory", label: "History" },
+        ],
+      },
+      {
+        key: "odds",
+        label: "Markets",
+        tabs: [
+          { key: "odds", label: "Odds" },
+          { key: "linemovement", label: "Line Movement" },
+          { key: "pm", label: "Prediction Markets" },
+        ],
+      },
+      {
+        key: "placedbets",
+        label: "Bets",
+        tabs: [
+          { key: "placedbets", label: "Placed" },
+          { key: "bethistory", label: "Spread history" },
+          { key: "mlbethistory", label: "Moneyline history" },
+        ],
+      },
+      { key: "pools", label: "Pools" },
     ],
   },
   {
-    label: "Tools",
+    label: "Publish",
     items: [
-      { key: "vizbuilder", label: "Viz Builder" },
-      { key: "tools", label: "Public Tools" },
+      {
+        key: "publish",
+        label: "Publish",
+        tabs: [
+          { key: "publish", label: "Publish" },
+          { key: "lockgames", label: "Freeze Week" },
+          { key: "lockedhistory", label: "Locked History" },
+        ],
+      },
+      {
+        key: "imagedump",
+        label: "Reports",
+        tabs: [
+          { key: "imagedump", label: "Public Report" },
+          { key: "bettingreport", label: "Weekly Betting Report" },
+          { key: "vizbuilder", label: "Viz Builder" },
+        ],
+      },
     ],
   },
   {
-    label: "Reports",
+    label: "Site",
     items: [
-      { key: "imagedump", label: "Public Report" },
-      { key: "bettingreport", label: "Weekly Betting Report" },
-    ],
-  },
-  {
-    label: "Public tools",
-    items: [{ key: "survivorpooladmin", label: "Survivor Pool (Public)" }],
-  },
-  {
-    label: "Settings",
-    items: [{ key: "passkeys", label: "Passkeys" }],
-  },
-  {
-    label: "Archived",
-    collapsible: true,
-    items: [
-      { key: "matchuphistory", label: "Matchup History" },
-      { key: "upload", label: "Data Upload" },
+      {
+        key: "tools",
+        label: "Public pages",
+        tabs: [
+          { key: "tools", label: "Public Tools" },
+          { key: "survivorpooladmin", label: "Survivor Pool (Public)" },
+        ],
+      },
+      { key: "checklist", label: "Weekly Checklist" },
+      { key: "passkeys", label: "Settings" },
     ],
   },
 ];
+
+/** The sidebar entry a view belongs to (itself, the entry it's a tab of, or Pools for a pool page). */
+function navItemFor(view: AdminView): NavItem | undefined {
+  for (const g of NAV_GROUPS) for (const i of g.items) if (i.key === view || i.tabs?.some((t) => t.key === view)) return i;
+  return undefined;
+}
 
 const POOL_SUBVIEWS: AdminView[] = [
   "poolbalance",
@@ -766,12 +830,13 @@ const POOL_SUBVIEWS: AdminView[] = [
 ];
 
 function activeNavKey(view: AdminView): AdminView {
-  return POOL_SUBVIEWS.includes(view) ? "pools" : view;
+  if (POOL_SUBVIEWS.includes(view)) return "pools";
+  return navItemFor(view)?.key ?? view;
 }
 
 /** Breadcrumb trail for the top bar: group › page, or group › Pools › pool. */
 function crumbsFor(view: AdminView): { label: string; to?: AdminView }[] {
-  if (view === "home") return [{ label: "Overview" }];
+  if (view === "home") return [{ label: "Weekly Run" }];
   const navKey = activeNavKey(view);
   const group = NAV_GROUPS.find((g) => g.items.some((i) => i.key === navKey));
   const item = group?.items.find((i) => i.key === navKey);
@@ -780,6 +845,9 @@ function crumbsFor(view: AdminView): { label: string; to?: AdminView }[] {
   if (POOL_SUBVIEWS.includes(view)) {
     trail.push({ label: item?.label ?? "Pools", to: "pools" });
     trail.push({ label: POOL_LABELS[view] ?? view });
+  } else if (item?.tabs) {
+    trail.push({ label: item.label, to: item.key });
+    trail.push({ label: item.tabs.find((t) => t.key === view)?.label ?? view });
   } else {
     trail.push({ label: item?.label ?? view });
   }
@@ -827,7 +895,7 @@ function AdminSidebar({
       </div>
       <div className="admin-nav-group">
         <button className={`admin-nav-item${active === "home" ? " on" : ""}`} onClick={() => onNavigate("home")}>
-          Overview
+          Weekly Run
         </button>
       </div>
       {NAV_GROUPS.map((group) => {
@@ -1160,6 +1228,19 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
         </header>
 
         <main className="admin-content admin-view">
+          {(() => {
+            const item = navItemFor(view);
+            if (!item?.tabs) return null;
+            return (
+              <nav className="admin-tabs" aria-label={`${item.label} pages`} style={{ marginBottom: "1rem" }}>
+                {item.tabs.map((t) => (
+                  <button key={t.key} className={view === t.key ? "on" : undefined} onClick={() => navigate(t.key)}>
+                    {t.label}
+                  </button>
+                ))}
+              </nav>
+            );
+          })()}
           {view === "home" && (
             <AdminDashboard
               lastUpload={lastUpload}
