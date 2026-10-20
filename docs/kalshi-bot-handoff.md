@@ -257,3 +257,17 @@ was frozen before kickoff (week 1 locks were written after the games and are exc
 **Next:** (1) rebuild 2025 pregame projections from weekly ratings (only if those ratings were stored before each week,
 otherwise they leak results) and rerun, to test the early-week lead and the filters on a second season; (2) start the
 read-only snapshot logger so Kalshi opening prices vs live YCPR are captured going forward.
+
+### 13b. Bucket bets and early-week entry (added 2026-10-20)
+
+- **Bet History data bug:** 300 of the 770 graded 2025 rows in `src/data/betHistory.data.ts` store the spread *and* the
+  projection with the wrong sign (checked against `betting_lines` and final scores; 2024 is clean). That flips the
+  recorded pick and the favorite/underdog label on those games. Corrected 2024–2026 ATS (closing line): every pick
+  52.2%, underdog picks 53.3%, favorite picks 50.9%, underdogs +10 and up 55.1% (57 / 53 / 56% by season),
+  underdog +2.5/+3 with 3+ off 33–21. Conclusions drawn from the uncorrected 2025 rows are overstated.
+- **Kalshi timing:** CFB spread markets open ~6.5 days before kickoff (Sunday), but the first quotes are placeholders
+  (median 41¢ wide). Median bid–ask: ~5¢ more than 4 days out, 2¢ from 2–4 days, 1¢ on game day.
+- **Buckets on Kalshi 2026** (§3e of the report; pick from the opening line, rung nearest it, first tradeable quote, median
+  144h out): underdog picks +6.5¢/contract (90% CI [0.4, 12.2]) but CLV ≈ 0; favorite picks ≈ 0 with CLV −1.5¢;
+  underdogs +10 +9¢ (CI touches 0). Entering early vs 30 min before kickoff made almost no difference: on average the
+  Kalshi line does not drift toward YCPR during the week, and it drifts against our favorite picks.
