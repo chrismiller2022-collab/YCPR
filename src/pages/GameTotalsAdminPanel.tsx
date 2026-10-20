@@ -1,3 +1,4 @@
+import { totalKeysBetween } from "../lib/keyNumberCross";
 import { getAdminPassword } from "../lib/adminAuth";
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
@@ -367,12 +368,36 @@ function rowOpenProps(open: ((g: TotalsRowOpen) => void) | undefined, g: TotalsR
   };
 }
 
-export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[]; onOpenTotals?: (g: TotalsRowOpen) => void }) {
-  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
+export function TotalsTab({
+  rows,
+  settings,
+  poolRows,
+  onOpenTotals,
+  keyTier = 2,
+  throughKeyOnly = false,
+}: {
+  rows: EnrichedGameRow[];
+  settings: GameTotalsSettings;
+  poolRows?: EnrichedGameRow[];
+  onOpenTotals?: (g: TotalsRowOpen) => void;
+  /** Highest key-total tier that counts for the Key column and the Through key filter. */
+  keyTier?: number;
+  /** Only games whose total crosses a key total, sorted by amount off (largest first). */
+  throughKeyOnly?: boolean;
+}) {
+  const allBetRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
+  const keysFor = (b: BetRow) => totalKeysBetween(b.projectedTotal, b.vegasTotal, keyTier);
+  const betRows = useMemo(() => (throughKeyOnly ? allBetRows.filter((b) => keysFor(b).length > 0) : allBetRows), [allBetRows, throughKeyOnly, keyTier]); // eslint-disable-line react-hooks/exhaustive-deps
   const [absMode, setAbsMode] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  useEffect(() => {
+    if (!throughKeyOnly) return;
+    setSortKey("amountOff");
+    setSortDir("desc");
+    setAbsMode(true);
+  }, [throughKeyOnly]);
 
   function handleSort(key: string) {
     const k = key as SortKey;
@@ -417,6 +442,7 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
               <th style={{ ...CP, textAlign: "right" }}>FB</th>
               {sh("Amt Off", "amountOff", "right")}
               {sh("Std Dev Off", "stdDevOff", "right")}
+              <th style={CP} title="Key totals sitting between my total and Vegas's (bold = Tier 1)">Key</th>
               <th style={{ ...CP, textAlign: "right" }}>Actual Total</th>
               <th style={{ ...CP, textAlign: "right" }}>Result</th>
               <th style={{ ...CP, textAlign: "right" }}>W/L</th>
@@ -447,6 +473,22 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
                 </td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.amountOff != null ? Math.abs(b.amountOff) : b.amountOff)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.stdDevOff != null ? Math.abs(b.stdDevOff) : b.stdDevOff, 2)}</td>
+                <td style={{ ...CP, color: "var(--gold, #d4af37)", whiteSpace: "nowrap" }}>
+                  {(() => {
+                    const keys = keysFor(b);
+                    return keys.length ? (
+                      <>
+                        🔑
+                        {keys.map((k, i) => (
+                          <span key={k.key} style={{ fontWeight: k.tier === 1 ? 800 : 500 }} title={`Tier ${k.tier}`}>
+                            {i ? ", " : ""}
+                            {k.key}
+                          </span>
+                        ))}
+                      </>
+                    ) : null;
+                  })()}
+                </td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.row.actualTotal, 0)}</td>
                 <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{b.actualResult ?? "–"}</td>
                 <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: b.grade ? GRADE_COLOR[b.grade] : undefined, fontWeight: 700 }}>
@@ -456,7 +498,7 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
             ))}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={14} className="empty">
+                <td colSpan={15} className="empty">
                   No games.
                 </td>
               </tr>
