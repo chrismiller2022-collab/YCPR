@@ -19,7 +19,7 @@ import { compassDir, weatherLabel } from "../lib/weather";
 
 type Show = "all" | "selected" | "action";
 type Matchup = "fbs" | "all" | "fcs" | "cross";
-type Detail = "field" | "down" | "lastPlay" | "winProb" | "lines" | "bets" | "pools" | "stadium";
+type Detail = "field" | "down" | "lastPlay" | "winProb" | "lines" | "mine" | "bets" | "pools" | "stadium";
 type WeatherMode = "full" | "compact" | "off";
 type SortMode = "kickoff" | "impact";
 
@@ -41,7 +41,8 @@ const DETAILS: { key: Detail; label: string }[] = [
   { key: "down", label: "Down & distance" },
   { key: "lastPlay", label: "Last play" },
   { key: "winProb", label: "Win probability" },
-  { key: "lines", label: "Lines (Vegas, mine)" },
+  { key: "lines", label: "Vegas line" },
+  { key: "mine", label: "My projection" },
   { key: "bets", label: "My bets" },
   { key: "pools", label: "Pool picks" },
   { key: "stadium", label: "Stadium" },
@@ -50,7 +51,7 @@ const DETAILS: { key: Detail; label: string }[] = [
 const DEFAULTS: Settings = {
   show: "all",
   matchup: "fbs",
-  details: { field: true, down: true, lastPlay: false, winProb: false, lines: true, bets: true, pools: true, stadium: true },
+  details: { field: true, down: true, lastPlay: false, winProb: false, lines: true, mine: true, bets: true, pools: true, stadium: true },
   delay: 0,
   wxPre: "full",
   wxStarted: "compact",
@@ -544,11 +545,16 @@ function Tile({
           Win prob: {sb.home.abbrev} {Math.round(sb.homeWinPct * 100)}%
         </div>
       )}
-      {details.lines && (line?.spread != null || ctx?.myHomeSpread != null) && (
+      {details.lines && line?.spread != null && (
         <div className="sb-line sb-dim">
-          {line?.spread != null && `Vegas ${sb?.home.abbrev ?? g.home_team} ${signed(line.spread)}`}
-          {line?.over_under != null && ` · O/U ${line.over_under}`}
-          {ctx?.myHomeSpread != null && ` · Mine ${signed(ctx.myHomeSpread)}`}
+          Vegas {sb?.home.abbrev ?? g.home_team} {signed(line.spread)}
+          {line.over_under != null && ` · O/U ${line.over_under}`}
+        </div>
+      )}
+      {details.mine && (ctx?.myHomeSpread != null || ctx?.myTotal != null) && (
+        <div className="sb-line sb-dim">
+          Mine{ctx?.myHomeSpread != null ? ` ${sb?.home.abbrev ?? g.home_team} ${signed(ctx.myHomeSpread)}` : ""}
+          {ctx?.myTotal != null && ` · Total ${ctx.myTotal.toFixed(1)}`}
         </div>
       )}
       {bets.length > 0 && (

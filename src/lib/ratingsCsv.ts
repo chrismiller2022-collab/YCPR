@@ -241,6 +241,22 @@ export function parseSpPlusCsv(text: string): SpPlusRow[] {
   const headers = parseCsvLine(lines[0]);
   let teamIdx = findHeaderIdx(headers, "Team");
   let spIdx = findHeaderIdx(headers, "SP+");
+  // The upload template (Team, Division, SP+): FBS rows on the FBS scale, FCS rows on the FCS-tab scale (−33 before
+  // the sign flip), same as the sheet's FBS/FCS week tabs.
+  const divIdx = findHeaderIdx(headers, "Division");
+  if (divIdx !== -1 && teamIdx !== -1 && spIdx !== -1) {
+    const out: SpPlusRow[] = [];
+    for (const line of lines.slice(1)) {
+      const f = parseCsvLine(line);
+      const team = (f[teamIdx] ?? "").trim();
+      const raw = (f[spIdx] ?? "").trim();
+      const n = Number(raw);
+      if (!team || raw === "" || Number.isNaN(n)) continue;
+      const fcs = (f[divIdx] ?? "").trim().toUpperCase() === "FCS";
+      out.push({ team, value: fcs ? -(n - 33) : -n });
+    }
+    return out;
+  }
   if (teamIdx === -1) teamIdx = 14; // column O
   if (spIdx === -1) spIdx = 17; // column R
 

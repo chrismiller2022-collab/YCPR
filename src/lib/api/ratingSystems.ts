@@ -54,8 +54,21 @@ export function saveRatingWeights(weights: Record<string, number>) {
   return authedPost("weightsSave", { weights });
 }
 
-export function syncCfbdRatings(year: number) {
-  return authedPost("sync", { year });
+/** CFBD rating pulls. `opts.systems` pulls only those; `opts.skip` pulls everything else. */
+export function syncCfbdRatings(year: number, opts: { systems?: string[]; skip?: string[] } = {}) {
+  return authedPost("sync", { year, ...opts });
+}
+
+export interface SpSheetResult {
+  mode: "top" | "split" | "none";
+  tabs: string[];
+  rows: { team: string; sp: number; tab: "top" | "fbs" | "fcs" }[];
+  notes?: string[];
+}
+
+/** Bill Connelly's SP+ sheet for a week: the "TOP n WEEK w" tab if there is one, else the FBS/FCS week tabs (raw SP+, not yet offset). */
+export async function fetchSpPlusSheet(week: number): Promise<SpSheetResult> {
+  return (await authedPost("spSheetProxy", { week })) as SpSheetResult;
 }
 
 /** Writes YC into weekly_team_stats.rating for the given week (site-wide "live rating" source), without touching any other column on those rows. */

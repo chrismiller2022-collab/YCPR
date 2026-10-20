@@ -7,6 +7,8 @@ import { CONFERENCES } from "../data/teams";
 import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusMemberKey, isInConsensus } from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
+import { SP_CSV_TEMPLATE, spFreshness, spValuesFromSheet, type SpValue } from "../lib/spPlusPull";
+import { TEAMS_BY_NAME } from "../data/teams";
 import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, teamDivConf, type ConglomeratedRow } from "../lib/ratingConglomerate";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -20,6 +22,7 @@ import {
   fetchTeamRankingsRatings,
   fetchTeamRankingsHfaPage,
   saveTeamHfa,
+  fetchSpPlusSheet,
   fetchRecentPullRuns,
   fetchSavedRatingsAtOrBefore,
   logManualPullRun,
@@ -128,9 +131,10 @@ function WeightsEditor({
 // run is logged to rating_pull_runs (trigger "manual"), which is what Fill
 // gaps and the status chips read.
 // ---------------------------------------------------------------------
-type SourceKey = "cfbd" | "sheet" | "sagarin" | "mcillece" | "jpplus" | "tr";
+type SourceKey = "cfbd" | "spplus" | "sheet" | "sagarin" | "mcillece" | "jpplus" | "tr";
 const SOURCE_LABELS: Record<SourceKey, string> = {
   cfbd: "CFBD",
+  spplus: "SP+",
   sheet: "Sheet",
   sagarin: "Sagarin/FEI/F+",
   mcillece: "McIllece",
@@ -190,7 +194,8 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   }
 
   async function syncCfbdCore(): Promise<SourceResult> {
-    const data = await syncCfbdRatings(year);
+    // SP+ has its own source (CFBD first, then the SP+ sheet), so the general CFBD pull skips it.
+    const data = await syncCfbdRatings(year, { skip: ["sp"] });
     const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
       const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
       if (r.error) return `${label}: error (${r.error})`;
@@ -274,8 +279,73 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     };
   }
 
+  // SP+: CFBD (FBS only) when it has new numbers for this season; the SP+ sheet for the admin week otherwise, and
+  // always for FCS. Ends by comparing against last week's saved SP+ so a stale pull can't pass as new.
+  async function syncSpPlusCore(): Promise<SourceResult> {
+    const lines: string[] = [];
+    let fbsFromCfbd = false;
+    try {
+      const data = await syncCfbdRatings(year, { systems: ["sp"] });
+      const r = data.results?.sp;
+      if (r?.error) lines.push(`CFBD SP+ failed (${r.error}) — using the sheet for FBS.`);
+      else if (!r || r.fetched === 0) lines.push("CFBD has no SP+ — using the sheet for FBS.");
+      else if (r.yearUsed !== year) lines.push(`CFBD only has ${r.yearUsed} SP+ — using the sheet for FBS.`);
+      else if (!r.changed) lines.push(`CFBD SP+ is unchanged since the last pull (${r.fetched} teams) — using the sheet for FBS.`);
+      else {
+        fbsFromCfbd = true;
+        lines.push(`CFBD SP+: ${r.saved} FBS teams, ${r.changed} changed.`);
+      }
+    } catch (e: any) {
+      lines.push(`CFBD SP+ failed (${e.message ?? e}) — using the sheet for FBS.`);
+    }
+
+    let values: SpValue[] = [];
+    let unmatchedNames: string[] = [];
+    try {
+      const sheet = await fetchSpPlusSheet(hfaWeek);
+      const parsed = spValuesFromSheet(sheet);
+      values = parsed.values.filter((v) => v.division === "FCS" || !fbsFromCfbd);
+      unmatchedNames = parsed.unmatched;
+      if (sheet.mode === "none" || parsed.values.length === 0) lines.push(`SP+ sheet: nothing for week ${hfaWeek} (${(sheet.notes ?? []).join("; ")}).`);
+      else
+        lines.push(
+          `SP+ sheet (${sheet.tabs.join(" + ")}): ${parsed.values.filter((v) => v.division === "FBS").length} FBS, ${parsed.values.filter((v) => v.division === "FCS").length} FCS${fbsFromCfbd ? " (FBS kept from CFBD)" : ""}.`
+        );
+    } catch (e: any) {
+      lines.push(`SP+ sheet failed: ${e.message ?? e}.`);
+    }
+
+    const haveFbs = fbsFromCfbd || values.some((v) => v.division === "FBS");
+    const haveFcs = values.some((v) => v.division === "FCS");
+    if (values.length > 0) {
+      const result = await saveRatingRows(values.map((v) => ({ team: v.team, division: v.division, conference: TEAMS_BY_NAME[v.team]?.conf ?? null, values: { sp: v.value } })));
+      lines.push(`Saved ${result.saved} sheet values.${formatDiffNote(result.bySystem)}`);
+    }
+
+    // New-week check against the last saved week (CFBD's FBS values are read back from the live table).
+    try {
+      const prev = await fetchSavedRatingsAtOrBefore(year, hfaWeek - 1);
+      let compare: { team: string; division: "FBS" | "FCS"; value: number }[] = values;
+      if (fbsFromCfbd) {
+        const live = (await fetchRatingPulls()).filter((r) => r.system_key === "sp" && TEAMS_BY_NAME[r.team]?.div === "FBS");
+        compare = [...live.map((r) => ({ team: r.team, division: "FBS" as const, value: Number(r.value) })), ...values];
+      }
+      lines.push(spFreshness(compare, prev.rows, prev.week));
+    } catch {
+      /* comparison is informational */
+    }
+
+    if (!haveFbs || !haveFcs) {
+      throw new Error(
+        `${lines.join(" ")} Missing ${[!haveFbs && "FBS", !haveFcs && "FCS"].filter(Boolean).join(" and ")} SP+ for week ${hfaWeek}: upload an SP+ CSV (Download SP+ template).`
+      );
+    }
+    return { summary: lines.join(" "), unmatchedNames: unmatchedNames.length ? unmatchedNames : undefined, label: `week ${hfaWeek}` };
+  }
+
   const CORES: Record<SourceKey, () => Promise<SourceResult>> = {
     cfbd: syncCfbdCore,
+    spplus: syncSpPlusCore,
     sheet: syncSheetCore,
     sagarin: syncSagarinFeiCore,
     mcillece: () =>
@@ -562,6 +632,21 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
             }}
           />
         </label>
+        <button
+          className="menu-btn"
+          style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}
+          title="Team, Division (FBS/FCS), SP+ — FBS on the FBS scale, FCS on the FCS scale (as in the sheet's FBS and FCS week tabs)"
+          onClick={() => {
+            const url = URL.createObjectURL(new Blob([SP_CSV_TEMPLATE], { type: "text/csv" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "sp-plus-template.csv";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}
+        >
+          Download SP+ template
+        </button>
         <label className="menu-btn" style={{ cursor: "pointer", fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}>
           {busy === "massey" ? "Uploading…" : "Upload Massey CSV"}
           <input
