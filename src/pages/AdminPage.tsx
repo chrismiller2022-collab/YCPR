@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Clock, ExternalLink, KeyRound, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import "../styles/admin.css";
 import SurvivorBoardPanel from "./SurvivorBoardPanel";
+import AdminConferencesPanel from "./AdminConferencesPanel";
 import WeeklyBettingReportPanel from "./WeeklyBettingReportPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
@@ -245,6 +246,7 @@ type AdminView =
   | "periodproj"
   | "matchuphistory"
   | "teaminfo"
+  | "conferences"
   | "scoreboard"
   | "weather"
   | "tools"
@@ -650,6 +652,7 @@ const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { key: "teaminfo", label: "Teams" },
+      { key: "conferences", label: "Conferences" },
       { key: "passkeys", label: "Settings" },
     ],
   },
@@ -1136,6 +1139,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "periodproj" && <PeriodProjectionsPanel onBack={() => setView("home")} />}
           {view === "matchuphistory" && <MatchupHistoryPanel onBack={() => setView("home")} />}
           {view === "teaminfo" && <TeamInfoPanel onBack={() => setView("home")} />}
+          {view === "conferences" && <AdminConferencesPanel />}
           {view === "weather" && <WeatherPanel onBack={() => setView("home")} />}
           {view === "tools" && <AdminToolsPanel onBack={() => setView("home")} />}
           {view === "vizbuilder" && <VizBuilderPanel />}
