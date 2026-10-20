@@ -9,6 +9,7 @@ import { fetchPlacedBets, isPlaceholderBet, type PlacedBetRow } from "../lib/api
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { computeRow } from "../lib/matchupsCompute";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
+import { fetchMarketLinesUpdatedAt, refreshMarketLines } from "../lib/api/marketLines";
 
 // Overview tiles for the admin week: what's published, and which bets are still to make.
 
@@ -143,6 +144,64 @@ export function BetsThisWeekTile({ season, week, onOpen }: { season: number; wee
       <div className="d">
         {counts.made} of {counts.signals} signals placed
         {counts.tickedNotPlaced > 0 && <span style={{ color: "var(--c-warn)" }}> · {counts.tickedNotPlaced} sent from Matchups, awaiting CSV</span>}
+      </div>
+    </div>
+  );
+}
+
+function ago(iso: string): string {
+  const mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** Refresh Vegas lines (the median across books from the odds feed) right from the Overview, with when it last ran. */
+export function VegasLinesTile({ season }: { season: number }) {
+  const [last, setLast] = useState<string | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    fetchMarketLinesUpdatedAt(season).then(setLast).catch(() => setLast(null));
+    const t = window.setInterval(() => tick((n) => n + 1), 60_000); // keep "x min ago" current
+    return () => window.clearInterval(t);
+  }, [season]);
+
+  async function refresh() {
+    setBusy(true);
+    setMsg(null);
+    setError(false);
+    try {
+      const r = await refreshMarketLines(season);
+      setMsg(`${r.matched} of ${r.oddsGames} games saved${r.unmatched.length ? ` · ${r.unmatched.length} not matched` : ""}`);
+      if (r.unmatched.length) console.info("Vegas lines not matched:", r.unmatched);
+      setLast(await fetchMarketLinesUpdatedAt(season).catch(() => new Date().toISOString()));
+    } catch (e: any) {
+      setError(true);
+      setMsg(e.message ?? "Refresh failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stale = last != null && Date.now() - Date.parse(last) > 12 * 3600 * 1000;
+  return (
+    <div className="admin-stat">
+      <div className="l">Vegas lines</div>
+      <div className="v" style={{ fontSize: "1rem", color: stale ? "var(--c-warn)" : undefined }} title={last ? new Date(last).toLocaleString() : undefined}>
+        {last === undefined ? "…" : last ? `Refreshed ${ago(last)}` : "Never refreshed"}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.35rem", flexWrap: "wrap" }}>
+        <button className="menu-btn" onClick={refresh} disabled={busy} style={{ fontSize: "0.78rem", padding: "0.2rem 0.6rem" }}>
+          {busy ? "Refreshing…" : "Refresh Vegas lines"}
+        </button>
+        {msg && <span className="d" style={{ color: error ? "var(--c-err)" : undefined }}>{msg}</span>}
       </div>
     </div>
   );

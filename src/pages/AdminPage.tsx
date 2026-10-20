@@ -1,4 +1,4 @@
-import { PublishStatusTile, BetsThisWeekTile } from "../components/OverviewTiles";
+import { PublishStatusTile, BetsThisWeekTile, VegasLinesTile } from "../components/OverviewTiles";
 import ScoreboardPanel from "./ScoreboardPanel";
 import WeeklyRunPanel from "../components/WeeklyRunPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -476,6 +476,7 @@ function AdminDashboard({ betSummary, onNavigate }: AdminDashboardProps) {
           <div className="admin-stats">
             <PublishStatusTile season={season} week={adminWeek} onOpen={() => onNavigate("publish")} />
             <BetsThisWeekTile season={season} week={adminWeek} onOpen={() => onNavigate("matchups")} />
+            <VegasLinesTile season={season} />
             <StatTile
               label="Bets this season"
               value={bs ? `${bs.wins}–${bs.losses}${bs.pushes ? `–${bs.pushes}` : ""}` : "—"}
