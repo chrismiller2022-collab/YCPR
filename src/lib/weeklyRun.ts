@@ -64,7 +64,7 @@ export interface AutoStatus {
   note?: string;
 }
 
-const RATING_SOURCES = ["cfbd", "sheet", "sagarin", "mcillece", "jpplus", "tr"];
+const RATING_SOURCES = ["cfbd", "spplus", "sheet", "sagarin", "mcillece", "jpplus", "tr"];
 
 // A row's own timestamp, whichever name the table uses.
 function stampOf(row: any): string | null {

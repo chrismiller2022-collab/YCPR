@@ -505,6 +505,117 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
+  // action: "spSheetProxy" — Bill Connelly's SP+ Google Sheet, for the
+  // week asked. Tab names come from the sheet's htmlview; tabs are read
+  // as CSV through gviz by exact name. gviz quietly returns the FIRST tab
+  // when a name doesn't exist, so every tab is checked by its headers.
+  // Prefers "TOP <n> WEEK <w>" (every division on one scale); else the
+  // "FBS Week <w>" + "FCS Week <w>" pair. Returns raw ratings; the client
+  // matches teams and applies each layout's offsets.
+  // -----------------------------------------------------------------
+  if (action === "spSheetProxy") {
+    const { week } = req.body ?? {};
+    if (typeof week !== "number" || week < 0) {
+      res.status(400).json({ error: "Missing or invalid 'week'" });
+      return;
+    }
+    const SHEET_ID = "1vwoVl-Dxy0es87Z9I1RTvFzr72Lb1fAkREfbLxbK-eg";
+    const csvRows = (text: string): string[][] =>
+      text
+        .split(/\r?\n/)
+        .filter((l) => l.length > 0)
+        .map((line) => {
+          const out: string[] = [];
+          let cur = "";
+          let q = false;
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (q) {
+              if (ch === '"' && line[i + 1] === '"') {
+                cur += '"';
+                i++;
+              } else if (ch === '"') q = false;
+              else cur += ch;
+            } else if (ch === '"') q = true;
+            else if (ch === ",") {
+              out.push(cur);
+              cur = "";
+            } else cur += ch;
+          }
+          out.push(cur);
+          return out;
+        });
+    const readTab = async (name: string) => {
+      const r = await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`, { headers: { "User-Agent": SCRAPE_USER_AGENT } });
+      if (!r.ok) throw new Error(`Sheet tab "${name}" fetch failed (${r.status})`);
+      return csvRows(await r.text());
+    };
+    const num = (v: string | undefined) => {
+      const n = Number((v ?? "").trim());
+      return (v ?? "").trim() === "" || Number.isNaN(n) ? null : n;
+    };
+    try {
+      const html = await (await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/htmlview`, { headers: { "User-Agent": SCRAPE_USER_AGENT } })).text();
+      const tabs = Array.from(new Set(Array.from(html.matchAll(/name: "([^"]{1,80})"/g)).map((m) => m[1])));
+      const notes: string[] = [];
+      const topTab = tabs.find((t) => new RegExp(`^top \\d+ week ${week}$`, "i").test(t.trim()));
+      if (topTab) {
+        const rows = await readTab(topTab);
+        const h = rows[0] ?? [];
+        const ti = h.findIndex((x) => x.trim().toLowerCase() === "team");
+        const si = h.findIndex((x) => x.trim().toLowerCase() === "sp+");
+        if (ti !== -1 && si !== -1 && !h.some((x) => x.trim().toLowerCase() === "week")) {
+          const out = rows.slice(1).flatMap((c) => {
+            const sp = num(c[si]);
+            const team = (c[ti] ?? "").trim();
+            return team && sp != null ? [{ team, sp, tab: "top" as const }] : [];
+          });
+          if (out.length > 0) {
+            res.status(200).json({ ok: true, mode: "top", tabs: [topTab], rows: out });
+            return;
+          }
+        }
+        notes.push(`"${topTab}" didn't have Team and SP+ columns`);
+      } else notes.push(`no "TOP … WEEK ${week}" tab`);
+
+      const fbsTab = tabs.find((t) => new RegExp(`^fbs week ${week}$`, "i").test(t.trim()));
+      const fcsTab = tabs.find((t) => new RegExp(`^fcs week ${week}$`, "i").test(t.trim()));
+      const out: { team: string; sp: number; tab: "fbs" | "fcs" }[] = [];
+      const used: string[] = [];
+      if (fbsTab) {
+        // FBS tab: a games table on the left, ratings on the right — Team in column O, SP+ in column R.
+        const rows = await readTab(fbsTab);
+        const h = rows[0] ?? [];
+        if ((h[14] ?? "").trim().toLowerCase() === "team" && (h[17] ?? "").trim().toLowerCase() === "sp+") {
+          for (const c of rows.slice(1)) {
+            const sp = num(c[17]);
+            const team = (c[14] ?? "").trim();
+            if (team && sp != null) out.push({ team, sp, tab: "fbs" });
+          }
+          used.push(fbsTab);
+        } else notes.push(`"${fbsTab}" columns O/R aren't Team/SP+`);
+      } else notes.push(`no "FBS Week ${week}" tab`);
+      if (fcsTab) {
+        // FCS tab: Team in column A, SP+ in column D.
+        const rows = await readTab(fcsTab);
+        const h = rows[0] ?? [];
+        if ((h[0] ?? "").trim().toLowerCase() === "team" && /sp\+/i.test(h[3] ?? "")) {
+          for (const c of rows.slice(1)) {
+            const sp = num(c[3]);
+            const team = (c[0] ?? "").trim();
+            if (team && sp != null) out.push({ team, sp, tab: "fcs" });
+          }
+          used.push(fcsTab);
+        } else notes.push(`"${fcsTab}" columns A/D aren't Team/SP+`);
+      } else notes.push(`no "FCS Week ${week}" tab`);
+      res.status(200).json({ ok: true, mode: out.length > 0 ? "split" : "none", tabs: used, rows: out, notes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "SP+ sheet fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
   // action: "fplusProxy" — scrapes Brian Fremeau's own bcftoys.com pages
   // for FEI and F+ (FEI blended with Bill Connelly's SP+), formerly
   // copied by hand into the published Google Sheet. Both pages share the
@@ -683,7 +794,11 @@ export default async function handler(req: any, res: any) {
       maxAbsDelta?: number;
     }
     const results: Record<string, SyncResult> = {};
+    // `systems` pulls only those; `skip` pulls everything else (SP+ has its own source with a sheet fallback).
+    const { systems, skip } = req.body ?? {};
     for (const [systemKey, pull] of Object.entries(pullers)) {
+      if (Array.isArray(systems) && !systems.includes(systemKey)) continue;
+      if (Array.isArray(skip) && skip.includes(systemKey)) continue;
       try {
         const { rows, yearUsed } = await pullWithFallback(pull, year);
         results[systemKey] = { fetched: rows.length, saved: 0, yearUsed };
