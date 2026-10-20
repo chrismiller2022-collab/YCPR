@@ -347,6 +347,70 @@ out(`- Games flagged: ${betSide.size} of ${gameByEvent.size}. ATS vs the closing
 }
 out();
 
+// ---- 3e. Bucket bets (from the corrected 2024–2026 ATS history), placed on Kalshi early vs late.
+out("## 3e. Your history's buckets, bet on Kalshi as early as possible vs just before kickoff");
+out();
+out("Pick and bucket are decided from the sportsbook **opening** spread (known early in the week): the pick is the side your frozen projection favors against it. The bet is the Kalshi rung nearest that opening spread on the picked side, 1 contract, taker. **Early** = first Kalshi quote at least 24h before kickoff with a bid–ask gap of 4¢ or less (Kalshi opens these markets ~6.5 days out, but its first quotes are placeholders, median 41¢ wide); **late** = last quote 30 min before kickoff. P&L after fees; CLV vs the last pregame mid.");
+out();
+out("| Bucket | Bets | Early: win % | Early P&L ¢ | Early CLV ¢ | Late: win % | Late P&L ¢ |");
+out("|---|---|---|---|---|---|---|");
+{
+  const earlyHours: number[] = [];
+  type Pick = { gameId: string; pickSide: "home" | "away"; pickLine: number; off: number; home: boolean };
+  const picks: Pick[] = [];
+  for (const { game: g } of gameByEvent.values()) {
+    const open = openSpread.get(String(g.id));
+    const lock = locks.get(String(g.id))!;
+    if (!open || open.spread === 0) continue;
+    const projHomeMargin = Number(lock.my_away_spread); // computeRow away-spread = home margin
+    const marketHomeMargin = -open.spread;
+    if (projHomeMargin === marketHomeMargin) continue;
+    const pickSide: "home" | "away" = projHomeMargin > marketHomeMargin ? "home" : "away";
+    picks.push({ gameId: String(g.id), pickSide, pickLine: pickSide === "home" ? open.spread : -open.spread, off: Math.abs(projHomeMargin - marketHomeMargin), home: pickSide === "home" });
+  }
+  const place = (p: Pick, when: "early" | "late") => {
+    const open = openSpread.get(p.gameId)!;
+    const favSide: "home" | "away" = open.spread <= 0 ? "home" : "away";
+    const ladder = rungs.filter((r) => r.gameId === p.gameId && r.side === favSide && r.strike != null);
+    if (!ladder.length) return null;
+    const target = Math.abs(open.spread);
+    const r = ladder.reduce((a, c) => (Math.abs(c.strike! - target) < Math.abs(a.strike! - target) ? c : a));
+    // Kalshi's first quotes on a new market are placeholders (median 41¢ wide), so "early" is the first tradeable one.
+    const q = when === "early" ? r.quotes.find((x) => x.t <= r.kickoff - 86400 && x.ask - x.bid <= 0.04) ?? null : quoteAt(r, r.kickoff - 1800);
+    if (q && when === "early") earlyHours.push((r.kickoff - q.t) / 3600);
+    const close = quoteAt(r);
+    if (!q || !close) return null;
+    const buy = p.pickSide === favSide;
+    const price = buy ? q.ask : q.bid;
+    const fee = kalshiFee(price);
+    return { gameId: p.gameId, pnl: buy ? r.result - price - fee : price - r.result - fee, clv: buy ? mid(close) - price : price - mid(close) };
+  };
+  const buckets: [string, (p: Pick) => boolean][] = [
+    ["Every pick", () => true],
+    ["Pick = underdog", (p) => p.pickLine > 0],
+    ["Pick = favorite", (p) => p.pickLine < 0],
+    ["Underdog +10 and up", (p) => p.pickLine >= 10],
+    ["Home underdog", (p) => p.pickLine > 0 && p.home],
+    ["Underdog +2.5/+3, off ≥ 3", (p) => (p.pickLine === 2.5 || p.pickLine === 3) && p.off >= 3],
+    ["Skip: laying −3 or −7.5", (p) => p.pickLine === -3 || p.pickLine === -7.5],
+  ];
+  for (const [label, f] of buckets) {
+    const sel = picks.filter(f);
+    const early = sel.map((p) => place(p, "early")).filter((x): x is NonNullable<typeof x> => x != null);
+    const late = sel.map((p) => place(p, "late")).filter((x): x is NonNullable<typeof x> => x != null);
+    if (!early.length && !late.length) continue;
+    const ep = gameBootstrap(early.map((x) => ({ gameId: x.gameId, v: x.pnl })));
+    const ec = gameBootstrap(early.map((x) => ({ gameId: x.gameId, v: x.clv })));
+    const lp = gameBootstrap(late.map((x) => ({ gameId: x.gameId, v: x.pnl })));
+    const wr = (xs: { pnl: number }[]) => (xs.length ? pct(xs.filter((x) => x.pnl > 0).length / xs.length) : "–");
+    out(`| ${label} | ${early.length} / ${late.length} | ${wr(early)} | ${early.length ? ci(ep) : "–"} | ${early.length ? ci(ec) : "–"} | ${wr(late)} | ${late.length ? ci(lp) : "–"} |`);
+  }
+  const sorted = [...earlyHours].sort((a, b) => a - b);
+  out();
+  out(`Early entries happened a median ${sorted[Math.floor(sorted.length / 2)]?.toFixed(0)}h before kickoff.`);
+}
+out();
+
 // ---- 4. Sensitivity to the outcome spread around our projection.
 out("## 4. Sensitivity: σ around our projection");
 out();

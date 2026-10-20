@@ -1,6 +1,6 @@
 # Kalshi CFB spread backtest: 2026
 
-Generated 2026-10-20T17:52:53.347Z by `bot/backtest/run.ts`. Read-only: no orders were placed.
+Generated 2026-10-20T18:20:52.090Z by `bot/backtest/run.ts`. Read-only: no orders were placed.
 
 ## Coverage
 - FBS-vs-FBS completed games: 388; with a projection frozen before kickoff: 316.
@@ -90,6 +90,22 @@ Taking only in the direction your filter picked:
 | 4¢ | best rung per game | 46 | 37.0% | -4.05 [-14.37, 6.38] | -0.64 [-1.83, 0.68] |
 
 Your filtered bet placed on Kalshi (rung nearest the closing spread, taken 30 min before kickoff, 1 contract): 47 bets, win 48.9%, P&L -4.30 [-15.59, 6.83] ¢/contract, total $-2.02.
+
+## 3e. Your history's buckets, bet on Kalshi as early as possible vs just before kickoff
+
+Pick and bucket are decided from the sportsbook **opening** spread (known early in the week): the pick is the side your frozen projection favors against it. The bet is the Kalshi rung nearest that opening spread on the picked side, 1 contract, taker. **Early** = first Kalshi quote at least 24h before kickoff with a bid–ask gap of 4¢ or less (Kalshi opens these markets ~6.5 days out, but its first quotes are placeholders, median 41¢ wide); **late** = last quote 30 min before kickoff. P&L after fees; CLV vs the last pregame mid.
+
+| Bucket | Bets | Early: win % | Early P&L ¢ | Early CLV ¢ | Late: win % | Late P&L ¢ |
+|---|---|---|---|---|---|---|
+| Every pick | 316 / 316 | 57.9% | 3.31 [-1.15, 7.73] | -0.56 [-1.07, -0.05] | 57.9% | 3.42 [-1.00, 7.94] |
+| Pick = underdog | 168 / 168 | 61.3% | 6.46 [0.37, 12.18] | 0.30 [-0.40, 1.03] | 61.3% | 5.76 [-0.28, 11.55] |
+| Pick = favorite | 148 / 148 | 54.1% | -0.28 [-6.76, 6.38] | -1.54 [-2.22, -0.85] | 54.1% | 0.77 [-5.82, 7.34] |
+| Underdog +10 and up | 74 / 74 | 63.5% | 9.05 [-0.14, 18.09] | 0.69 [-0.37, 1.80] | 63.5% | 7.98 [-1.21, 16.80] |
+| Home underdog | 53 / 53 | 60.4% | 6.01 [-4.95, 16.57] | 0.85 [-0.54, 2.15] | 60.4% | 4.52 [-6.71, 15.12] |
+| Underdog +2.5/+3, off ≥ 3 | 6 / 6 | 66.7% | 8.29 [-25.87, 41.96] | -1.92 [-3.33, -0.25] | 66.7% | 9.29 [-24.39, 42.47] |
+| Skip: laying −3 or −7.5 | 10 / 10 | 70.0% | 14.20 [-8.19, 35.70] | -2.85 [-4.90, -0.65] | 70.0% | 16.71 [-6.61, 39.09] |
+
+Early entries happened a median 144h before kickoff.
 
 ## 4. Sensitivity: σ around our projection
 
