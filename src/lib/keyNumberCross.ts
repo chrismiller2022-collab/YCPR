@@ -6,7 +6,7 @@ const KEYS = [3, 7];
 /**
  * Key numbers that sit between my projected line and the pool line —
  * i.e. my number is on one side of the key and the pool's is on the other
- * (mine -2.5 vs pool +3.5 crosses both -3 and +3). Landing exactly
+ * (mine -2.5 vs pool +3.5 crosses +3 only; mine -3.5 vs +3.5 crosses -3 and +3). Landing exactly
  * on a key counts as having reached it. Returns e.g. [-3, 3]; empty when
  * either line is missing or the two don't straddle any key.
  */
