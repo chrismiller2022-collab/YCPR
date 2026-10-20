@@ -239,6 +239,14 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
     }, 30);
   }
 
+  // SOS (SRS) computes on its own once games and ratings are loaded, so Save to Site never goes out without it.
+  // Recompute is still there after changing the run count.
+  useEffect(() => {
+    if (srsSos || computingSrs || games.length === 0 || Object.keys(liveByTeam).length === 0) return;
+    runSrsSos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, liveByTeam]);
+
   async function handleSaveToSite() {
     setSaving(true);
     setSaveMsg(null);

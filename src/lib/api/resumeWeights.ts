@@ -116,3 +116,21 @@ export async function fetchResumeRatingsByWeeks(
 export async function fetchFinishedResumeAvailableWeeks(season: number): Promise<number[]> {
   return fetchDistinctWeeks("team_resume_ratings_finished", season);
 }
+
+/** Every saved "Résumé so far" week's score per team — the progression for that tab. */
+export async function fetchFinishedResumeByWeeks(
+  season: number
+): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {
+  const data = await fetchAllRows<{ week: number; team: string; score: number | null; updated_at: string }>((from, to) =>
+    supabase.from("team_resume_ratings_finished").select("week, team, score, updated_at").eq("season", season).order("id").range(from, to)
+  );
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  const weekInfo: Record<number, WeekSaveInfo> = {};
+  for (const r of data) {
+    (byWeek[r.week] ??= {})[r.team] = r.score;
+    const info = (weekInfo[r.week] ??= { teams: 0, updatedAt: "" });
+    info.teams += 1;
+    if (r.updated_at > info.updatedAt) info.updatedAt = r.updated_at;
+  }
+  return { weeks: Object.keys(byWeek).map(Number).sort((a, b) => a - b), byWeek, weekInfo };
+}
