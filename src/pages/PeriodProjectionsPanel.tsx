@@ -9,6 +9,7 @@ import {
   fetchUpcomingEvents,
   parseEventOdds,
   savePeriodMarketLines,
+  pullHistoricalForGame,
   type GameRef,
 } from "../lib/api/oddsHistorical";
 import {
@@ -748,26 +749,72 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
     return out;
   }, [rows, lineRows, games, computed]);
 
+  // Games that have kicked off can't be priced from the live feed any more, so Sync lines pulls them from the
+  // historical endpoint instead (snapshot 5 minutes before kickoff, the same thing Historical Odds Pull does), and only
+  // the markets each game doesn't already have saved.
+  async function pullPlayedGames(played: GameWithLines[], markets: string[]): Promise<{ notes: string[]; saved: number; credits: number; failed: number }> {
+    const ids = played.map((g) => g.id);
+    const have = new Set<string>();
+    for (let i = 0; i < ids.length; i += 100) {
+      const [pl, tt] = await Promise.all([
+        supabase.from("period_market_lines").select("game_id, period, market_type").in("game_id", ids.slice(i, i + 100)),
+        supabase.from("team_total_lines").select("game_id, provider").in("game_id", ids.slice(i, i + 100)),
+      ]);
+      for (const r of (pl.data ?? []) as any[]) have.add(`${r.game_id}|${r.period}|${r.market_type}`);
+      for (const r of (tt.data ?? []) as any[]) if (String(r.provider ?? "").startsWith("hist")) have.add(`${r.game_id}|tt`);
+    }
+    const covered = (id: string, k: string) => {
+      if (k === "team_totals") return have.has(`${id}|tt`);
+      const m = /^(spreads|totals)_(h1|h2|q1|q2|q3|q4)$/.exec(k);
+      return !!m && have.has(`${id}|${m[2]}|${m[1] === "spreads" ? "spread" : "total"}`);
+    };
+    const out = { notes: [] as string[], saved: 0, credits: 0, failed: 0 };
+    for (const g of played) {
+      const need = markets.filter((k) => !covered(g.id, k));
+      if (need.length === 0) continue;
+      try {
+        const r = await pullHistoricalForGame(g, need);
+        out.notes.push(r.note);
+        out.saved += r.savedRows;
+        out.credits += r.credits;
+        if (r.savedRows === 0) out.failed++;
+      } catch (e: any) {
+        out.failed++;
+        out.notes.push(`${g.away_team} @ ${g.home_team}: historical pull failed — ${e.message ?? "error"}`);
+      }
+    }
+    return out;
+  }
+
   async function handleSyncLines() {
-    const targets = games.filter((g) => !g.completed && g.home_classification === "fbs" && g.away_classification === "fbs");
+    const fbs = games.filter((g) => g.home_classification === "fbs" && g.away_classification === "fbs");
+    const started = (g: GameWithLines) => g.completed || (g.start_date != null && Date.parse(g.start_date) <= Date.now());
+    const targets = fbs.filter((g) => !started(g));
+    const played = fbs.filter(started);
     const markets: string[] = [];
     if (syncHalves) markets.push("spreads_h1", "totals_h1", "spreads_h2", "totals_h2");
     if (syncQuarters) for (const q of [1, 2, 3, 4]) markets.push(`spreads_q${q}`, `totals_q${q}`);
-    if (targets.length === 0) {
-      setSyncMsg(
-        `Every FBS-vs-FBS game in week ${week} has already been played, so there are no live lines left to sync. For played games use Historical Odds Pull (Ratings & models) — it loads the lines from just before kickoff, which is what Period Grading reads.`
-      );
-      return;
-    }
+    const histMarkets = [...markets, ...(syncTeamTotals ? ["team_totals"] : [])];
     const perGame = markets.length + (syncTeamTotals ? 1 : 0);
     if (perGame === 0) return;
-    if (!window.confirm(`Sync current lines for up to ${targets.length} game(s), week ${week}?\n\nEstimated cost up to ${targets.length * perGame} credits (${perGame} per game: 1 per market). Games not yet posted cost less.`)) return;
+    if (
+      !window.confirm(
+        `Sync lines for week ${week}?\n\n` +
+          (targets.length ? `Upcoming: ${targets.length} game(s) from the live feed, up to ${targets.length * perGame} credits.\n` : "") +
+          (played.length
+            ? `Already played: ${played.length} game(s) from the historical feed (closing snapshot), only markets not yet saved — up to ${played.length * (1 + 10 * histMarkets.length)} credits.`
+            : "")
+      )
+    )
+      return;
     setSyncing(true);
     setSyncMsg(null);
     try {
       let periodSaved = 0;
       let ttRows = 0;
-      if (markets.length > 0) {
+      let hist: Awaited<ReturnType<typeof pullPlayedGames>> | null = null;
+      if (played.length > 0) hist = await pullPlayedGames(played, histMarkets);
+      if (targets.length > 0 && markets.length > 0) {
         const events = await fetchUpcomingEvents();
         const byPair = new Map<string, string>();
         for (const e of events) {
@@ -792,8 +839,16 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
           if (toSave.length > 0) periodSaved = (await savePeriodMarketLines(toSave, true)).saved;
         }
       }
-      if (syncTeamTotals) ttRows = (await syncTeamTotalsNow(targets, season)).rows;
-      setSyncMsg(`Saved ${periodSaved} period line rows and ${ttRows} team-total rows.`);
+      if (syncTeamTotals && targets.length > 0) ttRows = (await syncTeamTotalsNow(targets, season)).rows;
+      const parts = [];
+      if (targets.length > 0) parts.push(`Live feed (${targets.length} upcoming games): saved ${periodSaved} period line rows and ${ttRows} team-total rows.`);
+      if (hist)
+        parts.push(
+          hist.notes.length === 0
+            ? `Historical feed (${played.length} played games): everything already saved.`
+            : `Historical feed (${played.length} played games, ${hist.credits} credits): saved ${hist.saved} rows${hist.failed ? `; ${hist.failed} game(s) came back empty or failed — see below` : ""}.\n${hist.notes.join("\n")}`
+        );
+      setSyncMsg(parts.join("\n"));
       setReloadTick((n) => n + 1);
     } catch (err: any) {
       setSyncMsg(err.message ?? "Sync failed");
@@ -861,7 +916,14 @@ export default function PeriodProjectionsPanel({ onBack }: { onBack: () => void 
           <input type="checkbox" checked={syncTeamTotals} onChange={(e) => setSyncTeamTotals(e.target.checked)} /> Game team totals
         </label>
         <span style={{ color: "var(--chalk-dim)" }}>Costs 1 credit per market per game; asks first.</span>
-        {syncMsg && <span>{syncMsg}</span>}
+        {syncMsg && (
+          <div
+            className="admin-panel"
+            style={{ whiteSpace: "pre-line", fontSize: "0.78rem", flexBasis: "100%", borderColor: /failed|empty/.test(syncMsg) ? "var(--c-warn)" : undefined }}
+          >
+            {syncMsg}
+          </div>
+        )}
       </div>
 
       {totalsLoading ? (

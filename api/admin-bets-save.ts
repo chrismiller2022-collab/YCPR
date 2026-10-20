@@ -831,12 +831,30 @@ export default async function handler(req: any, res: any) {
         if (!existingIdByKey.has(key)) existingIdByKey.set(key, e.id);
       }
 
+      // Placeholders from Matchups' "Send to Placed Bets" (book "placeholder"): a new CSV bet on the same game, bet
+      // type and side takes over the placeholder row (it becomes the real bet) instead of inserting a second row.
+      const placeholders = (existing as any[]).filter((e) => e.book === "placeholder");
+      const claimed = new Set<number>();
       const toInsert: typeof rows = [];
       const toUpdate: { id: number; row: (typeof rows)[number] }[] = [];
+      const toConfirm: { id: number; row: (typeof rows)[number] }[] = [];
       for (const row of rows) {
         const id = existingIdByKey.get(betKey(row));
-        if (id != null) toUpdate.push({ id, row });
-        else toInsert.push(row);
+        if (id != null) {
+          toUpdate.push({ id, row });
+          continue;
+        }
+        const ph = row.game_id
+          ? placeholders.find((p) => !claimed.has(p.id) && p.game_id === row.game_id && p.bet_type === row.bet_type && String(p.side).toLowerCase() === String(row.side).toLowerCase())
+          : undefined;
+        if (ph) {
+          claimed.add(ph.id);
+          toConfirm.push({ id: ph.id, row });
+        } else toInsert.push(row);
+      }
+      for (const { id, row } of toConfirm) {
+        const { error } = await supabaseAdmin.from("placed_bets").update(row).eq("id", id);
+        if (error) throw error;
       }
 
       if (toInsert.length > 0) {
@@ -860,7 +878,20 @@ export default async function handler(req: any, res: any) {
         if (error) throw error;
       }
 
-      res.status(200).json({ inserted: toInsert.length, updated: toUpdate.length });
+      res.status(200).json({ inserted: toInsert.length, updated: toUpdate.length, confirmed: toConfirm.length });
+      return;
+    }
+
+    // Removes one placeholder bet (only placeholders: a real bet can't be deleted from here).
+    if (action === "deletePlaceholderBet") {
+      const id = Number(req.body?.id);
+      if (!Number.isFinite(id)) {
+        res.status(400).json({ error: "id is required" });
+        return;
+      }
+      const { error } = await supabaseAdmin.from("placed_bets").delete().eq("id", id).eq("book", "placeholder");
+      if (error) throw error;
+      res.status(200).json({ ok: true });
       return;
     }
 

@@ -4,6 +4,8 @@ import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
   importPlacedBets,
+  deletePlaceholderBet,
+  isPlaceholderBet,
   fetchPlacedParlays,
   BOOK_LABELS,
   fetchJuicereelAuthorizeUrl,
@@ -906,9 +908,10 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
     setImporting(true);
     setMessage(null);
     try {
-      const { inserted, updated } = await importPlacedBets(resolved);
+      const { inserted, updated, confirmed } = await importPlacedBets(resolved);
       setMessage(
-        `Saved ${resolved.length} bet${resolved.length === 1 ? "" : "s"}: ${inserted} new, ${updated} matched an existing bet and had its result/stake/price updated instead of duplicating.`
+        `Saved ${resolved.length} bet${resolved.length === 1 ? "" : "s"}: ${inserted} new, ${updated} matched an existing bet and had its result/stake/price updated instead of duplicating` +
+          (confirmed ? `, ${confirmed} confirmed a placeholder from Matchups.` : ".")
       );
       setResolved([]);
       setErrors([]);
@@ -1048,6 +1051,83 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+// Placeholders sent from Matchups ("Send to Placed Bets"), waiting for a CSV import with the same game, bet type and
+// side to confirm them. One whose game has kicked off without a match is flagged "Not bet". They never count in any
+// record above.
+function PlaceholderBets({ season, games, reloadTick, onChanged }: { season: number; games: GameWithLines[]; reloadTick: number; onChanged: () => void }) {
+  const [rows, setRows] = useState<PlacedBetRow[]>([]);
+  useEffect(() => {
+    fetchPlacedBets(season, { includePlaceholders: true })
+      .then((all) => setRows(all.filter(isPlaceholderBet)))
+      .catch(() => setRows([]));
+  }, [season, reloadTick]);
+  if (rows.length === 0) return null;
+  const gameById = new Map(games.map((g) => [g.id, g]));
+  const started = (b: PlacedBetRow) => {
+    const g = b.game_id ? gameById.get(b.game_id) : undefined;
+    return !!g && (g.completed || (g.start_date != null && Date.parse(g.start_date) <= Date.now()));
+  };
+  const notBet = rows.filter(started).length;
+  const cell = { padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", fontSize: "0.8rem", whiteSpace: "nowrap" as const };
+  return (
+    <div className="admin-panel" style={{ margin: "1rem 0 1.5rem", borderColor: notBet ? "var(--c-warn)" : undefined }}>
+      <div className="admin-panel-head">
+        <h3>
+          Awaiting CSV · {rows.length} placeholder{rows.length === 1 ? "" : "s"}
+          {notBet > 0 && <span style={{ color: "var(--c-warn)", fontWeight: 600 }}> · {notBet} not bet (game started, no CSV match)</span>}
+        </h3>
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Sent from Matchups. Importing a CSV with the same game, bet type and side turns a placeholder into the real bet; anything else in the CSV is
+        added as a new bet. Placeholders don't count in any record.
+      </p>
+      <div className="table-scroll" style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["Week", "Game", "Bet", "Line when sent", "Status", ""].map((h) => (
+                <th key={h} style={{ ...cell, textAlign: "left", color: "var(--chalk-dim)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((b) => {
+              const late = started(b);
+              return (
+                <tr key={b.id}>
+                  <td style={cell}>{b.week ?? "–"}</td>
+                  <td style={cell}>
+                    {b.away_team} @ {b.home_team}
+                  </td>
+                  <td style={{ ...cell, fontWeight: 700 }}>
+                    {b.side} {b.bet_type}
+                  </td>
+                  <td style={cell}>{b.line_value != null ? `${b.line_value > 0 ? "+" : ""}${b.line_value}` : "–"}</td>
+                  <td style={{ ...cell, color: late ? "var(--c-warn)" : "var(--chalk-dim)", fontWeight: late ? 700 : 400 }}>{late ? "Not bet" : "Waiting for CSV"}</td>
+                  <td style={cell}>
+                    <button
+                      className="admin-link"
+                      onClick={() =>
+                        deletePlaceholderBet(b.id)
+                          .then(onChanged)
+                          .catch(() => {})
+                      }
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1198,6 +1278,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
       <JuicereelConnectControl onImported={() => setReloadTick((n) => n + 1)} />
       <CsvImportControl onImported={() => setReloadTick((n) => n + 1)} />
+      <PlaceholderBets season={season} games={games} reloadTick={reloadTick} onChanged={() => setReloadTick((n) => n + 1)} />
 
       {loading && <p>Loading…</p>}
       {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}

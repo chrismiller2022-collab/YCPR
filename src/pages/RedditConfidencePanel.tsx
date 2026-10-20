@@ -1,3 +1,4 @@
+import { autoConfidencePoints } from "../lib/confidenceRank";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -216,7 +217,6 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     fetchRedditConfidencePicksForWeek(season, week, liveByTeam)
       .then((data) => {
         if (!isCurrent(token)) return;
-        setPicks(data);
         const d: Record<number, any> = {};
         // Confidence points auto-assign by spread magnitude, biggest
         // favorite = 10 down to smallest = 1 — only when NONE are saved
@@ -238,6 +238,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
           };
         }
         setDraft(d);
+        // Listed 10 → 1 by confidence (ordered once here, so rows don't jump while a number is typed).
+        setPicks([...data].sort((a, b) => (d[b.id]?.confidence_points ?? -1) - (d[a.id]?.confidence_points ?? -1)));
       })
       .catch((err) => {
         if (isCurrent(token)) setError(err.message);
@@ -420,6 +422,18 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.75rem", flexWrap: "wrap" }}>
         <button onClick={handleSave} disabled={saving}>
           {saving ? "Saving…" : "Save picks"}
+        </button>
+        <button
+          className="menu-btn"
+          onClick={() => {
+            const ranked = autoConfidencePoints(picks.map((p) => ({ id: p.id, pickedSide: draft[p.id]?.picked_side ?? null, myAwaySpread: p.myProjAwaySpread })));
+            setDraft((prev) => Object.fromEntries(Object.entries(prev).map(([id, v]: any) => [id, { ...v, confidence_points: ranked.get(Number(id)) ?? null }])));
+            setPicks((prev) => [...prev].sort((a, b) => (ranked.get(b.id) ?? -1) - (ranked.get(a.id) ?? -1)));
+          }}
+          disabled={saving}
+          title="Number every picked game 10..1 by your projected margin for the picked side"
+        >
+          Auto-rank
         </button>
         <button className="menu-btn" onClick={handleCopyCsv} disabled={!csvLine}>
           Copy picks for Reddit

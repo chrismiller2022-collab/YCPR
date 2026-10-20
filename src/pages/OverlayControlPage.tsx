@@ -43,7 +43,7 @@ async function fetchSlate(day: string): Promise<SlateGame[]> {
   const ids = (games ?? []).map((g: any) => g.id);
   if (!ids.length) return [];
   const [bets, locks] = await Promise.all([
-    supabase.from("placed_bets").select("game_id").in("game_id", ids),
+    supabase.from("placed_bets").select("game_id").in("game_id", ids).neq("book", "placeholder"),
     supabase.from("game_projection_locks").select("game_id").in("game_id", ids),
   ]);
   const betCount: Record<string, number> = {};

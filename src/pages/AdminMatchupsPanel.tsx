@@ -17,7 +17,7 @@ import { PredictionsContent } from "./PredictionsAdminPanel";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import MatchupTotalsPopup from "../components/MatchupTotalsPopup";
-import { fetchPlacedBets, type BetType } from "../lib/api/placedBets";
+import { fetchPlacedBets, savePlaceholderBets, type BetType } from "../lib/api/placedBets";
 
 // Deliberately dense — this table is for actually placing bets, not for
 // looking pretty, so it overrides the shared .matchups-* classes' default
@@ -1152,7 +1152,24 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
 
-      setSaveMessage(`Saved ${data.saved} bet${data.saved === 1 ? "" : "s"}.`);
+      // Each ticked game also goes to Placed Bets as a placeholder (Vegas line at the time, no stake); the next CSV
+      // import with the same game and side turns it into the real bet.
+      const placeholders = selectedRows.map((c) => {
+        const team = c.betTeam ?? c.projCoverTeam!;
+        return {
+          gameId: c.game.id,
+          season,
+          week: c.game.week,
+          awayTeam: c.game.away_team,
+          homeTeam: c.game.home_team,
+          betType: "spread" as const,
+          side: team === "away" ? c.game.away_team : c.game.home_team,
+          lineValue: team === "away" ? c.vegasAwaySpread : c.vegasAwaySpread != null ? -c.vegasAwaySpread : null,
+        };
+      });
+      await savePlaceholderBets(placeholders);
+
+      setSaveMessage(`Sent ${placeholders.length} to Placed Bets as placeholders. They become real bets when a CSV import matches them.`);
       setSelectedGameIds(new Set());
     } catch (err: any) {
       setSaveMessage(`Error: ${err.message ?? "Save failed"}`);
@@ -1348,7 +1365,6 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
                       mode={mode}
                       selected={selectedGameIds.has(c.game.id)}
                       onToggleSelect={toggleSelect}
-                      onPlaceBet={(computed) => setBetModalContext(buildPlaceBetContext(computed))}
                       mlEvThreshold={mlEvThreshold}
                       onOpenHandicap={(away, home, gameWeek) => setHandicapGame({ awayTeam: away, homeTeam: home, week: gameWeek })}
                     />
@@ -1365,7 +1381,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
               {saveMessage && <span style={{ color: saveMessage.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{saveMessage}</span>}
               <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
                 <button className="admin-btn primary" onClick={handleSaveBets} disabled={saving}>
-                  {saving ? "Saving…" : `Save ${selectedRows.length} Bet${selectedRows.length === 1 ? "" : "s"}`}
+                  {saving ? "Sending…" : `Send ${selectedRows.length} to Placed Bets`}
                 </button>
                 <button className="admin-btn" onClick={() => setSelectedGameIds(new Set())} disabled={saving}>
                   Clear
