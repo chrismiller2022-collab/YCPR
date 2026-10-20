@@ -14,6 +14,10 @@ export interface Rung {
   gameId: string;
   week: number;
   ticker: string;
+  /** Which team the market's YES backs ("<team> wins by over X"). */
+  side?: "home" | "away";
+  /** The market's floor_strike (X.5). */
+  strike?: number;
   /** Unix seconds. */
   kickoff: number;
   /** 1 if the market settled YES. */
@@ -22,6 +26,8 @@ export interface Rung {
   fair: number;
   /** Benchmark P(YES): same pmf shape around the sportsbook closing spread (null if no line). */
   bookFair: number | null;
+  /** Same, around the sportsbook OPENING spread (known before Kalshi opens; no hindsight). */
+  openFair?: number | null;
   /** Valid two-sided quotes before kickoff, oldest first. */
   quotes: Quote[];
 }
@@ -120,6 +126,8 @@ function solve3(A: number[][], y: number[]): number[] {
 
 export interface TakerTrade {
   gameId: string;
+  /** Team the traded market's YES backs. */
+  rungSide?: "home" | "away";
   ticker: string;
   week: number;
   t: number;
@@ -143,26 +151,27 @@ export interface TakerTrade {
  */
 export function simulateTaker(
   rungs: Rung[],
-  opts: { minEdge: number; cutoffSec?: number; onePerGame?: boolean; maxSpread?: number }
+  opts: { minEdge: number; cutoffSec?: number; onePerGame?: boolean; maxSpread?: number; fairOf?: (r: Rung) => number | null }
 ): TakerTrade[] {
   const cutoff = opts.cutoffSec ?? 30 * 60;
   const trades: TakerTrade[] = [];
   for (const r of rungs) {
     const close = quoteAt(r);
-    if (!close) continue;
+    const fair = opts.fairOf ? opts.fairOf(r) : r.fair;
+    if (!close || fair == null) continue;
     for (const q of r.quotes) {
       if (q.t > r.kickoff - cutoff) break;
       if (opts.maxSpread != null && q.ask - q.bid > opts.maxSpread) continue;
       const buyFee = kalshiFee(q.ask);
       const sellFee = kalshiFee(q.bid);
-      const buyEdge = r.fair - q.ask - buyFee;
-      const sellEdge = q.bid - r.fair - sellFee;
+      const buyEdge = fair - q.ask - buyFee;
+      const sellEdge = q.bid - fair - sellFee;
       if (buyEdge >= opts.minEdge) {
-        trades.push({ gameId: r.gameId, ticker: r.ticker, week: r.week, t: q.t, side: "buy", price: q.ask, fair: r.fair, edge: buyEdge, fee: buyFee, pnl: r.result - q.ask - buyFee, clv: mid(close) - q.ask });
+        trades.push({ gameId: r.gameId, rungSide: r.side, ticker: r.ticker, week: r.week, t: q.t, side: "buy", price: q.ask, fair, edge: buyEdge, fee: buyFee, pnl: r.result - q.ask - buyFee, clv: mid(close) - q.ask });
         break;
       }
       if (sellEdge >= opts.minEdge) {
-        trades.push({ gameId: r.gameId, ticker: r.ticker, week: r.week, t: q.t, side: "sell", price: q.bid, fair: r.fair, edge: sellEdge, fee: sellFee, pnl: q.bid - r.result - sellFee, clv: q.bid - mid(close) });
+        trades.push({ gameId: r.gameId, rungSide: r.side, ticker: r.ticker, week: r.week, t: q.t, side: "sell", price: q.bid, fair, edge: sellEdge, fee: sellFee, pnl: q.bid - r.result - sellFee, clv: q.bid - mid(close) });
         break;
       }
     }

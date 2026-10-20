@@ -10,9 +10,12 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { matchTeamName } from "../../src/lib/teamNameMatch";
+import { computeRow } from "../../src/lib/matchupsCompute";
+import { DEFAULT_CUSTOM_PARAMS } from "../../src/lib/betHistory";
 import { DEFAULT_MARGIN_MODEL, marginPmf, type MarginModel } from "../fairPrice/marginDistribution";
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { eventCandles, settledEvents } from "./kalshiHistory";
+import { kalshiFee } from "../fairPrice/kalshi";
 import { blendProb, clamp, fitBlend, gameBootstrap, logLoss, mid, quoteAt, rng, simulateTaker, type Quote, type Rung } from "./analysis";
 
 const SERIES = "KXNCAAFSPREAD";
@@ -37,14 +40,19 @@ async function rest<T>(path: string): Promise<T[]> {
 
 interface GameRow { id: string; week: number; start_date: string; home_team: string; away_team: string; home_points: number; away_points: number }
 interface LockRow { game_id: string; my_away_spread: number | null; locked_at: string }
-interface LineRow { game_id: string; provider: string; spread: number | null }
+interface LineRow { game_id: string; provider: string; spread: number | null; opening_spread: number | null; over_under: number | null; home_moneyline: number | null; away_moneyline: number | null }
 
 const games = await rest<GameRow>(`games?select=id,week,start_date,home_team,away_team,home_points,away_points&season=eq.${season}&completed=is.true&home_classification=eq.fbs&away_classification=eq.fbs&order=id`);
 const locks = new Map((await rest<LockRow>(`game_projection_locks?select=game_id,my_away_spread,locked_at&season=eq.${season}&order=game_id`)).map((l) => [String(l.game_id), l]));
 const PROVIDER_RANK: Record<string, number> = { market_median: 0, consensus: 1 };
 const bookSpread = new Map<string, { rank: number; spread: number }>();
-for (const l of await rest<LineRow>(`betting_lines?select=game_id,provider,spread&season=eq.${season}&spread=not.is.null&order=id`)) {
+const openSpread = new Map<string, { rank: number; spread: number }>();
+const linesByGame = new Map<string, LineRow[]>();
+for (const l of await rest<LineRow>(`betting_lines?select=game_id,provider,spread,opening_spread,over_under,home_moneyline,away_moneyline&season=eq.${season}&spread=not.is.null&order=id`)) {
+  (linesByGame.get(String(l.game_id)) ?? linesByGame.set(String(l.game_id), []).get(String(l.game_id))!).push(l);
   const rank = PROVIDER_RANK[l.provider] ?? 2;
+  const curOpen = openSpread.get(String(l.game_id));
+  if (l.opening_spread != null && (!curOpen || rank < curOpen.rank)) openSpread.set(String(l.game_id), { rank, spread: l.opening_spread });
   const cur = bookSpread.get(String(l.game_id));
   if (!cur || rank < cur.rank) bookSpread.set(String(l.game_id), { rank, spread: l.spread! });
 }
@@ -84,6 +92,8 @@ function buildRungs(model: MarginModel): { rungs: Rung[]; skippedMarkets: number
     const pmf = marginPmf(Number(lock.my_away_spread), model);
     const line = bookSpread.get(String(g.id));
     const bookPmf = line ? marginPmf(-line.spread, model) : null;
+    const open = openSpread.get(String(g.id));
+    const openPmf = open ? marginPmf(-open.spread, model) : null;
     const candles = candleCache.get(e.event_ticker);
     for (const mk of e.markets) {
       const team = canon(mk.yes_sub_title.replace(/\s+wins by over.*$/i, ""));
@@ -103,10 +113,13 @@ function buildRungs(model: MarginModel): { rungs: Rung[]; skippedMarkets: number
         gameId: String(g.id),
         week: g.week,
         ticker: mk.ticker,
+        side,
+        strike: mk.floor_strike,
         kickoff: Math.floor(new Date(g.start_date).getTime() / 1000),
         result: mk.result === "yes" ? 1 : 0,
         fair: kalshiSpreadYesProb(pmf, side, mk.floor_strike),
         bookFair: bookPmf ? kalshiSpreadYesProb(bookPmf, side, mk.floor_strike) : null,
+        openFair: openPmf ? kalshiSpreadYesProb(openPmf, side, mk.floor_strike) : null,
         quotes,
       });
     }
@@ -221,6 +234,116 @@ for (const minEdge of [0, 0.02, 0.04, 0.06, 0.08, 0.1]) {
     const wins = tr.filter((t) => t.pnl > 0).length;
     out(`| ${(minEdge * 100).toFixed(0)}¢ | ${onePerGame ? "best rung per game" : "every rung"} | ${tr.length} | ${pnl.games} | ${pct(wins / tr.length)} | ${ci(pnl)} | ${ci(clv)} | ${tr.reduce((s, t) => s + t.pnl, 0).toFixed(2)} |`);
   }
+}
+out();
+
+// ---- 3b. Is the taking edge YCPR's, or just stale Kalshi quotes?
+out("### 3b. Same strategy, fair price from the sportsbook spread instead of YCPR");
+out();
+out("If this does as well as YCPR, the profit comes from Kalshi quotes lagging the sportsbooks, not from our model. The closing line wasn't known at entry, so it is an upper bound; the opening line was known, so it is a strategy a bot could really run.");
+out();
+out("| Fair from | Min edge | Mode | Trades | Win % | P&L ¢/contract | CLV ¢ |");
+out("|---|---|---|---|---|---|---|");
+const bookRows = (fairOf: (r: Rung) => number | null | undefined, label: string) => {
+  for (const minEdge of [0, 0.02, 0.04]) {
+    for (const onePerGame of [false, true]) {
+      const tr = simulateTaker(rungs, { minEdge, onePerGame, fairOf: (r) => fairOf(r) ?? null });
+      if (!tr.length) continue;
+      const pnl = gameBootstrap(tr.map((t) => ({ gameId: t.gameId, v: t.pnl })));
+      const clv = gameBootstrap(tr.map((t) => ({ gameId: t.gameId, v: t.clv })));
+      out(`| ${label} | ${(minEdge * 100).toFixed(0)}¢ | ${onePerGame ? "best rung per game" : "every rung"} | ${tr.length} | ${pct(tr.filter((t) => t.pnl > 0).length / tr.length)} | ${ci(pnl)} | ${ci(clv)} |`);
+    }
+  }
+};
+bookRows((r) => r.bookFair, "Closing line (hindsight)");
+bookRows((r) => r.openFair, "**Opening line (no hindsight)**");
+out();
+out("### 3c. When the YCPR best-rung-per-game trades (2¢ min edge) were entered");
+out();
+out("| Hours before kickoff | Trades | P&L ¢/contract | CLV ¢ |");
+out("|---|---|---|---|");
+{
+  const tr = simulateTaker(rungs, { minEdge: 0.02, onePerGame: true });
+  const kick = new Map(rungs.map((r) => [r.ticker, r.kickoff]));
+  for (const [lo, hi] of [[0, 6], [6, 24], [24, 72], [72, 1e9]]) {
+    const sub = tr.filter((t) => {
+      const h = (kick.get(t.ticker)! - t.t) / 3600;
+      return h >= lo && h < hi;
+    });
+    if (!sub.length) continue;
+    const pnl = gameBootstrap(sub.map((t) => ({ gameId: t.gameId, v: t.pnl })));
+    const clv = gameBootstrap(sub.map((t) => ({ gameId: t.gameId, v: t.clv })));
+    out(`| ${lo}–${hi === 1e9 ? "∞" : hi} | ${sub.length} | ${ci(pnl)} | ${ci(clv)} |`);
+  }
+}
+out();
+
+// ---- 3d. The user's actual filters (Filtered / Weighted Filtered / NWFB from computeRow).
+out("## 3d. Only games your filters flag (computeRow betTeam vs the closing line)");
+out();
+const betSide = new Map<string, { team: "home" | "away"; category: string; covered: number | null }>();
+for (const { game: g } of gameByEvent.values()) {
+  const lock = locks.get(String(g.id))!;
+  const row = computeRow(
+    { ...g, neutral_site: false, completed: true, lines: linesByGame.get(String(g.id)) ?? [] } as any,
+    {},
+    "team",
+    DEFAULT_CUSTOM_PARAMS,
+    { myAwaySpread: Number(lock.my_away_spread), myAwayWinPct: null }
+  );
+  if (row.betTeam) betSide.set(String(g.id), { team: row.betTeam, category: row.betCategory ?? "?", covered: row.actCoverTeam === "push" ? null : row.actCoverTeam === row.betTeam ? 1 : 0 });
+}
+const graded = [...betSide.values()].filter((b) => b.covered != null);
+out(`- Games flagged: ${betSide.size} of ${gameByEvent.size}. ATS vs the closing line: ${graded.filter((b) => b.covered).length}-${graded.filter((b) => !b.covered).length} (${pct(graded.filter((b) => b.covered).length / graded.length)}; break-even at −110 is 52.4%).`);
+{
+  const rowsF = closeRows.filter(({ r }) => betSide.has(r.gameId));
+  const d = gameBootstrap(rowsF.map(({ r, q }) => ({ gameId: r.gameId, v: logLoss(mid(q), r.result) - logLoss(r.fair, r.result) })));
+  out(`- Forecast edge on these games' rungs (Kalshi log loss − ours, ×1000): ${ci(d, (x) => (x * 1000).toFixed(1))} over ${rowsF.length} rungs.`);
+  // Pro-bet-side trades only: buying YES on the bet team's ladder, or selling YES on the opponent's.
+  const proBet = (t: ReturnType<typeof simulateTaker>[number]) => {
+    const b = betSide.get(t.gameId);
+    return b != null && ((t.rungSide === b.team) === (t.side === "buy"));
+  };
+  out();
+  out("Taking only in the direction your filter picked:");
+  out();
+  out("| Min edge | Mode | Trades | Win % | P&L ¢/contract | CLV ¢ |");
+  out("|---|---|---|---|---|---|");
+  for (const minEdge of [0, 0.02, 0.04]) {
+    for (const onePerGame of [false, true]) {
+      let tr = simulateTaker(rungs.filter((r) => betSide.has(r.gameId)), { minEdge }).filter(proBet);
+      if (onePerGame) {
+        const best = new Map<string, (typeof tr)[number]>();
+        for (const t of tr) if (!best.has(t.gameId) || t.edge > best.get(t.gameId)!.edge) best.set(t.gameId, t);
+        tr = [...best.values()];
+      }
+      if (!tr.length) continue;
+      const pnl = gameBootstrap(tr.map((t) => ({ gameId: t.gameId, v: t.pnl })));
+      const clv = gameBootstrap(tr.map((t) => ({ gameId: t.gameId, v: t.clv })));
+      out(`| ${(minEdge * 100).toFixed(0)}¢ | ${onePerGame ? "best rung per game" : "every rung"} | ${tr.length} | ${pct(tr.filter((t) => t.pnl > 0).length / tr.length)} | ${ci(pnl)} | ${ci(clv)} |`);
+    }
+  }
+  // The filtered bet itself, placed on Kalshi: the rung nearest the closing spread, taken 30 min before kickoff.
+  const placed: { gameId: string; v: number; clv: number }[] = [];
+  for (const [gid, b] of betSide) {
+    const line = bookSpread.get(gid);
+    if (!line) continue;
+    const favSide: "home" | "away" = line.spread <= 0 ? "home" : "away";
+    const ladder = rungs.filter((r) => r.gameId === gid && r.side === favSide && r.strike != null);
+    if (!ladder.length) continue;
+    const target = Math.abs(line.spread);
+    const r = ladder.reduce((a, c) => (Math.abs(c.strike! - target) < Math.abs(a.strike! - target) ? c : a));
+    const q = quoteAt(r, r.kickoff - 1800);
+    const close = quoteAt(r);
+    if (!q || !close) continue;
+    const buy = b.team === favSide; // backing the favorite = buy "fav wins by over X"; backing the dog = sell it
+    const price = buy ? q.ask : q.bid;
+    const fee = kalshiFee(price);
+    placed.push({ gameId: gid, v: buy ? r.result - price - fee : price - r.result - fee, clv: buy ? mid(close) - price : price - mid(close) });
+  }
+  const pb = gameBootstrap(placed.map((x) => ({ gameId: x.gameId, v: x.v })));
+  out();
+  out(`Your filtered bet placed on Kalshi (rung nearest the closing spread, taken 30 min before kickoff, 1 contract): ${placed.length} bets, win ${pct(placed.filter((x) => x.v > 0).length / placed.length)}, P&L ${ci(pb)} ¢/contract, total $${placed.reduce((s, x) => s + x.v, 0).toFixed(2)}.`);
 }
 out();
 
