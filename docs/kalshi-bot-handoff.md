@@ -108,7 +108,7 @@ that on paper first (section 9). If paper results show we're just getting picked
 - **Public market data:** ✅ no auth needed for `GET /markets`, `/series/{t}`, `/markets/{t}/orderbook`.
   Prices are dollar strings with 4 decimals (`"0.6200"`), sizes are fixed-point strings (`"1261.43"`; fractional
   contracts exist). Market objects carry `yes_bid_dollars`, `yes_ask_dollars`, `*_size_fp`, `volume_fp`,
-  `open_interest_fp`, `close_time`, `occurrence_datetime` (kickoff), `price_ranges` / `price_level_structure`.
+  `open_interest_fp`, `close_time`, `occurrence_datetime` (≈ expected game **end**, not kickoff; use `games.start_date` for kickoff), `price_ranges` / `price_level_structure`.
 - **Base URLs:** ✅ production `https://external-api.kalshi.com/trade-api/v2` (recommended; `api.elections.kalshi.com`
   also works), demo `https://external-api.demo.kalshi.co/trade-api/v2` (`demo-api.kalshi.co` also works).
   WebSockets: `wss://external-api-ws.kalshi.com/trade-api/ws/v2` / `wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2`.
@@ -231,3 +231,29 @@ Code: `bot/fairPrice/` (tests: `npm test`). No trading code yet.
 **Next:** the CLV check (§9 step 2). Center the pmf on our projection for 2024–2026 games, price the closing
 line and the alternate lines, and measure whether we beat the close. σ may need to be wider around our projection
 than around the market (our number is noisier); fit it from that same data.
+
+## 13. Backtest results, 2026 weeks 2–7 (run 2026-10-20)
+
+Full tables: `docs/kalshi-backtest-2026.md` (regenerate with `bot/backtest/run.ts`). 316 games whose YCPR projection
+was frozen before kickoff (week 1 locks were written after the games and are excluded), 9,479 Kalshi spread rungs.
+
+- **Kalshi's price is a better forecast than raw YCPR.** Log loss per rung: YCPR 0.513, Kalshi last pregame mid 0.500
+  (gap −13.4 ×1000, 90% CI [−22.7, −4.0]); 24h out it is still −10.7. The distribution *shape* is fine: centered on the
+  sportsbook close it scores 0.503, about the same as Kalshi. The gap is the projection itself. Widening σ makes it worse.
+- **At the close, YCPR adds no information on top of Kalshi.** Logistic blend weight on YCPR −0.04 (CI [−0.45, 0.43]);
+  leave-one-week-out the blend does worse than Kalshi alone.
+- **The filters did not hold up in this sample.** 47 of 316 games flagged by Filtered/WFB/NWFB went 23–24 ATS vs the
+  close (48.9%). Taking only in the filter's direction lost; the filtered bet placed on Kalshi 30 min before kickoff:
+  −4.3¢/contract. 47 games is small: this does not disprove the filters' long-run record, but 2026 doesn't confirm it.
+- **One lead worth testing further:** take the single most-mispriced rung per game vs YCPR, mostly at Kalshi market open
+  (268 of 313 entries were >72h before kickoff): +4 to +5¢/contract after fees with positive CLV (+2 to +3¢), but the 90%
+  intervals only just clear zero and it is the best of many cuts. Benchmarks: the same rule with the sportsbook *opening*
+  line (no hindsight) ≈ 0 (−1.6 to +1.7¢); with the *closing* line (hindsight) +7 to +8¢. So Kalshi does lag the books
+  early in the week, and YCPR may carry information the market only absorbs during the week. Taking every rung loses.
+- **Implication for market making:** quoting around raw YCPR fair would be quoting around a worse price than the market
+  mid, which is the definition of getting picked off. Any quoting should center on the market and use YCPR, at most, as a
+  small early-week skew, and only if the lead above survives a second season.
+
+**Next:** (1) rebuild 2025 pregame projections from weekly ratings (only if those ratings were stored before each week,
+otherwise they leak results) and rerun, to test the early-week lead and the filters on a second season; (2) start the
+read-only snapshot logger so Kalshi opening prices vs live YCPR are captured going forward.
