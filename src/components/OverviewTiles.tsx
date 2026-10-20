@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabaseClient";
 import { fetchSeasonAvailableWeeks } from "../lib/api/seasonWeeklyRatings";
 import { fetchTeamSosAvailableWeeks } from "../lib/api/ratingSystems";
 import { fetchResumeRatingsAvailableWeeks, fetchFinishedResumeAvailableWeeks } from "../lib/api/resumeWeights";
 import { fetchMonteCarloRuns } from "../lib/api/monteCarlo";
 import { fetchGameLockCoverageByWeek, useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchPlacedBets, type PlacedBetRow } from "../lib/api/placedBets";
+import { fetchPlacedBets, isPlaceholderBet, type PlacedBetRow } from "../lib/api/placedBets";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { computeRow } from "../lib/matchupsCompute";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
@@ -82,12 +81,6 @@ export function PublishStatusTile({ season, week, onOpen }: { season: number; we
   );
 }
 
-interface TickedBet {
-  away_team: string;
-  home_team: string;
-  bet_team: string;
-}
-
 const sameGame = (b: { away_team: string; home_team: string | null; game_id?: string | null }, g: GameWithLines) =>
   b.game_id === g.id || (b.away_team === g.away_team && b.home_team === g.home_team);
 
@@ -98,7 +91,7 @@ const sameGame = (b: { away_team: string; home_team: string | null; game_id?: st
 export function BetsThisWeekTile({ season, week, onOpen }: { season: number; week: number; onOpen: () => void }) {
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [placed, setPlaced] = useState<PlacedBetRow[]>([]);
-  const [ticked, setTicked] = useState<TickedBet[]>([]);
+  const [ticked, setTicked] = useState<PlacedBetRow[]>([]);
   const { byWeek } = useWeekAccurateRatings(season, [week], season);
   const { locks } = useGameProjectionLocks(season, [week]);
 
@@ -106,14 +99,15 @@ export function BetsThisWeekTile({ season, week, onOpen }: { season: number; wee
     let cancelled = false;
     Promise.all([
       fetchGamesWithLines(season, week),
-      fetchPlacedBets(season),
-      supabase.from("admin_bets").select("away_team, home_team, bet_team").eq("season", season).eq("week", week),
+      fetchPlacedBets(season, { includePlaceholders: true }),
     ])
-      .then(([g, p, t]) => {
+      .then(([g, p]) => {
         if (cancelled) return;
         setGames(g.filter((x) => x.home_classification === "fbs" && x.away_classification === "fbs"));
-        setPlaced(p.filter((b) => b.week === week && b.bet_type === "spread"));
-        setTicked((t.data ?? []) as TickedBet[]);
+        const spread = p.filter((b) => b.week === week && b.bet_type === "spread");
+        setPlaced(spread.filter((b) => !isPlaceholderBet(b)));
+        // Ticked in Matchups and sent as placeholders, not yet confirmed by a CSV import.
+        setTicked(spread.filter(isPlaceholderBet));
       })
       .catch(() => {});
     return () => {
@@ -136,7 +130,7 @@ export function BetsThisWeekTile({ season, week, onOpen }: { season: number; wee
       if (isMade) made++;
       else if (!g.completed && (!g.start_date || Date.parse(g.start_date) > Date.now())) toMake++;
     }
-    const tickedNotPlaced = ticked.filter((t) => !placed.some((b) => b.away_team === t.away_team && b.home_team === t.home_team && b.side === t.bet_team)).length;
+    const tickedNotPlaced = ticked.length;
     return { signals, made, toMake, tickedNotPlaced };
   }, [games, placed, ticked, byWeek, locks, week]);
 
@@ -148,7 +142,7 @@ export function BetsThisWeekTile({ season, week, onOpen }: { season: number; wee
       </div>
       <div className="d">
         {counts.made} of {counts.signals} signals placed
-        {counts.tickedNotPlaced > 0 && <span style={{ color: "var(--c-warn)" }}> · {counts.tickedNotPlaced} ticked in Matchups, not in Bets</span>}
+        {counts.tickedNotPlaced > 0 && <span style={{ color: "var(--c-warn)" }}> · {counts.tickedNotPlaced} sent from Matchups, awaiting CSV</span>}
       </div>
     </div>
   );

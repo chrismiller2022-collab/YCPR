@@ -319,7 +319,7 @@ export async function fetchOverlayContext(gameIds: string[]): Promise<Record<str
       .select("id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under")
       .in("game_id", gameIds),
     supabase.from("game_projection_locks").select("game_id, my_away_spread, my_total").in("game_id", gameIds),
-    supabase.from("placed_bets").select("*").in("game_id", gameIds),
+    supabase.from("placed_bets").select("*").in("game_id", gameIds).neq("book", "placeholder"),
   ]);
   for (const r of [games, lines, locks, bets]) if (r.error) throw r.error;
 
