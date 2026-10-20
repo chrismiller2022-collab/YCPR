@@ -3,20 +3,26 @@ import { useAdminWeek } from "../lib/adminWeek";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { espnDate, fetchOverlayContext, liveBets, useDelayed, useScoreboard, type OverlayContext, type ScoreGame } from "../lib/overlay";
 import { gradePick, usePoolPicksForGames } from "../lib/pools";
+import { WeatherIcon, loadWeatherCards, type WeatherCard } from "./WeatherPanel";
+import { compassDir, weatherLabel } from "../lib/weather";
 
 // Admin Scoreboard: a tile per game, live from ESPN (same feed and polling as the TV overlay), for the admin week's
-// games as CFBD assigns them (so a Tuesday or Friday game lands in the right week). Tiles scale with a size slider and
-// reflow to fit the screen. A tile flashes on a score, on entering the red zone and on a 30+ yard play.
+// games as CFBD assigns them (so a Tuesday or Friday game lands in the right week). Each tile carries the stadium and,
+// before kickoff, the game-window weather (Game Weather's data). Tiles scale with a size slider and reflow to fit the
+// screen. A tile flashes on a score, on entering the red zone and on a 30+ yard play. The Overview embeds the same
+// board in "today" mode: only the current game day's games (or the next game day's when there are none today).
 
 type Show = "all" | "selected" | "action";
 type Matchup = "fbs" | "all" | "fcs" | "cross";
-type Detail = "field" | "down" | "lastPlay" | "winProb" | "lines" | "bets" | "pools";
+type Detail = "field" | "down" | "lastPlay" | "winProb" | "lines" | "bets" | "pools" | "stadium";
+type WeatherMode = "pregame" | "always" | "off";
 
 interface Settings {
   show: Show;
   matchup: Matchup;
   details: Record<Detail, boolean>;
   delay: number;
+  weather: WeatherMode;
   size: number | null; // tile min width in px; null = fit 4 across
   selected: string[];
 }
@@ -29,13 +35,15 @@ const DETAILS: { key: Detail; label: string }[] = [
   { key: "lines", label: "Lines (Vegas, mine)" },
   { key: "bets", label: "My bets" },
   { key: "pools", label: "Pool picks" },
+  { key: "stadium", label: "Stadium" },
 ];
 
 const DEFAULTS: Settings = {
   show: "all",
   matchup: "fbs",
-  details: { field: true, down: true, lastPlay: false, winProb: false, lines: true, bets: true, pools: true },
+  details: { field: true, down: true, lastPlay: false, winProb: false, lines: true, bets: true, pools: true, stadium: true },
   delay: 0,
+  weather: "pregame",
   size: null,
   selected: [],
 };
@@ -82,7 +90,10 @@ function fmtKick(iso: string | null): string {
 
 const signed = (v: number) => (v === 0 ? "PK" : `${v > 0 ? "+" : ""}${Math.round(v * 2) / 2}`);
 
-export default function ScoreboardPanel() {
+/** YYYY-MM-DD in Eastern time: the game day a kickoff belongs to. */
+const etDay = (iso: string | Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(typeof iso === "string" ? new Date(iso) : iso);
+
+export default function ScoreboardPanel({ today = false, onOpenFull }: { today?: boolean; onOpenFull?: () => void }) {
   const season = new Date().getFullYear();
   const { week } = useAdminWeek();
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -138,11 +149,36 @@ export default function ScoreboardPanel() {
 
   const picks = usePoolPicksForGames(poolIds, [], true);
 
+  const [weather, setWeather] = useState<Record<string, WeatherCard>>({});
+  useEffect(() => {
+    if (settings.weather === "off" && !settings.details.stadium) return;
+    let cancelled = false;
+    const toMap = (cards: WeatherCard[]) => Object.fromEntries(cards.map((c) => [c.game.id, c]));
+    loadWeatherCards(season, week, (base) => !cancelled && setWeather(toMap(base)))
+      .then((r) => !cancelled && setWeather(toMap(r.cards)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [season, week, settings.weather === "off" && !settings.details.stadium]);
+
+  // Today mode: the current Eastern game day, else the next day with games.
+  const gameDay = useMemo(() => {
+    if (!today) return null;
+    const days = Array.from(new Set(pool.map((g) => (g.start_date ? etDay(g.start_date) : null)).filter((d): d is string => !!d))).sort();
+    const now = etDay(new Date());
+    return days.includes(now) ? now : days.find((d) => d > now) ?? null;
+  }, [today, pool]);
+
   const shown = useMemo(() => {
+    if (today) {
+      const dayGames = pool.filter((g) => g.start_date && etDay(g.start_date) === gameDay);
+      return settings.show === "action" ? dayGames.filter((g) => (contexts[g.id]?.bets.length ?? 0) > 0 || (picks[g.id]?.length ?? 0) > 0) : dayGames;
+    }
     if (settings.show === "selected") return pool.filter((g) => settings.selected.includes(g.id));
     if (settings.show === "action") return pool.filter((g) => (contexts[g.id]?.bets.length ?? 0) > 0 || (picks[g.id]?.length ?? 0) > 0);
     return pool;
-  }, [pool, settings.show, settings.selected, contexts, picks]);
+  }, [pool, settings.show, settings.selected, contexts, picks, today, gameDay]);
   const shownIds = shown.map((g) => g.id);
 
   const dates = useMemo(() => Array.from(new Set(shown.map((g) => g.start_date).filter((d): d is string => !!d).map(espnDate))).sort().join(","), [shown]);
@@ -188,7 +224,25 @@ export default function ScoreboardPanel() {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Scoreboard · Week {week}</h2>
+      {today ? (
+        <div className="admin-panel-head" style={{ marginBottom: "0.5rem" }}>
+          <h3>
+            {gameDay == null
+              ? "No more games this week"
+              : gameDay === etDay(new Date())
+                ? "Today's games"
+                : `Next game day · ${new Date(`${gameDay}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}`}
+          </h3>
+          {onOpenFull && (
+            <button className="admin-link admin-panel-link" onClick={onOpenFull}>
+              Full scoreboard →
+            </button>
+          )}
+        </div>
+      ) : (
+        <h2 style={{ marginTop: 0 }}>Scoreboard · Week {week}</h2>
+      )}
+      {!today && (
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "0.75rem", fontSize: "0.82rem" }}>
         <span style={{ color: "var(--chalk-dim)" }}>
           {ordered.length} games · {Object.values(scores).filter((g) => g.state === "in" && shownIds.includes(g.id)).length} live
@@ -201,10 +255,19 @@ export default function ScoreboardPanel() {
           </button>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          Weather
+          <select value={settings.weather} onChange={(e) => set("weather", e.target.value as WeatherMode)} aria-label="Weather">
+            <option value="pregame">Before kickoff</option>
+            <option value="always">Always</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
           Delay {settings.delay}s
           <input type="range" min={0} max={120} step={5} value={settings.delay} onChange={(e) => set("delay", Number(e.target.value))} aria-label="Delay seconds" />
         </label>
       </div>
+      )}
 
       <div ref={gridRef} className="sb-grid" style={{ "--sb-tile": `${tileMin}px`, "--sb-scale": String(tileMin / 280) } as CSSProperties}>
         {ordered.map((g) => (
@@ -216,11 +279,14 @@ export default function ScoreboardPanel() {
             picks={picks[g.id] ?? []}
             details={settings.details}
             flash={flashes[g.id]}
+            wx={weather[g.id]}
+            weatherMode={settings.weather}
           />
         ))}
         {ordered.length === 0 && <div className="empty matchups-empty">No games for these settings.</div>}
       </div>
 
+      {!today && (
       <div className="admin-panel" style={{ marginTop: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center", fontSize: "0.85rem" }}>
           <span style={{ fontWeight: 700 }}>Show</span>
@@ -282,6 +348,7 @@ export default function ScoreboardPanel() {
           </div>
         </details>
       </div>
+      )}
     </div>
   );
 }
@@ -309,7 +376,11 @@ function Tile({
   picks,
   details,
   flash,
+  wx,
+  weatherMode,
 }: {
+  wx: WeatherCard | undefined;
+  weatherMode: WeatherMode;
   game: GameWithLines;
   sb: ScoreGame | undefined;
   ctx: OverlayContext | undefined;
@@ -342,6 +413,26 @@ function Tile({
       <TeamRow name={sb?.away.abbrev ?? g.away_team} sbTeam={sb ? { ...sb.away, score: awayPts } : undefined} poss={possAway} winner={awayWin} />
       <TeamRow name={sb?.home.abbrev ?? g.home_team} sbTeam={sb ? { ...sb.home, score: homePts } : undefined} poss={possHome} winner={homeWin} />
 
+      {details.stadium && wx?.location && (
+        <div className="sb-line sb-dim" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {wx.location.name}
+          {wx.location.city ? ` · ${wx.location.city}${wx.location.state ? `, ${wx.location.state}` : ""}` : ""}
+          {wx.location.dome ? " · Dome" : ""}
+          {g.neutral_site ? " · Neutral" : ""}
+        </div>
+      )}
+      {wx?.weather && (weatherMode === "always" || (weatherMode === "pregame" && state === "pre")) && (
+        <div className="sb-wx" style={{ opacity: wx.location?.dome ? 0.55 : 1 }}>
+          <WeatherIcon code={wx.weather.code} isDay={wx.weather.kickoff.isDay} size={22} />
+          <span style={{ fontWeight: 700 }}>{wx.weather.kickoff.temp != null ? `${Math.round(wx.weather.kickoff.temp)}°` : "–"}</span>
+          <span className="sb-dim">{weatherLabel(wx.weather.code)}</span>
+          <span className="sb-dim">
+            {wx.weather.avgWind != null ? `${Math.round(wx.weather.avgWind)} mph ${compassDir(wx.weather.kickoff.windDir)}` : ""}
+            {wx.weather.maxPrecipProb != null && wx.weather.maxPrecipProb > 0 ? ` · ${Math.round(wx.weather.maxPrecipProb)}% precip` : ""}
+          </span>
+          {!wx.location?.dome && wx.weather.flags.length > 0 && <span className="sb-wx-flag">{wx.weather.flags.join(" · ")}</span>}
+        </div>
+      )}
       {state === "in" && details.field && sb?.yardLine != null && (
         <div className="sb-field" title={sb.possessionText ?? undefined}>
           <div className="sb-field-rz sb-field-rz-l" />

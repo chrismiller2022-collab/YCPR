@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from "react";
+import { ExternalLink } from "lucide-react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import CoachAtsSection from "../components/CoachAtsSection";
 import TeamBettingSection from "../components/TeamBettingSection";
@@ -31,7 +32,7 @@ export default function TeamInfoPanel({ onBack: _onBack }: { onBack: () => void 
   useDefaultToAdminWeek(setWeek);
   const [pickedTeam, setPickedTeam] = useState("Georgia");
   const [wholeSeason, setWholeSeason] = useState(false);
-  const [parts, setParts] = useState<Record<string, boolean>>({ pgwe: true, netsr: true, coaches: true, venues: false });
+  const [parts, setParts] = useState<Record<string, boolean>>({ pgwe: false, netsr: false, coaches: true, venues: true });
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState<string | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
@@ -91,8 +92,14 @@ export default function TeamInfoPanel({ onBack: _onBack }: { onBack: () => void 
                 ))}
               </select>
             </label>
-            <a href={`/team/${teamToSlug(pickedTeam)}`} target="_blank" rel="noopener" style={{ fontSize: "0.82rem" }}>
-              Open public page ↗
+            <a
+              className="menu-btn"
+              href={`/team/${teamToSlug(pickedTeam)}`}
+              target="_blank"
+              rel="noopener"
+              style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none", fontSize: "0.82rem" }}
+            >
+              <ExternalLink size={14} /> View on public site
             </a>
           </div>
           {teamObj && (
@@ -108,8 +115,8 @@ export default function TeamInfoPanel({ onBack: _onBack }: { onBack: () => void 
       {tab === "pulls" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", margin: 0 }}>
-            CFBD Team Info: postgame win expectancy (PGWE), net success rate, head coaches with tenure, and stadium coordinates for Game
-            Weather. PGWE and net SR show in Admin Matchups → Review.
+            PGWE and net success rate already come in with the weekly pull on the Overview (Sync week), so you only need this page for the
+            yearly pulls: head coaches with tenure, and stadium coordinates (Scoreboard weather). Run those once a season or after a coaching change.
           </p>
           <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
             <label style={{ fontSize: "0.85rem" }}>

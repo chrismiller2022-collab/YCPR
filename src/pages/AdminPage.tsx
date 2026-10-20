@@ -1,3 +1,4 @@
+import { PublishStatusTile, BetsThisWeekTile } from "../components/OverviewTiles";
 import ScoreboardPanel from "./ScoreboardPanel";
 import WeeklyRunPanel from "../components/WeeklyRunPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -51,10 +52,6 @@ import VizBuilderPanel from "./VizBuilderPanel";
 import RatingSystemsMatchupsPanel from "./RatingSystemsMatchupsPanel";
 import DrogbaAdminPanel from "./DrogbaAdminPanel";
 import { fetchAvailableWeeks, fetchLastUpload, type LastUpload } from "../lib/api/weeklyStats";
-import { fetchChecklistState, toggleChecklistItem } from "../lib/api/adminChecklist";
-import { CHECKLIST_ITEMS, type ChecklistItemDef } from "../lib/checklistItems";
-import ChecklistItemsBlock from "../components/ChecklistItemsBlock";
-import AdminChecklistPage from "./AdminChecklistPage";
 import { WEEK_OPTIONS } from "../lib/weekOptions";
 import { AdminWeekProvider, useAdminWeek } from "../lib/adminWeek";
 import { useAdminTheme, useSidebarCollapsed, type AdminTheme } from "../lib/adminPrefs";
@@ -291,7 +288,6 @@ type AdminView =
   | "ratingsystems"
   | "ratingmatchups"
   | "sos"
-  | "checklist"
   | "passkeys";
 
 // ---------------------------------------------------------------------
@@ -418,15 +414,6 @@ interface BetSummary {
   pendingBooks: number;
 }
 
-function leafKeys(item: ChecklistItemDef): string[] {
-  return item.subItems ? item.subItems.flatMap(leafKeys) : [item.key];
-}
-
-/** A top-level checklist item counts as done once every one of its leaf boxes is checked. */
-function checklistItemDone(item: ChecklistItemDef, checked: Record<string, boolean>): boolean {
-  return leafKeys(item).every((k) => checked[k]);
-}
-
 function weekLabel(w: string | null): string {
   if (!w) return "—";
   const m = /^week\s*(\d+)$/i.exec(w);
@@ -450,211 +437,85 @@ function StatTile({ label, value, sub, tone }: { label: string; value: ReactNode
 }
 
 // ---------------------------------------------------------------------
-// Weekly checklist — lives on the admin dashboard home view (not its own
-// page). Two of the seven top-level items have a collapsible sub-checklist;
-// the parent checkbox reflects (and bulk-toggles) whether every sub-item is
-// checked. State is keyed by the current week label (same "week1"/
-// "preseason" strings used elsewhere) and persisted to Supabase so it
-// carries across devices/browsers, not just localStorage on one machine.
-// The state itself is owned by AdminPage so the sidebar badge stays in
-// sync. Item definitions live in lib/checklistItems.ts, shared with the
-// full Weekly Checklist page.
+// Overview (admin home): today's games, the week's run (the only checklist; it ticks itself where the database can
+// tell), what's published this week, bets still to make, and the Weekly Betting Report as a second tab.
 // ---------------------------------------------------------------------
-function WeeklyChecklist({
-  week,
-  checked,
-  loading,
-  onToggle,
-  onOpenFull,
-}: {
-  week: string | null;
-  checked: Record<string, boolean>;
-  loading: boolean;
-  onToggle: (key: string, next: boolean) => void;
-  onOpenFull: () => void;
-}) {
-  if (!week) return null;
-  const done = CHECKLIST_ITEMS.filter((i) => checklistItemDone(i, checked)).length;
-  const total = CHECKLIST_ITEMS.length;
-  return (
-    <section className="admin-panel">
-      <div className="admin-panel-head">
-        <h3>Weekly checklist · {weekLabel(week)}</h3>
-        <span style={{ display: "inline-flex", gap: 12, alignItems: "baseline" }}>
-          {loading && <span className="admin-muted" style={{ fontSize: "0.78rem" }}>Loading…</span>}
-          <button className="admin-link admin-panel-link" onClick={onOpenFull}>
-            Open checklist →
-          </button>
-        </span>
-      </div>
-      <div className="admin-progress" style={{ marginBottom: 12 }} title={`${done} of ${total} done`}>
-        <span style={{ width: `${(done / total) * 100}%` }} />
-      </div>
-      <div className="admin-checklist">
-        <ChecklistItemsBlock items={CHECKLIST_ITEMS} isChecked={(k) => checked[k] ?? false} onToggle={onToggle} />
-      </div>
-    </section>
-  );
-}
-
 interface AdminDashboardProps {
-  lastUpload: LastUpload | null;
-  currentWeek: string | null;
-  loadingSummary: boolean;
   betSummary: BetSummary | null;
-  checklist: Record<string, boolean>;
-  checklistLoading: boolean;
-  onToggleChecklist: (key: string, next: boolean) => void;
   onNavigate: (v: AdminView) => void;
-  onGoToRatings?: () => void;
-  onGoToResume?: () => void;
-  onGoToSOS?: () => void;
 }
 
-// Overview — number tiles, weekly checklist, quick links to public rating
-// pages and the next games in the admin week. Every other admin page is a
-// sidebar item.
-function AdminDashboard({
-  lastUpload,
-  currentWeek,
-  loadingSummary,
-  betSummary,
-  checklist,
-  checklistLoading,
-  onToggleChecklist,
-  onNavigate,
-  onGoToRatings,
-  onGoToResume,
-  onGoToSOS,
-}: AdminDashboardProps) {
+function AdminDashboard({ betSummary, onNavigate }: AdminDashboardProps) {
   const { week: adminWeek } = useAdminWeek();
   const season = new Date().getFullYear();
-  const [games, setGames] = useState<GameWithLines[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setGames(null);
-    fetchGamesWithLines(season, adminWeek)
-      .then((g) => !cancelled && setGames(g))
-      .catch(() => !cancelled && setGames([]));
-    return () => {
-      cancelled = true;
-    };
-  }, [season, adminWeek]);
-
-  const upcoming = useMemo(() => {
-    if (!games) return [];
-    return games
-      // Not final and not kicked off more than ~4 hours ago (a game can sit un-final until the next sync).
-      .filter((g) => !g.completed && (!g.start_date || Date.parse(g.start_date) > Date.now() - 4 * 3600 * 1000))
-      .filter((g) => g.home_classification === "fbs" || g.away_classification === "fbs")
-      .sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""))
-      .slice(0, 6);
-  }, [games]);
-
-  const done = CHECKLIST_ITEMS.filter((i) => checklistItemDone(i, checklist)).length;
+  const [tab, setTab] = useState<"week" | "report">("week");
+  const [runOpen, setRunOpen] = useState(true);
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   const bs = betSummary;
 
   return (
     <div>
-      <h2>Weekly Run</h2>
+      <h2>Overview</h2>
       <p>
-        {today} · {season} season
+        {today} · {season} season · week {adminWeek}
       </p>
+      <nav className="admin-tabs" aria-label="Overview" style={{ margin: "0.75rem 0 1rem" }}>
+        <button className={tab === "week" ? "on" : undefined} onClick={() => setTab("week")}>
+          This week
+        </button>
+        <button className={tab === "report" ? "on" : undefined} onClick={() => setTab("report")}>
+          Weekly Betting Report
+        </button>
+      </nav>
 
-      <div className="admin-stats" style={{ marginTop: 16 }}>
-        <StatTile label="Current week" value={loadingSummary ? "…" : weekLabel(currentWeek)} sub="latest uploaded ratings" />
-        <StatTile
-          label="Last upload"
-          value={
-            loadingSummary
-              ? "…"
-              : lastUpload
-              ? new Date(lastUpload.insertedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-              : "None yet"
-          }
-          sub={lastUpload ? `${weekLabel(lastUpload.week)} ratings` : undefined}
-        />
-        <StatTile label="Checklist" value={currentWeek ? `${done} / ${CHECKLIST_ITEMS.length}` : "—"} sub={currentWeek ? `done for ${weekLabel(currentWeek).toLowerCase()}` : undefined} />
-        <StatTile
-          label="Bets this season"
-          value={bs ? `${bs.wins}–${bs.losses}${bs.pushes ? `–${bs.pushes}` : ""}` : "—"}
-          sub={bs ? `${fmtMoney(bs.profit)}${bs.roi != null ? ` · ${bs.roi > 0 ? "+" : ""}${bs.roi.toFixed(1)}% ROI` : ""}` : undefined}
-          tone={bs ? (bs.profit > 0 ? "up" : bs.profit < 0 ? "down" : undefined) : undefined}
-        />
-        <StatTile label="Pending bets" value={bs ? bs.pending : "—"} sub={bs && bs.pending ? `across ${bs.pendingBooks} book${bs.pendingBooks === 1 ? "" : "s"}` : undefined} />
-      </div>
+      {tab === "report" ? (
+        <WeeklyBettingReportPanel onBack={() => setTab("week")} />
+      ) : (
+        <>
+          <div className="admin-stats">
+            <PublishStatusTile season={season} week={adminWeek} onOpen={() => onNavigate("publish")} />
+            <BetsThisWeekTile season={season} week={adminWeek} onOpen={() => onNavigate("matchups")} />
+            <StatTile
+              label="Bets this season"
+              value={bs ? `${bs.wins}–${bs.losses}${bs.pushes ? `–${bs.pushes}` : ""}` : "—"}
+              sub={bs ? `${fmtMoney(bs.profit)}${bs.roi != null ? ` · ${bs.roi > 0 ? "+" : ""}${bs.roi.toFixed(1)}% ROI` : ""}` : undefined}
+              tone={bs ? (bs.profit > 0 ? "up" : bs.profit < 0 ? "down" : undefined) : undefined}
+            />
+            <StatTile label="Pending bets" value={bs ? bs.pending : "—"} sub={bs && bs.pending ? `across ${bs.pendingBooks} book${bs.pendingBooks === 1 ? "" : "s"}` : undefined} />
+          </div>
 
-      <div style={{ marginTop: 16 }}>
-        <WeeklyRunPanel onNavigate={(v) => onNavigate(v as AdminView)} />
-      </div>
+          <section className="admin-panel" style={{ marginTop: 16 }}>
+            <ScoreboardPanel today onOpenFull={() => onNavigate("scoreboard")} />
+          </section>
 
-      <div className="admin-cols">
-        <WeeklyChecklist
-          week={loadingSummary ? null : currentWeek}
-          checked={checklist}
-          loading={checklistLoading}
-          onToggle={onToggleChecklist}
-          onOpenFull={() => onNavigate("checklist")}
-        />
-        <div style={{ display: "grid", gap: 16 }}>
-          <section className="admin-panel">
+          <section style={{ marginTop: 16 }}>
+            <button className="admin-link" onClick={() => setRunOpen((o) => !o)} aria-expanded={runOpen} style={{ fontWeight: 700, marginBottom: 8 }}>
+              {runOpen ? "▾" : "▸"} Week {adminWeek} run
+            </button>
+            {runOpen && <WeeklyRunPanel onNavigate={(v) => onNavigate(v as AdminView)} />}
+          </section>
+
+          <section className="admin-panel" style={{ marginTop: 16 }}>
             <div className="admin-panel-head">
               <h3>Quick links</h3>
             </div>
             <div className="admin-quicklinks">
-              <button onClick={onGoToRatings}>
-                Power Ratings <span>public page →</span>
+              <button onClick={() => onNavigate("drogba")}>
+                DROGBA <span>spreads model →</span>
               </button>
-              <button onClick={onGoToResume}>
-                Resume Ratings <span>public page →</span>
+              <button onClick={() => onNavigate("gametotals")}>
+                Totals <span>totals model →</span>
               </button>
-              <button onClick={onGoToSOS}>
-                Strength of Schedule <span>public page →</span>
+              <button onClick={() => onNavigate("matchups")}>
+                Matchups <span>this week →</span>
+              </button>
+              <button onClick={() => onNavigate("scoreboard")}>
+                Scoreboard <span>live tiles →</span>
               </button>
             </div>
           </section>
-          <section className="admin-panel">
-            <div className="admin-panel-head">
-              <h3>Next up · week {adminWeek}</h3>
-              <button className="admin-link admin-panel-link" onClick={() => onNavigate("gameslines")}>
-                Games &amp; Lines →
-              </button>
-            </div>
-            {games == null ? (
-              <p className="admin-muted" style={{ margin: 0, fontSize: "0.85rem" }}>Loading…</p>
-            ) : upcoming.length === 0 ? (
-              <p className="admin-muted" style={{ margin: 0, fontSize: "0.85rem" }}>No upcoming FBS games synced for week {adminWeek}.</p>
-            ) : (
-              <table className="admin-mini-table">
-                <tbody>
-                  {upcoming.map((g) => {
-                    const line = pickLine(g.lines);
-                    const fav =
-                      line?.spread == null ? null : line.spread === 0 ? "PK" : line.spread < 0 ? `${g.home_team} ${line.spread}` : `${g.away_team} −${line.spread}`;
-                    return (
-                      <tr key={g.id}>
-                        <td className="admin-muted">
-                          {g.start_date
-                            ? new Date(g.start_date).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
-                            : "TBD"}
-                        </td>
-                        <td>
-                          {g.away_team} {g.neutral_site ? "vs" : "@"} {g.home_team}
-                        </td>
-                        <td style={{ textAlign: "right" }} className={fav ? undefined : "admin-muted"}>
-                          {fav ?? "No line"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
@@ -683,25 +544,10 @@ interface NavGroup {
   collapsible?: boolean;
 }
 
-// Grouped by when in the week each page is used (approved admin map, Oct 2026): data comes in Sunday morning, the
-// models run Sunday, betting and pools mid-week, publishing after that.
+// Grouped by when in the week each page is used. Weekly data pulls live on the Overview (Weekly Run step 1), so there's
+// no separate Data section; Game Weather is part of the Scoreboard tiles and Data Upload is retired (both still open by
+// their old view keys).
 const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Data",
-    items: [
-      {
-        key: "gameslines",
-        label: "Week Data",
-        tabs: [
-          { key: "gameslines", label: "Games & Lines" },
-          { key: "weather", label: "Game Weather" },
-          { key: "upload", label: "Data Upload" },
-          { key: "oddshistorical", label: "Historical Odds Pull" },
-        ],
-      },
-      { key: "teaminfo", label: "Teams" },
-    ],
-  },
   {
     label: "Models",
     items: [
@@ -731,6 +577,7 @@ const NAV_GROUPS: NavGroup[] = [
         tabs: [
           { key: "periodproj", label: "Projections" },
           { key: "periodgrading", label: "Grading" },
+          { key: "oddshistorical", label: "Historical Odds Pull" },
         ],
       },
     ],
@@ -744,6 +591,7 @@ const NAV_GROUPS: NavGroup[] = [
         tabs: [
           { key: "matchups", label: "This week" },
           { key: "matchuphistory", label: "History" },
+          { key: "gameslines", label: "Lines" },
         ],
       },
       {
@@ -802,7 +650,7 @@ const NAV_GROUPS: NavGroup[] = [
           { key: "survivorpooladmin", label: "Survivor Pool (Public)" },
         ],
       },
-      { key: "checklist", label: "Weekly Checklist" },
+      { key: "teaminfo", label: "Teams" },
       { key: "passkeys", label: "Settings" },
     ],
   },
@@ -839,7 +687,7 @@ function activeNavKey(view: AdminView): AdminView {
 
 /** Breadcrumb trail for the top bar: group › page, or group › Pools › pool. */
 function crumbsFor(view: AdminView): { label: string; to?: AdminView }[] {
-  if (view === "home") return [{ label: "Weekly Run" }];
+  if (view === "home") return [{ label: "Overview" }];
   const navKey = activeNavKey(view);
   const group = NAV_GROUPS.find((g) => g.items.some((i) => i.key === navKey));
   const item = group?.items.find((i) => i.key === navKey);
@@ -898,7 +746,7 @@ function AdminSidebar({
       </div>
       <div className="admin-nav-group">
         <button className={`admin-nav-item${active === "home" ? " on" : ""}`} onClick={() => onNavigate("home")}>
-          Weekly Run
+          Overview
         </button>
       </div>
       {NAV_GROUPS.map((group) => {
@@ -1114,8 +962,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
   const [currentWeek, setCurrentWeek] = useState<string | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [betSummary, setBetSummary] = useState<BetSummary | null>(null);
-  const [checklist, setChecklist] = useState<Record<string, boolean>>({});
-  const [checklistLoading, setChecklistLoading] = useState(false);
   const [theme, setTheme] = useAdminTheme();
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
 
@@ -1160,27 +1006,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
       .catch(() => setBetSummary(null));
   }, [authed]);
 
-  // Weekly checklist state lives here (not in the widget) so the sidebar
-  // badge and the Overview tile stay in step with every checkbox click.
-  useEffect(() => {
-    if (!authed || !currentWeek) return;
-    setChecklistLoading(true);
-    fetchChecklistState(currentWeek)
-      .then(setChecklist)
-      .catch(() => {})
-      .finally(() => setChecklistLoading(false));
-  }, [authed, currentWeek]);
-
-  function toggleChecklist(key: string, next: boolean) {
-    if (!currentWeek) return;
-    setChecklist((c) => ({ ...c, [key]: next }));
-    toggleChecklistItem(currentWeek, key, next).catch(() => {
-      // Revert locally if the save failed — keeps the UI honest about what's actually persisted.
-      setChecklist((c) => ({ ...c, [key]: !next }));
-    });
-  }
-
-  const checklistRemaining = currentWeek ? CHECKLIST_ITEMS.filter((item) => !checklistItemDone(item, checklist)).length : 0;
 
   if (!authed) {
     return <AdminPasswordGate onAuthed={() => setAuthed(true)} onHome={onHome} theme={theme} />;
@@ -1194,7 +1019,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
         onNavigate={navigate}
         onCollapse={() => setSidebarCollapsed(true)}
         onHome={onHome}
-        counts={{ placedbets: betSummary?.pending ?? 0, checklist: checklistRemaining }}
+        counts={{ placedbets: betSummary?.pending ?? 0 }}
       />
 
       <div className="admin-main">
@@ -1244,21 +1069,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
               </nav>
             );
           })()}
-          {view === "home" && (
-            <AdminDashboard
-              lastUpload={lastUpload}
-              currentWeek={currentWeek}
-              loadingSummary={loadingSummary}
-              betSummary={betSummary}
-              checklist={checklist}
-              checklistLoading={checklistLoading}
-              onToggleChecklist={toggleChecklist}
-              onNavigate={navigate}
-              onGoToRatings={onGoToRatings}
-              onGoToResume={onGoToResume}
-              onGoToSOS={onGoToSOS}
-            />
-          )}
+          {view === "home" && <AdminDashboard betSummary={betSummary} onNavigate={navigate} />}
 
           {view === "upload" && (
             <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
@@ -1317,7 +1128,6 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "ratingmatchups" && <RatingSystemsMatchupsPanel onBack={() => setView("home")} />}
 
           {view === "sos" && <SosAdminPanel onBack={() => setView("home")} />}
-          {view === "checklist" && <AdminChecklistPage onBack={() => setView("home")} />}
           {view === "scoreboard" && <ScoreboardPanel />}
 
           {view === "gametotals" && <GameTotalsAdminPanel onBack={() => setView("home")} />}
