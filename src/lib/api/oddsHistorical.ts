@@ -222,3 +222,55 @@ export async function fetchUpcomingEvents(): Promise<HistoricalEvent[]> {
   if (!res.ok) throw new Error(data.error ?? "events request failed");
   return data.events as HistoricalEvent[];
 }
+
+// The Odds API rejects milliseconds: it wants YYYY-MM-DDTHH:MM:SSZ exactly.
+const isoNoMs = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+export interface HistoricalGamePull {
+  /** One line for a run log. */
+  note: string;
+  savedRows: number;
+  credits: number;
+  remaining: string | null;
+}
+
+/**
+ * Pulls one past game's markets from the historical endpoint, from a snapshot `minutesBefore` kickoff (a proxy for
+ * the close), and saves them. Costs 1 credit for the event lookup plus 10 per market. Used by Historical Odds Pull
+ * and by Periods' Sync lines for games that have already kicked off.
+ */
+export async function pullHistoricalForGame(
+  g: { id: string; season: number; week: number; home_team: string; away_team: string; start_date: string | null },
+  markets: string[],
+  minutesBefore = 5
+): Promise<HistoricalGamePull> {
+  const label = `${g.away_team} @ ${g.home_team}`;
+  if (!g.start_date) return { note: `${label}: no kickoff time, skipped`, savedRows: 0, credits: 0, remaining: null };
+  const kick = new Date(g.start_date).getTime();
+  const snap = isoNoMs(kick - minutesBefore * 60000);
+  const ref: GameRef = { id: g.id, season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team };
+  const ev = await fetchHistoricalEvents(snap, isoNoMs(kick - 30 * 60000), isoNoMs(kick + 30 * 60000));
+  let credits = Number(ev.quota.last ?? 0);
+  const match = matchEventToGame(ev.events, ref);
+  if (!match) return { note: `${label}: no matching Odds API event at that time (${ev.events.length} events listed)`, savedRows: 0, credits, remaining: ev.quota.remaining };
+  const odds = await fetchHistoricalEventOdds(match.id, snap, markets);
+  credits += Number(odds.quota.last ?? 0);
+  const parsed = parseEventOdds(odds, ref, true);
+  const books = new Set([...parsed.period.map((r) => r.provider), ...parsed.teamTotals.map((r) => r.provider)]);
+  let savedRows = 0;
+  let savedNote = "nothing posted";
+  if (parsed.period.length > 0 || parsed.teamTotals.length > 0) {
+    const [a, b] = await Promise.all([
+      parsed.period.length ? savePeriodMarketLines(parsed.period) : Promise.resolve({ saved: 0 }),
+      parsed.teamTotals.length ? saveHistoricalTeamTotals(parsed.teamTotals, true) : Promise.resolve({ saved: 0 }),
+    ]);
+    savedRows = (a.saved ?? 0) + (b.saved ?? 0);
+    savedNote = `saved ${a.saved} period + ${b.saved} team-total rows`;
+  }
+  return {
+    note: `${label}: ${books.size} book(s) [${Array.from(books).join(", ") || "none"}] — ${savedNote} (snapshot ${odds.timestamp ?? snap})`,
+    savedRows,
+    credits,
+    remaining: odds.quota.remaining,
+  };
+}
