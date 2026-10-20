@@ -272,3 +272,34 @@ export function parseSpPlusCsv(text: string): SpPlusRow[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------
+// JP+ pasted from jpplusratings.com's table (the fallback when the JP+
+// pull fails). Copying the table gives, per team: rank, movement (▲2 /
+// ▼1 / —), the team name, then one tab-separated line starting with the
+// JP+ rating ("+28.2	37.7 (10)	9.1 (1)	-0.4 (117)"). The team is the
+// last text line before each rating line. Sign-flipped like the pull.
+// ---------------------------------------------------------------------
+export function parseJpPlusPaste(text: string): { team: string; value: number }[] {
+  const lines = text
+    .replace(/−/g, "-")
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const out: { team: string; value: number }[] = [];
+  let lastText: string | null = null;
+  for (const line of lines) {
+    const m = /^([+-]?\s?\d+(?:\.\d+)?)(?:\t|\s{2,}|$)/.exec(line);
+    const isRatingLine = m != null && /\t/.test(line);
+    if (isRatingLine) {
+      const rating = Number(m![1].replace(/\s/g, ""));
+      if (lastText && !Number.isNaN(rating)) out.push({ team: lastText, value: rating === 0 ? 0 : -rating });
+      lastText = null;
+      continue;
+    }
+    // Rank numbers and movement markers aren't team names.
+    if (/^\d+$/.test(line) || /^[▲▼—–-]\s*\d*$/.test(line) || /^team$/i.test(line)) continue;
+    lastText = line;
+  }
+  return out;
+}

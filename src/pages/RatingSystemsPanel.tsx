@@ -9,7 +9,7 @@ import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
 import { SP_CSV_TEMPLATE, spFreshness, spValuesFromSheet, type SpValue } from "../lib/spPlusPull";
 import { TEAMS_BY_NAME } from "../data/teams";
-import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
+import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows, parseJpPlusPaste } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, teamDivConf, type ConglomeratedRow } from "../lib/ratingConglomerate";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
@@ -164,6 +164,30 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   const [log, setLog] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<{ source: string; names: string[] } | null>(null);
   const [running, setRunning] = useState<SourceKey | null>(null);
+  // JP+ paste box: opens when the JP+ pull fails (or from the Paste JP+ button).
+  const [jpPasteOpen, setJpPasteOpen] = useState(false);
+  const [jpPasteText, setJpPasteText] = useState("");
+  const [jpPasteMsg, setJpPasteMsg] = useState<string | null>(null);
+  const jpParsed = useMemo(() => parseJpPlusPaste(jpPasteText), [jpPasteText]);
+
+  async function saveJpPaste() {
+    const { matched, unmatched: um } = matchTeamRows(jpParsed, (r) => r.team);
+    if (matched.length === 0) {
+      setJpPasteMsg("Couldn't read any teams from that — paste the JP+ table as copied from jpplusratings.com.");
+      return;
+    }
+    try {
+      const result = await saveRatingRows(matched.map((m) => ({ team: m.team, values: { jpplus: m.row.value } })));
+      const summary = `JP+ (pasted) — read ${jpParsed.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`;
+      await logManualPullRun({ source: "jpplus", ok: true, label: "pasted", detail: summary.slice(0, 500) }).catch(() => {});
+      setJpPasteMsg(summary + (um.length ? ` Unmatched: ${um.map((u) => u.team).join(", ")}` : ""));
+      setJpPasteText("");
+      loadRuns();
+      onDataChanged();
+    } catch (e: any) {
+      setJpPasteMsg(e.message ?? "Save failed");
+    }
+  }
   const [runs, setRuns] = useState<PullRunRow[] | null>(null);
   function loadRuns() {
     fetchRecentPullRuns(10)
@@ -395,7 +419,8 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         await logManualPullRun({ source: key, ok: true, label: result.label ?? null, detail: result.summary.slice(0, 500) }).catch(() => {});
       } catch (err: any) {
         const msg = err.message ?? "unknown error";
-        summaries.push(`${SOURCE_LABELS[key]} failed: ${msg}${key === "jpplus" ? " — JP+ is skipped this week; Fill gaps will try it again." : ""}`);
+        summaries.push(`${SOURCE_LABELS[key]} failed: ${msg}${key === "jpplus" ? " — paste the JP+ table below instead." : ""}`);
+        if (key === "jpplus") setJpPasteOpen(true);
         await logManualPullRun({ source: key, ok: false, error: msg }).catch(() => {});
       }
     }
@@ -663,6 +688,45 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         </label>
       </div>
       {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0, whiteSpace: "pre-line" }}>{log}</p>}
+      <div style={{ marginTop: "0.5rem" }}>
+        {!jpPasteOpen ? (
+          <button className="menu-btn" style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }} onClick={() => setJpPasteOpen(true)}>
+            Paste JP+
+          </button>
+        ) : (
+          <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.6rem", background: "var(--turf-panel)", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            <div style={{ fontSize: "0.82rem", fontWeight: 700 }}>Paste JP+</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>
+              Select the whole table on jpplusratings.com (from "Team" down to the last team), copy, and paste here. The team name and the JP+ rating are
+              read from each row; offense, defense and special teams are ignored.
+            </div>
+            <textarea
+              value={jpPasteText}
+              onChange={(e) => {
+                setJpPasteText(e.target.value);
+                setJpPasteMsg(null);
+              }}
+              rows={8}
+              placeholder={"Team\n1\n▲2\nLSU\n+28.2\t37.7 (10)\t9.1 (1)\t-0.4 (117)\n…"}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: "0.75rem" }}
+            />
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", fontSize: "0.78rem" }}>
+              <button className="menu-btn" onClick={saveJpPaste} disabled={jpParsed.length === 0}>
+                Save {jpParsed.length > 0 ? `${jpParsed.length} teams` : ""}
+              </button>
+              <button className="admin-link" onClick={() => setJpPasteOpen(false)}>
+                Close
+              </button>
+              {jpParsed.length > 0 && (
+                <span style={{ color: "var(--chalk-dim)" }}>
+                  Read {jpParsed.length}: {jpParsed[0].team} {(-jpParsed[0].value).toFixed(1)} … {jpParsed[jpParsed.length - 1].team} {(-jpParsed[jpParsed.length - 1].value).toFixed(1)}
+                </span>
+              )}
+              {jpPasteMsg && <span style={{ color: "var(--chalk-dim)" }}>{jpPasteMsg}</span>}
+            </div>
+          </div>
+        )}
+      </div>
       {unmatched && (
         <p style={{ fontSize: "0.78rem", color: "var(--c-warn)", marginTop: "0.5rem" }}>
           {unmatched.source}: {unmatched.names.length} team name(s) couldn't be matched and were skipped —{" "}
