@@ -284,6 +284,11 @@ function normalCdf(z: number): number {
 }
 
 /** Away team's win probability under Bill R Method, given both teams' site power ratings (lower = better). */
+/** Bill R win probability for a team given its own spread (negative = favored): the same curve applied to any spread, so a Vegas line and a YC projection convert the same way. */
+export function billRWinPctFromSpread(teamSpread: number, divisor: number = BILL_R_DEFAULT_DIVISOR): number {
+  return normalCdf(divisor !== 0 ? -teamSpread / divisor : 0);
+}
+
 /** Pass hfa = 0 for a neutral site. */
 export function billRAwayWinPct(awayRating: number, homeRating: number, divisor: number = BILL_R_DEFAULT_DIVISOR, hfa: number = BILL_R_HFA): number {
   const margin = homeRating - awayRating - hfa; // positive => away favored, after shaving off the home team's HFA

@@ -4,8 +4,7 @@ import WeeklyRunPanel from "../components/WeeklyRunPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Clock, ExternalLink, KeyRound, Moon, PanelLeftClose, PanelLeftOpen, Sun } from "lucide-react";
 import "../styles/admin.css";
-import SurvivorPanel from "./SurvivorPanel";
-import SplashSurvivorPanel from "./SplashSurvivorPanel";
+import SurvivorBoardPanel from "./SurvivorBoardPanel";
 import WeeklyBettingReportPanel from "./WeeklyBettingReportPanel";
 import GamesLinesPanel from "./GamesLinesPanel";
 import AdminMatchupsPanel from "./AdminMatchupsPanel";
@@ -1075,9 +1074,9 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
             <DataUploadPanel onBack={() => setView("home")} onSaved={loadSummary} />
           )}
 
-          {view === "survivor" && <SurvivorPanel onBack={() => setView("pools")} />}
+          {view === "survivor" && <SurvivorBoardPanel key="survivor" initialRules="survivor" />}
 
-          {view === "splashsurvivor" && <SplashSurvivorPanel onBack={() => setView("pools")} />}
+          {view === "splashsurvivor" && <SurvivorBoardPanel key="splash" initialRules="splash" />}
           {view === "bettingreport" && <WeeklyBettingReportPanel onBack={() => setView("home")} />}
 
           {view === "survivorpooladmin" && <SurvivorPoolAdminPanel onBack={() => setView("home")} />}
