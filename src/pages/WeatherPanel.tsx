@@ -72,7 +72,7 @@ const FLAG_COLORS: Record<WeatherFlag, string> = {
 
 const FLAG_WEIGHT: Record<WeatherFlag, number> = { storms: 4, snow: 4, wind: 3, rain: 2, freezing: 2, cold: 1, hot: 1 };
 
-function impactScore(c: WeatherCard): number {
+export function impactScore(c: WeatherCard): number {
   if (!c.weather || c.location?.dome) return -1;
   return c.weather.flags.reduce((a, f) => a + FLAG_WEIGHT[f], 0) + (c.weather.avgWind ?? 0) / 10;
 }
@@ -168,13 +168,97 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: Re
   );
 }
 
-function MatchupCard({ c }: { c: WeatherCard }) {
-  const g = c.game;
+/** The full weather block of a game card: conditions, temperature, wind/precip/temp range/clouds, hourly strip, flags. */
+export function WeatherDetail({ c }: { c: WeatherCard }) {
   const w = c.weather;
-  const line = lineLabel(g);
   const T = WEATHER_THRESHOLDS;
   const past = c.windowStart != null && Date.parse(c.windowStart) < Date.now();
   const windy = w != null && ((w.avgWind ?? 0) >= T.windSustained || (w.maxGust ?? 0) >= T.windGust);
+  return (
+    <>
+      {w ? (
+      <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.6rem", display: "flex", flexDirection: "column", gap: "0.55rem", opacity: c.location?.dome ? 0.55 : 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <WeatherIcon code={w.code} isDay={w.kickoff.isDay} size={34} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700 }}>{weatherLabel(w.code)}</div>
+            <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
+              {c.location?.dome ? "Outside the dome · " : ""}
+              {past ? "Observed" : "Forecast"}
+              {c.tbd ? " · noon–11pm ET" : ""}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "1.5rem", fontWeight: 800, lineHeight: 1 }}>{fmtT(w.kickoff.temp)}</div>
+            <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>feels {fmtT(w.kickoff.feelsLike)}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.4rem" }}>
+          <Stat
+            label="Wind"
+            value={
+              <span style={{ color: windy ? "var(--c-info)" : undefined }}>
+                {fmtMph(w.avgWind)} <span style={{ fontSize: "0.7rem", fontWeight: 400 }}>mph</span>
+              </span>
+            }
+            sub={
+              <>
+                {compassDir(w.kickoff.windDir)} <WindArrow deg={w.kickoff.windDir} /> · G{fmtMph(w.maxGust)}
+              </>
+            }
+          />
+          <Stat
+            label="Precip"
+            value={w.maxPrecipProb != null ? `${Math.round(w.maxPrecipProb)}%` : w.totalPrecip > 0 ? "Yes" : "0%"}
+            sub={w.totalSnow > 0 ? `${fmtIn(w.totalSnow)}" snow` : `${fmtIn(w.totalPrecip)}"`}
+          />
+          <Stat label="Temp" value={`${fmtT(w.tempLow)}–${fmtT(w.tempHigh)}`} sub="game window" />
+          <Stat label="Clouds" value={w.avgCloud != null ? `${Math.round(w.avgCloud)}%` : "–"} sub={w.kickoff.humidity != null ? `${Math.round(w.kickoff.humidity)}% RH` : undefined} />
+        </div>
+
+        <div style={{ display: "flex", gap: "0.3rem", overflowX: "auto" }}>
+          {w.hours.map((h) => (
+            <div key={h.time} style={{ flex: "1 0 52px", textAlign: "center", background: "var(--turf)", borderRadius: 6, padding: "0.3rem 0.2rem", fontSize: "0.66rem" }}>
+              <div style={{ color: "var(--chalk-dim)" }}>{new Date(`${h.time}:00Z`).toLocaleTimeString(undefined, { hour: "numeric" })}</div>
+              <div style={{ margin: "0.15rem 0" }}>
+                <WeatherIcon code={h.code} isDay={h.isDay} size={16} />
+              </div>
+              <div style={{ fontWeight: 700 }}>{fmtT(h.temp)}</div>
+              <div style={{ color: "var(--chalk-dim)", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                <Wind size={9} />
+                {fmtMph(h.wind)}
+              </div>
+              {h.precipProb != null && h.precipProb > 0 && (
+                <div style={{ color: "#8fbef0", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
+                  <Droplets size={9} />
+                  {Math.round(h.precipProb)}%
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {w.flags.length > 0 && !c.location?.dome && (
+          <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
+            {w.flags.map((f) => (
+              <span key={f} style={chip(FLAG_COLORS[f])}>
+                {FLAG_LABELS[f]}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    ) : (
+      <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.6rem", fontSize: "0.75rem", color: "var(--chalk-dim)" }}>{c.missing ?? "Loading weather…"}</div>
+    )}
+    </>
+  );
+}
+
+function MatchupCard({ c }: { c: WeatherCard }) {
+  const g = c.game;
+  const line = lineLabel(g);
 
   return (
     <div style={{ border: "1px solid var(--hash)", borderRadius: 10, background: "var(--turf-panel)", padding: "0.8rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
@@ -212,82 +296,7 @@ function MatchupCard({ c }: { c: WeatherCard }) {
         )}
       </div>
 
-      {w ? (
-        <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.6rem", display: "flex", flexDirection: "column", gap: "0.55rem", opacity: c.location?.dome ? 0.55 : 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-            <WeatherIcon code={w.code} isDay={w.kickoff.isDay} size={34} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700 }}>{weatherLabel(w.code)}</div>
-              <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)" }}>
-                {c.location?.dome ? "Outside the dome · " : ""}
-                {past ? "Observed" : "Forecast"}
-                {c.tbd ? " · noon–11pm ET" : ""}
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "1.5rem", fontWeight: 800, lineHeight: 1 }}>{fmtT(w.kickoff.temp)}</div>
-              <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>feels {fmtT(w.kickoff.feelsLike)}</div>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.4rem" }}>
-            <Stat
-              label="Wind"
-              value={
-                <span style={{ color: windy ? "var(--c-info)" : undefined }}>
-                  {fmtMph(w.avgWind)} <span style={{ fontSize: "0.7rem", fontWeight: 400 }}>mph</span>
-                </span>
-              }
-              sub={
-                <>
-                  {compassDir(w.kickoff.windDir)} <WindArrow deg={w.kickoff.windDir} /> · G{fmtMph(w.maxGust)}
-                </>
-              }
-            />
-            <Stat
-              label="Precip"
-              value={w.maxPrecipProb != null ? `${Math.round(w.maxPrecipProb)}%` : w.totalPrecip > 0 ? "Yes" : "0%"}
-              sub={w.totalSnow > 0 ? `${fmtIn(w.totalSnow)}" snow` : `${fmtIn(w.totalPrecip)}"`}
-            />
-            <Stat label="Temp" value={`${fmtT(w.tempLow)}–${fmtT(w.tempHigh)}`} sub="game window" />
-            <Stat label="Clouds" value={w.avgCloud != null ? `${Math.round(w.avgCloud)}%` : "–"} sub={w.kickoff.humidity != null ? `${Math.round(w.kickoff.humidity)}% RH` : undefined} />
-          </div>
-
-          <div style={{ display: "flex", gap: "0.3rem", overflowX: "auto" }}>
-            {w.hours.map((h) => (
-              <div key={h.time} style={{ flex: "1 0 52px", textAlign: "center", background: "var(--turf)", borderRadius: 6, padding: "0.3rem 0.2rem", fontSize: "0.66rem" }}>
-                <div style={{ color: "var(--chalk-dim)" }}>{new Date(`${h.time}:00Z`).toLocaleTimeString(undefined, { hour: "numeric" })}</div>
-                <div style={{ margin: "0.15rem 0" }}>
-                  <WeatherIcon code={h.code} isDay={h.isDay} size={16} />
-                </div>
-                <div style={{ fontWeight: 700 }}>{fmtT(h.temp)}</div>
-                <div style={{ color: "var(--chalk-dim)", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
-                  <Wind size={9} />
-                  {fmtMph(h.wind)}
-                </div>
-                {h.precipProb != null && h.precipProb > 0 && (
-                  <div style={{ color: "#8fbef0", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
-                    <Droplets size={9} />
-                    {Math.round(h.precipProb)}%
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {w.flags.length > 0 && !c.location?.dome && (
-            <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
-              {w.flags.map((f) => (
-                <span key={f} style={chip(FLAG_COLORS[f])}>
-                  {FLAG_LABELS[f]}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div style={{ borderTop: "1px solid var(--hash)", paddingTop: "0.6rem", fontSize: "0.75rem", color: "var(--chalk-dim)" }}>{c.missing ?? "No weather."}</div>
-      )}
+      <WeatherDetail c={c} />
     </div>
   );
 }

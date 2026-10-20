@@ -3,26 +3,35 @@ import { useAdminWeek } from "../lib/adminWeek";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { espnDate, fetchOverlayContext, liveBets, useDelayed, useScoreboard, type OverlayContext, type ScoreGame } from "../lib/overlay";
 import { gradePick, usePoolPicksForGames } from "../lib/pools";
-import { WeatherIcon, loadWeatherCards, type WeatherCard } from "./WeatherPanel";
+import { WeatherDetail, WeatherIcon, impactScore, loadWeatherCards, type WeatherCard } from "./WeatherPanel";
+import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
+import { pullVenues } from "../lib/api/gameWeather";
+import { invalidateCache } from "../lib/api/cache";
 import { compassDir, weatherLabel } from "../lib/weather";
 
 // Admin Scoreboard: a tile per game, live from ESPN (same feed and polling as the TV overlay), for the admin week's
 // games as CFBD assigns them (so a Tuesday or Friday game lands in the right week). Each tile carries the stadium and,
 // before kickoff, the game-window weather (Game Weather's data). Tiles scale with a size slider and reflow to fit the
-// screen. A tile flashes on a score, on entering the red zone and on a 30+ yard play. The Overview embeds the same
+// screen. Weather: before kickoff a tile carries the full Game Weather block (conditions, wind/precip/temp/clouds,
+// the hourly strip, flags) by default; once a game kicks off it drops to a one-line summary. Each can be set to
+// full, one line or off, and "Minimize all" sets both to one line. Clicking a tile opens the matchup preview. A tile flashes on a score, on entering the red zone and on a 30+ yard play. The Overview embeds the same
 // board in "today" mode: only the current game day's games (or the next game day's when there are none today).
 
 type Show = "all" | "selected" | "action";
 type Matchup = "fbs" | "all" | "fcs" | "cross";
 type Detail = "field" | "down" | "lastPlay" | "winProb" | "lines" | "bets" | "pools" | "stadium";
-type WeatherMode = "pregame" | "always" | "off";
+type WeatherMode = "full" | "compact" | "off";
+type SortMode = "kickoff" | "impact";
 
 interface Settings {
   show: Show;
   matchup: Matchup;
   details: Record<Detail, boolean>;
   delay: number;
-  weather: WeatherMode;
+  wxPre: WeatherMode; // before kickoff
+  wxStarted: WeatherMode; // live and final
+  sort: SortMode;
+  flaggedOnly: boolean;
   size: number | null; // tile min width in px; null = fit 4 across
   selected: string[];
 }
@@ -43,7 +52,10 @@ const DEFAULTS: Settings = {
   matchup: "fbs",
   details: { field: true, down: true, lastPlay: false, winProb: false, lines: true, bets: true, pools: true, stadium: true },
   delay: 0,
-  weather: "pregame",
+  wxPre: "full",
+  wxStarted: "compact",
+  sort: "kickoff",
+  flaggedOnly: false,
   size: null,
   selected: [],
 };
@@ -150,8 +162,30 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
   const picks = usePoolPicksForGames(poolIds, [], true);
 
   const [weather, setWeather] = useState<Record<string, WeatherCard>>({});
+  const weatherOff = settings.wxPre === "off" && settings.wxStarted === "off";
+  const [reloadTick, setReloadTick] = useState(0);
+  const [preview, setPreview] = useState<GameWithLines | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [pullMsg, setPullMsg] = useState<string | null>(null);
+
+  async function handlePull(wholeSeason: boolean) {
+    if (!window.confirm(`Pull stadiums from CFBD (3 requests: venues, team home stadiums, and ${wholeSeason ? `every ${season} game` : `week ${week} games`})?`)) return;
+    setPulling(true);
+    setPullMsg(null);
+    try {
+      const r = await pullVenues(season, wholeSeason ? null : week);
+      const v = r.venues;
+      setPullMsg(v ? `${v.venues} venues · ${v.teams} team stadiums · ${v.gamesWithVenue} of ${v.games} games have a venue` : "Done");
+      invalidateCache();
+      setReloadTick((n) => n + 1);
+    } catch (e: any) {
+      setPullMsg(e.message ?? "Pull failed");
+    } finally {
+      setPulling(false);
+    }
+  }
   useEffect(() => {
-    if (settings.weather === "off" && !settings.details.stadium) return;
+    if (weatherOff && !settings.details.stadium) return;
     let cancelled = false;
     const toMap = (cards: WeatherCard[]) => Object.fromEntries(cards.map((c) => [c.game.id, c]));
     loadWeatherCards(season, week, (base) => !cancelled && setWeather(toMap(base)))
@@ -160,7 +194,7 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
     return () => {
       cancelled = true;
     };
-  }, [season, week, settings.weather === "off" && !settings.details.stadium]);
+  }, [season, week, weatherOff && !settings.details.stadium, reloadTick]);
 
   // Today mode: the current Eastern game day, else the next day with games.
   const gameDay = useMemo(() => {
@@ -179,9 +213,14 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
     if (settings.show === "action") return pool.filter((g) => (contexts[g.id]?.bets.length ?? 0) > 0 || (picks[g.id]?.length ?? 0) > 0);
     return pool;
   }, [pool, settings.show, settings.selected, contexts, picks, today, gameDay]);
-  const shownIds = shown.map((g) => g.id);
+  const isFlagged = (g: GameWithLines) => {
+    const c = weather[g.id];
+    return !!c?.weather && c.weather.flags.length > 0 && !c.location?.dome;
+  };
+  const filtered = useMemo(() => (settings.flaggedOnly ? shown.filter(isFlagged) : shown), [shown, settings.flaggedOnly, weather]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shownIds = filtered.map((g) => g.id);
 
-  const dates = useMemo(() => Array.from(new Set(shown.map((g) => g.start_date).filter((d): d is string => !!d).map(espnDate))).sort().join(","), [shown]);
+  const dates = useMemo(() => Array.from(new Set(filtered.map((g) => g.start_date).filter((d): d is string => !!d).map(espnDate))).sort().join(","), [filtered]);
   const { games: live, fetchedAt } = useScoreboard(dates ? `dates=${dates}` : null, shownIds);
   const scores = useDelayed(live, fetchedAt, settings.delay);
 
@@ -216,8 +255,12 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
       const s = scores[g.id]?.state ?? (g.completed ? "post" : "pre");
       return s === "in" ? 0 : s === "pre" ? 1 : 2;
     };
-    return [...shown].sort((a, b) => rank(a) - rank(b) || (a.start_date ?? "").localeCompare(b.start_date ?? ""));
-  }, [shown, scores]);
+    // "Weather impact" puts the roughest conditions first within each group (live, upcoming, final).
+    const impact = (g: GameWithLines) => (weather[g.id] ? impactScore(weather[g.id]) : -1);
+    return [...filtered].sort(
+      (a, b) => rank(a) - rank(b) || (settings.sort === "impact" ? impact(b) - impact(a) : 0) || (a.start_date ?? "").localeCompare(b.start_date ?? "")
+    );
+  }, [filtered, scores, settings.sort, weather]);
 
   const fit = Math.max(220, Math.min(380, Math.floor(gridWidth / 4) - 12));
   const tileMin = settings.size ?? fit;
@@ -255,12 +298,37 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
           </button>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          Weather
-          <select value={settings.weather} onChange={(e) => set("weather", e.target.value as WeatherMode)} aria-label="Weather">
-            <option value="pregame">Before kickoff</option>
-            <option value="always">Always</option>
+          Weather before kickoff
+          <select value={settings.wxPre} onChange={(e) => set("wxPre", e.target.value as WeatherMode)} aria-label="Weather before kickoff">
+            <option value="full">Full</option>
+            <option value="compact">One line</option>
             <option value="off">Off</option>
           </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          Live &amp; final
+          <select value={settings.wxStarted} onChange={(e) => set("wxStarted", e.target.value as WeatherMode)} aria-label="Weather for live and final games">
+            <option value="compact">One line</option>
+            <option value="full">Full</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <button
+          className="admin-link"
+          onClick={() => setSettings((x) => ({ ...x, wxPre: "compact", wxStarted: "compact" }))}
+          disabled={settings.wxPre === "compact" && settings.wxStarted === "compact"}
+        >
+          Minimize all weather
+        </button>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          Sort
+          <select value={settings.sort} onChange={(e) => set("sort", e.target.value as SortMode)} aria-label="Sort">
+            <option value="kickoff">Kickoff</option>
+            <option value="impact">Weather impact</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          <input type="checkbox" checked={settings.flaggedOnly} onChange={(e) => set("flaggedOnly", e.target.checked)} /> Flagged weather only
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
           Delay {settings.delay}s
@@ -280,14 +348,28 @@ export default function ScoreboardPanel({ today = false, onOpenFull }: { today?:
             details={settings.details}
             flash={flashes[g.id]}
             wx={weather[g.id]}
-            weatherMode={settings.weather}
+            wxPre={settings.wxPre}
+            wxStarted={settings.wxStarted}
+            onOpen={() => setPreview(g)}
           />
         ))}
         {ordered.length === 0 && <div className="empty matchups-empty">No games for these settings.</div>}
       </div>
 
+      {preview && <MatchupHandicapPopup season={season} week={preview.week} awayTeam={preview.away_team} homeTeam={preview.home_team} onClose={() => setPreview(null)} />}
+
       {!today && (
       <div className="admin-panel" style={{ marginTop: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem", alignItems: "center", fontSize: "0.82rem" }}>
+          <span style={{ fontWeight: 700 }}>Stadiums</span>
+          <button className="menu-btn" onClick={() => handlePull(false)} disabled={pulling}>
+            {pulling ? "Pulling…" : `Pull stadiums (week ${week})`}
+          </button>
+          <button className="menu-btn" onClick={() => handlePull(true)} disabled={pulling}>
+            Pull stadiums (whole season)
+          </button>
+          <span style={{ color: "var(--chalk-dim)" }}>{pullMsg ?? "Run once a season, and again for a week whose neutral-site games show no venue."}</span>
+        </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center", fontSize: "0.85rem" }}>
           <span style={{ fontWeight: 700 }}>Show</span>
           {(
@@ -377,10 +459,14 @@ function Tile({
   details,
   flash,
   wx,
-  weatherMode,
+  wxPre,
+  wxStarted,
+  onOpen,
 }: {
   wx: WeatherCard | undefined;
-  weatherMode: WeatherMode;
+  wxPre: WeatherMode;
+  wxStarted: WeatherMode;
+  onOpen: () => void;
   game: GameWithLines;
   sb: ScoreGame | undefined;
   ctx: OverlayContext | undefined;
@@ -401,10 +487,11 @@ function Tile({
   const bets = details.bets && ctx ? liveBets(ctx, sb) : [];
   const lite = { homeTeam: g.home_team, awayTeam: g.away_team, homeSpread: line?.spread ?? null, total: line?.over_under ?? null, final: g.completed && g.home_points != null && g.away_points != null ? { home: g.home_points, away: g.away_points } : null };
   const graded = details.pools ? picks.map((p) => gradePick(p, lite, sb)) : [];
+  const wxMode = state === "pre" ? wxPre : wxStarted;
   const statusColor = (s: string) => (s === "up" ? "var(--c-ok)" : s === "down" ? "var(--c-err)" : "var(--chalk-dim)");
 
   return (
-    <div className={`sb-tile${flash ? ` sb-flash sb-flash-${flash.kind}` : ""}${state === "in" && sb?.redZone ? " sb-redzone" : ""}`}>
+    <div onClick={onOpen} style={{ cursor: "pointer" }} title="Open the matchup preview" className={`sb-tile${flash ? ` sb-flash sb-flash-${flash.kind}` : ""}${state === "in" && sb?.redZone ? " sb-redzone" : ""}`}>
       <div className="sb-head">
         <span style={{ color: state === "in" ? "var(--c-err)" : "var(--chalk-dim)", fontWeight: state === "in" ? 700 : 500 }}>{status}</span>
         <span style={{ color: "var(--chalk-dim)" }}>{sb?.network ?? ""}</span>
@@ -421,7 +508,12 @@ function Tile({
           {g.neutral_site ? " · Neutral" : ""}
         </div>
       )}
-      {wx?.weather && (weatherMode === "always" || (weatherMode === "pregame" && state === "pre")) && (
+      {wxMode === "full" && wx && (
+        <div className="sb-wx-full">
+          <WeatherDetail c={wx} />
+        </div>
+      )}
+      {wxMode === "compact" && wx?.weather && (
         <div className="sb-wx" style={{ opacity: wx.location?.dome ? 0.55 : 1 }}>
           <WeatherIcon code={wx.weather.code} isDay={wx.weather.kickoff.isDay} size={22} />
           <span style={{ fontWeight: 700 }}>{wx.weather.kickoff.temp != null ? `${Math.round(wx.weather.kickoff.temp)}°` : "–"}</span>
