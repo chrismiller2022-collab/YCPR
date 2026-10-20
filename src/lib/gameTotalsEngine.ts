@@ -1,3 +1,4 @@
+import { TOTALS_KEY_TIERS } from "./keyNumberCross";
 import { useEffect, useMemo, useState } from "react";
 import { hfaFor } from "./odds";
 import { useWeeklyStats } from "./api/weeklyStats";
@@ -422,12 +423,8 @@ function addTotalsTally(t: TotalsKeyNumberTally, result: ReturnType<typeof grade
   else if (result === "push") t.push++;
 }
 
-export const TOTALS_KEY_NUMBER_TIERS: { label: string; keys: number[] }[] = [
-  { label: "Tier 1 — Critical", keys: [55, 48, 58, 44, 51] },
-  { label: "Tier 2 — High", keys: [41, 45, 65, 59, 52] },
-  { label: "Tier 3 — Elevated", keys: [62, 69, 37, 47, 49] },
-  { label: "Tier 4 — Moderate", keys: [61, 38, 66, 54, 63, 57, 34, 56, 43, 40] },
-];
+// Defined in keyNumberCross.ts so the Matchups key flags and this study share one list.
+export const TOTALS_KEY_NUMBER_TIERS = TOTALS_KEY_TIERS;
 
 // One graded game behind a bucket's tally — enough to render a
 // drill-down list of the actual games making up that count, without

@@ -10,6 +10,7 @@ import { classOf, isTracked, computeRow, computeMatchupStats, computeErrorStats,
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import PlaceBetModal, { type PlaceBetContext } from "../components/PlaceBetModal";
 import SortHeader from "../components/SortHeader";
+import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
 import { useGameTotalsEngine, applyOpeningLine, buildBetRows, buildTeamSplitBetRows, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { fetchTeamTotalLines } from "../lib/api/teamTotalLines";
 import { TotalsTab, TeamTotalsTab, filterRowsByDivision } from "./GameTotalsAdminPanel";
@@ -542,6 +543,12 @@ export function MatchupsRow({
           )}
         </td>
         <td style={{ ...CP, textAlign: "right" }}>{absAmountOff != null ? absAmountOff.toFixed(1) : "–"}</td>
+        <td style={{ ...CP, color: "var(--gold, #d4af37)", fontWeight: 700, whiteSpace: "nowrap" }} title="My spread and Vegas's are on opposite sides of these key numbers (3 and 7)">
+          {(() => {
+            const keys = keyNumbersBetween(projAwaySpread, vegasAwaySpread);
+            return keys.length ? `🔑${keyCrossLabel(keys)}` : "";
+          })()}
+        </td>
         <td style={{ ...CP, textAlign: "right" }}>{absRelativeOff != null ? absRelativeOff.toFixed(2) : "–"}</td>
         <td style={{ ...CP, textAlign: "right" }}>{sigmaOff != null ? sigmaOff.toFixed(2) : "–"}</td>
       </tr>
@@ -658,7 +665,7 @@ export function MatchupsHeaderRow({
             <th colSpan={3}>Lines</th>
             <th colSpan={2}>Score</th>
             <th colSpan={8} className="mu-g-picks">Picks</th>
-            <th colSpan={4}>Result</th>
+            <th colSpan={5}>Result</th>
           </tr>
         )}
         {mode === "spreads" && (
@@ -683,6 +690,7 @@ export function MatchupsHeaderRow({
             <SortHeader label="WTF" sortKey="wtf" active={sortKey === "wtf"} dir={sortDir} onClick={onSort} />
             <SortHeader label="Act. Cover Team" sortKey="actCover" active={sortKey === "actCover"} dir={sortDir} onClick={onSort} />
             <SortHeader label="Amount Off" sortKey="amountOff" active={sortKey === "amountOff"} dir={sortDir} onClick={onSort} align="right" />
+            <SortHeader label="Key" sortKey="key" active={sortKey === "key"} dir={sortDir} onClick={onSort} />
             <SortHeader label="Relative Off" sortKey="relativeOff" active={sortKey === "relativeOff"} dir={sortDir} onClick={onSort} align="right" />
             <SortHeader label="Sigma Off" sortKey="sigmaOff" active={sortKey === "sigmaOff"} dir={sortDir} onClick={onSort} align="right" />
           </tr>
@@ -750,6 +758,8 @@ export function sortValue(c: MatchupComputed, mode: string, key: string): number
         return c.projAwaySpread;
       case "amountOff":
         return c.absAmountOff;
+      case "key":
+        return keyNumbersBetween(c.projAwaySpread, c.vegasAwaySpread).length || null;
       case "relativeOff":
         return c.absRelativeOff;
       case "sigmaOff":
@@ -870,6 +880,9 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
   // since a game can have a spread bet placed but no total bet, and each
   // tab should only answer for its own market.
   const [betFilter, setBetFilter] = useState<"all" | "placed" | "notPlaced">("all");
+  // "Through key": only games where my number and Vegas's sit on opposite sides of a key number, biggest amount off first.
+  const [throughKey, setThroughKey] = useState(false);
+  const [totalsKeyTier, setTotalsKeyTier] = useState(2);
 
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1084,13 +1097,14 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
         if (betFilter === "placed" && !hasBet) return false;
         if (betFilter === "notPlaced" && hasBet) return false;
       }
+      if (throughKey && mode === "spreads" && keyNumbersBetween(c.projAwaySpread, c.vegasAwaySpread).length === 0) return false;
       if (!hideNoLine) return true;
       if (mode === "spreads") return c.vegasAwaySpread != null;
       if (mode === "moneyline") return c.vegasMoneyline != null;
       if (mode === "totals") return c.line?.over_under != null;
       return true;
     });
-  }, [computedRows, hideNoLine, completedFilter, mode, betFilter, placedGameIdsByType]);
+  }, [computedRows, hideNoLine, completedFilter, mode, betFilter, placedGameIdsByType, throughKey]);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return visibleRows;
@@ -1274,6 +1288,37 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
           <option value="FCSvFCS">FCS vs FCS</option>
           <option value="Cross">Cross-Division (FBS vs FCS)</option>
         </select>
+        {(mode === "spreads" || mode === "totals") && (
+          <button
+            className={`mode-btn ${throughKey ? "mode-btn-active" : ""}`}
+            onClick={() => {
+              const on = !throughKey;
+              setThroughKey(on);
+              if (on && mode === "spreads") {
+                setSortKey("amountOff");
+                setSortDir("desc");
+              }
+            }}
+            title={
+              mode === "spreads"
+                ? "Only games where my spread and Vegas's are on opposite sides of 3 or 7, sorted by amount off"
+                : "Only games where my total and Vegas's are on opposite sides of a key total, sorted by amount off"
+            }
+          >
+            🔑 Through key
+          </button>
+        )}
+        {mode === "totals" && (
+          <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }} title="Which key totals count (Tier 1 = most common final-score sums)">
+            Key totals
+            <select className="filter" value={totalsKeyTier} onChange={(e) => setTotalsKeyTier(Number(e.target.value))}>
+              <option value={1}>Tier 1</option>
+              <option value={2}>Tiers 1–2</option>
+              <option value={3}>Tiers 1–3</option>
+              <option value={4}>All tiers</option>
+            </select>
+          </label>
+        )}
         {MODE_TO_BET_TYPE[mode] && (
           <div className="admin-seg" title={`Checks your placed ${MODE_TO_BET_TYPE[mode]} bets specifically — a game with a spread bet but no total bet still counts as "not bet" on the Totals tab.`}>
             {(
@@ -1406,7 +1451,7 @@ export default function AdminMatchupsPanel({ onBack }: { onBack: () => void }) {
             return (
               <>
                 <CategorySnapshot label={`Filtered Bet — ${season}`} w={w} l={l} />
-                <TotalsTab rows={rows} settings={totalsSettings} poolRows={totalsPoolRows} onOpenTotals={setTotalsGame} />
+                <TotalsTab rows={rows} settings={totalsSettings} poolRows={totalsPoolRows} onOpenTotals={setTotalsGame} keyTier={totalsKeyTier} throughKeyOnly={throughKey} />
               </>
             );
           })()}
