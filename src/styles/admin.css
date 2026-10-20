@@ -498,3 +498,4 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 }
 .sb-wx { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4em; font-size: 0.8em; border-top: 1px solid var(--hash); padding-top: 0.35em; }
 .sb-wx-flag { font-size: 0.85em; font-weight: 700; color: var(--c-warn); text-transform: capitalize; }
+.sb-wx-full { display: flex; flex-direction: column; gap: 0.55rem; font-size: 0.85rem; }
