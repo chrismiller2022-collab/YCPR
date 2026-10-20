@@ -108,7 +108,7 @@ that on paper first (section 9). If paper results show we're just getting picked
 - **Public market data:** ✅ no auth needed for `GET /markets`, `/series/{t}`, `/markets/{t}/orderbook`.
   Prices are dollar strings with 4 decimals (`"0.6200"`), sizes are fixed-point strings (`"1261.43"`; fractional
   contracts exist). Market objects carry `yes_bid_dollars`, `yes_ask_dollars`, `*_size_fp`, `volume_fp`,
-  `open_interest_fp`, `close_time`, `occurrence_datetime` (kickoff), `price_ranges` / `price_level_structure`.
+  `open_interest_fp`, `close_time`, `occurrence_datetime` (≈ expected game **end**, not kickoff; use `games.start_date` for kickoff), `price_ranges` / `price_level_structure`.
 - **Base URLs:** ✅ production `https://external-api.kalshi.com/trade-api/v2` (recommended; `api.elections.kalshi.com`
   also works), demo `https://external-api.demo.kalshi.co/trade-api/v2` (`demo-api.kalshi.co` also works).
   WebSockets: `wss://external-api-ws.kalshi.com/trade-api/ws/v2` / `wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2`.
