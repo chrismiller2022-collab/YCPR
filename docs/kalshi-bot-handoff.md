@@ -1,7 +1,8 @@
 # Kalshi market-making bot: handoff
 
-Written 2026-10-20 at the end of a long build session, so a new chat can start this project cold. Everything below
-"Verify" is a belief, not a checked fact: confirm it against current Kalshi docs before relying on it.
+Written 2026-10-20 at the end of a long build session, so a new chat can start this project cold.
+**Kalshi facts in §3, §6 and §7 were checked on 2026-10-20** against docs.kalshi.com and the live public API
+(marked ✅). Anything still marked "Verify" is unchecked.
 
 ## 1. What we're building
 
@@ -40,9 +41,10 @@ Prices are probabilities = cost of a contract that pays $1. Tennessee +3 vs Sout
 - 54.75% ≈ −121 American. A −110 bet is 52.38%.
 - Outlier rows (77.27%, 75.31%) are stale orders: ignore when computing fair or depth.
 - ProphetX shows whole-number lines (+3) that probably **push** (refund) on an exact margin of 3. Kalshi spread markets
-  are "wins by more than X.5", so **no pushes** on Kalshi. Verify both.
+  are "wins by more than X.5", so **no pushes** on Kalshi. ✅ Kalshi confirmed (every `floor_strike` is X.5).
+  ProphetX push rules: still Verify.
 
-## 4. Fair price for every line (the first thing to build)
+## 4. Fair price for every line (✅ built: `bot/fairPrice/`, see §12)
 
 The bot needs P(win), P(push), P(lose) for each alternate spread, not one number per game.
 
@@ -90,30 +92,61 @@ For each market, every cycle:
 **Honest expectation:** market making only beats the fees if our fair price is sharper than the market mid. Prove
 that on paper first (section 9). If paper results show we're just getting picked off, fall back to ways 1–2.
 
-## 6. Kalshi specifics (Verify all of this)
+## 6. Kalshi specifics (✅ checked 2026-10-20)
 
-- **Existing code:** `api/kalshi-markets.ts` already proxies Kalshi's **public, unauthenticated** market data
+- **Existing code:** ✅ `api/kalshi-markets.ts` already proxies Kalshi's **public, unauthenticated** market data
   (`https://external-api.kalshi.com/trade-api/v2`), series `KXNCAAFGAME` (game winners, two markets per event) and
   futures series (`KXNCAAF`, `KXNCAAFCONF`, `KXNCAAFPLAYOFF`, `KXNCAAFWINS`, …). Client side:
   `src/lib/api/kalshi.ts`; used on the Prediction Markets admin page (`src/pages/PmAdminPanel.tsx`) and odds pages.
   Kalshi team names already map through `src/lib/teamNameMatch.ts`.
-- **Spread markets:** find the CFB spread series ticker (likely a `KXNCAAFSPREAD`-style series; the existing
-  `discoverKalshiNcaafSeries()` lists what exists). Each is probably "Team wins by more than X.5".
-- **Trading API:** authenticated with an API key ID + RSA private key; each request signed
-  (headers like `KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-TIMESTAMP`, `KALSHI-ACCESS-SIGNATURE`). Endpoints for orders
-  (create / cancel / amend), positions, fills, balance, and the order book (`/markets/{ticker}/orderbook`, which
-  lists **YES bids and NO bids**; the YES ask = 100 − best NO bid, same mirror as ProphetX).
-- **Demo environment:** separate base URL (demo-api) with fake money. Use it for the demo phase.
-- **Fees:** roughly `ceil(0.07 × contracts × P × (1 − P))` dollars per trade for takers (max ~1.75¢/contract at 50¢);
-  maker fees are lower or zero on some markets. Check the current schedule; it decides the minimum half-spread.
-- **Order types:** limit orders with expiration; "post only"/maker-only flag if available (avoid accidentally taking).
-- **Rate limits:** check the tier limits before choosing the polling interval.
+- **Spread markets:** ✅ series **`KXNCAAFSPREAD`** ("College Football Spread"). One event per game
+  (`KXNCAAFSPREAD-26OCT24COLOOKST`) holding a ladder of markets for **both** teams, e.g. ticker
+  `…-OKST8`, `floor_strike` 7.5, `strike_type` "greater", `yes_sub_title` "Oklahoma St. wins by over 7.5 points".
+  The Colorado–Oklahoma St. event had 31 markets (OKST over 1.5 … 35.5, COLO over 1.5 … 10.5); most had zero
+  volume, a few had 1k–7k contracts traded. Team names are Kalshi's short forms ("Oklahoma St.") → resolve with
+  `matchTeamName`. `no_sub_title` repeats the YES text; don't use it. Totals: `KXNCAAFTOTAL` exists.
+- **Public market data:** ✅ no auth needed for `GET /markets`, `/series/{t}`, `/markets/{t}/orderbook`.
+  Prices are dollar strings with 4 decimals (`"0.6200"`), sizes are fixed-point strings (`"1261.43"`; fractional
+  contracts exist). Market objects carry `yes_bid_dollars`, `yes_ask_dollars`, `*_size_fp`, `volume_fp`,
+  `open_interest_fp`, `close_time`, `occurrence_datetime` (kickoff), `price_ranges` / `price_level_structure`.
+- **Base URLs:** ✅ production `https://external-api.kalshi.com/trade-api/v2` (recommended; `api.elections.kalshi.com`
+  also works), demo `https://external-api.demo.kalshi.co/trade-api/v2` (`demo-api.kalshi.co` also works).
+  WebSockets: `wss://external-api-ws.kalshi.com/trade-api/ws/v2` / `wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2`.
+- **Auth / signing:** ✅ headers `KALSHI-ACCESS-KEY` (key ID), `KALSHI-ACCESS-TIMESTAMP` (**milliseconds**),
+  `KALSHI-ACCESS-SIGNATURE` (base64). Signed string = `timestamp + METHOD + path`, path **without the query string**
+  (`/trade-api/v2/portfolio/orders?limit=5` signs as `/trade-api/v2/portfolio/orders`). Key types: RSA-2048 →
+  RSA-PSS, SHA-256, MGF1-SHA-256, salt length 32; or **Ed25519 (Kalshi's recommendation)**. Kalshi picks the
+  algorithm from the registered key, so sign with whatever type the key is.
+- **Demo environment:** ✅ fake money, **separate account and separate API keys** (demo keys don't work on prod).
+- **Order book:** ✅ `GET /markets/{ticker}/orderbook?depth=N` → `{"orderbook_fp":{"yes_dollars":[[price,size],…],
+  "no_dollars":[…]}}`. **Bids only**, both sides. Live response is sorted **ascending (best bid last)**; the docs only
+  say "best to worst", so take the max rather than trusting order. YES ask = 1 − best NO bid.
+  Live sample: YES bids …0.62, NO bids …0.37 → YES 0.62 / 0.63.
+- **Orders:** ✅ use **`POST /portfolio/events/orders`** (Create Order V2). The old `/portfolio/orders` is slated for
+  deprecation ("no earlier than May 6, 2026"). V2 body: `ticker`, `side` (`bid` = buy YES, `ask` = sell YES; YES leg
+  only, so "buy NO at 0.37" = sell YES at 0.63), `count` and `price` as strings (`"1"`, `"0.56"`),
+  `time_in_force` (`good_till_canceled` | `immediate_or_cancel` | `fill_or_kill`), optional `expiration_time`
+  (unix seconds, with GTC), `post_only`, `reduce_only` (IOC only), `client_order_id`,
+  `self_trade_prevention_type` (**required**: `taker_at_cross` | `maker`), `cancel_order_on_pause`.
+  Cancel / amend have V2 endpoints too. Portfolio: `GET /portfolio/positions`, `/portfolio/fills`, `/portfolio/balance`.
+- **Tick:** ✅ CFB spread markets are `price_level_structure: "linear_cent"`, `price_ranges` step 0.01 over 0–1.
+  Read the field per market; some other markets use finer ticks.
+- **Fees:** ✅ the CFB series (`KXNCAAFSPREAD`, `KXNCAAFGAME`, `KXNCAAFTOTAL`) are `fee_type:
+  "quadratic_with_maker_fees"`, `fee_multiplier: 1` (from `GET /series/{ticker}`). Fee = rate × contracts × P × (1 − P)
+  × multiplier, **taker rate 0.07** (1.75¢ at 50¢), **maker rate 0.0175** (≈0.44¢ at 50¢), per Kalshi's fee schedule.
+  Rounding (docs "fee rounding"): computed per fill, rounded up to 6 decimals; non-direct members' balances move in
+  whole cents and the rounding overpayment is tracked per order and rebated, so long-run cost ≈ the formula.
+  Implemented as `kalshiFee()` in `bot/fairPrice/kalshi.ts`. Watch `GET /series/fee_changes` for schedule changes.
+- **Rate limits:** ✅ token buckets, most requests cost 10 tokens. Basic tier: 200 read / 100 write tokens per second
+  (≈20 reads/s, 10 writes/s). Writes = order create / amend / cancel, order groups, RFQ. `GET /portfolio/balance`
+  has its own bucket (1/s on Basic). Not a constraint for a bot polling every few minutes.
 
 ## 7. Minimum spread math
 
 Per round trip (buy at bid b, sell at ask a, 1 contract): profit = (a − b) − maker fee(b) − maker fee(a).
-With taker-like fees near 50¢ (~1.75¢ each side) a 2¢ spread loses money; maker-fee-free it earns 2¢.
-Start with h ≥ fees + 1–2¢ and tune from paper data.
+✅ CFB spread markets charge **maker** fees: ≈0.44¢ per side at 50¢, so a 2¢ round trip nets ≈1.1¢; a 1¢ spread
+nets ≈0.1¢ (basically nothing). Taking costs 1.75¢ at 50¢, so a "take when the book is wrong" trade needs ≥2¢ of edge
+just to break even. Start with h ≥ 1.5–2¢ and tune from paper data.
 
 ## 8. Architecture (proposed)
 
@@ -134,13 +167,14 @@ Start with h ≥ fees + 1–2¢ and tune from paper data.
   trades through it), writes to the same tables with mode = paper. No orders sent.
 - **Admin page:** a Bot panel in the admin (Betting section): mode, kill switch, limits, open quotes, inventory,
   P&L, fills vs fair, and closing-line value. Reuse the existing admin shell and `/api/admin-bets-save` pattern for writes.
-- **Shared code:** the fair-price engine (section 4) should live in `src/lib/` so the admin site can show "fair price
-  for every alternate line" in Matchups even without the bot.
+- **Shared code:** the fair-price engine lives in `bot/fairPrice/` (pure TypeScript, imports `computeRow` from
+  `src/lib`). If the admin site wants "fair price for every alternate line" in Matchups, import it from there
+  (or move it to `src/lib/` then).
 
 ## 9. Rollout plan
 
-1. **Fair-price engine** for every line, with key numbers. Validate on 2024–2026 history: calibration of P(cover)
-   by line, and how often each exact margin occurs.
+1. ✅ **Fair-price engine** for every line, with key numbers (§12). Exact-margin frequencies fit and validated on a
+   held-out season. Still to do: calibration of P(cover) when centered on **our** projection instead of the market.
 2. **CLV check:** using `betting_lines` history, measure whether our fair beats the closing line. If not, stop here:
    market making on a model that doesn't beat the close just donates to sharper traders.
 3. **Paper bot** for 2–3 weeks: quotes, simulated fills, P&L, how often we'd have been picked off.
@@ -169,3 +203,31 @@ Start with h ≥ fees + 1–2¢ and tune from paper data.
   unless he asks to review first.
 - Type-check: `npx tsc --noEmit -p .` (two known pre-existing errors: `oddsHistorical.ts(170)`,
   `BetHistoryPage.tsx(460)`); build: `npx vite build`.
+
+## 12. Fair-price engine (built 2026-10-20)
+
+Code: `bot/fairPrice/` (tests: `npm test`). No trading code yet.
+
+- `marginDistribution.ts`: P(home margin = m) for every whole m. A normal (σ = `DEFAULT_SIGMA`) cut into whole-point
+  bins, 0 removed (CFB has overtime, so no ties), then each |m| multiplied by a key-number weight and re-centered so
+  the mean equals the projection exactly. `fitKeyWeights()` fits the weights by iterative proportional fitting with a
+  20-game prior toward 1.
+- `keyWeights.fitted.ts`: **generated** by `bot/scripts/fitKeyWeights.ts`, centered on the closing market spread
+  (market_median → consensus → any book). Fit on 3,730 FBS-vs-FBS games, 2021–2025: **σ = 15.31**. Weights:
+  3 → 2.7×, 7 → 2.4×, 10 → 1.4×, 14 → 1.4×, 17 → 1.4×, 21 → 1.7×, 24 → 1.4×, 28 → 1.8×. Dead numbers sit
+  well below 1 (9 → 0.4, 16 → 0.35, 5 → 0.65). Held-out 2026 (388 games): log-likelihood per game improves from
+  −4.076 (plain normal) to −3.933. Refit each offseason:
+  `SUPABASE_URL=… SUPABASE_ANON_KEY=… npx tsx bot/scripts/fitKeyWeights.ts 2021 2025 2026`.
+- `lines.ts`: `spreadOutcome(pmf, side, line)` → {win, push, lose} for any line (pushes only on whole numbers),
+  `kalshiSpreadYesProb(pmf, side, floorStrike)`, `winProb`, `evPerContract` (push refunds the stake), `fairPrice`
+  (break-even price), `americanFromProb`.
+- `kalshi.ts`: `kalshiFee()`, `parseKalshiSpreadTitle()`, `bestYesQuotes()` for the bids-only book.
+- `projection.ts`: `projectedHomeMargin(game, liveByTeam, {hfaMode, lock})` calls **`computeRow`** (same numbers as
+  Matchups; default `hfaMode: "team"` like Matchups) and returns its `projAwaySpread`, which is numerically the home
+  margin (ratings are lower = better). `gameMarginPmf()` = the pmf around it.
+- Sanity check against the live Colorado @ Oklahoma St. ladder (pmf centered on the market's ~OKST −12): every rung
+  was within ~2¢ of Kalshi's mid, with the same drops at 3 and 7.
+
+**Next:** the CLV check (§9 step 2). Center the pmf on our projection for 2024–2026 games, price the closing
+line and the alternate lines, and measure whether we beat the close. σ may need to be wider around our projection
+than around the market (our number is noisier); fit it from that same data.
