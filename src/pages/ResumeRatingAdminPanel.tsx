@@ -6,11 +6,14 @@ import { TEAMS, conferencesForDivision } from "../data/teams";
 import { conferenceFilterOptions, teamMatchesConferenceFilter } from "../lib/conferenceBuckets";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchResumeWeights, saveResumeRatingsToSite, saveFinishedResumeRatings, fetchResumeRatingsByWeeks } from "../lib/api/resumeWeights";
+import { fetchResumeWeights, saveResumeRatingsToSite, saveFinishedResumeRatings, fetchResumeRatingsByWeeks, fetchFinishedResumeByWeeks } from "../lib/api/resumeWeights";
 import { fetchMonteCarloRun, fetchMonteCarloRuns } from "../lib/api/monteCarlo";
 import SavedWeekProgression from "../components/SavedWeekProgression";
 import { fetchRatingPulls, fetchTeamSos } from "../lib/api/ratingSystems";
-import { fetchTeamGameAdvanced } from "../lib/api/teamInfo";
+import { fetchTeamGameAdvanced, type TeamGameAdvancedRow } from "../lib/api/teamInfo";
+import { fetchTeamSosForWeek } from "../lib/api/ratingSystems";
+import { fetchFinishedResumeAvailableWeeks } from "../lib/api/resumeWeights";
+import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import {
   computeRawResumeMetrics,
   normalizeMetric,
@@ -44,6 +47,7 @@ const panel: CSSProperties = { padding: "1rem", background: "var(--turf-panel)",
 interface Row {
   team: (typeof TEAMS)[number];
   raw: RawResumeMetrics;
+  norm: Partial<Record<keyof RawResumeMetrics, number | null>>;
   score: number | null;
   buckets: Record<BucketKey, number | null>;
 }
@@ -80,6 +84,57 @@ function buildField(ranked: Row[], mode: ResumeMode, confTitle: Record<string, n
   return { field: field.map((r) => ({ row: r, rank: rankOf.get(r.team.team)!, auto: autoSet.has(r.team.team) })), firstOut, rankOf };
 }
 
+/** One team's résumé, component by component: raw value, 1–10 score, rank and percentile in the division. */
+function TeamBreakdown({ row, allRows, mode, config, rank }: { row: Row; allRows: Row[]; mode: ResumeMode; config: ResumeWeightConfig; rank: number | null }) {
+  const rankFor = (key: keyof RawResumeMetrics) => {
+    const mine = row.norm[key];
+    if (mine == null) return null;
+    const vals = allRows.map((r) => r.norm[key]).filter((v): v is number => v != null);
+    const better = vals.filter((v) => v > mine).length;
+    return { rank: better + 1, of: vals.length, pct: vals.length > 1 ? Math.round((1 - better / (vals.length - 1)) * 100) : 100 };
+  };
+  const bucketRank = (b: BucketKey) => {
+    const mine = row.buckets[b];
+    if (mine == null) return null;
+    const vals = allRows.map((r) => r.buckets[b]).filter((v): v is number => v != null);
+    return vals.filter((v) => v > mine).length + 1;
+  };
+  const cell: CSSProperties = { padding: "0.2rem 0.6rem", fontSize: "0.78rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" };
+  return (
+    <div>
+      <div style={{ fontWeight: 700, marginBottom: "0.5rem" }}>
+        {row.team.team} · #{rank ?? "–"} · {row.score?.toFixed(2) ?? "–"}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.75rem" }}>
+        {RESUME_BUCKETS.filter((b) => bucketMetrics(b.key, mode).length > 0).map((b) => (
+          <div key={b.key} style={{ border: "1px solid var(--hash)", borderRadius: 6, padding: "0.4rem 0.5rem", background: "var(--turf)" }}>
+            <div style={{ fontWeight: 700, fontSize: "0.8rem", marginBottom: "0.25rem" }}>
+              {b.label} · {row.buckets[b.key]?.toFixed(1) ?? "–"}/10 · #{bucketRank(b.key) ?? "–"}{" "}
+              <span style={{ fontWeight: 400, color: "var(--chalk-dim)" }}>(weight {config.buckets[b.key] ?? 0})</span>
+            </div>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <tbody>
+                {bucketMetrics(b.key, mode).map((m) => {
+                  const rk = rankFor(m);
+                  const v = row.raw[m] as number | null;
+                  return (
+                    <tr key={m}>
+                      <td style={{ ...cell, color: "var(--chalk-dim)" }}>{METRIC_LABELS[m]}</td>
+                      <td style={{ ...cell, textAlign: "right" }}>{v == null ? "–" : v.toFixed(2)}</td>
+                      <td style={{ ...cell, textAlign: "right" }}>{row.norm[m]?.toFixed(1) ?? "–"}</td>
+                      <td style={{ ...cell, textAlign: "right" }}>{rk ? `#${rk.rank} · ${rk.pct}th` : "–"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: () => void }) {
   const [mode, setMode] = useState<ResumeMode>("sofar");
   const [division, setDivision] = useState<"FBS" | "FCS">("FBS");
@@ -93,6 +148,7 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
   const [vsrsByTeam, setVsrsByTeam] = useState<Record<string, number | null>>({});
   const [netSrByTeam, setNetSrByTeam] = useState<Record<string, number | null>>({});
   const [sosByTeam, setSosByTeam] = useState<Record<string, number | null>>({});
+  const [advRows, setAdvRows] = useState<TeamGameAdvancedRow[]>([]);
   const [mc, setMc] = useState<{ week: number; byTeam: Record<string, { meanWins: number | null; confTitlePct: number | null }> } | null>(null);
 
   const [configs, setConfigs] = useState<Record<ResumeMode, ResumeWeightConfig>>({ sofar: defaultResumeConfig("sofar"), projected: defaultResumeConfig("projected") });
@@ -100,6 +156,7 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [openBucket, setOpenBucket] = useState<BucketKey | null>(null);
+  const [openTeam, setOpenTeam] = useState<string | null>(null);
 
   const [sortKey, setSortKey] = useState("score");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -124,6 +181,7 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
         setConfigs({ sofar: resumeConfigFrom(savedWeights, "sofar"), projected: resumeConfigFrom(savedWeights, "projected") });
         setWeightsLoaded(true);
 
+        setAdvRows(advRows);
         // Net success rate: mean over each team's played games, in points.
         const netAcc = new Map<string, number[]>();
         for (const r of advRows) {
@@ -191,7 +249,7 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
       const norm: Partial<Record<keyof RawResumeMetrics, number | null>> = {};
       for (const key of METRIC_KEYS) norm[key] = normalizeMetric(key, raw?.[key] ?? null, pools[key]!, METRIC_HIGHER_IS_BETTER[key]);
       const { score, buckets } = computeBucketedScore(norm, config, mode);
-      return { team: t, raw, score, buckets };
+      return { team: t, raw, norm, score, buckets };
     });
   }, [divisionTeams, rawByTeam, config, mode]);
 
@@ -284,6 +342,70 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
       setSaveToSiteMsg(`Error: ${err.message ?? "Save failed"}`);
     } finally {
       setSavingToSite(false);
+    }
+  }
+
+  // Backfill Résumé so far for earlier weeks that have no snapshot: each week from only the games played before it,
+  // that week's saved ratings and SOS, and the current weights. Weeks already saved are never touched.
+  const [soFarWeeks, setSoFarWeeks] = useState<number[] | null>(null);
+  useEffect(() => {
+    fetchFinishedResumeAvailableWeeks(season)
+      .then(setSoFarWeeks)
+      .catch(() => setSoFarWeeks([]));
+  }, [season, progressionRefresh]);
+  const missingWeeks = useMemo(() => {
+    if (!soFarWeeks) return [];
+    const out: number[] = [];
+    for (let w = 2; w < saveWeek; w++) if (!soFarWeeks.includes(w)) out.push(w);
+    return out;
+  }, [soFarWeeks, saveWeek]);
+  const { byWeek: ratingsByWeek, loading: ratingsByWeekLoading } = useWeekAccurateRatings(season, missingWeeks, season);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
+
+  async function handleBackfill() {
+    setBackfilling(true);
+    setBackfillMsg(null);
+    const cfg = configs.sofar;
+    const done: number[] = [];
+    try {
+      for (const w of missingWeeks) {
+        const ratings = ratingsByWeek[w] ?? liveByTeam;
+        const before = games.filter((g) => g.week < w);
+        const sosRows = await fetchTeamSosForWeek(season, w).catch(() => ({}));
+        const sosW: Record<string, number | null> = {};
+        for (const [team, row] of Object.entries(sosRows as Record<string, any>)) sosW[team] = row.blend_score ?? row.sos_srs_total ?? null;
+        const netAcc = new Map<string, number[]>();
+        for (const r of advRows) if (r.week != null && r.week < w && r.net_success_rate != null) netAcc.set(r.team, [...(netAcc.get(r.team) ?? []), r.net_success_rate * 100]);
+        const netW: Record<string, number | null> = {};
+        for (const [t, v] of netAcc) netW[t] = v.reduce((a, b) => a + b, 0) / v.length;
+        const bubble =
+          TEAMS.filter((t) => t.div === "FBS")
+            .map((t) => (ratings as any)[t.team]?.rating ?? t.rating)
+            .sort((a, b) => a - b)[11] ?? null;
+        const raw = new Map(divisionTeams.map((t) => [t.team, computeRawResumeMetrics(t, before, ratings, srsByTeam, vsrsByTeam, true, netW, sosW, { bubbleRating: bubble })]));
+        const pools: Partial<Record<keyof RawResumeMetrics, (number | null)[]>> = {};
+        for (const key of METRIC_KEYS) pools[key] = divisionTeams.map((t) => raw.get(t.team)?.[key] ?? null);
+        const rows = divisionTeams.map((t) => {
+          const r = raw.get(t.team)!;
+          const norm: Partial<Record<keyof RawResumeMetrics, number | null>> = {};
+          for (const key of METRIC_KEYS) norm[key] = normalizeMetric(key, r[key] ?? null, pools[key]!, METRIC_HIGHER_IS_BETTER[key]);
+          return { team: t.team, score: computeBucketedScore(norm, cfg, "sofar").score, actWins: r.actWins, losses: r.losses };
+        });
+        await saveFinishedResumeRatings(season, w, rows);
+        done.push(w);
+        setBackfillMsg(`Backfilled week${done.length === 1 ? "" : "s"} ${done.join(", ")}…`);
+      }
+      setBackfillMsg(
+        done.length
+          ? `Backfilled Résumé so far for week${done.length === 1 ? "" : "s"} ${done.join(", ")} with today's weights (SRS/VSRS use the current snapshot). Those weeks are now saved and won't be backfilled again.`
+          : "Nothing to backfill."
+      );
+      setProgressionRefresh((n) => n + 1);
+    } catch (err: any) {
+      setBackfillMsg(`Error after ${done.length} week(s): ${err.message ?? "save failed"}`);
+    } finally {
+      setBackfilling(false);
     }
   }
 
@@ -403,6 +525,17 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
         <span style={{ fontSize: "0.78rem", color: saveToSiteMsg?.startsWith("Error") ? "var(--c-err)" : "var(--chalk-dim)" }}>
           {saveToSiteMsg ?? "Each résumé saves to its own weekly snapshot; both show as tabs on the public Resume page."}
         </span>
+        {mode === "sofar" && division === "FBS" && missingWeeks.length > 0 && (
+          <button
+            className="menu-btn"
+            onClick={handleBackfill}
+            disabled={backfilling || ratingsByWeekLoading || loading}
+            title="Builds each missing week from the games played before it, that week's saved ratings and SOS, and today's weights"
+          >
+            {backfilling ? "Backfilling…" : `Backfill weeks ${missingWeeks.join(", ")}`}
+          </button>
+        )}
+        {backfillMsg && <span style={{ fontSize: "0.78rem", color: backfillMsg.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{backfillMsg}</span>}
       </div>
 
       {playoff && ranked.length > 0 && (
@@ -470,7 +603,8 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
             </thead>
             <tbody>
               {shownRows.map((r) => (
-                <tr key={r.team.team}>
+                <Fragment key={r.team.team}>
+                <tr style={{ cursor: "pointer" }} onClick={() => setOpenTeam(openTeam === r.team.team ? null : r.team.team)} title="Show this team's résumé components">
                   <td className="matchup-team-cell">
                     <span style={{ color: "var(--chalk-dim)", marginRight: "0.4rem" }}>{rankOf.get(r.team.team) ?? "–"}</span>
                     <TeamLogo team={r.team} />
@@ -488,20 +622,41 @@ export default function ResumeRatingAdminPanel({ onBack: _onBack }: { onBack: ()
                     </Fragment>
                   ))}
                 </tr>
+                {openTeam === r.team.team && (
+                  <tr>
+                    <td colSpan={2 + RESUME_BUCKETS.length + shownMetrics.length} style={{ background: "var(--turf-panel)", padding: "0.75rem 1rem" }}>
+                      <TeamBreakdown row={r} allRows={allRows} mode={mode} config={config} rank={rankOf.get(r.team.team) ?? null} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
 
-      <SavedWeekProgression
-        title="Projected finish: saved weeks"
-        description="Every saved week's Projected finish score per team (what the public Resume page has always shown)."
-        fetchByWeeks={fetchResumeRatingsByWeeks}
-        refreshKey={progressionRefresh}
-        digits={2}
-        higherIsBetter={true}
-      />
+      {mode === "projected" ? (
+        <SavedWeekProgression
+          key="projected"
+          title="Projected finish progression"
+          description="Every saved week's Projected finish score per team."
+          fetchByWeeks={fetchResumeRatingsByWeeks}
+          refreshKey={progressionRefresh}
+          digits={2}
+          higherIsBetter={true}
+        />
+      ) : (
+        <SavedWeekProgression
+          key="sofar"
+          title="Résumé so far progression"
+          description="Every saved week's Résumé so far score per team."
+          fetchByWeeks={fetchFinishedResumeByWeeks}
+          refreshKey={progressionRefresh}
+          digits={2}
+          higherIsBetter={true}
+        />
+      )}
 
       <div className="footer-note">
         Strength of Schedule is your SOS blend from the last Save to Site on the Strength of Schedule page (SOS via SRS for a week saved before the
