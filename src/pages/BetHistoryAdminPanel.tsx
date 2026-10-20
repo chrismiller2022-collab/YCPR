@@ -834,7 +834,10 @@ function matrixCellBg(t: RecordTally, mode: MatrixStatMode, maxValue: number): s
 }
 
 function fmtLineBucketLabel(min: number, max: number): string {
-  return `${min} to ${max}`;
+  // Half-point-wide buckets are a single line (the 2.5 / 3 / 3.5 and 6.5 / 7 / 7.5 splits).
+  if (max - min === 0.5) return max <= 0 ? `${max}` : `${min > 0 ? "+" : ""}${min}`;
+  if (max <= 0) return `${max} to ${min === -Infinity ? "−∞" : min}`; // favorite side reads nearest-to-zero first, e.g. -4 to -6.5
+  return `${min > 0 ? "+" : ""}${min} to ${max === Infinity ? "∞" : max}`;
 }
 
 function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
