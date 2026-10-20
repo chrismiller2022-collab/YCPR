@@ -9,7 +9,7 @@ import { fetchPeriodLocks, lockedPeriodValue, type PeriodLockRow } from "../lib/
 import { fetchGameTotalSnapshots } from "../lib/api/gameTotalsData";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { pickLine } from "../lib/matchupsCompute";
-import { billRAwayWinPct } from "../lib/moneylineBetHistory";
+import { billRAwayWinPct, BILL_R_HFA } from "../lib/moneylineBetHistory";
 import { fairMoneylineFromWinPct, hfaFor } from "../lib/odds";
 import { PERIOD_KEYS, buildPeriodDistribution, summarize, type PeriodKey } from "../lib/periodSim";
 import { actualPeriodPoints, consensusLines, type GradePeriod, type PeriodLineRowLite } from "../lib/periodGrading";
@@ -191,10 +191,10 @@ export default function MatchupHistoryPanel({ onBack }: { onBack: () => void }) 
         const r = ratingsByWeek[k];
         const away = r?.[g.away_team];
         const home = r?.[g.home_team];
-        const fromRatings = away != null && home != null ? away - home + hfaFor(g.home_team, liveByTeam) : null;
+        const fromRatings = away != null && home != null ? away - home + (g.neutral_site ? 0 : hfaFor(g.home_team, liveByTeam)) : null;
         const awaySpread = lock?.my_away_spread != null ? lock.my_away_spread : fromRatings;
         const awayWinPct =
-          lock?.my_away_win_pct != null ? lock.my_away_win_pct : away != null && home != null ? billRAwayWinPct(away, home) : null;
+          lock?.my_away_win_pct != null ? lock.my_away_win_pct : away != null && home != null ? billRAwayWinPct(away, home, undefined, g.neutral_site ? 0 : BILL_R_HFA) : null;
         const lockTotal = lock?.my_total ?? null;
         const snapTotal = snapTotals[k]?.[g.id] ?? null;
         out[g.id][k] = {

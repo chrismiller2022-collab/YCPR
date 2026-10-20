@@ -349,6 +349,7 @@ export default function HfaSection() {
                 <th className="th-right">NWFB</th>
                 <th className="th-right" title="Team totals from the Totals model's saved projection, split by this spread">Team total MAE</th>
                 <th className="th-right" title="Mean of (home points − projected home team total)">Home TT resid.</th>
+                <th className="th-right" title="Mean of (away points − projected away team total). If both are positive, the Totals model is running low overall.">Away TT resid.</th>
                 <th className="th-right" title="Games where a source's value came from a later week (not yet backfilled)">Lookahead</th>
               </tr>
             </thead>
@@ -371,6 +372,7 @@ export default function HfaSection() {
                   <td className="td-right">{rec(r.nwfb)}</td>
                   <td className="td-right">{r.ttMae == null ? "—" : `${f(r.ttMae)} (${r.ttGames})`}</td>
                   <td className="td-right">{f(r.homeTtResidual)}</td>
+                  <td className="td-right">{f(r.awayTtResidual)}</td>
                   <td className="td-right" style={r.lookaheadGames > 0 ? { color: "var(--c-warn)" } : undefined}>
                     {r.lookaheadGames || ""}
                   </td>

@@ -65,7 +65,8 @@ export interface TeamHfaInputs {
   trRaw: number | null;
   bluechip: number | null;
   split: number | null; // TR home − TR away (points)
-  lookahead: boolean; // any input taken from a week after this one
+  // Inputs taken from a week after this one (that source wasn't saved yet for this week), per source.
+  lookahead: { massey: boolean; tr: boolean; split: boolean };
 }
 
 export function teamInputs(ctx: HfaContext, s: HfaSettings, team: string, week: number, means: { tr: number | null; split: number | null }): TeamHfaInputs {
@@ -80,7 +81,7 @@ export function teamInputs(ctx: HfaContext, s: HfaSettings, team: string, week: 
     trRaw: t?.value ?? null,
     bluechip: BLUE_CHIP_HFA[team] ?? null,
     split: h != null && a != null ? h.value - a.value : null,
-    lookahead: !!(m?.lookahead || t?.lookahead || h?.lookahead || a?.lookahead),
+    lookahead: { massey: !!m?.lookahead, tr: !!t?.lookahead, split: !!(h?.lookahead || a?.lookahead) },
   };
 }
 
@@ -177,6 +178,7 @@ export interface VariantResult {
   ttGames: number;
   ttMae: number | null; // team-total error, both teams
   homeTtResidual: number | null; // mean(home points − projected home team total)
+  awayTtResidual: number | null; // same for the away team; home and away both high means the Totals model runs low, not HFA
   lookaheadGames: number;
   elevationGames: number; // games where the elevation dampener changed the HFA
 }
@@ -191,6 +193,7 @@ export function runVariant(key: VariantKey, rows: BacktestGame[], ctx: HfaContex
   let ttAbs = 0;
   let ttN = 0;
   let ttHomeResid = 0;
+  let ttAwayResid = 0;
   let ttGames = 0;
   let lookaheadGames = 0;
   let elevationGames = 0;
@@ -210,7 +213,10 @@ export function runVariant(key: VariantKey, rows: BacktestGame[], ctx: HfaContex
     else if (g.neutral_site) hfa = 0;
     else {
       const inp = teamInputs(ctx, s, g.home_team, g.week, means);
-      if (inp.lookahead && key !== "flat" && key !== "bluechip") lookaheadGames++;
+      const la = inp.lookahead;
+      const usesMassey = key === "massey" || ((key === "average" || (key === "blend" && s.weights.massey > 0)) && inp.massey != null);
+      const usesTr = key === "tr" || ((key === "average" || (key === "blend" && s.weights.tr > 0)) && inp.tr != null);
+      if ((usesMassey && la.massey) || (usesTr && la.tr) || (key === "split" && la.split)) lookaheadGames++;
       hfa = variantHfa(key, inp, s, means.split);
       if (s.elevation.on && r.highElevation) {
         hfa *= s.elevation.factor;
@@ -235,6 +241,7 @@ export function runVariant(key: VariantKey, rows: BacktestGame[], ctx: HfaContex
         ttAbs += Math.abs(g.home_points! - split.home) + Math.abs(g.away_points! - split.away);
         ttN += 2;
         ttHomeResid += g.home_points! - split.home;
+        ttAwayResid += g.away_points! - split.away;
         ttGames++;
       }
     }
@@ -280,6 +287,7 @@ export function runVariant(key: VariantKey, rows: BacktestGame[], ctx: HfaContex
     ttGames,
     ttMae: ttN ? ttAbs / ttN : null,
     homeTtResidual: ttGames ? ttHomeResid / ttGames : null,
+    awayTtResidual: ttGames ? ttAwayResid / ttGames : null,
     lookaheadGames,
     elevationGames,
   };

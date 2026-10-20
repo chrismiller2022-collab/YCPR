@@ -8,7 +8,7 @@ import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
-import { billRAwayWinPct } from "../lib/moneylineBetHistory";
+import { billRAwayWinPct, BILL_R_HFA } from "../lib/moneylineBetHistory";
 import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
@@ -32,7 +32,7 @@ const pickLine = (lines: BettingLineRow[]): BettingLineRow | null => pickVegasLi
 // bug Chris has hit before (see conventions), so it's one function used
 // both places.
 function computeProjection(
-  g: { away_team: string; home_team: string },
+  g: { away_team: string; home_team: string; neutral_site?: boolean | null },
   liveByTeam: Record<string, WeeklyTeamStats>,
   lock?: { my_away_spread: number | null; my_away_win_pct: number | null } | null
 ) {
@@ -48,12 +48,12 @@ function computeProjection(
     lock?.my_away_spread != null
       ? lock.my_away_spread
       : awayTeam && homeTeam
-        ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam)
+        ? awayTeam.rating - homeTeam.rating + (g.neutral_site ? 0 : hfaFor(g.home_team, liveByTeam))
         : null;
   // Bill R Method — the canonical site-wide moneyline model — not the
   // spread-derived curve, matching every other pool tool.
   const awayWinPct =
-    lock?.my_away_win_pct != null ? lock.my_away_win_pct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+    lock?.my_away_win_pct != null ? lock.my_away_win_pct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating, undefined, g.neutral_site ? 0 : BILL_R_HFA) : null;
   return { awayTeam, homeTeam, projAwaySpread, awayWinPct };
 }
 

@@ -1,7 +1,7 @@
 import { LINE_PROVIDER_ORDER } from "./linePick";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { HFA, hfaFor, fairMoneylineFromWinPct } from "./odds";
-import { billRAwayWinPct } from "./moneylineBetHistory";
+import { billRAwayWinPct, BILL_R_HFA } from "./moneylineBetHistory";
 import { type GameWithLines, type BettingLineRow } from "./api/gamesLines";
 import { DEFAULT_CUSTOM_PARAMS, type CustomParams } from "./betHistory";
 import { type ErrorStatsBundle, bundleErrors } from "./errorStats";
@@ -326,7 +326,8 @@ export function computeRow(
     ? { ...staticHomeTeam, rating: liveByTeam[game.home_team]?.rating ?? staticHomeTeam.rating }
     : null;
 
-  const hfa = hfaMode === "flat" ? HFA : hfaFor(game.home_team, liveByTeam);
+  // No home field at a neutral site.
+  const hfa = game.neutral_site ? 0 : hfaMode === "flat" ? HFA : hfaFor(game.home_team, liveByTeam);
   // Once a game has kicked off, its own locked snapshot (captured the
   // moment it kicked off — see game_projection_locks / useGameProjectionLocks)
   // wins over live ratings unconditionally. Ratings get re-pushed
@@ -349,7 +350,7 @@ export function computeRow(
   // pool that shows a moneyline, all read from this one calculation now,
   // so there's exactly one "My ML" for a given game, not several
   // disagreeing ones depending on which page computed it.
-  const projWinPct = lock?.myAwayWinPct != null ? lock.myAwayWinPct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+  const projWinPct = lock?.myAwayWinPct != null ? lock.myAwayWinPct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating, undefined, game.neutral_site ? 0 : BILL_R_HFA) : null;
   const projMoneyline = projWinPct != null ? fairMoneylineFromWinPct(projWinPct) : null;
   const vegasMoneyline = line?.away_moneyline ?? null;
 
