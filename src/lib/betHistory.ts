@@ -357,7 +357,7 @@ export type HfaMode = "team" | "flat";
 
 export type LineMode = "open" | "close";
 
-function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
+export function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
   const field = lineMode === "open" ? "opening_spread" : "spread";
   const withSpread = lines.filter((l) => l[field] != null);
   if (withSpread.length === 0) return null;
@@ -407,7 +407,7 @@ export function buildLiveBetHistoryRecords(
       const homeRating = weekRatings[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
       const awayRating = weekRatings[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
       if (homeRating == null || awayRating == null) continue;
-      const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
+      const hfa = g.neutral_site ? 0 : hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
       awayPerspectivePrediction = awayRating - homeRating + hfa;
     }
 

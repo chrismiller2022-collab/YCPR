@@ -208,6 +208,26 @@ export async function fetchTeamRankingsRatings(): Promise<ScrapedRatingRow[]> {
   return data.rows as ScrapedRatingRow[];
 }
 
+export type TrHfaPage = "home-adv" | "home" | "away";
+
+/** One TeamRankings home-field page (home-adv already divided by 10; home/away ratings in points, higher = better). `date` = the page as of that day. */
+export async function fetchTeamRankingsHfaPage(page: TrHfaPage, date?: string): Promise<{ team: string; value: number }[]> {
+  const data = await authedPost("trHfaProxy", { page, date: date ?? null });
+  return data.rows as { team: string; value: number }[];
+}
+
+export type HfaSource = "massey" | "tr" | "tr_home" | "tr_away";
+
+/** Saves per-team HFA inputs for (season, week, source) into team_hfa. Week N = values known going into week N. */
+export function saveTeamHfa(season: number, week: number, source: HfaSource, rows: { team: string; value: number }[], asOf?: string | null) {
+  return authedPost("hfaSave", { season, week, source, asOf: asOf ?? null, rows });
+}
+
+/** Saves the season's Team HFA definition (Teams → HFA blend weights and options). */
+export function saveHfaSettings(season: number, settings: Record<string, any>) {
+  return authedPost("hfaSettingsSave", { season, settings });
+}
+
 export interface JpPlusSnapshot {
   label: string;
   rows: { team: string; conference: string; value: number }[]; // value already sign-flipped to this site's convention

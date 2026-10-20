@@ -459,6 +459,52 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
+  // action: "trHfaProxy" — one TeamRankings home-field page: "home-adv"
+  // (Home Advantage rating, divided by 10 to read as points), "home" or
+  // "away" (the team's rating from home / road games only, in points,
+  // same scale as the predictive rating). `date` (YYYY-MM-DD) asks for the
+  // page as it stood that day, which is how past weeks are backfilled.
+  // One request per call; the client spaces calls out for the crawl delay.
+  // -----------------------------------------------------------------
+  if (action === "trHfaProxy") {
+    const { page, date } = req.body ?? {};
+    const slug = page === "home-adv" ? "home-adv-by-other" : page === "home" ? "home-by-other" : page === "away" ? "away-by-other" : null;
+    if (!slug) {
+      res.status(400).json({ error: "page must be home-adv, home or away" });
+      return;
+    }
+    if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      res.status(400).json({ error: "date must be YYYY-MM-DD" });
+      return;
+    }
+    try {
+      const url = `https://www.teamrankings.com/college-football/ranking/${slug}${date ? `?date=${date}` : ""}`;
+      const pageRes = await fetch(url, { headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" } });
+      if (!pageRes.ok) throw new Error(`TeamRankings fetch failed (${pageRes.status})`);
+      const rows = tableRows(await pageRes.text());
+      const headerIdx = rows.findIndex((cells) => cells.includes("Team") && cells.includes("Rating"));
+      if (headerIdx === -1) throw new Error("TeamRankings page no longer has a table with Team and Rating columns — its layout may have changed");
+      const teamIdx = rows[headerIdx].indexOf("Team");
+      const ratingIdx = rows[headerIdx].indexOf("Rating");
+      const scale = page === "home-adv" ? 0.1 : 1;
+      const out: { team: string; value: number }[] = [];
+      for (const cells of rows.slice(headerIdx + 1)) {
+        if (cells.includes("Team")) break;
+        const team = (cells[teamIdx] ?? "").replace(/\s*\(\d+-\d+(?:-\d+)?\)\s*$/, "").trim();
+        const raw = (cells[ratingIdx] ?? "").trim();
+        const rating = Number(raw);
+        if (!team || raw === "" || Number.isNaN(rating)) continue;
+        out.push({ team, value: Math.round(rating * scale * 1000) / 1000 });
+      }
+      if (out.length === 0) throw new Error("Parsed 0 rows from TeamRankings' table");
+      res.status(200).json({ ok: true, rows: out });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "TeamRankings fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
   // action: "fplusProxy" — scrapes Brian Fremeau's own bcftoys.com pages
   // for FEI and F+ (FEI blended with Bill Connelly's SP+), formerly
   // copied by hand into the published Google Sheet. Both pages share the
@@ -1133,6 +1179,59 @@ export default async function handler(req: any, res: any) {
     }
 
     res.status(200).json({ ok: true, saved: count ?? saveRows.length });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "hfaSave" — per-team HFA inputs into team_hfa, keyed by
+  // (season, week, team, source). Week N holds the values known going
+  // into week N, so a backtest of week N games never sees later data.
+  // -----------------------------------------------------------------
+  if (action === "hfaSave") {
+    const { season, week, source, asOf, rows } = req.body ?? {};
+    if (!season || typeof season !== "number" || typeof week !== "number" || week < 0) {
+      res.status(400).json({ error: "Missing or invalid 'season'/'week'" });
+      return;
+    }
+    if (!["massey", "tr", "tr_home", "tr_away"].includes(source)) {
+      res.status(400).json({ error: "source must be massey, tr, tr_home or tr_away" });
+      return;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.status(400).json({ error: "Missing or empty 'rows'" });
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const saveRows = dedupeByKey(
+      rows
+        .filter((r: any) => typeof r?.team === "string" && typeof r?.value === "number" && Number.isFinite(r.value))
+        .map((r: any) => ({ season, week, team: r.team, source, value: r.value, as_of: asOf ?? null, updated_at: nowIso })),
+      (r) => r.team
+    );
+    const { error } = await supabaseAdmin.from("team_hfa").upsert(saveRows, { onConflict: "season,week,team,source" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true, saved: saveRows.length });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "hfaSettingsSave" — the Team HFA definition (blend weights etc.) for a season.
+  // -----------------------------------------------------------------
+  if (action === "hfaSettingsSave") {
+    const { season, settings } = req.body ?? {};
+    if (!season || typeof season !== "number" || !settings || typeof settings !== "object") {
+      res.status(400).json({ error: "Missing season or settings" });
+      return;
+    }
+    const { error } = await supabaseAdmin.from("hfa_settings").upsert({ season, settings, updated_at: new Date().toISOString() }, { onConflict: "season" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true });
     return;
   }
 

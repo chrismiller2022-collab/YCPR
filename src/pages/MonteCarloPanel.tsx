@@ -1,3 +1,4 @@
+import { computeAndSaveLiveSos } from "../lib/sosCompute";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
@@ -664,6 +665,8 @@ function MonteCarloResultsSection() {
     }
   }
 
+  const [saveSos, setSaveSos] = useState(true);
+
   async function handleSave() {
     if (!results || saveWeek == null) return;
     setSaving(true);
@@ -678,7 +681,18 @@ function MonteCarloResultsSection() {
         resumeComparison: resumeComparison ?? undefined,
         resumeComparisonTrials,
       });
-      setSaveMsg("Saved.");
+      // SOS for the same week, from the same live ratings, so the Weekly Run's "Save SOS" step is done with the sim.
+      let sosNote = "";
+      if (saveSos) {
+        try {
+          setSaveMsg("Saved the sim. Saving SOS…");
+          const sos = await computeAndSaveLiveSos(season, saveWeek);
+          sosNote = ` SOS saved for week ${saveWeek} (${sos.withBlend} teams with a blend score).`;
+        } catch (e: any) {
+          sosNote = ` SOS not saved: ${e.message ?? e}. Save it from the SOS page.`;
+        }
+      }
+      setSaveMsg(`Saved.${sosNote}`);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -725,6 +739,9 @@ function MonteCarloResultsSection() {
                 <button onClick={handleSave} disabled={saving || saveWeek == null}>
                   {saving ? "Saving…" : "Save this run"}
                 </button>
+                <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.3rem" }} title="Computes SOS from the live ratings and saves it to the same week">
+                  <input type="checkbox" checked={saveSos} onChange={(e) => setSaveSos(e.target.checked)} /> Also save SOS
+                </label>
               </>
             )}
           </div>

@@ -342,6 +342,21 @@ export default async function handler(req: any, res: any) {
     }
 
 
+    // --- Survivor working picks: the admin Survivor page's current picks, one row per season + pool ---
+    if (pool === "survivorpicks") {
+      const { season, which, picks } = req.body;
+      if (typeof season !== "number" || (which !== "survivor" && which !== "splash") || !picks || typeof picks !== "object") {
+        res.status(400).json({ error: "Missing season, which (survivor/splash) or picks" });
+        return;
+      }
+      const { error } = await supabaseAdmin
+        .from("survivor_working_picks")
+        .upsert({ season, pool: which, picks, updated_at: new Date().toISOString() }, { onConflict: "season,pool" });
+      if (error) throw error;
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     // --- Survivor saved paths: named candidate paths, not tied to a season/week ---
     if (pool === "survivorpaths") {
       if (action === "save") {

@@ -111,7 +111,7 @@ function computeEnrichedRows(
     const homeRating = liveByTeam[game.homeTeam]?.rating;
     const awayRating = liveByTeam[game.awayTeam]?.rating;
     const myHomeSpread =
-      homeRating != null && awayRating != null ? homeRating - awayRating - hfaFor(game.homeTeam, liveByTeam) : null;
+      homeRating != null && awayRating != null ? homeRating - awayRating - (game.neutralSite ? 0 : hfaFor(game.homeTeam, liveByTeam)) : null;
 
     if (!home || !away) {
       return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
