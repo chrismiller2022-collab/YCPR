@@ -26,6 +26,7 @@ export interface SpValue {
 export function spValuesFromSheet(sheet: SpSheetResult): { values: SpValue[]; unmatched: string[] } {
   // The TOP tab also lists D2, D3 and NAIA schools, so only exact and alias matches count there (a fuzzy match
   // could land a D2 school on an FCS team). The FBS/FCS tabs only hold their own division, so fuzzy is fine.
+  // TOP-tab rows come first, so the FCS tab only fills FCS teams the TOP tab left out.
   const { matched, unmatched } = matchTeamRows(sheet.rows, (r) => r.team);
   const values: SpValue[] = [];
   const seen = new Set<string>();
@@ -42,7 +43,8 @@ export function spValuesFromSheet(sheet: SpSheetResult): { values: SpValue[]; un
       m.row.tab === "top" ? -(sp - (div === "FBS" ? SP_TOP_FBS_OFFSET : SP_TOP_FCS_OFFSET + SP_SPLIT_FCS_OFFSET)) : m.row.tab === "fbs" ? -sp : -(sp - SP_SPLIT_FCS_OFFSET);
     values.push({ team: m.team, division: div, value: Math.round(value * 100) / 100 });
   }
-  return { values, unmatched: sheet.mode === "top" ? [] : unmatched.map((u) => u.team) };
+  // The TOP tab lists D2/D3/NAIA schools too, so its non-matches aren't worth reporting; the week tabs' are.
+  return { values, unmatched: unmatched.filter((u) => u.tab !== "top").map((u) => u.team) };
 }
 
 /**

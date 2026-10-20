@@ -565,13 +565,33 @@ export default async function handler(req: any, res: any) {
         const ti = h.findIndex((x) => x.trim().toLowerCase() === "team");
         const si = h.findIndex((x) => x.trim().toLowerCase() === "sp+");
         if (ti !== -1 && si !== -1 && !h.some((x) => x.trim().toLowerCase() === "week")) {
-          const out = rows.slice(1).flatMap((c) => {
+          const out: { team: string; sp: number; tab: "top" | "fcs" }[] = rows.slice(1).flatMap((c) => {
             const sp = num(c[si]);
             const team = (c[ti] ?? "").trim();
             return team && sp != null ? [{ team, sp, tab: "top" as const }] : [];
           });
           if (out.length > 0) {
-            res.status(200).json({ ok: true, mode: "top", tabs: [topTab], rows: out });
+            // FCS teams the TOP tab leaves out (it has skipped Mississippi Valley State) come from the FCS week tab.
+            const tabsUsed = [topTab];
+            const fcsFill = tabs.find((t) => new RegExp(`^fcs week ${week}$`, "i").test(t.trim()));
+            if (fcsFill) {
+              try {
+                const fr = await readTab(fcsFill);
+                const fh = fr[0] ?? [];
+                if ((fh[0] ?? "").trim().toLowerCase() === "team" && /sp\+/i.test(fh[3] ?? "")) {
+                  const rows: { team: string; sp: number; tab: "top" | "fcs" }[] = out;
+                  for (const c of fr.slice(1)) {
+                    const sp = num(c[3]);
+                    const team = (c[0] ?? "").trim();
+                    if (team && sp != null) rows.push({ team, sp, tab: "fcs" });
+                  }
+                  tabsUsed.push(fcsFill);
+                }
+              } catch {
+                /* the TOP tab alone is still a complete pull */
+              }
+            }
+            res.status(200).json({ ok: true, mode: "top", tabs: tabsUsed, rows: out });
             return;
           }
         }
