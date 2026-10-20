@@ -165,6 +165,8 @@ export function parseMcilleceCsv(text: string): McilleceRow[] {
 export interface MasseyRawRow {
   team: string;
   pwr: number;
+  /** Massey's home-field advantage in points. Unlike Pwr/Off/Def, "HFA" has no rank column, so the value sits under the label itself. */
+  hfa: number | null;
 }
 
 export function parseMasseyCsv(text: string): MasseyRawRow[] {
@@ -173,6 +175,7 @@ export function parseMasseyCsv(text: string): MasseyRawRow[] {
   const headers = parseCsvLine(lines[0]);
   const teamIdx = findHeaderIdx(headers, "Team");
   const pwrLabelIdx = findHeaderIdx(headers, "Pwr");
+  const hfaIdx = findHeaderIdx(headers, "HFA");
   if (teamIdx === -1 || pwrLabelIdx === -1) return [];
   const pwrValueIdx = pwrLabelIdx + 1;
 
@@ -184,7 +187,9 @@ export function parseMasseyCsv(text: string): MasseyRawRow[] {
     if (!team || raw === "") continue;
     const n = Number(raw);
     if (Number.isNaN(n)) continue;
-    out.push({ team, pwr: n });
+    const hfaRaw = hfaIdx === -1 ? "" : (fields[hfaIdx] ?? "").trim();
+    const hfa = hfaRaw === "" || Number.isNaN(Number(hfaRaw)) ? null : Number(hfaRaw);
+    out.push({ team, pwr: n, hfa });
   }
   return out;
 }

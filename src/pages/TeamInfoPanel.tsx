@@ -4,6 +4,7 @@ import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import CoachAtsSection from "../components/CoachAtsSection";
 import TeamBettingSection from "../components/TeamBettingSection";
 import TeamOverviewSection from "../components/TeamOverviewSection";
+import HfaSection from "../components/HfaSection";
 import TeamPage from "./TeamPage";
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
 import { teamToSlug } from "../lib/slugs";
@@ -17,6 +18,7 @@ const FBS_TEAMS = TEAMS.filter((t) => t.div === "FBS")
 const TABS = [
   { key: "betting", label: "Betting by team" },
   { key: "coaches", label: "Coach records" },
+  { key: "hfa", label: "HFA" },
   { key: "team", label: "Team page" },
   { key: "pulls", label: "Data pulls" },
 ] as const;
@@ -78,6 +80,8 @@ export default function TeamInfoPanel({ onBack: _onBack }: { onBack: () => void 
       {tab === "betting" && <TeamBettingSection />}
 
       {tab === "coaches" && <CoachAtsSection refreshKey={reloadTick} />}
+
+      {tab === "hfa" && <HfaSection />}
 
       {tab === "team" && (
         <div>

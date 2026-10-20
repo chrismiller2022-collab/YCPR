@@ -18,6 +18,8 @@ import {
   fetchMcilleceRatings,
   fetchJpPlusRatings,
   fetchTeamRankingsRatings,
+  fetchTeamRankingsHfaPage,
+  saveTeamHfa,
   fetchRecentPullRuns,
   fetchSavedRatingsAtOrBefore,
   logManualPullRun,
@@ -152,6 +154,8 @@ type SourceResult = { summary: string; unmatchedNames?: string[]; label?: string
 
 function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   const [year, setYear] = useState(new Date().getFullYear());
+  // HFA pulled alongside Massey / TeamRankings is saved as the HFA going into the admin week (Teams → HFA).
+  const { week: hfaWeek } = useAdminWeek();
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<{ source: string; names: string[] } | null>(null);
@@ -284,7 +288,20 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         const r = await fetchJpPlusRatings();
         return { rows: r.rows, note: r.label };
       }),
-    tr: () => scrapeCore("TeamRankings", async () => ({ rows: await fetchTeamRankingsRatings(), note: null })),
+    tr: async () => {
+      const result = await scrapeCore("TeamRankings", async () => ({ rows: await fetchTeamRankingsRatings(), note: null }));
+      // Then TeamRankings' Home Advantage page (÷10, in points) — a second request, after the site's 10s crawl delay.
+      try {
+        await new Promise((r) => setTimeout(r, 10_000));
+        const hfaRows = await fetchTeamRankingsHfaPage("home-adv");
+        const { matched } = matchTeamRows(hfaRows, (r) => r.team);
+        const saved = await saveTeamHfa(year, hfaWeek, "tr", matched.map((m) => ({ team: m.team, value: m.row.value })));
+        result.summary += ` TR HFA: saved ${saved.saved} teams for week ${hfaWeek}.`;
+      } catch (e: any) {
+        result.summary += ` TR HFA pull failed: ${e.message ?? e}.`;
+      }
+      return result;
+    },
   };
 
   // Runs the given sources one after another (a failed source doesn't stop the rest), logs each run and shows one
@@ -429,8 +446,22 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       const { matched, unmatched: um } = matchTeamRows(normalized, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { massey: m.row.value } }));
       const result = await saveRatingRows(rows);
+      // The same file's HFA column, saved as the HFA going into the admin week.
+      const hfaRows = matched.flatMap((m) => {
+        const hfa = raw.find((r) => r.team === m.row.team)?.hfa;
+        return hfa != null ? [{ team: m.team, value: hfa }] : [];
+      });
+      let hfaNote = " No HFA column found, so HFA wasn't updated.";
+      if (hfaRows.length > 0) {
+        try {
+          const saved = await saveTeamHfa(year, hfaWeek, "massey", hfaRows);
+          hfaNote = ` HFA: saved ${saved.saved} teams for week ${hfaWeek}.`;
+        } catch (e: any) {
+          hfaNote = ` HFA save failed: ${e.message ?? e}.`;
+        }
+      }
       setLog(
-        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).${formatDiffNote(result.bySystem)}`
+        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).${formatDiffNote(result.bySystem)}${hfaNote}`
       );
       if (um.length > 0) setUnmatched({ source: "Massey CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);

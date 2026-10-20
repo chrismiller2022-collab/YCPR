@@ -357,7 +357,7 @@ export type HfaMode = "team" | "flat";
 
 export type LineMode = "open" | "close";
 
-function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
+export function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
   const field = lineMode === "open" ? "opening_spread" : "spread";
   const withSpread = lines.filter((l) => l[field] != null);
   if (withSpread.length === 0) return null;
