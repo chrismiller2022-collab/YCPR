@@ -19,82 +19,12 @@ import {
   type SosWeights,
 } from "../lib/sosBlend";
 import SavedWeekProgression from "../components/SavedWeekProgression";
+import SosBackfillSection from "../components/SosBackfillSection";
+import { computeSosRows, type OppCell, type SosRow } from "../lib/sosCompute";
 
 function fmtNum(v: number | null | undefined, digits = 2) {
   if (v == null) return "–";
   return `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
-}
-
-interface OppCell {
-  opp: string;
-  rating: number;
-}
-
-function toCell(c: BestWorstCandidate | null): OppCell | null {
-  return c ? { opp: c.opponent.team, rating: c.oppCurrentRating } : null;
-}
-
-interface SosRow {
-  team: string;
-  div: "FBS" | "FCS";
-  conf: string;
-  avgOppYcTotal: number | null;
-  avgOppYcConf: number | null;
-  sosSrsTotal: number | null;
-  sosSrsConf: number | null;
-  numSrsRuns: number | null;
-  bestWinTotal: OppCell | null;
-  bestWinConf: OppCell | null;
-  bestLossTotal: OppCell | null;
-  bestLossConf: OppCell | null;
-  worstLossTotal: OppCell | null;
-  worstLossConf: OppCell | null;
-  hypoWins: number | null;
-  top7: number | null;
-}
-
-// Same two calculations as the public Strength of Schedule page's
-// "Hypothetical #12 Team Win Total" and "Top 7" modes (see
-// StrengthOfSchedulePage.tsx) — ported here as-is (same site power
-// rating basis, not the Rating Systems "YC" conglomerate the rest of
-// this page's Avg Opp PR/SOS (SRS) columns use) so Admin shows the exact
-// same numbers the public page does, just alongside everything else.
-function ratingForTeam(name: string, liveByTeam: Record<string, any>): number | null {
-  const fallback = TEAMS_BY_NAME[name]?.rating;
-  if (fallback == null) return null;
-  return liveByTeam[name]?.rating ?? fallback;
-}
-
-function computeHypoWinsFor(teamName: string, games: GameWithLines[], liveByTeam: Record<string, any>, top12Rating: number | null): number | null {
-  if (top12Rating == null) return null;
-  const teamGames = games.filter((g) => g.home_team === teamName || g.away_team === teamName);
-  if (teamGames.length === 0) return null;
-  let expWins = 0;
-  for (const g of teamGames) {
-    const isHome = g.home_team === teamName;
-    const oppName = isHome ? g.away_team : g.home_team;
-    const oppRating = ratingForTeam(oppName, liveByTeam);
-    if (oppRating == null) continue;
-    const spread = isHome
-      ? top12Rating - oppRating - hfaFor(teamName, liveByTeam)
-      : top12Rating - oppRating + hfaFor(oppName, liveByTeam);
-    expWins += spreadToWinPct(spread);
-  }
-  return expWins;
-}
-
-function computeTop7For(teamName: string, games: GameWithLines[], liveByTeam: Record<string, any>): number | null {
-  const teamGames = games.filter((g) => g.home_team === teamName || g.away_team === teamName);
-  const oppRatings: number[] = [];
-  for (const g of teamGames) {
-    const isHome = g.home_team === teamName;
-    const oppName = isHome ? g.away_team : g.home_team;
-    const oppRating = ratingForTeam(oppName, liveByTeam);
-    if (oppRating != null) oppRatings.push(oppRating);
-  }
-  if (oppRatings.length === 0) return null;
-  const toughest7 = [...oppRatings].sort((a, b) => a - b).slice(0, 7);
-  return toughest7.reduce((s, r) => s + r, 0) / toughest7.length;
 }
 
 const cellStyle: CSSProperties = { padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" };
@@ -271,48 +201,10 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
     }
   }
 
-  // Same "#12 power-rated FBS team" reference point as the public page —
-  // sorted ascending (most negative/best first), index 11.
-  const top12Rating = useMemo(() => {
-    const ratings = TEAMS.filter((t) => t.div === "FBS")
-      .map((t) => ratingForTeam(t.team, liveByTeam))
-      .filter((v): v is number => v != null)
-      .sort((a, b) => a - b);
-    return ratings.length >= 12 ? ratings[11] : null;
-  }, [liveByTeam]);
-
-  const rows: SosRow[] = useMemo(() => {
-    if (games.length === 0) return [];
-    const confGames = conferenceOnly(games);
-
-    return TEAMS.map((t) => {
-      const oppYc = computeAvgOppYc(t.team, games, ycByTeam);
-      const srs = srsSos?.get(t.team);
-
-      const teamConfGames = confGames.filter((g) => g.home_team === t.team || g.away_team === t.team);
-      const totalBw = computeBestWorst(t, games, liveByTeam);
-      const confBw = computeBestWorst(t, teamConfGames, liveByTeam);
-
-      return {
-        team: t.team,
-        div: t.div,
-        conf: t.conf,
-        avgOppYcTotal: oppYc.total,
-        avgOppYcConf: oppYc.conference,
-        sosSrsTotal: srs?.sosTotal ?? null,
-        sosSrsConf: srs?.sosConference ?? null,
-        numSrsRuns: srs ? runsUsedForSrs : null,
-        bestWinTotal: toCell(totalBw.bestWin.actual),
-        bestWinConf: toCell(confBw.bestWin.actual),
-        bestLossTotal: toCell(totalBw.bestLoss.actual),
-        bestLossConf: toCell(confBw.bestLoss.actual),
-        worstLossTotal: toCell(totalBw.worstLoss.actual),
-        worstLossConf: toCell(confBw.worstLoss.actual),
-        hypoWins: computeHypoWinsFor(t.team, games, liveByTeam, top12Rating),
-        top7: computeTop7For(t.team, games, liveByTeam),
-      };
-    });
-  }, [games, ycByTeam, srsSos, runsUsedForSrs, liveByTeam, top12Rating]);
+  const rows: SosRow[] = useMemo(
+    () => computeSosRows({ games, ycByTeam, liveByTeam, srsSos, numSrsRuns: runsUsedForSrs }),
+    [games, ycByTeam, srsSos, runsUsedForSrs, liveByTeam]
+  );
 
   const filtered = rows.filter((r) => {
     if (divFilter !== "all" && r.div !== divFilter) return false;
@@ -621,6 +513,8 @@ export default function SosAdminPanel({ onBack }: { onBack: () => void }) {
             refreshKey={progressionRefresh}
             higherIsBetter={true}
           />
+
+          <SosBackfillSection season={season} onSaved={() => setProgressionRefresh((n) => n + 1)} />
         </>
       )}
     </div>
