@@ -5,10 +5,11 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchMonteCarloRun, fetchMonteCarloRuns } from "../lib/api/monteCarlo";
 import { fetchLatestSavedResumeRanks } from "../lib/api/resumeWeights";
 import ExportPngButton from "../components/ExportPngButton";
+import { useVizLiveMetrics } from "../lib/vizLiveMetrics";
 import type { TeamSimResult } from "../lib/montecarlo/engine";
 
-// Admin scatter plot: pick any two team metrics and see every team's logo at its (x, y). Sources: the latest weekly
-// ratings upload, the latest saved Monte Carlo run, and the latest saved Resume Ratings week.
+// Admin scatter plot: pick any two team metrics and see every team's logo at its (x, y). Sources: live power ratings,
+// the latest saved Monte Carlo run, the latest saved Resume Ratings week, and live game data (vizLiveMetrics.ts).
 
 interface TeamPoint {
   team: string;
@@ -28,12 +29,15 @@ interface Metric {
 const METRICS: Metric[] = [
   { key: "rating", label: "Power rating", source: "Ratings", lowerIsBetter: true },
   { key: "resume", label: "Resume rating", source: "Resume Ratings" },
-  { key: "sor", label: "Strength of record", source: "Ratings" },
-  { key: "total_wins", label: "Projected wins", source: "Ratings" },
-  { key: "season_win_line", label: "Vegas win total", source: "Ratings" },
-  { key: "change_from_preseason", label: "Wins vs preseason projection", source: "Ratings" },
-  { key: "ats_pct", label: "ATS win %", source: "Ratings", pct: true },
-  { key: "hfa", label: "Home-field advantage", source: "Ratings" },
+  { key: "sor", label: "Strength of schedule (blend)", source: "SOS", lowerIsBetter: true },
+  { key: "total_wins", label: "Projected wins", source: "Games + ratings" },
+  { key: "season_win_line", label: "Vegas win total", source: "Win total lines" },
+  { key: "change_from_preseason", label: "Projected wins vs Vegas win total", source: "Games + win total lines" },
+  { key: "ats_pct", label: "ATS win %", source: "Games", pct: true },
+  { key: "ats_margin", label: "ATS margin (avg)", source: "Games" },
+  { key: "hfa", label: "Home-field advantage", source: "Weekly stats" },
+  { key: "net_sr", label: "Net success rate", source: "Weekly CFBD pull" },
+  { key: "avg_pgwe", label: "Avg postgame win expectancy", source: "Weekly CFBD pull", pct: true },
   { key: "mc_wins", label: "Mean wins (Monte Carlo)", source: "Monte Carlo" },
   { key: "mc_playoff", label: "Playoff odds", source: "Monte Carlo", pct: true },
   { key: "mc_conf", label: "Conference title odds", source: "Monte Carlo", pct: true },
@@ -91,12 +95,14 @@ export default function VizBuilderPanel() {
       .catch(() => setResume(null));
   }, [season]);
 
+  const live = useVizLiveMetrics(season, (team) => stats[team]?.rating ?? TEAMS.find((t) => t.team === team)?.rating ?? null);
+
   const points = useMemo<TeamPoint[]>(() => {
     const mcBy = new Map((mc?.results ?? []).map((r) => [r.team, r]));
     return TEAMS.map((t) => {
       const s: any = stats[t.team] ?? {};
       const r = mcBy.get(t.team);
-      const atsN = (s.ats_wins ?? 0) + (s.ats_losses ?? 0);
+      const L = live[t.team];
       return {
         team: t.team,
         conf: t.conf,
@@ -104,12 +110,15 @@ export default function VizBuilderPanel() {
         values: {
           rating: s.rating ?? t.rating ?? null,
           resume: resume?.byTeam[t.team]?.rating ?? null,
-          sor: s.sor ?? null,
-          total_wins: s.total_wins ?? null,
-          season_win_line: s.season_win_line ?? null,
-          change_from_preseason: s.change_from_preseason ?? null,
-          ats_pct: atsN ? (s.ats_wins ?? 0) / atsN : null,
-          hfa: s.hfa ?? null,
+          sor: L?.sos ?? null,
+          total_wins: L?.projWins ?? null,
+          season_win_line: L?.vegasWins ?? null,
+          change_from_preseason: L?.winsVsVegas ?? null,
+          ats_pct: L?.atsPct ?? null,
+          ats_margin: L?.atsMargin ?? null,
+          hfa: L?.hfa ?? null,
+          net_sr: L?.netSr ?? null,
+          avg_pgwe: L?.avgPgwe ?? null,
           mc_wins: r?.meanWins ?? null,
           mc_playoff: r ? r.playoffPct / 100 : null,
           mc_conf: r && t.conf !== "FBS Independents" ? r.confTitlePct / 100 : null,
@@ -117,7 +126,7 @@ export default function VizBuilderPanel() {
         },
       };
     });
-  }, [stats, mc, resume]);
+  }, [stats, mc, resume, live]);
 
   const conferences = useMemo(() => Array.from(new Set(TEAMS.filter((t) => t.div === "FBS").map((t) => t.conf))).sort(), []);
 
