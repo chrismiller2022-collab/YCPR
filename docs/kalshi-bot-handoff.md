@@ -271,3 +271,43 @@ read-only snapshot logger so Kalshi opening prices vs live YCPR are captured goi
   144h out): underdog picks +6.5¢/contract (90% CI [0.4, 12.2]) but CLV ≈ 0; favorite picks ≈ 0 with CLV −1.5¢;
   underdogs +10 +9¢ (CI touches 0). Entering early vs 30 min before kickoff made almost no difference: on average the
   Kalshi line does not drift toward YCPR during the week, and it drifts against our favorite picks.
+
+## 14. Trading approach Chris signed off on (2026-10-20)
+
+Lean toward a side Chris picked, quote a ladder of numbers all week, and let the other side's fills pay.
+
+**Worked example** (Team B at home; Chris has B −4.3, market B −6.5; fair from `bot/fairPrice`, σ 15.31):
+
+| Team A | My fair | Market fair | Edge |
+|---|---|---|---|
+| +3.5 | 50.4¢ | 44.8¢ | 5.6¢ |
+| +4.5 | 52.9¢ | 47.2¢ | 5.7¢ |
+| +5.5 | 54.4¢ | 48.8¢ | 5.7¢ |
+| +6.5 | 56.8¢ | 51.1¢ | 5.7¢ |
+| +7.5 | 62.9¢ | 57.3¢ | 5.6¢ |
+| +10.5 | 69.2¢ | 63.9¢ | 5.3¢ |
+
+Rules that follow from it:
+1. **"Team B −X" is the other side of "Team A +X"**, the same contract. Net exposure per number = A contracts − B contracts.
+   Bid–ask profit = buy A +X at our bid, later sell it at our ask (= take B −X); the pair is locked whatever happens.
+2. **The whole ladder is one bet on the final margin.** Track P&L for every possible final margin; cap the worst case per
+   game, not contracts per number.
+3. **Edge is about equal on every number** when our number is a shift of the market's (~5.5¢ here). +7.5 costs ~6¢ more
+   than +6.5 because B wins by exactly 7 ~6% of the time. Prefer numbers where the market's price step between neighbors
+   is wrong vs our fair step (key-number mispricing), and numbers with liquidity.
+4. **Middles are welcome:** long A +7.5 and short A +4.5 (= B −4.5) wins both on B by 5–7 (~10% here, 7 inside).
+
+Per-game parameters:
+- **Lean:** target exposure on the picked side, as a worst-case dollar loss.
+- **Picked-side bids:** tight (fair − small edge) so they fill. **Picked-side asks:** wide, only sell back when paid well.
+- **Caps:** per number and per game (worst case across margins).
+- **Stops:** stop adding when the edge is gone (and sell back if the bid exceeds fair + fees); when the line moves
+  against us, add only against the blended fair (YCPR leaning toward market as kickoff nears), only if sportsbooks
+  didn't move the same way, with more edge required per extra contract and a hard cap; stop the game once realized +
+  open P&L hits its profit target.
+- **Fair price:** blend of Kalshi-implied (margin distribution fit to the Kalshi ladder, weighted by depth/tightness),
+  sportsbook lines, and YCPR as a tilt where history supports it (underdogs, +10 dogs, early week).
+- **Venues:** Kalshi (API, liquidity, exit/hedge); ProphetX if trading API access is granted (whole-number lines,
+  pushes, ~2% of net winnings); Novig manual unless API access is granted.
+- **Expectations:** at 54% on ~50 selected games, ≈3–4.5¢ per contract per game from the directional edge; bid–ask
+  adds ≈0.3–1¢ per round trip. Over 50 games a true 54% bettor still finishes down ~30% of the time.
