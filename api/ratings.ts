@@ -1217,5 +1217,23 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // -----------------------------------------------------------------
+  // action: "hfaSettingsSave" — the Team HFA definition (blend weights etc.) for a season.
+  // -----------------------------------------------------------------
+  if (action === "hfaSettingsSave") {
+    const { season, settings } = req.body ?? {};
+    if (!season || typeof season !== "number" || !settings || typeof settings !== "object") {
+      res.status(400).json({ error: "Missing season or settings" });
+      return;
+    }
+    const { error } = await supabaseAdmin.from("hfa_settings").upsert({ season, settings, updated_at: new Date().toISOString() }, { onConflict: "season" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true });
+    return;
+  }
+
   res.status(400).json({ error: `Unknown action '${action}'` });
 }

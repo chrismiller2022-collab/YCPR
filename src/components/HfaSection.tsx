@@ -3,8 +3,8 @@ import SortHeader from "./SortHeader";
 import { supabase } from "../lib/supabaseClient";
 import { fetchAllRows } from "../lib/api/fetchAll";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchTeamHfa, indexTeamHfa, type TeamHfaRow } from "../lib/api/teamHfa";
-import { fetchTeamRankingsHfaPage, saveTeamHfa, type HfaSource, type TrHfaPage } from "../lib/api/ratingSystems";
+import { fetchTeamHfa, fetchHfaSettings, indexTeamHfa, type TeamHfaRow } from "../lib/api/teamHfa";
+import { fetchTeamRankingsHfaPage, saveHfaSettings, saveTeamHfa, type HfaSource, type TrHfaPage } from "../lib/api/ratingSystems";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { useAdminWeek } from "../lib/adminWeek";
 import { matchTeamRows } from "../lib/teamNameMatch";
@@ -74,7 +74,30 @@ export default function HfaSection() {
   const [s, setS] = useState<HfaSettings>(DEFAULT_HFA_SETTINGS);
   const [lineMode, setLineMode] = useState<LineMode>("close");
   const [fbsOnly, setFbsOnly] = useState(true);
-  const [sortKey, setSortKey] = useState("average");
+  const [sortKey, setSortKey] = useState("blend");
+  // The saved Team HFA definition: what the blend row and Team HFA column use, and what the site will read.
+  const [saved, setSaved] = useState<HfaSettings | null>(null);
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  useEffect(() => {
+    fetchHfaSettings(SEASON)
+      .then((x) => {
+        if (!x) return;
+        const merged = { ...DEFAULT_HFA_SETTINGS, ...x, weights: { ...DEFAULT_HFA_SETTINGS.weights, ...(x.weights ?? {}) }, elevation: { ...DEFAULT_HFA_SETTINGS.elevation, ...(x.elevation ?? {}) } } as HfaSettings;
+        setS(merged);
+        setSaved(merged);
+      })
+      .catch(() => {});
+  }, []);
+  const unsaved = JSON.stringify(s) !== JSON.stringify(saved ?? DEFAULT_HFA_SETTINGS);
+  async function saveSettings() {
+    try {
+      await saveHfaSettings(SEASON, s);
+      setSaved(s);
+      setSettingsMsg("Saved as the Team HFA definition.");
+    } catch (e: any) {
+      setSettingsMsg(e.message ?? "Save failed");
+    }
+  }
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [showElevGames, setShowElevGames] = useState(false);
 
@@ -204,7 +227,6 @@ export default function HfaSection() {
         trRaw: inp.trRaw,
         tr: inp.tr,
         bluechip: inp.bluechip,
-        average: variantHfa("average", inp, s, splitMean),
         blend: variantHfa("blend", inp, s, splitMean),
         split: inp.split,
         splitHfa: inp.split != null ? variantHfa("split", inp, s, splitMean) : null,
@@ -252,8 +274,9 @@ export default function HfaSection() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <p style={{ ...small, margin: 0 }}>
-        Home-field advantage by source, and a {SEASON} backtest of each choice. The site itself still runs a flat 2.4 everywhere; nothing here changes
-        live projections or locked games. Values are what was known going into each week: week N holds what was pulled before week N kicked off.
+        Each source (Massey's CSV HFA column, TeamRankings, Blue Chip, the TR home/away split) is collected separately here. A team's true HFA is the
+        Team HFA: the blend of all of them, with the weights you save below. The backtest shows every source on its own and the blend. The site itself still
+        runs a flat 2.4 until you switch it over; nothing here changes live projections or locked games. Values are what was known going into each week: week N holds what was pulled before week N kicked off.
       </p>
 
       <div style={{ ...panel, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
@@ -307,10 +330,15 @@ export default function HfaSection() {
           </label>
         </div>
         <div style={{ display: "flex", gap: "1.1rem", flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>Blend weights</span>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600 }} title="Team HFA = these weights over every source a team has; a missing source drops out">Team HFA blend</span>
           <Slider label="Massey" value={s.weights.massey} min={0} max={3} step={0.25} onChange={(v) => setS({ ...s, weights: { ...s.weights, massey: v } })} fmt={(v) => v.toFixed(2)} />
           <Slider label="TR" value={s.weights.tr} min={0} max={3} step={0.25} onChange={(v) => setS({ ...s, weights: { ...s.weights, tr: v } })} fmt={(v) => v.toFixed(2)} />
           <Slider label="Blue Chip" value={s.weights.bluechip} min={0} max={3} step={0.25} onChange={(v) => setS({ ...s, weights: { ...s.weights, bluechip: v } })} fmt={(v) => v.toFixed(2)} />
+          <Slider label="Home/away split" value={s.weights.split} min={0} max={3} step={0.25} onChange={(v) => setS({ ...s, weights: { ...s.weights, split: v } })} fmt={(v) => v.toFixed(2)} />
+          <button className="menu-btn" onClick={saveSettings} disabled={!unsaved} title="Saves these settings as the season's Team HFA">
+            {unsaved ? "Save as Team HFA" : "Team HFA saved"}
+          </button>
+          {settingsMsg && <span style={small}>{settingsMsg}</span>}
         </div>
         <div style={{ display: "flex", gap: "1.1rem", flexWrap: "wrap", alignItems: "center" }}>
           <Slider label="Home/away split shrink" value={s.splitShrink} min={0} max={1} step={0.05} onChange={(v) => setS({ ...s, splitShrink: v })} fmt={(v) => v.toFixed(2)} />
@@ -467,12 +495,11 @@ export default function HfaSection() {
             <thead>
               <tr>
                 {th("Team", "team", undefined)}
+                {th("Team HFA", "blend")}
                 {th("Massey", "massey")}
                 {th("TR ÷10", "trRaw")}
                 {th(s.centerTr ? "TR centered" : "TR used", "tr")}
                 {th("Blue Chip", "bluechip")}
-                {th("Average", "average")}
-                {th("Blend", "blend")}
                 {th("TR home − away", "split")}
                 {th("Split HFA", "splitHfa")}
                 {th("Elevation", "elevFt")}
@@ -482,12 +509,11 @@ export default function HfaSection() {
               {sortedTeams.map((t) => (
                 <tr key={t.team}>
                   <td>{t.team}</td>
+                  <td className="td-right" style={{ fontWeight: 700 }}>{f(t.blend)}</td>
                   <td className="td-right">{f(t.massey)}</td>
                   <td className="td-right">{f(t.trRaw)}</td>
                   <td className="td-right">{f(t.tr)}</td>
                   <td className="td-right">{f(t.bluechip, 1)}</td>
-                  <td className="td-right">{f(t.average)}</td>
-                  <td className="td-right">{f(t.blend)}</td>
                   <td className="td-right">{f(t.split, 1)}</td>
                   <td className="td-right">{f(t.splitHfa)}</td>
                   <td className="td-right" style={t.high ? { color: "var(--c-warn)", fontWeight: 600 } : undefined}>
@@ -498,7 +524,7 @@ export default function HfaSection() {
             </tbody>
           </table>
         </div>
-        <p style={small}>Missing values fall back to the flat slider in Average, Blend and Split. Elevation in amber is above the dampener threshold.</p>
+        <p style={small}>A source a team doesn't have drops out of its Team HFA; with none, it's the flat value. Single-source rows in the backtest use the flat value for a missing team. Elevation in amber is above the dampener threshold.</p>
       </div>
     </div>
   );

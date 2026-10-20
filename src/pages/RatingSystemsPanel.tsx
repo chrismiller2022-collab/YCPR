@@ -296,7 +296,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         const hfaRows = await fetchTeamRankingsHfaPage("home-adv");
         const { matched } = matchTeamRows(hfaRows, (r) => r.team);
         const saved = await saveTeamHfa(year, hfaWeek, "tr", matched.map((m) => ({ team: m.team, value: m.row.value })));
-        result.summary += ` TR HFA: saved ${saved.saved} teams for week ${hfaWeek}.`;
+        result.summary += ` TR Home Advantage saved as the TR input on Teams → HFA (${saved.saved} teams, week ${hfaWeek}).`;
       } catch (e: any) {
         result.summary += ` TR HFA pull failed: ${e.message ?? e}.`;
       }
@@ -455,7 +455,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       if (hfaRows.length > 0) {
         try {
           const saved = await saveTeamHfa(year, hfaWeek, "massey", hfaRows);
-          hfaNote = ` HFA: saved ${saved.saved} teams for week ${hfaWeek}.`;
+          hfaNote = ` Massey HFA column saved as the Massey input on Teams → HFA (${saved.saved} teams, week ${hfaWeek}); it isn't the team's HFA on its own, the Team HFA blend there is.`;
         } catch (e: any) {
           hfaNote = ` HFA save failed: ${e.message ?? e}.`;
         }

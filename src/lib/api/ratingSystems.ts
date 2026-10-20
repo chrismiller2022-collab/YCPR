@@ -223,6 +223,11 @@ export function saveTeamHfa(season: number, week: number, source: HfaSource, row
   return authedPost("hfaSave", { season, week, source, asOf: asOf ?? null, rows });
 }
 
+/** Saves the season's Team HFA definition (Teams → HFA blend weights and options). */
+export function saveHfaSettings(season: number, settings: Record<string, any>) {
+  return authedPost("hfaSettingsSave", { season, settings });
+}
+
 export interface JpPlusSnapshot {
   label: string;
   rows: { team: string; conference: string; value: number }[]; // value already sign-flipped to this site's convention

@@ -22,7 +22,8 @@ export interface HfaContext {
 export interface HfaSettings {
   flat: number; // flat HFA (slider 0–5)
   centerTr: boolean; // TR ÷10 averages well under the usual 2.4, so optionally re-center it on the flat value
-  weights: { massey: number; tr: number; bluechip: number }; // Blend weights
+  // Team HFA = the weighted blend of every source collected (a source a team doesn't have drops out of its blend).
+  weights: { massey: number; tr: number; bluechip: number; split: number };
   splitShrink: number; // home/away split experiment: flat + k × (split − league mean split) / 2
   elevation: { on: boolean; thresholdM: number; factor: number }; // dampen HFA when both teams' home stadiums are high
 }
@@ -30,21 +31,20 @@ export interface HfaSettings {
 export const DEFAULT_HFA_SETTINGS: HfaSettings = {
   flat: 2.4,
   centerTr: true,
-  weights: { massey: 1, tr: 1, bluechip: 1 },
+  weights: { massey: 1, tr: 1, bluechip: 1, split: 0 },
   splitShrink: 0.25,
   elevation: { on: false, thresholdM: 1200, factor: 0.5 },
 };
 
-export type VariantKey = "flat" | "massey" | "tr" | "bluechip" | "average" | "blend" | "split" | "live";
+export type VariantKey = "flat" | "massey" | "tr" | "bluechip" | "split" | "blend" | "live";
 
 export const VARIANTS: { key: VariantKey; label: string; note: string }[] = [
   { key: "flat", label: "Flat", note: "The slider value for every home team" },
   { key: "massey", label: "Massey", note: "HFA column of the Massey CSV" },
   { key: "tr", label: "TeamRankings", note: "Home Advantage ÷ 10" },
   { key: "bluechip", label: "Blue Chip", note: "Static table" },
-  { key: "average", label: "Average", note: "Mean of whichever of Massey, TR, Blue Chip the team has" },
-  { key: "blend", label: "Blend", note: "Weighted by the sliders" },
   { key: "split", label: "Home/away split", note: "Flat + shrink × (TR home rating − TR away rating, centered) ÷ 2" },
+  { key: "blend", label: "Team HFA (blend)", note: "Every source above, weighted by the blend sliders" },
   { key: "live", label: "As the site runs today", note: "Flat 2.4, including at neutral sites" },
 ];
 
@@ -85,6 +85,10 @@ export function teamInputs(ctx: HfaContext, s: HfaSettings, team: string, week: 
   };
 }
 
+function splitHfa(inp: TeamHfaInputs, s: HfaSettings, splitMean: number | null): number | null {
+  return inp.split != null && splitMean != null ? s.flat + (s.splitShrink * (inp.split - splitMean)) / 2 : null;
+}
+
 function weighted(parts: { v: number | null; w: number }[]): number | null {
   let sum = 0;
   let wsum = 0;
@@ -107,12 +111,17 @@ export function variantHfa(key: VariantKey, inp: TeamHfaInputs, s: HfaSettings, 
       return inp.tr ?? s.flat;
     case "bluechip":
       return inp.bluechip ?? s.flat;
-    case "average":
-      return weighted([{ v: inp.massey, w: 1 }, { v: inp.tr, w: 1 }, { v: inp.bluechip, w: 1 }]) ?? s.flat;
-    case "blend":
-      return weighted([{ v: inp.massey, w: s.weights.massey }, { v: inp.tr, w: s.weights.tr }, { v: inp.bluechip, w: s.weights.bluechip }]) ?? s.flat;
     case "split":
-      return inp.split != null && splitMean != null ? s.flat + (s.splitShrink * (inp.split - splitMean)) / 2 : s.flat;
+      return splitHfa(inp, s, splitMean) ?? s.flat;
+    case "blend":
+      return (
+        weighted([
+          { v: inp.massey, w: s.weights.massey },
+          { v: inp.tr, w: s.weights.tr },
+          { v: inp.bluechip, w: s.weights.bluechip },
+          { v: splitHfa(inp, s, splitMean), w: s.weights.split },
+        ]) ?? s.flat
+      );
   }
 }
 
@@ -214,9 +223,10 @@ export function runVariant(key: VariantKey, rows: BacktestGame[], ctx: HfaContex
     else {
       const inp = teamInputs(ctx, s, g.home_team, g.week, means);
       const la = inp.lookahead;
-      const usesMassey = key === "massey" || ((key === "average" || (key === "blend" && s.weights.massey > 0)) && inp.massey != null);
-      const usesTr = key === "tr" || ((key === "average" || (key === "blend" && s.weights.tr > 0)) && inp.tr != null);
-      if ((usesMassey && la.massey) || (usesTr && la.tr) || (key === "split" && la.split)) lookaheadGames++;
+      const usesMassey = key === "massey" || (key === "blend" && s.weights.massey > 0 && inp.massey != null);
+      const usesTr = key === "tr" || (key === "blend" && s.weights.tr > 0 && inp.tr != null);
+      const usesSplit = key === "split" || (key === "blend" && s.weights.split > 0 && inp.split != null);
+      if ((usesMassey && la.massey) || (usesTr && la.tr) || (usesSplit && la.split)) lookaheadGames++;
       hfa = variantHfa(key, inp, s, means.split);
       if (s.elevation.on && r.highElevation) {
         hfa *= s.elevation.factor;
@@ -300,4 +310,17 @@ export function bestFlatHfa(rows: BacktestGame[]): { value: number; se: number; 
   const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
   return { value: mean, se: sd / Math.sqrt(xs.length), n: xs.length };
+}
+
+/** League means for a week, for centering TR and the home/away split. */
+export function weekMeans(index: HfaBySource, week: number): { tr: number | null; split: number | null } {
+  const h = weekMean(index, "tr_home", week);
+  const a = weekMean(index, "tr_away", week);
+  return { tr: weekMean(index, "tr", week), split: h != null && a != null ? h - a : null };
+}
+
+/** A team's Team HFA (the saved blend) going into `week`. Neutral sites are the caller's job (0 there). */
+export function teamHfa(ctx: HfaContext, s: HfaSettings, team: string, week: number): number {
+  const means = weekMeans(ctx.index, week);
+  return variantHfa("blend", teamInputs(ctx, s, team, week, means), s, means.split);
 }

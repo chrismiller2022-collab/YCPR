@@ -7,7 +7,8 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { fetchTeamSos } from "../lib/api/ratingSystems";
 import { fetchResumeRatingsAvailableWeeks, fetchResumeRatingsForWeek, fetchFinishedResumeAvailableWeeks, fetchFinishedResumeForWeek } from "../lib/api/resumeWeights";
-import { fetchTeamHfa, indexTeamHfa, hfaAsOf } from "../lib/api/teamHfa";
+import { fetchTeamHfa, fetchHfaSettings, indexTeamHfa, hfaAsOf } from "../lib/api/teamHfa";
+import { DEFAULT_HFA_SETTINGS, teamHfa, type HfaSettings } from "../lib/hfaBacktest";
 import { useLatestMonteCarloRun } from "../lib/futuresData";
 import { useBetHistoryRecords } from "../lib/useBetHistoryRecords";
 import { breakdownByConference, breakdownByTeam, DEFAULT_CUSTOM_PARAMS, emptyTally, winPct, type RecordTally } from "../lib/betHistory";
@@ -35,6 +36,7 @@ interface Row {
   ncLosses: number;
   ats: RecordTally;
   bets: RecordTally;
+  hfaTeam: number | null; // the saved Team HFA blend
   hfaBlueChip: number | null;
   hfaMassey: number | null;
   hfaTr: number | null;
@@ -66,6 +68,7 @@ export default function AdminConferencesPanel() {
   const [resume, setResume] = useState<{ week: number | null; byTeam: Record<string, number | null> }>({ week: null, byTeam: {} });
   const [soFar, setSoFar] = useState<{ week: number | null; byTeam: Record<string, number | null> }>({ week: null, byTeam: {} });
   const [hfaIndex, setHfaIndex] = useState<ReturnType<typeof indexTeamHfa>>({});
+  const [hfaSettings, setHfaSettings] = useState<HfaSettings>(DEFAULT_HFA_SETTINGS);
 
   useEffect(() => {
     fetchGamesWithLines(SEASON).then(setGames).catch(() => setGames([]));
@@ -82,6 +85,9 @@ export default function AdminConferencesPanel() {
     latest(fetchResumeRatingsAvailableWeeks, fetchResumeRatingsForWeek).then(setResume).catch(() => {});
     latest(fetchFinishedResumeAvailableWeeks, fetchFinishedResumeForWeek).then(setSoFar).catch(() => {});
     fetchTeamHfa(SEASON).then((r) => setHfaIndex(indexTeamHfa(r))).catch(() => {});
+    fetchHfaSettings(SEASON)
+      .then((x) => x && setHfaSettings({ ...DEFAULT_HFA_SETTINGS, ...x, weights: { ...DEFAULT_HFA_SETTINGS.weights, ...(x.weights ?? {}) } } as HfaSettings))
+      .catch(() => {});
   }, []);
 
   const confOf = useMemo(() => Object.fromEntries(TEAMS.map((t) => [t.team, t.conf])), []);
@@ -132,6 +138,7 @@ export default function AdminConferencesPanel() {
       ncLosses: r.ncl,
       ats: atsByTeam.everyBet.get(team) ?? emptyTally(),
       bets: atsByTeam.filteredBet.get(team) ?? emptyTally(),
+      hfaTeam: teamHfa({ index: hfaIndex, elevationM: {} }, hfaSettings, team, adminWeek),
       hfaBlueChip: BLUE_CHIP_HFA[team] ?? null,
       hfaMassey: hfaAsOf(hfaIndex, "massey", team, adminWeek)?.value ?? null,
       hfaTr: hfaAsOf(hfaIndex, "tr", team, adminWeek)?.value ?? null,
@@ -158,13 +165,14 @@ export default function AdminConferencesPanel() {
           // A game counts once per team in it, same as Bet History's conference breakdown.
           ats: atsByConf.everyBet.get(conf) ?? emptyTally(),
           bets: atsByConf.filteredBet.get(conf) ?? emptyTally(),
+          hfaTeam: avg(teams.map((t) => t.hfaTeam)),
           hfaBlueChip: avg(teams.map((t) => t.hfaBlueChip)),
           hfaMassey: avg(teams.map((t) => t.hfaMassey)),
           hfaTr: avg(teams.map((t) => t.hfaTr)),
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [div, liveByTeam, mc, sos, resume, soFar, records, atsByConf, atsByTeam, hfaIndex, adminWeek]
+    [div, liveByTeam, mc, sos, resume, soFar, records, atsByConf, atsByTeam, hfaIndex, hfaSettings, adminWeek]
   );
 
   const shown = useMemo(() => {
@@ -232,6 +240,7 @@ export default function AdminConferencesPanel() {
               {th("Non-conf W-L", "ncWins")}
               {th("Model ATS", "ats")}
               {th("Bets (Filtered)", "bets")}
+              {th("Team HFA", "hfaTeam", "The saved blend from Teams → HFA")}
               {th("HFA Blue Chip", "hfaBlueChip")}
               {th("HFA Massey", "hfaMassey")}
               {th("HFA TR ÷10", "hfaTr")}
@@ -263,6 +272,7 @@ export default function AdminConferencesPanel() {
                 </td>
                 <td className="td-right">{rec(r.ats)}</td>
                 <td className="td-right">{rec(r.bets)}</td>
+                <td className="td-right" style={{ fontWeight: 700 }}>{f(r.hfaTeam)}</td>
                 <td className="td-right">{f(r.hfaBlueChip, 1)}</td>
                 <td className="td-right">{f(r.hfaMassey)}</td>
                 <td className="td-right">{f(r.hfaTr)}</td>

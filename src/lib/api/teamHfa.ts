@@ -48,3 +48,10 @@ export function hfaAsOf(index: HfaBySource, source: HfaSource, team: string, wee
   if (atOrBefore.length > 0) return { value: byWeek[atOrBefore[atOrBefore.length - 1]][team], lookahead: false };
   return { value: byWeek[weeks[0]][team], lookahead: true };
 }
+
+/** The season's saved Team HFA definition (blend weights and options), or null if never saved. */
+export async function fetchHfaSettings(season: number): Promise<Record<string, any> | null> {
+  const { data, error } = await supabase.from("hfa_settings").select("settings").eq("season", season).maybeSingle();
+  if (error) throw error;
+  return (data?.settings as Record<string, any>) ?? null;
+}
