@@ -1,3 +1,4 @@
+import { fetchPlacedBets, type PlacedBetRow } from "../lib/api/placedBets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import TeamLogo from "../components/TeamLogo";
@@ -459,7 +460,7 @@ function PerfRow({ bucket, bold }: { bucket: PerfBucket; bold?: boolean }) {
         style={{
           ...cellStyle,
           textAlign: "right",
-          color: bucket.units > 0 ? "#8fd39a" : bucket.units < 0 ? "#c45c52" : undefined,
+          color: bucket.units > 0 ? "var(--c-ok)" : bucket.units < 0 ? "var(--c-err)" : undefined,
         }}
       >
         {bucket.units > 0 ? "+" : ""}
@@ -667,6 +668,29 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   // disappear just because they've started. The checkbox stays for
   // anyone who does want the live-only view.
   const [hideCompleted, setHideCompleted] = useState(false);
+  // Greys out and strikes through report bets that are already in Placed Bets (matched on game, bet type and side).
+  const [strikeMade, setStrikeMade] = useState(true);
+  const [placed, setPlaced] = useState<PlacedBetRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlacedBets(season)
+      .then((rows) => !cancelled && setPlaced(rows.filter((b) => b.week === week || b.week == null)))
+      .catch(() => !cancelled && setPlaced([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [season, week]);
+  const isMade = (g: { id: string; away_team?: string; home_team?: string; awayTeam?: string; homeTeam?: string }, type: PlacedBetRow["bet_type"], side: string | null): boolean => {
+    if (!strikeMade) return false;
+    const want = side?.toLowerCase() ?? null;
+    return placed.some(
+      (b) =>
+        b.bet_type === type &&
+        (b.game_id === g.id || (b.away_team === (g.away_team ?? g.awayTeam) && b.home_team === (g.home_team ?? g.homeTeam))) &&
+        (want == null || b.side.toLowerCase() === want)
+    );
+  };
+  const madeStyle = { opacity: 0.45, textDecoration: "line-through" } as const;
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
   // Performance mode is "how'd every bet that would have qualified this
   // week actually do" — it needs completed games only, the opposite of
@@ -1034,9 +1058,6 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <div ref={exportRef}>
       <h2 style={{ marginTop: 0 }}>Weekly Betting Report</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
@@ -1072,6 +1093,10 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
             Hide completed games
           </label>
         )}
+        <label style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input type="checkbox" checked={strikeMade} onChange={(e) => setStrikeMade(e.target.checked)} />
+          Strike bets I've made
+        </label>
       </div>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -1149,7 +1174,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </thead>
               <tbody>
                 {spreadBets.map((r) => (
-                  <tr key={r.game.id}>
+                  <tr key={r.game.id} style={isMade(r.game, "spread", r.betTeam === "away" ? r.game.away_team : r.game.home_team) ? madeStyle : undefined}>
                     <td
                       style={{ ...cellStyle, cursor: "pointer" }}
                       title="View handicapping preview"
@@ -1213,7 +1238,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                             </thead>
                             <tbody>
                               {rows.map((r) => (
-                                <tr key={r.game.id}>
+                                <tr key={r.game.id} style={isMade(r.game, "total", r.call) ? madeStyle : undefined}>
                                   <td
                                     style={{ ...cellStyle, cursor: "pointer" }}
                                     title="View handicapping preview"
@@ -1269,7 +1294,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                             </thead>
                             <tbody>
                               {rows.map((r) => (
-                                <tr key={`${r.row.game.id}-${r.team}`}>
+                                <tr key={`${r.row.game.id}-${r.team}`} style={isMade(r.row.game, "team_total", null) ? madeStyle : undefined}>
                                   <td
                                     style={{ ...cellStyle, cursor: "pointer" }}
                                     title="View handicapping preview"
@@ -1320,7 +1345,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </thead>
               <tbody>
                 {moneylineBets.map(({ row: r, awayScore, homeScore }) => (
-                  <tr key={r.game.id}>
+                  <tr key={r.game.id} style={isMade(r.game, "moneyline", r.betSide === "away" ? r.game.away_team : r.betSide === "home" ? r.game.home_team : null) ? madeStyle : undefined}>
                     <td
                       style={{ ...cellStyle, cursor: "pointer" }}
                       title="View handicapping preview"

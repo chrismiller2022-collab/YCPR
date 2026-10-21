@@ -132,7 +132,7 @@ function StakingModeSummary({
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Win %</div>
       </div>
       <div>
-        <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1, color: units >= 0 ? "var(--gold)" : "#e05a5a" }}>
+        <div style={{ fontSize: size, fontWeight: 800, lineHeight: 1, color: units >= 0 ? "var(--gold)" : "var(--c-err)" }}>
           {fmtUnits(units, currency, dollarsPerUnit)}
         </div>
         <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>
@@ -209,7 +209,7 @@ function SplitsTable({
                       padding: "0.4rem 0.6rem",
                       borderBottom: "1px solid var(--hash)",
                       textAlign: "right",
-                      color: e.w + e.l > 0 ? (eUnits >= 0 ? "var(--gold)" : "#e05a5a") : "var(--chalk-dim)",
+                      color: e.w + e.l > 0 ? (eUnits >= 0 ? "var(--gold)" : "var(--c-err)") : "var(--chalk-dim)",
                     }}
                   >
                     {e.w + e.l > 0 ? fmtUnits(eUnits, currency, dollarsPerUnit) : "–"}
@@ -228,7 +228,7 @@ function SplitsTable({
                       padding: "0.4rem 0.6rem",
                       borderBottom: "1px solid var(--hash)",
                       textAlign: "right",
-                      color: f.w + f.l > 0 ? (fUnits >= 0 ? "var(--gold)" : "#e05a5a") : "var(--chalk-dim)",
+                      color: f.w + f.l > 0 ? (fUnits >= 0 ? "var(--gold)" : "var(--c-err)") : "var(--chalk-dim)",
                     }}
                   >
                     {f.w + f.l > 0 ? fmtUnits(fUnits, currency, dollarsPerUnit) : "–"}
@@ -291,7 +291,7 @@ function AlsoBetSpreadBlock({
         ML record restricted to games where the spread side's own signal also fired that week
         (same engine as Admin Bet History, default thresholds).
         {!hasBetHistoryForSeason && (
-          <strong style={{ color: "#a15c00" }}> Not available for {season} yet — no historical spread/prediction data stored for it.</strong>
+          <strong style={{ color: "var(--c-warn)" }}> Not available for {season} yet — no historical spread/prediction data stored for it.</strong>
         )}
       </p>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -553,9 +553,6 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Moneyline Bet History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
@@ -775,7 +772,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         padding: "0.4rem 0.6rem",
                         borderBottom: "1px solid var(--hash)",
                         textAlign: "right",
-                        color: units >= 0 ? "var(--gold)" : "#e05a5a",
+                        color: units >= 0 ? "var(--gold)" : "var(--c-err)",
                         fontWeight: 700,
                       }}
                     >
@@ -789,23 +786,23 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         </div>
       )}
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {!loading && !isMultiSeason && games.length === 0 && (
-        <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
+        <p style={{ color: "var(--c-warn)", fontSize: "0.85rem" }}>
           No games/lines synced for {primarySeason} yet — sync it from Admin → Games & Lines first (check "Whole season").
           Moneylines only started being captured once that sync was fixed to store them, so a season synced before
           that fix needs a re-sync to backfill them.
         </p>
       )}
       {!loading && !isMultiSeason && games.length > 0 && allRows.length === 0 && (
-        <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
+        <p style={{ color: "var(--c-warn)", fontSize: "0.85rem" }}>
           {games.length} games synced for {primarySeason}, but none had a line carrying both moneylines yet — try re-syncing
           Games & Lines for this season.
         </p>
       )}
       {!isMultiSeason && unmatchedCount > 0 && (
-        <p style={{ color: "#a15c00", fontSize: "0.85rem" }}>
+        <p style={{ color: "var(--c-warn)", fontSize: "0.85rem" }}>
           {unmatchedCount} Bet History game(s) for {primarySeason} had no matching synced game/line (team-name mismatch, or
           that week hasn't been synced) and were skipped.
         </p>
@@ -884,19 +881,19 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                     const hasFiltered = !!ft && ft.w + ft.l > 0;
                     return (
                       <tr key={w}>
-                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>Week {w}</td>
-                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--a-tint-2)" }}>Week {w}</td>
+                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                           {t.w}-{t.l}
                         </td>
-                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                           {mlWinPct(t).toFixed(1)}%
                         </td>
                         <td
                           style={{
                             padding: "0.35rem 0.6rem",
-                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            borderBottom: "1px solid var(--a-tint-2)",
                             textAlign: "right",
-                            color: units >= 0 ? "var(--gold)" : "#e05a5a",
+                            color: units >= 0 ? "var(--gold)" : "var(--c-err)",
                             fontWeight: 700,
                           }}
                         >
@@ -905,22 +902,22 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                         <td
                           style={{
                             padding: "0.35rem 0.6rem",
-                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            borderBottom: "1px solid var(--a-tint-2)",
                             borderLeft: "1px solid var(--hash)",
                             textAlign: "right",
                           }}
                         >
                           {hasFiltered ? `${ft!.w}-${ft!.l}` : "–"}
                         </td>
-                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                        <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                           {hasFiltered ? `${mlWinPct(ft!).toFixed(1)}%` : "–"}
                         </td>
                         <td
                           style={{
                             padding: "0.35rem 0.6rem",
-                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                            borderBottom: "1px solid var(--a-tint-2)",
                             textAlign: "right",
-                            color: hasFiltered ? (filteredUnits >= 0 ? "var(--gold)" : "#e05a5a") : undefined,
+                            color: hasFiltered ? (filteredUnits >= 0 ? "var(--gold)" : "var(--c-err)") : undefined,
                             fontWeight: hasFiltered ? 700 : undefined,
                           }}
                         >
@@ -987,57 +984,57 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                   const stake = stakingMode === "toWin1" ? r.toWin1 : r.flat1;
                   return (
                     <tr key={r.game.id}>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", whiteSpace: "nowrap" }}>
                         {fmtDateTime(r.game.start_date)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)" }}>
                         <TeamLink team={r.game.away_team} />
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)" }}>
                         <TeamLink team={r.game.home_team} />
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtSpread(r.myAwaySpread)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtPct(r.myAwayWinPct)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtOdds(r.myAwayMoneyline)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtOdds(r.vegasAwayMoneyline)}
                       </td>
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          borderBottom: "1px solid var(--a-tint-2)",
                           textAlign: "right",
                           color: r.evAway != null && r.evAway > 0 ? "var(--gold)" : "inherit",
                         }}
                       >
                         {fmtEv(r.evAway)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtPct(r.myHomeWinPct)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtOdds(r.myHomeMoneyline)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", textAlign: "right" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", textAlign: "right" }}>
                         {fmtOdds(r.vegasHomeMoneyline)}
                       </td>
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          borderBottom: "1px solid var(--a-tint-2)",
                           textAlign: "right",
                           color: r.evHome != null && r.evHome > 0 ? "var(--gold)" : "inherit",
                         }}
                       >
                         {fmtEv(r.evHome)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", fontWeight: 700 }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", fontWeight: 700 }}>
                         {r.betSide != null && (
                           <TeamLogo team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />
                         )}{" "}
@@ -1052,7 +1049,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid rgba(255,255,255,0.05)", color: "var(--gold)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--a-tint-2)", color: "var(--gold)" }}>
                         {r.betEv != null && r.betEv > evThreshold && r.betSide != null ? (
                           <>
                             <TeamLink team={r.betSide === "away" ? r.game.away_team : r.game.home_team} />
@@ -1064,8 +1061,8 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
-                          color: r.result === "win" ? "var(--gold)" : r.result === "loss" ? "#e05a5a" : "var(--chalk-dim)",
+                          borderBottom: "1px solid var(--a-tint-2)",
+                          color: r.result === "win" ? "var(--gold)" : r.result === "loss" ? "var(--c-err)" : "var(--chalk-dim)",
                         }}
                       >
                         {r.result ?? (r.betSide == null ? "no bet" : "pending")}
@@ -1073,7 +1070,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          borderBottom: "1px solid var(--a-tint-2)",
                           textAlign: "right",
                           color: "var(--chalk-dim)",
                         }}
@@ -1083,10 +1080,10 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
                       <td
                         style={{
                           padding: "0.3rem 0.5rem",
-                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                          borderBottom: "1px solid var(--a-tint-2)",
                           textAlign: "right",
                           fontWeight: 700,
-                          color: stake == null ? "inherit" : stake.profit >= 0 ? "var(--gold)" : "#e05a5a",
+                          color: stake == null ? "inherit" : stake.profit >= 0 ? "var(--gold)" : "var(--c-err)",
                         }}
                       >
                         {stake == null ? "–" : fmtStakeValue(stake.profit)}

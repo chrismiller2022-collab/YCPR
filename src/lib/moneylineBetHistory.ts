@@ -25,6 +25,7 @@
 // vig eating both sides at once is the normal case when your number is close
 // to the market's).
 
+import { LINE_PROVIDER_ORDER } from "./linePick";
 import { HFA, hfaFor, spreadToWinPct, fairMoneylineFromWinPct } from "./odds";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { type BetHistoryRecord, BET_HISTORY } from "../data/betHistory.data";
@@ -37,12 +38,11 @@ export type BetSide = "away" | "home" | null;
 // espnMlPool.ts) for spread lines — reused here, but a line only qualifies
 // if it actually carries BOTH moneylines (some providers report spread/O-U
 // only), so this scans further down the list than pickLine() would.
-const PREFERRED_ML_PROVIDERS = ["consensus", "DraftKings", "Bovada", "ESPN Bet"];
 
 export function pickMoneylineLine(lines: BettingLineRow[]): BettingLineRow | null {
   const withBoth = lines.filter((l) => l.home_moneyline != null && l.away_moneyline != null);
   if (withBoth.length === 0) return null;
-  for (const p of PREFERRED_ML_PROVIDERS) {
+  for (const p of LINE_PROVIDER_ORDER) {
     const match = withBoth.find((l) => l.provider === p);
     if (match) return match;
   }
@@ -242,7 +242,7 @@ export function buildMlRowsFromLiveRatings(
     const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
     const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
     const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
-    const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
+    const hfa = g.neutral_site ? 0 : hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
     const myAwaySpread = awayRating != null && homeRating != null ? awayRating - homeRating + hfa : null;
 
     // Once frozen, the locked away win% wins over the live spread —
@@ -284,8 +284,14 @@ function normalCdf(z: number): number {
 }
 
 /** Away team's win probability under Bill R Method, given both teams' site power ratings (lower = better). */
-export function billRAwayWinPct(awayRating: number, homeRating: number, divisor: number = BILL_R_DEFAULT_DIVISOR): number {
-  const margin = homeRating - awayRating - BILL_R_HFA; // positive => away favored, after shaving off the home team's HFA
+/** Bill R win probability for a team given its own spread (negative = favored): the same curve applied to any spread, so a Vegas line and a YC projection convert the same way. */
+export function billRWinPctFromSpread(teamSpread: number, divisor: number = BILL_R_DEFAULT_DIVISOR): number {
+  return normalCdf(divisor !== 0 ? -teamSpread / divisor : 0);
+}
+
+/** Pass hfa = 0 for a neutral site. */
+export function billRAwayWinPct(awayRating: number, homeRating: number, divisor: number = BILL_R_DEFAULT_DIVISOR, hfa: number = BILL_R_HFA): number {
+  const margin = homeRating - awayRating - hfa; // positive => away favored, after shaving off the home team's HFA
   const z = divisor !== 0 ? margin / divisor : 0;
   return normalCdf(z);
 }
@@ -315,7 +321,7 @@ export function buildMlRowsFromLiveRatingsBillR(
       const staticHome = TEAMS_BY_NAME[g.home_team] ?? null;
       const awayRating = weekRatings[g.away_team]?.rating ?? staticAway?.rating ?? null;
       const homeRating = weekRatings[g.home_team]?.rating ?? staticHome?.rating ?? null;
-      awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor) : null;
+      awayWinPct = awayRating != null && homeRating != null ? billRAwayWinPct(awayRating, homeRating, divisor, g.neutral_site ? 0 : BILL_R_HFA) : null;
     }
 
     rows.push(computeMlRow(g, null, line.away_moneyline, line.home_moneyline, awayWinPct));

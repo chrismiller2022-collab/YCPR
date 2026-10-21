@@ -74,12 +74,55 @@ export async function fetchResumeRatingsForWeek(season: number, week: number): P
   return out;
 }
 
+/**
+ * The most recent saved Resume Ratings week, ranked (1 = best score) — what
+ * the 24-team playoff tool uses for at-large bids and seeding. Null when no
+ * week has been saved yet this season.
+ */
+export async function fetchLatestSavedResumeRanks(season: number): Promise<{ week: number; byTeam: Record<string, { rank: number; rating: number }> } | null> {
+  const weeks = await fetchResumeRatingsAvailableWeeks(season);
+  if (weeks.length === 0) return null;
+  const week = Math.max(...weeks);
+  const rows = await fetchResumeRatingsForWeek(season, week);
+  const ranked = Object.entries(rows)
+    .filter(([, r]) => r.score != null)
+    .sort((a, b) => (b[1].score as number) - (a[1].score as number));
+  const byTeam: Record<string, { rank: number; rating: number }> = {};
+  ranked.forEach(([team, r], i) => {
+    byTeam[team] = { rank: i + 1, rating: r.score as number };
+  });
+  return { week, byTeam };
+}
+
 export async function fetchResumeRatingsByWeeks(
   season: number
 ): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {
   // Paginated — 266 teams x several weeks passes PostgREST's 1000-row cap.
   const data = await fetchAllRows<{ week: number; team: string; score: number | null; updated_at: string }>((from, to) =>
     supabase.from("team_resume_ratings").select("week, team, score, updated_at").eq("season", season).order("id").range(from, to)
+  );
+  const byWeek: Record<number, Record<string, number | null>> = {};
+  const weekInfo: Record<number, WeekSaveInfo> = {};
+  for (const r of data) {
+    (byWeek[r.week] ??= {})[r.team] = r.score;
+    const info = (weekInfo[r.week] ??= { teams: 0, updatedAt: "" });
+    info.teams += 1;
+    if (r.updated_at > info.updatedAt) info.updatedAt = r.updated_at;
+  }
+  return { weeks: Object.keys(byWeek).map(Number).sort((a, b) => a - b), byWeek, weekInfo };
+}
+
+/** Distinct week numbers with a saved "Résumé so far" (completed games only) snapshot. */
+export async function fetchFinishedResumeAvailableWeeks(season: number): Promise<number[]> {
+  return fetchDistinctWeeks("team_resume_ratings_finished", season);
+}
+
+/** Every saved "Résumé so far" week's score per team — the progression for that tab. */
+export async function fetchFinishedResumeByWeeks(
+  season: number
+): Promise<{ weeks: number[]; byWeek: Record<number, Record<string, number | null>>; weekInfo: Record<number, WeekSaveInfo> }> {
+  const data = await fetchAllRows<{ week: number; team: string; score: number | null; updated_at: string }>((from, to) =>
+    supabase.from("team_resume_ratings_finished").select("week, team, score, updated_at").eq("season", season).order("id").range(from, to)
   );
   const byWeek: Record<number, Record<string, number | null>> = {};
   const weekInfo: Record<number, WeekSaveInfo> = {};

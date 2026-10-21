@@ -5,7 +5,7 @@ import SortHeader from "../components/SortHeader";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
-import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import KeyCrossSlot from "../components/KeyCrossSlot";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchWestgateWeek, fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints, WESTGATE_PICK_LIMIT, type WestgateRow } from "../lib/api/westgatePool";
@@ -161,10 +161,10 @@ function LinesCsvImport({ season, week, onImported }: { season: number; week: nu
             {importing ? "Importing…" : `Import ${result.resolved.length} line${result.resolved.length === 1 ? "" : "s"}`}
           </button>
         )}
-        {msg && <span style={{ color: msg.startsWith("Imported") ? "green" : "#e0a030" }}>{msg}</span>}
+        {msg && <span style={{ color: msg.startsWith("Imported") ? "var(--c-ok)" : "var(--c-warn)" }}>{msg}</span>}
       </div>
       {result && result.errors.length > 0 && (
-        <div style={{ marginTop: "0.5rem", color: "#e0a030", fontSize: "0.78rem" }}>
+        <div style={{ marginTop: "0.5rem", color: "var(--c-warn)", fontSize: "0.78rem" }}>
           {result.errors.length} row{result.errors.length === 1 ? "" : "s"} couldn't be resolved:
           <ul>
             {result.errors.map((e, i) => (
@@ -378,10 +378,10 @@ function StandingsTab({ season }: { season: number }) {
                 {importing ? "Importing…" : `Import ${checkResult.resolved.length} row${checkResult.resolved.length === 1 ? "" : "s"}`}
               </button>
             )}
-            {msg && <span style={{ color: msg.startsWith("Imported") ? "green" : "#e0a030" }}>{msg}</span>}
+            {msg && <span style={{ color: msg.startsWith("Imported") ? "var(--c-ok)" : "var(--c-warn)" }}>{msg}</span>}
           </div>
           {checkResult && checkResult.errors.length > 0 && (
-            <div style={{ marginTop: "0.5rem", color: "#e0a030", fontSize: "0.78rem" }}>
+            <div style={{ marginTop: "0.5rem", color: "var(--c-warn)", fontSize: "0.78rem" }}>
               {checkResult.errors.map((e, i) => (
                 <div key={i}>
                   Line {e.line}: {e.reason}
@@ -392,7 +392,7 @@ function StandingsTab({ season }: { season: number }) {
         </div>
       )}
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {(loading || ratingsLoading) && <p>Loading…</p>}
 
       {!loading && standings.length === 0 && (
@@ -663,7 +663,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
           Hide completed games
         </label>
         <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Possible: {possibleCount}</span>
-        <span style={{ fontSize: "0.82rem", color: pickedCount === WESTGATE_PICK_LIMIT ? "green" : "#a15c00" }}>
+        <span style={{ fontSize: "0.82rem", color: pickedCount === WESTGATE_PICK_LIMIT ? "var(--c-ok)" : "var(--c-warn)" }}>
           Picked: {pickedCount}/{WESTGATE_PICK_LIMIT} · Record: {record.wins}-{record.losses}
           {record.pushes > 0 ? `-${record.pushes}` : ""} · Points: {westgatePoints(record).toFixed(1)}
         </span>
@@ -692,7 +692,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
 
       <LinesCsvImport season={season} week={week} onImported={load} />
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {ratingsLoading && <p>Loading live ratings…</p>}
       {loading && <p>Loading…</p>}
 
@@ -779,7 +779,7 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                   const grade = gradeWestgatePick(r);
                   const cellStyle = { padding: "0.25rem 0.35rem", borderBottom: "1px solid var(--hash)" };
                   return (
-                    <tr key={r.game_id} style={r.is_possible_pick ? { background: "rgba(255,255,255,0.04)" } : undefined}>
+                    <tr key={r.game_id} style={r.is_possible_pick ? { background: "var(--a-tint-1)" } : undefined}>
                       <td style={cellStyle}>
                         <TeamLink team={r.game.away_team} />
                       </td>
@@ -810,19 +810,9 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                           onChange={(e) =>
                             updateRow(r.game_id, { westgate_line: e.target.value === "" ? null : Number(e.target.value) })
                           }
-                          style={{ width: 55, textAlign: "right" }}
+                          style={{ width: 76, textAlign: "right" }}
                         />
-                        {(() => {
-                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.westgate_line);
-                          return crossed.length > 0 ? (
-                            <span
-                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.westgate_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
-                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
-                            >
-                              🔑{keyCrossLabel(crossed)}
-                            </span>
-                          ) : null;
-                        })()}
+                        <KeyCrossSlot mine={r.myProjAwaySpread} pool={r.westgate_line} />
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
@@ -901,14 +891,14 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
           </div>
 
           {isDirty && (
-            <p style={{ color: "#e0a030", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
+            <p style={{ color: "var(--c-warn)", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
               ⚠ You have unsaved picks and/or lines — click Save below before leaving this page, or they'll be lost.
             </p>
           )}
           <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
             {saving ? "Saving…" : "Save Westgate Lines & Picks"}
           </button>
-          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "green" : "#e0a030", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "var(--c-ok)" : "var(--c-warn)", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
       )}
 
@@ -939,9 +929,6 @@ export default function WestgatePoolPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>Westgate Supercontest</h2>

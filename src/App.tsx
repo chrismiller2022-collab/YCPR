@@ -1,5 +1,5 @@
 import "./styles/global.css";
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Routes, Route, Navigate, useNavigate, useParams } from "react-router-dom";
 import { Analytics } from "@vercel/analytics/react";
 import HomePage from "./pages/HomePage";
@@ -13,6 +13,7 @@ import MatchupsPage from "./pages/MatchupsPage";
 import LiveWinTotalsPage from "./pages/LiveWinTotalsPage";
 import ResumeRatingsPage from "./pages/ResumeRatingsPage";
 import ResumeRatingsWeekPage from "./pages/ResumeRatingsWeekPage";
+import { fetchResumeRatingsAvailableWeeks, fetchFinishedResumeAvailableWeeks } from "./lib/api/resumeWeights";
 import StrengthOfSchedulePage from "./pages/StrengthOfSchedulePage";
 import SosWeekPage from "./pages/SosWeekPage";
 import WeeklyProgressionPage from "./pages/WeeklyProgressionPage";
@@ -285,7 +286,7 @@ export default function App() {
               <Route path="/matchups/all" element={<MatchupsPage subKey="all" subLabel="All" onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
               <Route path="/matchups/week/:n" element={<MatchupsWeekRoute onNavigateTeam={onNavigateTeam} onHome={onHome} />} />
 
-              <Route path="/resume-ratings/live" element={<ResumeRatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
+              <Route path="/resume-ratings/live" element={<LatestResumeRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/resume-ratings/progression" element={<WeeklyProgressionPage metric="resume" subLabel="Weekly Progression" onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
               <Route path="/resume-ratings/week/:n" element={<ResumeRatingsWeekRoute onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />} />
 
@@ -390,6 +391,30 @@ function FCSBracketWeekRoute({ onNavigateTeam, onNavigateConference, onHome }: a
         onHome={onHome}
       />
     </>
+  );
+}
+
+// LIVE résumé: the most recent week saved for either résumé, shown with the Résumé so far / Projected finish tabs.
+// Falls back to the older live table (weekly upload) until a week has been saved this season.
+function LatestResumeRoute({ onNavigateTeam, onNavigateConference, onHome }: any) {
+  const [week, setWeek] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    const season = new Date().getFullYear();
+    Promise.all([fetchResumeRatingsAvailableWeeks(season).catch(() => []), fetchFinishedResumeAvailableWeeks(season).catch(() => [])]).then(([a, b]) => {
+      const all = [...a, ...b];
+      setWeek(all.length ? Math.max(...all) : null);
+    });
+  }, []);
+  if (week === undefined) return <div className="empty matchups-empty">Loading…</div>;
+  if (week === null) return <ResumeRatingsPage onNavigateTeam={onNavigateTeam} onNavigateConference={onNavigateConference} onHome={onHome} />;
+  return (
+    <ResumeRatingsWeekPage
+      weekNum={week}
+      subLabel="LIVE"
+      onNavigateTeam={onNavigateTeam}
+      onNavigateConference={onNavigateConference}
+      onHome={onHome}
+    />
   );
 }
 

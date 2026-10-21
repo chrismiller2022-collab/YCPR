@@ -408,9 +408,6 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Totals History</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         How the Totals model has actually performed — for the live per-game working view, see
@@ -442,7 +439,7 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
         ))}
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {tab === "keynumbers" ? (
         keyNumberLoading ? (

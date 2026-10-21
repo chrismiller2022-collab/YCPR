@@ -60,9 +60,16 @@ export interface NewPlacedBet {
   market?: string | null;
 }
 
-export async function fetchPlacedBets(season?: number): Promise<PlacedBetRow[]> {
+// Placeholder bets: Matchups' "Send to Placed Bets" saves each ticked game as a bet with book "placeholder" (no
+// stake), meaning "I mean to bet this". A CSV import that has the same game, bet type and side turns the placeholder
+// into the real bet. Placeholders never count in records or pending totals; only Placed Bets shows them.
+export const PLACEHOLDER_BOOK = "placeholder";
+export const isPlaceholderBet = (b: { book: string }) => b.book === PLACEHOLDER_BOOK;
+
+export async function fetchPlacedBets(season?: number, opts: { includePlaceholders?: boolean } = {}): Promise<PlacedBetRow[]> {
   let q = supabase.from("placed_bets").select("*").order("created_at", { ascending: false });
   if (season != null) q = q.eq("season", season);
+  if (!opts.includePlaceholders) q = q.neq("book", PLACEHOLDER_BOOK);
   const { data, error } = await q;
   if (error) throw error;
   return data ?? [];
@@ -88,7 +95,7 @@ export async function savePlacedBet(bet: NewPlacedBet): Promise<void> {
 // matches a bet already saved updates it (result/stake/to_win/price)
 // instead of inserting a duplicate, so re-uploading the same season sheet
 // every week is safe.
-export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ inserted: number; updated: number }> {
+export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ inserted: number; updated: number; confirmed?: number }> {
   const password = sessionStorage.getItem("admin_password") ?? "";
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
@@ -98,6 +105,21 @@ export async function importPlacedBets(bets: NewPlacedBet[]): Promise<{ inserted
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to import bets");
   return data;
+}
+
+export async function deletePlaceholderBet(id: number): Promise<void> {
+  const res = await fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: sessionStorage.getItem("admin_password") ?? "", action: "deletePlaceholderBet", id }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to remove placeholder");
+}
+
+/** Saves Matchups' ticked games as placeholder bets (book "placeholder", no stake), one per game and bet type. */
+export function savePlaceholderBets(bets: Omit<NewPlacedBet, "book" | "price" | "stake" | "result">[]) {
+  return importPlacedBets(bets.map((b) => ({ ...b, book: PLACEHOLDER_BOOK, price: -110, stake: null, result: "pending" as const })));
 }
 
 // Record<string, string> (not Record<KnownBetBook, string>) on purpose —

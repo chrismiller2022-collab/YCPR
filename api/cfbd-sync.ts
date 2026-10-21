@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 // This runs on Vercel's servers, not in the browser — CFBD_API_KEY and the
@@ -6,6 +7,34 @@ import { createClient } from "@supabase/supabase-js";
 // though the Admin gate already confirmed it once client-side.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const CFBD_API_KEY = process.env.CFBD_API_KEY;
 // Separate from CFBD_API_KEY on purpose — CFBD's own docs are explicit
 // that the Model Pick'em prediction token is a different credential
@@ -486,7 +515,7 @@ async function cfbdFetch(path: string) {
 // rate = a team's offensive success rate minus the success rate its defense
 // allowed), and head coaches with tenure at their school. `parts` picks
 // which to run so a pull costs only what was asked for.
-async function syncTeamInfo(res: any, year: number, week: number | null, parts: string[]) {
+async function syncTeamInfo(year: number, week: number | null, parts: string[]) {
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
   const weekParam = week != null ? `&week=${week}` : "";
   const out: any = { ok: true, year, week: week ?? "all", parts };
@@ -651,8 +680,103 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
     if (rows.length === 0) warnings.push("CFBD returned no coach seasons — check the response shape.");
   }
 
+  if (parts.includes("venues")) {
+    // Stadium coordinates for the admin Weather page. Three requests: every venue (so neutral sites resolve), each
+    // team's home stadium, and the week's games (to stamp each game with the venue CFBD lists for it). CFBD's newer
+    // API names coordinates latitude/longitude; the older one nested them as location {x: lat, y: lon} — both read.
+    const venueRow = (v: any, now: string) => ({
+      id: Number(v.id ?? v.venueId ?? v.venue_id),
+      name: v.name ?? null,
+      city: v.city ?? null,
+      state: v.state ?? null,
+      zip: v.zip ?? null,
+      country_code: v.countryCode ?? v.country_code ?? null,
+      timezone: v.timezone ?? null,
+      latitude: numOrNull(v.latitude ?? v.location?.x),
+      longitude: numOrNull(v.longitude ?? v.location?.y),
+      elevation: numOrNull(v.elevation),
+      capacity: numOrNull(v.capacity),
+      construction_year: numOrNull(v.constructionYear ?? v.year_constructed),
+      grass: v.grass ?? null,
+      dome: v.dome ?? null,
+      updated_at: now,
+    });
+    const now = new Date().toISOString();
+
+    const venues = await cfbdFetch(`/venues`);
+    const venueRows = (venues ?? []).map((v: any) => venueRow(v, now)).filter((v: any) => Number.isFinite(v.id));
+    let venuesSaved = 0;
+    for (let i = 0; i < venueRows.length; i += 500) {
+      const { error, count } = await supabaseAdmin.from("venues").upsert(venueRows.slice(i, i + 500), { onConflict: "id", count: "exact" });
+      if (error) throw new Error(`Saving venues failed: ${error.message}`);
+      venuesSaved += count ?? 0;
+    }
+
+    const teams = await cfbdFetch(`/teams?year=${year}`);
+    const teamRows: any[] = [];
+    for (const t of teams ?? []) {
+      const loc = t.location;
+      if (!t.school || !loc) continue;
+      const v = venueRow({ ...loc, id: loc.id ?? loc.venueId ?? loc.venue_id }, now);
+      if (v.latitude == null || v.longitude == null) continue;
+      teamRows.push({
+        team: t.school,
+        venue_id: Number.isFinite(v.id) ? v.id : null,
+        venue_name: v.name,
+        city: v.city,
+        state: v.state,
+        timezone: v.timezone,
+        latitude: v.latitude,
+        longitude: v.longitude,
+        elevation: v.elevation,
+        capacity: v.capacity,
+        grass: v.grass,
+        dome: v.dome,
+        updated_at: now,
+      });
+    }
+    let teamsSaved = 0;
+    for (let i = 0; i < teamRows.length; i += 500) {
+      const { error, count } = await supabaseAdmin.from("team_venues").upsert(teamRows.slice(i, i + 500), { onConflict: "team", count: "exact" });
+      if (error) throw new Error(`Saving team venues failed: ${error.message}`);
+      teamsSaved += count ?? 0;
+    }
+
+    // A single week stays regular season (week numbers repeat in the postseason); a whole-season pull takes bowls too.
+    const gamesPath = week != null ? `/games?year=${year}&week=${week}&seasonType=regular` : `/games?year=${year}&seasonType=both`;
+    const cfbdGames = await cfbdFetch(gamesPath);
+    const gameRows = (cfbdGames ?? []).filter(isTrackedGame).map((g: any) => ({
+      id: String(g.id),
+      season: g.season,
+      week: g.week,
+      season_type: g.seasonType ?? "regular",
+      start_date: g.startDate ?? null,
+      start_time_tbd: g.startTimeTBD ?? g.startTimeTbd ?? null,
+      neutral_site: !!g.neutralSite,
+      home_team: g.homeTeam,
+      away_team: g.awayTeam,
+      venue_id: numOrNull(g.venueId),
+      venue: g.venue ?? null,
+      updated_at: now,
+    }));
+    for (let i = 0; i < gameRows.length; i += 500) {
+      const { error } = await supabaseAdmin.from("games").upsert(gameRows.slice(i, i + 500), { onConflict: "id" });
+      if (error) throw new Error(`Saving game venues failed: ${error.message}`);
+    }
+
+    out.venues = {
+      venues: venuesSaved,
+      withCoords: venueRows.filter((v: any) => v.latitude != null && v.longitude != null).length,
+      teams: teamsSaved,
+      games: gameRows.length,
+      gamesWithVenue: gameRows.filter((g: any) => g.venue_id != null).length,
+    };
+    if (venueRows.length === 0) warnings.push("CFBD returned no venues — check the response shape.");
+    if (teamRows.length === 0) warnings.push("CFBD returned no team locations with coordinates — check the response shape.");
+  }
+
   if (warnings.length) out.warnings = warnings;
-  res.status(200).json(out);
+  return out;
 }
 
 // DROGBA (admin spread-model page) backfill. Two independent parts, each safe to re-run:
@@ -664,7 +788,7 @@ async function syncTeamInfo(res: any, year: number, week: number | null, parts: 
 // Response shapes for the preseason endpoints follow CFBD's published schema but were NOT checked
 // against a live response from here — every field is optional-chained, a `sample` row comes back
 // so the first run can be eyeballed, and an empty result adds a warning rather than throwing.
-async function syncDrogba(res: any, year: number, week: number | null, part: string) {
+async function syncDrogba(year: number, week: number | null, part: string) {
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
   const out: any = { ok: true, year, week: week ?? "all", part };
   const warnings: string[] = [];
@@ -856,116 +980,14 @@ async function syncDrogba(res: any, year: number, week: number | null, part: str
   }
 
   if (warnings.length) out.warnings = warnings;
-  res.status(200).json(out);
+  return out;
 }
 
-export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
-
-  if (!ADMIN_PASSWORD) {
-    res.status(500).json({ error: "ADMIN_PASSWORD is not configured on the server" });
-    return;
-  }
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    res.status(500).json({ error: "Supabase server env vars are not configured" });
-    return;
-  }
-
-  if (req.body?.mode === "predictions") {
-    const { password } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
-      res.status(401).json({ error: "Incorrect password" });
-      return;
-    }
-    if (!CFBD_PREDICTIONS_TOKEN) {
-      res.status(500).json({ error: "CFBD_PREDICTIONS_TOKEN is not configured on the server" });
-      return;
-    }
-    try {
-      await syncPredictions(res);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Predictions sync failed" });
-    }
-    return;
-  }
-
-  if (req.body?.mode === "drogba") {
-    const { password, year, week, part } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
-      res.status(401).json({ error: "Incorrect password" });
-      return;
-    }
-    if (!CFBD_API_KEY) {
-      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
-      return;
-    }
-    if (!year || typeof year !== "number") {
-      res.status(400).json({ error: "Missing or invalid 'year'" });
-      return;
-    }
-    if (part !== "gameadv" && part !== "preseason" && part !== "plays") {
-      res.status(400).json({ error: "'part' must be 'gameadv', 'preseason' or 'plays'" });
-      return;
-    }
-    try {
-      await syncDrogba(res, year, typeof week === "number" ? week : null, part);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "DROGBA sync failed" });
-    }
-    return;
-  }
-
-  if (req.body?.mode === "teaminfo") {
-    const { password, year, week, parts } = req.body ?? {};
-    if (password !== ADMIN_PASSWORD) {
-      res.status(401).json({ error: "Incorrect password" });
-      return;
-    }
-    if (!CFBD_API_KEY) {
-      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
-      return;
-    }
-    if (!year || typeof year !== "number") {
-      res.status(400).json({ error: "Missing or invalid 'year'" });
-      return;
-    }
-    const wanted = (Array.isArray(parts) ? parts : ["pgwe", "netsr", "coaches"]).filter((p: string) => ["pgwe", "netsr", "coaches"].includes(p));
-    try {
-      await syncTeamInfo(res, year, typeof week === "number" ? week : null, wanted);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message ?? "Team info pull failed" });
-    }
-    return;
-  }
-
-  if (!CFBD_API_KEY) {
-    res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
-    return;
-  }
-
-  const { password, year, week, seasonType, syncStats } = req.body ?? {};
-
-  if (password !== ADMIN_PASSWORD) {
-    res.status(401).json({ error: "Incorrect password" });
-    return;
-  }
-  if (!year || typeof year !== "number") {
-    res.status(400).json({ error: "Missing or invalid 'year'" });
-    return;
-  }
-  if (week != null && typeof week !== "number") {
-    res.status(400).json({ error: "'week', if provided, must be a number" });
-    return;
-  }
-
-  const stype = seasonType === "postseason" ? "postseason" : "regular";
+// Games (with media and postgame win expectancy) and CFBD betting lines for one week, or the whole season when week is
+// null. Three CFBD requests.
+async function syncGamesAndLines(year: number, week: number | null, stype: string) {
   const weekParam = week != null ? `&week=${week}` : "";
-  const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-  try {
+  const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
     // --- Games ---
     const cfbdGames = await cfbdFetch(`/games?year=${year}${weekParam}&seasonType=${stype}`);
     const trackedGames = (cfbdGames ?? []).filter(isTrackedGame);
@@ -1014,6 +1036,10 @@ export default async function handler(req: any, res: any) {
         away_postgame_win_probability: g.awayPostgameWinProbability ?? null,
         tv_outlet: media?.outlet ?? null,
         media_type: media?.mediaType ?? null,
+        // Where the game is played and whether kickoff is still TBD — feeds the admin Weather page.
+        venue_id: g.venueId != null ? Number(g.venueId) : null,
+        venue: g.venue ?? null,
+        start_time_tbd: g.startTimeTBD ?? g.startTimeTbd ?? null,
         updated_at: new Date().toISOString(),
       };
     });
@@ -1024,8 +1050,7 @@ export default async function handler(req: any, res: any) {
         .from("games")
         .upsert(gameRows, { onConflict: "id", count: "exact" });
       if (gamesError) {
-        res.status(500).json({ error: `Saving games failed: ${gamesError.message}` });
-        return;
+        throw new Error(`Saving games failed: ${gamesError.message}`);
       }
       gamesUpserted = count ?? gameRows.length;
     }
@@ -1074,158 +1099,316 @@ export default async function handler(req: any, res: any) {
         .from("betting_lines")
         .upsert(lineRows, { onConflict: "game_id,provider", count: "exact" });
       if (linesError) {
-        res.status(500).json({ error: `Saving betting lines failed: ${linesError.message}` });
-        return;
+        throw new Error(`Saving betting lines failed: ${linesError.message}`);
       }
       linesUpserted = count ?? lineRows.length;
     }
 
-    // --- Team season stats (only when explicitly requested — separate
-    // concern from games/lines, and a much bigger payload) ---
-    let statsTeamsUpserted = 0;
-    if (syncStats) {
-      // /stats/season is long-format: one row per {team, statName,
-      // statValue}. Pivot into one wide row per team, keeping only the
-      // fields the Game Totals engine actually uses.
-      const basicStats = await cfbdFetch(`/stats/season?year=${year}`);
-      const WANTED_STATS: Record<string, string> = {
-        rushingAttempts: "rushing_attempts",
-        rushingYards: "rushing_yards",
-        rushingAttemptsOpponent: "rushing_attempts_opponent",
-        rushingYardsOpponent: "rushing_yards_opponent",
-        passAttempts: "pass_attempts",
-        netPassingYards: "net_passing_yards",
-        passAttemptsOpponent: "pass_attempts_opponent",
-        netPassingYardsOpponent: "net_passing_yards_opponent",
-        totalYards: "total_yards",
-        totalYardsOpponent: "total_yards_opponent",
-        games: "games",
-        possessionTime: "possession_time",
-        possessionTimeOpponent: "possession_time_opponent",
-      };
+  return {
+    gamesFetched: (cfbdGames ?? []).length,
+    gamesSkippedByDivision: (cfbdGames ?? []).length - trackedGames.length,
+    gamesUpserted,
+    linesUpserted,
+  };
+}
 
-      // CFBD returns possessionTime as MM:SS — converted to seconds so
-      // it's a plain number to do math on later.
-      function toSeconds(v: any): number | null {
-        if (v == null) return null;
-        if (typeof v === "number") return v;
-        const parts = String(v).split(":");
-        if (parts.length !== 2) return Number(v) || null;
-        const [m, s] = parts.map(Number);
-        return m * 60 + s;
-      }
+// Season-to-date team stats (basic + advanced) for the Game Totals engine. Two CFBD requests.
+async function syncSeasonStats(year: number) {
+  const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+  let statsTeamsUpserted = 0;
+    // /stats/season is long-format: one row per {team, statName,
+    // statValue}. Pivot into one wide row per team, keeping only the
+    // fields the Game Totals engine actually uses.
+    const basicStats = await cfbdFetch(`/stats/season?year=${year}`);
+    const WANTED_STATS: Record<string, string> = {
+      rushingAttempts: "rushing_attempts",
+      rushingYards: "rushing_yards",
+      rushingAttemptsOpponent: "rushing_attempts_opponent",
+      rushingYardsOpponent: "rushing_yards_opponent",
+      passAttempts: "pass_attempts",
+      netPassingYards: "net_passing_yards",
+      passAttemptsOpponent: "pass_attempts_opponent",
+      netPassingYardsOpponent: "net_passing_yards_opponent",
+      totalYards: "total_yards",
+      totalYardsOpponent: "total_yards_opponent",
+      games: "games",
+      possessionTime: "possession_time",
+      possessionTimeOpponent: "possession_time_opponent",
+    };
 
-      const byTeam = new Map<string, any>();
-      for (const row of basicStats ?? []) {
-        const col = WANTED_STATS[row.statName];
-        if (!col) continue;
-        const key = row.team;
-        const entry = byTeam.get(key) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
-        entry[col] = col === "possession_time" || col === "possession_time_opponent" ? toSeconds(row.statValue) : Number(row.statValue);
-        byTeam.set(key, entry);
-      }
-
-      // /stats/season/advanced — nested offense/defense objects, per
-      // established CFBD API convention (matches how the CSV exporter's
-      // "Offense Plays"/"Defense Plays" columns are flattened from
-      // offense.plays/defense.plays). NOT verified against a live
-      // response yet — every field below is read with optional chaining
-      // so a wrong nesting assumption produces nulls, not a thrown error;
-      // worth checking a real synced row against CFBD's docs/an actual
-      // response the first time this runs. This used to only keep
-      // plays/drives — the Game Totals engine now runs on the full
-      // efficiency set (PPA/success rate/explosiveness/points-per-
-      // opportunity/havoc/etc.), so everything CFBD gives us here gets
-      // stored instead of discarded.
-      const advancedStats = await cfbdFetch(`/stats/season/advanced?year=${year}`);
-      for (const row of advancedStats ?? []) {
-        const entry = byTeam.get(row.team) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
-        const off = row.offense ?? {};
-        const def = row.defense ?? {};
-
-        entry.offense_plays = off.plays ?? null;
-        entry.offense_drives = off.drives ?? null;
-        entry.defense_plays = def.plays ?? null;
-        entry.defense_drives = def.drives ?? null;
-
-        entry.off_ppa = off.ppa ?? null;
-        entry.off_success_rate = off.successRate ?? null;
-        entry.off_explosiveness = off.explosiveness ?? null;
-        entry.off_points_per_opportunity = off.pointsPerOpportunity ?? null;
-        entry.off_power_success = off.powerSuccess ?? null;
-        entry.off_stuff_rate = off.stuffRate ?? null;
-        entry.off_line_yards = off.lineYards ?? null;
-        entry.off_standard_downs_ppa = off.standardDowns?.ppa ?? null;
-        entry.off_standard_downs_success_rate = off.standardDowns?.successRate ?? null;
-        entry.off_standard_downs_explosiveness = off.standardDowns?.explosiveness ?? null;
-        entry.off_passing_downs_ppa = off.passingDowns?.ppa ?? null;
-        entry.off_passing_downs_success_rate = off.passingDowns?.successRate ?? null;
-        entry.off_passing_downs_explosiveness = off.passingDowns?.explosiveness ?? null;
-        entry.off_rushing_plays_ppa = off.rushingPlays?.ppa ?? null;
-        entry.off_rushing_plays_success_rate = off.rushingPlays?.successRate ?? null;
-        entry.off_rushing_plays_explosiveness = off.rushingPlays?.explosiveness ?? null;
-        entry.off_passing_plays_ppa = off.passingPlays?.ppa ?? null;
-        entry.off_passing_plays_success_rate = off.passingPlays?.successRate ?? null;
-        entry.off_passing_plays_explosiveness = off.passingPlays?.explosiveness ?? null;
-        entry.off_field_position_avg_start = off.fieldPosition?.averageStart ?? null;
-        entry.off_field_position_avg_predicted_points = off.fieldPosition?.averagePredictedPoints ?? null;
-        entry.off_havoc_total = off.havoc?.total ?? null;
-        entry.off_havoc_front_seven = off.havoc?.frontSeven ?? null;
-        entry.off_havoc_db = off.havoc?.db ?? null;
-
-        entry.def_ppa = def.ppa ?? null;
-        entry.def_success_rate = def.successRate ?? null;
-        entry.def_explosiveness = def.explosiveness ?? null;
-        entry.def_points_per_opportunity = def.pointsPerOpportunity ?? null;
-        entry.def_power_success = def.powerSuccess ?? null;
-        entry.def_stuff_rate = def.stuffRate ?? null;
-        entry.def_line_yards = def.lineYards ?? null;
-        entry.def_standard_downs_ppa = def.standardDowns?.ppa ?? null;
-        entry.def_standard_downs_success_rate = def.standardDowns?.successRate ?? null;
-        entry.def_standard_downs_explosiveness = def.standardDowns?.explosiveness ?? null;
-        entry.def_passing_downs_ppa = def.passingDowns?.ppa ?? null;
-        entry.def_passing_downs_success_rate = def.passingDowns?.successRate ?? null;
-        entry.def_passing_downs_explosiveness = def.passingDowns?.explosiveness ?? null;
-        entry.def_rushing_plays_ppa = def.rushingPlays?.ppa ?? null;
-        entry.def_rushing_plays_success_rate = def.rushingPlays?.successRate ?? null;
-        entry.def_rushing_plays_explosiveness = def.rushingPlays?.explosiveness ?? null;
-        entry.def_passing_plays_ppa = def.passingPlays?.ppa ?? null;
-        entry.def_passing_plays_success_rate = def.passingPlays?.successRate ?? null;
-        entry.def_passing_plays_explosiveness = def.passingPlays?.explosiveness ?? null;
-        entry.def_field_position_avg_start = def.fieldPosition?.averageStart ?? null;
-        entry.def_field_position_avg_predicted_points = def.fieldPosition?.averagePredictedPoints ?? null;
-        entry.def_havoc_total = def.havoc?.total ?? null;
-        entry.def_havoc_front_seven = def.havoc?.frontSeven ?? null;
-        entry.def_havoc_db = def.havoc?.db ?? null;
-
-        byTeam.set(row.team, entry);
-      }
-
-      const statRows = Array.from(byTeam.values()).map((e) => ({ ...e, updated_at: new Date().toISOString() }));
-
-      if (statRows.length > 0) {
-        const { error: statsError, count } = await supabaseAdmin
-          .from("team_season_stats")
-          .upsert(statRows, { onConflict: "season,team", count: "exact" });
-        if (statsError) {
-          res.status(500).json({ error: `Saving team season stats failed: ${statsError.message}` });
-          return;
-        }
-        statsTeamsUpserted = count ?? statRows.length;
-      }
+    // CFBD returns possessionTime as MM:SS — converted to seconds so
+    // it's a plain number to do math on later.
+    function toSeconds(v: any): number | null {
+      if (v == null) return null;
+      if (typeof v === "number") return v;
+      const parts = String(v).split(":");
+      if (parts.length !== 2) return Number(v) || null;
+      const [m, s] = parts.map(Number);
+      return m * 60 + s;
     }
 
-    res.status(200).json({
-      ok: true,
-      year,
-      week: week ?? "all",
-      seasonType: stype,
-      gamesFetched: (cfbdGames ?? []).length,
-      gamesSkippedByDivision: (cfbdGames ?? []).length - trackedGames.length,
-      gamesUpserted,
-      linesUpserted,
-      statsTeamsUpserted,
-    });
+    const byTeam = new Map<string, any>();
+    for (const row of basicStats ?? []) {
+      const col = WANTED_STATS[row.statName];
+      if (!col) continue;
+      const key = row.team;
+      const entry = byTeam.get(key) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
+      entry[col] = col === "possession_time" || col === "possession_time_opponent" ? toSeconds(row.statValue) : Number(row.statValue);
+      byTeam.set(key, entry);
+    }
+
+    // /stats/season/advanced — nested offense/defense objects, per
+    // established CFBD API convention (matches how the CSV exporter's
+    // "Offense Plays"/"Defense Plays" columns are flattened from
+    // offense.plays/defense.plays). NOT verified against a live
+    // response yet — every field below is read with optional chaining
+    // so a wrong nesting assumption produces nulls, not a thrown error;
+    // worth checking a real synced row against CFBD's docs/an actual
+    // response the first time this runs. This used to only keep
+    // plays/drives — the Game Totals engine now runs on the full
+    // efficiency set (PPA/success rate/explosiveness/points-per-
+    // opportunity/havoc/etc.), so everything CFBD gives us here gets
+    // stored instead of discarded.
+    const advancedStats = await cfbdFetch(`/stats/season/advanced?year=${year}`);
+    for (const row of advancedStats ?? []) {
+      const entry = byTeam.get(row.team) ?? { season: row.season ?? year, team: row.team, conference: row.conference ?? null };
+      const off = row.offense ?? {};
+      const def = row.defense ?? {};
+
+      entry.offense_plays = off.plays ?? null;
+      entry.offense_drives = off.drives ?? null;
+      entry.defense_plays = def.plays ?? null;
+      entry.defense_drives = def.drives ?? null;
+
+      entry.off_ppa = off.ppa ?? null;
+      entry.off_success_rate = off.successRate ?? null;
+      entry.off_explosiveness = off.explosiveness ?? null;
+      entry.off_points_per_opportunity = off.pointsPerOpportunity ?? null;
+      entry.off_power_success = off.powerSuccess ?? null;
+      entry.off_stuff_rate = off.stuffRate ?? null;
+      entry.off_line_yards = off.lineYards ?? null;
+      entry.off_standard_downs_ppa = off.standardDowns?.ppa ?? null;
+      entry.off_standard_downs_success_rate = off.standardDowns?.successRate ?? null;
+      entry.off_standard_downs_explosiveness = off.standardDowns?.explosiveness ?? null;
+      entry.off_passing_downs_ppa = off.passingDowns?.ppa ?? null;
+      entry.off_passing_downs_success_rate = off.passingDowns?.successRate ?? null;
+      entry.off_passing_downs_explosiveness = off.passingDowns?.explosiveness ?? null;
+      entry.off_rushing_plays_ppa = off.rushingPlays?.ppa ?? null;
+      entry.off_rushing_plays_success_rate = off.rushingPlays?.successRate ?? null;
+      entry.off_rushing_plays_explosiveness = off.rushingPlays?.explosiveness ?? null;
+      entry.off_passing_plays_ppa = off.passingPlays?.ppa ?? null;
+      entry.off_passing_plays_success_rate = off.passingPlays?.successRate ?? null;
+      entry.off_passing_plays_explosiveness = off.passingPlays?.explosiveness ?? null;
+      entry.off_field_position_avg_start = off.fieldPosition?.averageStart ?? null;
+      entry.off_field_position_avg_predicted_points = off.fieldPosition?.averagePredictedPoints ?? null;
+      entry.off_havoc_total = off.havoc?.total ?? null;
+      entry.off_havoc_front_seven = off.havoc?.frontSeven ?? null;
+      entry.off_havoc_db = off.havoc?.db ?? null;
+
+      entry.def_ppa = def.ppa ?? null;
+      entry.def_success_rate = def.successRate ?? null;
+      entry.def_explosiveness = def.explosiveness ?? null;
+      entry.def_points_per_opportunity = def.pointsPerOpportunity ?? null;
+      entry.def_power_success = def.powerSuccess ?? null;
+      entry.def_stuff_rate = def.stuffRate ?? null;
+      entry.def_line_yards = def.lineYards ?? null;
+      entry.def_standard_downs_ppa = def.standardDowns?.ppa ?? null;
+      entry.def_standard_downs_success_rate = def.standardDowns?.successRate ?? null;
+      entry.def_standard_downs_explosiveness = def.standardDowns?.explosiveness ?? null;
+      entry.def_passing_downs_ppa = def.passingDowns?.ppa ?? null;
+      entry.def_passing_downs_success_rate = def.passingDowns?.successRate ?? null;
+      entry.def_passing_downs_explosiveness = def.passingDowns?.explosiveness ?? null;
+      entry.def_rushing_plays_ppa = def.rushingPlays?.ppa ?? null;
+      entry.def_rushing_plays_success_rate = def.rushingPlays?.successRate ?? null;
+      entry.def_rushing_plays_explosiveness = def.rushingPlays?.explosiveness ?? null;
+      entry.def_passing_plays_ppa = def.passingPlays?.ppa ?? null;
+      entry.def_passing_plays_success_rate = def.passingPlays?.successRate ?? null;
+      entry.def_passing_plays_explosiveness = def.passingPlays?.explosiveness ?? null;
+      entry.def_field_position_avg_start = def.fieldPosition?.averageStart ?? null;
+      entry.def_field_position_avg_predicted_points = def.fieldPosition?.averagePredictedPoints ?? null;
+      entry.def_havoc_total = def.havoc?.total ?? null;
+      entry.def_havoc_front_seven = def.havoc?.frontSeven ?? null;
+      entry.def_havoc_db = def.havoc?.db ?? null;
+
+      byTeam.set(row.team, entry);
+    }
+
+    const statRows = Array.from(byTeam.values()).map((e) => ({ ...e, updated_at: new Date().toISOString() }));
+
+    if (statRows.length > 0) {
+      const { error: statsError, count } = await supabaseAdmin
+        .from("team_season_stats")
+        .upsert(statRows, { onConflict: "season,team", count: "exact" });
+      if (statsError) {
+        throw new Error(`Saving team season stats failed: ${statsError.message}`);
+      }
+      statsTeamsUpserted = count ?? statRows.length;
+    }
+  return statsTeamsUpserted;
+}
+
+export default async function handler(req: any, res: any) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  if (!ADMIN_PASSWORD) {
+    res.status(500).json({ error: "ADMIN_PASSWORD is not configured on the server" });
+    return;
+  }
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    res.status(500).json({ error: "Supabase server env vars are not configured" });
+    return;
+  }
+
+  if (req.body?.mode === "predictions") {
+    const { password } = req.body ?? {};
+    if (!(await isAdmin(password))) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_PREDICTIONS_TOKEN) {
+      res.status(500).json({ error: "CFBD_PREDICTIONS_TOKEN is not configured on the server" });
+      return;
+    }
+    try {
+      await syncPredictions(res);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Predictions sync failed" });
+    }
+    return;
+  }
+
+  if (req.body?.mode === "drogba") {
+    const { password, year, week, part } = req.body ?? {};
+    if (!(await isAdmin(password))) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_API_KEY) {
+      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+      return;
+    }
+    if (!year || typeof year !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'year'" });
+      return;
+    }
+    if (part !== "gameadv" && part !== "preseason" && part !== "plays") {
+      res.status(400).json({ error: "'part' must be 'gameadv', 'preseason' or 'plays'" });
+      return;
+    }
+    try {
+      res.status(200).json(await syncDrogba(year, typeof week === "number" ? week : null, part));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "DROGBA sync failed" });
+    }
+    return;
+  }
+
+  // Weekly data pull, one step per request so each stays well inside the function time limit. The Weekly Data panel
+  // runs the steps in order for the selected week (Sync week) or only for weeks the database shows as missing
+  // (Fill gaps). Every step is logged to rating_pull_runs as source "cfbd:<step>" so the panel can show what ran.
+  //   games       games + media + PGWE + CFBD betting lines (closing-line history)      3 requests
+  //   gameadv     per-game advanced stats for both teams (net SR, PPA, …; DROGBA + Review) 1 request
+  //   plays       one week of plays aggregated per team-game (DROGBA)                   1 request
+  //   seasonstats season-to-date team stats (Game Totals)                               2 requests
+  if (req.body?.mode === "weekly") {
+    const { password, year, week, step } = req.body ?? {};
+    if (!(await isAdmin(password))) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_API_KEY) {
+      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+      return;
+    }
+    if (!year || typeof year !== "number" || typeof week !== "number") {
+      res.status(400).json({ error: "'year' and 'week' must be numbers" });
+      return;
+    }
+    if (!["games", "gameadv", "plays", "seasonstats"].includes(step)) {
+      res.status(400).json({ error: "'step' must be games, gameadv, plays or seasonstats" });
+      return;
+    }
+    const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    const log = (ok: boolean, saved: number | null, detail: any, error: string | null) =>
+      supabaseAdmin
+        .from("rating_pull_runs")
+        .insert({ source: `cfbd:${step}`, trigger: "manual", ok, error, saved, label: `${year} wk ${week}`, detail: detail ? JSON.stringify(detail).slice(0, 2000) : null })
+        .then(() => {}, () => {});
+    try {
+      let result: any;
+      let saved: number | null = null;
+      if (step === "games") {
+        result = await syncGamesAndLines(year, week, "regular");
+        saved = result.gamesUpserted + result.linesUpserted;
+      } else if (step === "seasonstats") {
+        saved = await syncSeasonStats(year);
+        result = { statsTeamsUpserted: saved };
+      } else {
+        result = await syncDrogba(year, week, step);
+        saved = step === "gameadv" ? result.gameAdv?.saved ?? null : result.plays?.saved ?? result.plays?.teamGames ?? null;
+      }
+      await log(true, saved, result, null);
+      res.status(200).json({ ok: true, step, year, week, saved, result });
+    } catch (err: any) {
+      await log(false, null, null, err.message ?? "failed");
+      res.status(500).json({ error: err.message ?? `Weekly ${step} pull failed` });
+    }
+    return;
+  }
+
+  if (req.body?.mode === "teaminfo") {
+    const { password, year, week, parts } = req.body ?? {};
+    if (!(await isAdmin(password))) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
+    if (!CFBD_API_KEY) {
+      res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+      return;
+    }
+    if (!year || typeof year !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'year'" });
+      return;
+    }
+    const wanted = (Array.isArray(parts) ? parts : ["pgwe", "netsr", "coaches"]).filter((p: string) => ["pgwe", "netsr", "coaches", "venues"].includes(p));
+    try {
+      res.status(200).json(await syncTeamInfo(year, typeof week === "number" ? week : null, wanted));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Team info pull failed" });
+    }
+    return;
+  }
+
+  if (!CFBD_API_KEY) {
+    res.status(500).json({ error: "CFBD_API_KEY is not configured on the server" });
+    return;
+  }
+
+  const { password, year, week, seasonType, syncStats } = req.body ?? {};
+
+  if (!(await isAdmin(password))) {
+    res.status(401).json({ error: "Incorrect password" });
+    return;
+  }
+  if (!year || typeof year !== "number") {
+    res.status(400).json({ error: "Missing or invalid 'year'" });
+    return;
+  }
+  if (week != null && typeof week !== "number") {
+    res.status(400).json({ error: "'week', if provided, must be a number" });
+    return;
+  }
+
+  const stype = seasonType === "postseason" ? "postseason" : "regular";
+
+  try {
+    const gl = await syncGamesAndLines(year, week ?? null, stype);
+    // Team season stats only when explicitly requested — separate concern from games/lines, and a bigger payload.
+    const statsTeamsUpserted = syncStats ? await syncSeasonStats(year) : 0;
+    res.status(200).json({ ok: true, year, week: week ?? "all", seasonType: stype, ...gl, statsTeamsUpserted });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "CFBD sync failed" });
   }

@@ -2195,3 +2195,9 @@
             grid-template-columns: 1fr !important;
           }
         }
+
+/* Teams → HFA tables */
+.hfa-table { border-collapse: collapse; width: 100%; font-size: 0.78rem; }
+.hfa-table th, .hfa-table td { padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--hash); white-space: nowrap; }
+.hfa-table th { text-align: left; }
+.hfa-table th.th-right, .hfa-table td.td-right { text-align: right; font-variant-numeric: tabular-nums; }

@@ -94,9 +94,6 @@ export default function NflDraftPoolAdminPanel({ onBack }: { onBack: () => void 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <h2 style={{ marginTop: 0 }}>NFL Win Total Draft</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 680 }}>

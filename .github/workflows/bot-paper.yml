@@ -1,0 +1,36 @@
+# Kalshi ladder bot, PAPER mode: every ~10 minutes, reads the watchlist from
+# Supabase, reads Kalshi's public books, decides orders with the ladder
+# engine and simulates fills. Never touches an exchange account.
+#
+# Needs repo secrets SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+# (Settings → Secrets and variables → Actions). This repo is public, so its
+# Actions logs are public: the runner logs counts only.
+name: Bot (paper)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot-paper
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsx bot/runner/paper.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

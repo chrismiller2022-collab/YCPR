@@ -44,12 +44,13 @@ function computeSystemResult(
   homeValue: number | null,
   homeTeam: string,
   liveByTeam: Record<string, any>,
-  vegasAwaySpread: number | null
+  vegasAwaySpread: number | null,
+  neutral = false
 ): SystemGameResult {
   if (awayValue == null || homeValue == null) {
     return { systemKey, projAwaySpread: null, projCoverTeam: null, filteredBetTeam: null, nwfbTeam: null };
   }
-  const projAwaySpread = awayValue - homeValue + hfaFor(homeTeam, liveByTeam);
+  const projAwaySpread = awayValue - homeValue + (neutral ? 0 : hfaFor(homeTeam, liveByTeam));
   if (vegasAwaySpread == null) {
     return { systemKey, projAwaySpread, projCoverTeam: null, filteredBetTeam: null, nwfbTeam: null };
   }
@@ -86,7 +87,8 @@ export function computeMultiSystemRow(
       homeRatings[s.key] ?? null,
       game.home_team,
       liveByTeam,
-      vegasAwaySpread
+      vegasAwaySpread,
+      !!game.neutral_site
     );
   }
 

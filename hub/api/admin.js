@@ -1,0 +1,56 @@
+// POST { action, ... }: kill switch and watchlist edits. Requires x-bot-password.
+import { authorized, sb, send } from "./_lib.js";
+
+const NUMERIC = ["my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
+const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
+
+function cleanWatch(body) {
+  const w = {};
+  if (body.pick != null) {
+    if (body.pick !== "home" && body.pick !== "away") throw new Error("pick must be home or away");
+    w.pick = body.pick;
+  }
+  for (const k of NUMERIC) if (body[k] !== undefined) w[k] = body[k] === "" || body[k] === null ? null : Number(body[k]);
+  for (const k of INTS) if (body[k] !== undefined) w[k] = Math.round(Number(body[k]));
+  for (const [k, v] of Object.entries(w)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
+  if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
+  if (body.enabled !== undefined) w.enabled = !!body.enabled;
+  if (body.notes !== undefined) w.notes = String(body.notes).slice(0, 500);
+  return w;
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return send(res, 405, { error: "POST only" });
+  if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
+  try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    switch (body.action) {
+      case "kill": {
+        const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ kill_switch: !!body.on, updated_at: new Date().toISOString() }) });
+        return send(res, 200, { state: row });
+      }
+      case "addWatch": {
+        const [g] = await sb(`games?select=id,season,week,start_date,home_team,away_team&id=eq.${encodeURIComponent(body.game_id)}`);
+        if (!g) throw new Error("Unknown game");
+        const w = cleanWatch(body);
+        if (w.pick == null || w.my_home_margin == null) throw new Error("pick and your number are required");
+        const row = { game_id: String(g.id), season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team, kickoff: g.start_date, ...w };
+        const [saved] = await sb("bot_watchlist?on_conflict=game_id", { method: "POST", headers: { Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(row) });
+        return send(res, 200, { watch: saved });
+      }
+      case "updateWatch": {
+        const [saved] = await sb(`bot_watchlist?id=eq.${Number(body.id)}`, { method: "PATCH", body: JSON.stringify(cleanWatch(body)) });
+        return send(res, 200, { watch: saved });
+      }
+      case "removeWatch": {
+        // Disable rather than delete so fills keep their game context.
+        const [saved] = await sb(`bot_watchlist?id=eq.${Number(body.id)}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) });
+        return send(res, 200, { watch: saved });
+      }
+      default:
+        return send(res, 400, { error: "Unknown action" });
+    }
+  } catch (err) {
+    send(res, 400, { error: String(err.message || err) });
+  }
+}

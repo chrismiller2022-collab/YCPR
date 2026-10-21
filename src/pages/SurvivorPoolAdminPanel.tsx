@@ -89,8 +89,8 @@ function SettingsTab({ season }: { season: number }) {
       <button onClick={handleSave} disabled={saving}>
         {saving ? "Saving…" : "Save conferences"}
       </button>
-      {saveMsg && <span style={{ color: "green", marginLeft: "0.75rem" }}>{saveMsg}</span>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {saveMsg && <span style={{ color: "var(--c-ok)", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -176,7 +176,7 @@ function EntrantsTab({ season }: { season: number }) {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p>Loading entrants…</p>
       ) : entrants.length === 0 ? (
@@ -376,9 +376,9 @@ function FpiRatingsTab({ season }: { season: number }) {
         season {season} as a placeholder.
       </p>
 
-      {syncMsg && <p style={{ color: "green" }}>{syncMsg}</p>}
-      {syncError && <p style={{ color: "crimson" }}>{syncError}</p>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {syncMsg && <p style={{ color: "var(--c-ok)" }}>{syncMsg}</p>}
+      {syncError && <p style={{ color: "var(--c-err)" }}>{syncError}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       <div style={{ marginTop: "1rem", marginBottom: "1.25rem", padding: "0.75rem", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <div style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.5rem" }}>
@@ -392,14 +392,14 @@ function FpiRatingsTab({ season }: { season: number }) {
             {manualSaving ? "Saving…" : "Save"}
           </button>
         </div>
-        {manualMsg && <p style={{ color: "green", marginTop: "0.5rem" }}>{manualMsg}</p>}
-        {manualError && <p style={{ color: "crimson", marginTop: "0.5rem" }}>{manualError}</p>}
+        {manualMsg && <p style={{ color: "var(--c-ok)", marginTop: "0.5rem" }}>{manualMsg}</p>}
+        {manualError && <p style={{ color: "var(--c-err)", marginTop: "0.5rem" }}>{manualError}</p>}
       </div>
 
       {loading ? (
         <p>Loading…</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: "#a15c00" }}>No FPI ratings saved for {season} yet — sync or add one manually above.</p>
+        <p style={{ color: "var(--c-warn)" }}>No FPI ratings saved for {season} yet — sync or add one manually above.</p>
       ) : (
         <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 500, overflowY: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.82rem" }}>
@@ -484,7 +484,7 @@ function PicksTab({ season }: { season: number }) {
   const entrantNameById = new Map(entrants.map((e) => [e.id, e.name]));
 
   if (loading) return <p>Loading picks…</p>;
-  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+  if (error) return <p style={{ color: "var(--c-err)" }}>{error}</p>;
 
   return (
     <div>
@@ -599,7 +599,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
   }
 
   if (loading) return <p>Loading…</p>;
-  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+  if (error) return <p style={{ color: "var(--c-err)" }}>{error}</p>;
 
   return (
     <div>
@@ -661,7 +661,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
                         >
                           {weekPicks.length === 0 ? (
                             w <= currentWeek ? (
-                              <span style={{ color: "#c45c52", fontWeight: 700 }}>NEEDS PICKS</span>
+                              <span style={{ color: "var(--c-err)", fontWeight: 700 }}>NEEDS PICKS</span>
                             ) : (
                               <span style={{ color: "var(--chalk-dim)" }}>–</span>
                             )
@@ -671,7 +671,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
                                 const result = gradePickResult(p, gamesById);
                                 return (
                                   <div key={i} style={{ marginBottom: "0.1rem" }}>
-                                    <span style={{ color: result === "loss" ? "#c45c52" : result === "win" ? "#8fd39a" : undefined }}>
+                                    <span style={{ color: result === "loss" ? "var(--c-err)" : result === "win" ? "var(--c-ok)" : undefined }}>
                                       <TeamLink team={p.team} />
                                     </span>
                                     {result !== "pending" && <span style={{ fontSize: "0.65rem" }}>{result === "win" ? " ✅" : " ❌"}</span>}
@@ -687,7 +687,7 @@ function PrivateStandingsTab({ season }: { season: number }) {
                                 );
                               })}
                               {weekPicks.length < 2 && w <= currentWeek && (
-                                <div style={{ fontSize: "0.65rem", color: "#c45c52", fontWeight: 700 }}>MISSING 1</div>
+                                <div style={{ fontSize: "0.65rem", color: "var(--c-err)", fontWeight: 700 }}>MISSING 1</div>
                               )}
                             </>
                           )}
@@ -711,9 +711,6 @@ export default function SurvivorPoolAdminPanel({ onBack }: { onBack: () => void 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Survivor Pool (Public)</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>

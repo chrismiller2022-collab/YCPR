@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import SplashLinePaste from "../components/SplashLinePaste";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import SortHeader from "../components/SortHeader";
@@ -8,7 +9,7 @@ import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } from "../lib/api/cbsSplashPool";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
-import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
+import KeyCrossSlot from "../components/KeyCrossSlot";
 import { TEAMS_BY_NAME } from "../data/teams";
 
 // CBS's own rules exclude games between two teams that are BOTH outside
@@ -400,11 +401,11 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           <input type="checkbox" checked={cbsEligibleOnly} onChange={(e) => setCbsEligibleOnly(e.target.checked)} />
           CBS: eligible conferences only
         </label>
-        <span style={{ fontSize: "0.82rem", color: kellySelectedCount === KELLY_GAMES_TARGET ? "green" : "#a15c00" }}>
+        <span style={{ fontSize: "0.82rem", color: kellySelectedCount === KELLY_GAMES_TARGET ? "var(--c-ok)" : "var(--c-warn)" }}>
           Kelly: {kellySelectedCount}/{KELLY_GAMES_TARGET} selected · {kellyPickedCount} picked · {kellyRecord.wins}-{kellyRecord.losses}
           {kellyRecord.pushes > 0 ? `-${kellyRecord.pushes}` : ""}
         </span>
-        <span style={{ fontSize: "0.82rem", color: cbsSelectedCount === CBS_GAMES_TARGET && cbsKeyCount === CBS_KEY_PICKS_TARGET ? "green" : "#a15c00" }}>
+        <span style={{ fontSize: "0.82rem", color: cbsSelectedCount === CBS_GAMES_TARGET && cbsKeyCount === CBS_KEY_PICKS_TARGET ? "var(--c-ok)" : "var(--c-warn)" }}>
           CBS: {cbsSelectedCount}/{CBS_GAMES_TARGET} selected · {cbsPickedCount} picked · Key {cbsKeyCount}/{CBS_KEY_PICKS_TARGET} · {cbsRecord.wins}-
           {cbsRecord.losses}
           {cbsRecord.pushes > 0 ? `-${cbsRecord.pushes}` : ""}
@@ -440,9 +441,23 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         >
           Time
         </button>
+        <SplashLinePaste
+          format="cbs"
+          disabled={loading}
+          games={rows.map((r) => ({
+            id: r.game_id,
+            away_team: r.game.away_team,
+            home_team: r.game.home_team,
+            currentLine: r.splash_line,
+            vegasLine: r.vegasAwaySpread,
+          }))}
+          onApply={(lineByGame) =>
+            setRows((prev) => prev.map((r) => (lineByGame.has(r.game_id) ? { ...r, splash_line: lineByGame.get(r.game_id)! } : r)))
+          }
+        />
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {ratingsLoading && <p>Loading live ratings…</p>}
       {loading && <p>Loading…</p>}
 
@@ -538,7 +553,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                   return (
                     <tr
                       key={r.game_id}
-                      style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : r.kellyIsPossible ? "rgba(255,255,255,0.04)" : undefined }}
+                      style={{ background: r.cbsIsKeyPick ? "var(--gold-dim)" : r.kellyIsPossible ? "var(--a-tint-1)" : undefined }}
                     >
                       <td
                         style={{ ...cellStyle, cursor: "pointer" }}
@@ -571,19 +586,9 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                           onChange={(e) =>
                             updateRow(r.game_id, { splash_line: e.target.value === "" ? null : Number(e.target.value) })
                           }
-                          style={{ width: 55, textAlign: "right" }}
+                          style={{ width: 76, textAlign: "right" }}
                         />
-                        {(() => {
-                          const crossed = keyNumbersBetween(r.myProjAwaySpread, r.splash_line);
-                          return crossed.length > 0 ? (
-                            <span
-                              title={`My line (${fmt(r.myProjAwaySpread)}) and the pool line (${fmt(r.splash_line)}) are on opposite sides of ${keyCrossLabel(crossed)}`}
-                              style={{ marginLeft: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--gold, #d4af37)" }}
-                            >
-                              🔑{keyCrossLabel(crossed)}
-                            </span>
-                          ) : null;
-                        })()}
+                        <KeyCrossSlot mine={r.myProjAwaySpread} pool={r.splash_line} />
                       </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
@@ -734,14 +739,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           </div>
 
           {isDirty && (
-            <p style={{ color: "#e0a030", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
+            <p style={{ color: "var(--c-warn)", fontWeight: 700, marginTop: "1rem", marginBottom: 0 }}>
               ⚠ You have unsaved picks and/or lines — click Save below before leaving this page, or they'll be lost.
             </p>
           )}
           <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
             {saving ? "Saving…" : "Save Lines & Picks"}
           </button>
-          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "green" : "#e0a030", marginLeft: "0.75rem" }}>{saveMsg}</span>}
+          {saveMsg && <span style={{ color: saveMsg === "Saved." ? "var(--c-ok)" : "var(--c-warn)", marginLeft: "0.75rem" }}>{saveMsg}</span>}
         </>
       )}
 

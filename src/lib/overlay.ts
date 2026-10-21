@@ -1,3 +1,4 @@
+import { pickVegasLine } from "./linePick";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import type { BettingLineRow } from "./api/gamesLines";
@@ -303,15 +304,9 @@ export interface OverlayContext {
   bets: PlacedBetRow[];
 }
 
-// Same provider preference as matchupsCompute.pickLine, kept local so the
-// TV page doesn't pull that module's team/ratings data into its bundle.
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Draft Kings", "Bovada"];
-export function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  for (const p of PREFERRED_PROVIDERS) {
-    const match = lines.find((l) => l.provider === p);
-    if (match) return match;
-  }
-  return lines[0] ?? null;
+// Shared provider order (linePick.ts has no heavy imports, so the TV page's bundle stays small).
+export function pickLine(lines: BettingLineRow[], completed?: boolean): BettingLineRow | null {
+  return pickVegasLine(lines, completed);
 }
 
 /** One read per table for the selected games — called when the selection changes, never on a timer. */
@@ -324,7 +319,7 @@ export async function fetchOverlayContext(gameIds: string[]): Promise<Record<str
       .select("id, game_id, season, week, provider, spread, over_under, home_moneyline, away_moneyline, pulled_at, opening_spread, opening_over_under")
       .in("game_id", gameIds),
     supabase.from("game_projection_locks").select("game_id, my_away_spread, my_total").in("game_id", gameIds),
-    supabase.from("placed_bets").select("*").in("game_id", gameIds),
+    supabase.from("placed_bets").select("*").in("game_id", gameIds).neq("book", "placeholder"),
   ]);
   for (const r of [games, lines, locks, bets]) if (r.error) throw r.error;
 
@@ -333,7 +328,7 @@ export async function fetchOverlayContext(gameIds: string[]): Promise<Record<str
     const lock = (locks.data ?? []).find((l: any) => l.game_id === g.id);
     out[g.id] = {
       game: g,
-      line: pickLine(((lines.data ?? []) as BettingLineRow[]).filter((l) => l.game_id === g.id)),
+      line: pickLine(((lines.data ?? []) as BettingLineRow[]).filter((l) => l.game_id === g.id), !!g.completed),
       // Locks store the AWAY spread; the bug works in home-perspective like betting_lines.
       myHomeSpread: lock?.my_away_spread != null ? -Number(lock.my_away_spread) : null,
       myTotal: lock?.my_total != null ? Number(lock.my_total) : null,

@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 // Read-only proxy to The Odds API (the-odds-api.com) and ESPN's public
 // futures API. Three modes:
 //   - Default (game odds): college football spread/moneyline/total
@@ -439,6 +440,34 @@ async function handleTeamTotals(req: any, res: any) {
 // x-requests-* headers so the actual spend is visible after each call.
 // ---------------------------------------------------------------------
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const MAX_HISTORICAL_MARKETS = 4;
 
 function creditHeaders(upstream: Response) {
@@ -642,7 +671,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.query?.mode === "period-lines") {
-      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+      if (!(await isAdmin(req.headers?.["x-admin-password"]))) {
         res.status(401).json({ error: "Incorrect password" });
         return;
       }
@@ -651,7 +680,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.query?.mode === "historical-spreads" || req.query?.mode === "current-spreads") {
-      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+      if (!(await isAdmin(req.headers?.["x-admin-password"]))) {
         res.status(401).json({ error: "Incorrect password" });
         return;
       }
@@ -660,7 +689,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.query?.mode === "historical-events" || req.query?.mode === "historical-event-odds") {
-      if (!ADMIN_PASSWORD || req.headers?.["x-admin-password"] !== ADMIN_PASSWORD) {
+      if (!(await isAdmin(req.headers?.["x-admin-password"]))) {
         res.status(401).json({ error: "Incorrect password" });
         return;
       }
@@ -705,13 +734,15 @@ export default async function handler(req: any, res: any) {
     // client actually renders — the raw response also carries several
     // mainstream US books (DraftKings, FanDuel, BetMGM...) we don't show,
     // no sense shipping those bytes to the browser on every page open.
+    const allBooks = req.query?.books === "all";
     const trimmed = games.map((g) => ({
       id: g.id,
       commenceTime: g.commence_time,
       homeTeam: g.home_team,
       awayTeam: g.away_team,
+      // ?books=all keeps every US book (for the consensus "Vegas" median the Weekly Data panel saves).
       bookmakers: g.bookmakers
-        .filter((b) => WANTED_BOOKMAKERS.has(b.key))
+        .filter((b) => allBooks || WANTED_BOOKMAKERS.has(b.key))
         .map((b) => ({
           key: b.key,
           title: b.title,

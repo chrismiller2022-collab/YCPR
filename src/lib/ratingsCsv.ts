@@ -165,6 +165,8 @@ export function parseMcilleceCsv(text: string): McilleceRow[] {
 export interface MasseyRawRow {
   team: string;
   pwr: number;
+  /** Massey's home-field advantage in points. Unlike Pwr/Off/Def, "HFA" has no rank column, so the value sits under the label itself. */
+  hfa: number | null;
 }
 
 export function parseMasseyCsv(text: string): MasseyRawRow[] {
@@ -173,6 +175,7 @@ export function parseMasseyCsv(text: string): MasseyRawRow[] {
   const headers = parseCsvLine(lines[0]);
   const teamIdx = findHeaderIdx(headers, "Team");
   const pwrLabelIdx = findHeaderIdx(headers, "Pwr");
+  const hfaIdx = findHeaderIdx(headers, "HFA");
   if (teamIdx === -1 || pwrLabelIdx === -1) return [];
   const pwrValueIdx = pwrLabelIdx + 1;
 
@@ -184,7 +187,9 @@ export function parseMasseyCsv(text: string): MasseyRawRow[] {
     if (!team || raw === "") continue;
     const n = Number(raw);
     if (Number.isNaN(n)) continue;
-    out.push({ team, pwr: n });
+    const hfaRaw = hfaIdx === -1 ? "" : (fields[hfaIdx] ?? "").trim();
+    const hfa = hfaRaw === "" || Number.isNaN(Number(hfaRaw)) ? null : Number(hfaRaw);
+    out.push({ team, pwr: n, hfa });
   }
   return out;
 }
@@ -236,6 +241,22 @@ export function parseSpPlusCsv(text: string): SpPlusRow[] {
   const headers = parseCsvLine(lines[0]);
   let teamIdx = findHeaderIdx(headers, "Team");
   let spIdx = findHeaderIdx(headers, "SP+");
+  // The upload template (Team, Division, SP+): FBS rows on the FBS scale, FCS rows on the FCS-tab scale (−33 before
+  // the sign flip), same as the sheet's FBS/FCS week tabs.
+  const divIdx = findHeaderIdx(headers, "Division");
+  if (divIdx !== -1 && teamIdx !== -1 && spIdx !== -1) {
+    const out: SpPlusRow[] = [];
+    for (const line of lines.slice(1)) {
+      const f = parseCsvLine(line);
+      const team = (f[teamIdx] ?? "").trim();
+      const raw = (f[spIdx] ?? "").trim();
+      const n = Number(raw);
+      if (!team || raw === "" || Number.isNaN(n)) continue;
+      const fcs = (f[divIdx] ?? "").trim().toUpperCase() === "FCS";
+      out.push({ team, value: fcs ? -(n - 33) : -n });
+    }
+    return out;
+  }
   if (teamIdx === -1) teamIdx = 14; // column O
   if (spIdx === -1) spIdx = 17; // column R
 
@@ -248,6 +269,37 @@ export function parseSpPlusCsv(text: string): SpPlusRow[] {
     const n = Number(raw);
     if (Number.isNaN(n)) continue;
     out.push({ team, value: -n });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------
+// JP+ pasted from jpplusratings.com's table (the fallback when the JP+
+// pull fails). Copying the table gives, per team: rank, movement (▲2 /
+// ▼1 / —), the team name, then one tab-separated line starting with the
+// JP+ rating ("+28.2	37.7 (10)	9.1 (1)	-0.4 (117)"). The team is the
+// last text line before each rating line. Sign-flipped like the pull.
+// ---------------------------------------------------------------------
+export function parseJpPlusPaste(text: string): { team: string; value: number }[] {
+  const lines = text
+    .replace(/−/g, "-")
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const out: { team: string; value: number }[] = [];
+  let lastText: string | null = null;
+  for (const line of lines) {
+    const m = /^([+-]?\s?\d+(?:\.\d+)?)(?:\t|\s{2,}|$)/.exec(line);
+    const isRatingLine = m != null && /\t/.test(line);
+    if (isRatingLine) {
+      const rating = Number(m![1].replace(/\s/g, ""));
+      if (lastText && !Number.isNaN(rating)) out.push({ team: lastText, value: rating === 0 ? 0 : -rating });
+      lastText = null;
+      continue;
+    }
+    // Rank numbers and movement markers aren't team names.
+    if (/^\d+$/.test(line) || /^[▲▼—–-]\s*\d*$/.test(line) || /^team$/i.test(line)) continue;
+    lastText = line;
   }
   return out;
 }

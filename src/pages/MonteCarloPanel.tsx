@@ -1,3 +1,4 @@
+import { computeAndSaveLiveSos } from "../lib/sosCompute";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
@@ -66,7 +67,7 @@ function DistributionDetail({ result, colSpan, showMore }: { result: TeamSimResu
 
   return (
     <tr>
-      <td colSpan={colSpan} style={{ padding: "0.5rem 0.75rem", background: "rgba(255,255,255,0.03)", fontSize: "0.75rem" }}>
+      <td colSpan={colSpan} style={{ padding: "0.5rem 0.75rem", background: "var(--a-tint-1)", fontSize: "0.75rem" }}>
         <div>
           <strong>{result.team} win-total distribution (final record):</strong>{" "}
           {buckets.map((b) => `${b.wins}-${b.losses}: ${b.pct.toFixed(1)}%`).join("  ·  ")}
@@ -564,7 +565,7 @@ function ResumeComparisonTable({ entries, sampleTrials }: { entries: ResumeCompa
                   </td>
                   <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmtPct(r.currentPlayoffPct)}{" "}
-                    <span style={{ fontSize: "0.7rem", color: pctDelta > 0.5 ? "#2e8b40" : pctDelta < -0.5 ? "#c0392b" : "var(--chalk-dim)" }}>
+                    <span style={{ fontSize: "0.7rem", color: pctDelta > 0.5 ? "var(--c-ok)" : pctDelta < -0.5 ? "var(--c-err)" : "var(--chalk-dim)" }}>
                       ({-pctDelta >= 0 ? "+" : ""}
                       {(-pctDelta).toFixed(1)})
                     </span>
@@ -664,6 +665,8 @@ function MonteCarloResultsSection() {
     }
   }
 
+  const [saveSos, setSaveSos] = useState(true);
+
   async function handleSave() {
     if (!results || saveWeek == null) return;
     setSaving(true);
@@ -678,7 +681,18 @@ function MonteCarloResultsSection() {
         resumeComparison: resumeComparison ?? undefined,
         resumeComparisonTrials,
       });
-      setSaveMsg("Saved.");
+      // SOS for the same week, from the same live ratings, so the Weekly Run's "Save SOS" step is done with the sim.
+      let sosNote = "";
+      if (saveSos) {
+        try {
+          setSaveMsg("Saved the sim. Saving SOS…");
+          const sos = await computeAndSaveLiveSos(season, saveWeek);
+          sosNote = ` SOS saved for week ${saveWeek} (${sos.withBlend} teams with a blend score).`;
+        } catch (e: any) {
+          sosNote = ` SOS not saved: ${e.message ?? e}. Save it from the SOS page.`;
+        }
+      }
+      setSaveMsg(`Saved.${sosNote}`);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -725,6 +739,9 @@ function MonteCarloResultsSection() {
                 <button onClick={handleSave} disabled={saving || saveWeek == null}>
                   {saving ? "Saving…" : "Save this run"}
                 </button>
+                <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.3rem" }} title="Computes SOS from the live ratings and saves it to the same week">
+                  <input type="checkbox" checked={saveSos} onChange={(e) => setSaveSos(e.target.checked)} /> Also save SOS
+                </label>
               </>
             )}
           </div>
@@ -759,10 +776,10 @@ function MonteCarloResultsSection() {
             </div>
           )}
 
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
-          {saveMsg && <p style={{ color: "green" }}>{saveMsg}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
+          {saveMsg && <p style={{ color: "var(--c-ok)" }}>{saveMsg}</p>}
           {unmatched.length > 0 && (
-            <p style={{ color: "#a15c00", fontSize: "0.8rem" }}>
+            <p style={{ color: "var(--c-warn)", fontSize: "0.8rem" }}>
               No power rating found for: {unmatched.slice(0, 15).join(", ")}
               {unmatched.length > 15 ? `, +${unmatched.length - 15} more` : ""}. These are
               treated as sub-FCS buy-game opponents — estimated at the median FCS rating +28
@@ -1190,7 +1207,7 @@ function SrsTab() {
             </button>
           </div>
 
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
           {rows.length > 0 && (
             <>
@@ -1617,9 +1634,6 @@ export default function MonteCarloPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" data-export-exclude="true" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Monte Carlo</h2>
 

@@ -54,8 +54,21 @@ export function saveRatingWeights(weights: Record<string, number>) {
   return authedPost("weightsSave", { weights });
 }
 
-export function syncCfbdRatings(year: number) {
-  return authedPost("sync", { year });
+/** CFBD rating pulls. `opts.systems` pulls only those; `opts.skip` pulls everything else. */
+export function syncCfbdRatings(year: number, opts: { systems?: string[]; skip?: string[] } = {}) {
+  return authedPost("sync", { year, ...opts });
+}
+
+export interface SpSheetResult {
+  mode: "top" | "split" | "none";
+  tabs: string[];
+  rows: { team: string; sp: number; tab: "top" | "fbs" | "fcs" }[];
+  notes?: string[];
+}
+
+/** Bill Connelly's SP+ sheet for a week: the "TOP n WEEK w" tab if there is one, else the FBS/FCS week tabs (raw SP+, not yet offset). */
+export async function fetchSpPlusSheet(week: number): Promise<SpSheetResult> {
+  return (await authedPost("spSheetProxy", { week })) as SpSheetResult;
 }
 
 /** Writes YC into weekly_team_stats.rating for the given week (site-wide "live rating" source), without touching any other column on those rows. */
@@ -208,6 +221,26 @@ export async function fetchTeamRankingsRatings(): Promise<ScrapedRatingRow[]> {
   return data.rows as ScrapedRatingRow[];
 }
 
+export type TrHfaPage = "home-adv" | "home" | "away";
+
+/** One TeamRankings home-field page (home-adv already divided by 10; home/away ratings in points, higher = better). `date` = the page as of that day. */
+export async function fetchTeamRankingsHfaPage(page: TrHfaPage, date?: string): Promise<{ team: string; value: number }[]> {
+  const data = await authedPost("trHfaProxy", { page, date: date ?? null });
+  return data.rows as { team: string; value: number }[];
+}
+
+export type HfaSource = "massey" | "tr" | "tr_home" | "tr_away";
+
+/** Saves per-team HFA inputs for (season, week, source) into team_hfa. Week N = values known going into week N. */
+export function saveTeamHfa(season: number, week: number, source: HfaSource, rows: { team: string; value: number }[], asOf?: string | null) {
+  return authedPost("hfaSave", { season, week, source, asOf: asOf ?? null, rows });
+}
+
+/** Saves the season's Team HFA definition (Teams → HFA blend weights and options). */
+export function saveHfaSettings(season: number, settings: Record<string, any>) {
+  return authedPost("hfaSettingsSave", { season, settings });
+}
+
 export interface JpPlusSnapshot {
   label: string;
   rows: { team: string; conference: string; value: number }[]; // value already sign-flipped to this site's convention
@@ -330,7 +363,12 @@ export interface PullRunRow {
   label: string | null;
 }
 
-/** Recent scheduled-pull attempts (scripts/pull-ratings.ts), newest first. */
+/** Records one manual Sync All / Fill gaps source run in rating_pull_runs, so Fill gaps knows what already succeeded this week. */
+export function logManualPullRun(run: { source: string; ok: boolean; error?: string | null; label?: string | null; detail?: string | null }) {
+  return authedPost("logPullRun", { trigger: "manual", ...run });
+}
+
+/** Recent rating pull attempts (manual Sync All / Fill gaps runs), newest first. */
 export async function fetchRecentPullRuns(days = 14): Promise<PullRunRow[]> {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const { data, error } = await supabase

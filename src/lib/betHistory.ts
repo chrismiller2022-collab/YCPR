@@ -1,3 +1,4 @@
+import { LINE_PROVIDER_ORDER } from "./linePick";
 import { type BetHistoryRecord, type BetPick } from "../data/betHistory.data";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { isP4, bucketFor } from "./conferenceBuckets";
@@ -356,12 +357,11 @@ export type HfaMode = "team" | "flat";
 
 export type LineMode = "open" | "close";
 
-const LIVE_PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
+export function pickSpreadLine(lines: BettingLineRow[], lineMode: LineMode = "close"): BettingLineRow | null {
   const field = lineMode === "open" ? "opening_spread" : "spread";
   const withSpread = lines.filter((l) => l[field] != null);
   if (withSpread.length === 0) return null;
-  for (const p of LIVE_PREFERRED_PROVIDERS) {
+  for (const p of LINE_PROVIDER_ORDER) {
     const match = withSpread.find((l) => l.provider === p);
     if (match) return match;
   }
@@ -407,7 +407,7 @@ export function buildLiveBetHistoryRecords(
       const homeRating = weekRatings[g.home_team]?.rating ?? TEAMS_BY_NAME[g.home_team]?.rating ?? null;
       const awayRating = weekRatings[g.away_team]?.rating ?? TEAMS_BY_NAME[g.away_team]?.rating ?? null;
       if (homeRating == null || awayRating == null) continue;
-      const hfa = hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
+      const hfa = g.neutral_site ? 0 : hfaMode === "flat" ? HFA : hfaFor(g.home_team, weekRatings);
       awayPerspectivePrediction = awayRating - homeRating + hfa;
     }
 
@@ -828,12 +828,18 @@ export interface AmountOffLineBucket {
 // 28, 35, 45), not a mechanical even split. The center bucket (0-1,
 // signed as -1 to 1) plus these 15 positive-side buckets; signed mode
 // mirrors the 15 onto the negative side, abs mode uses them as-is.
+// 3 and 7 are split into single lines (2.5 / 3 / 3.5 and 6.5 / 7 / 7.5): getting the
+// half point on either side of a key is worth real money, so they aren't one bucket.
 const POSITIVE_LINE_BUCKETS: AmountOffLineBucket[] = [
-  { min: 1, max: 2 },
-  { min: 2.5, max: 3.5 },
-  { min: 3.5, max: 6.5 },
-  { min: 6.5, max: 7.5 },
-  { min: 7.5, max: 9.5 },
+  { min: 1, max: 2.5 },
+  { min: 2.5, max: 3 },
+  { min: 3, max: 3.5 },
+  { min: 3.5, max: 4 },
+  { min: 4, max: 6.5 },
+  { min: 6.5, max: 7 },
+  { min: 7, max: 7.5 },
+  { min: 7.5, max: 8 },
+  { min: 8, max: 9.5 },
   { min: 9.5, max: 10.5 },
   { min: 10.5, max: 13.5 },
   { min: 13.5, max: 14.5 },
@@ -874,6 +880,10 @@ export function buildAmountOffThresholds(points: AmountOffPoint[]): number[] {
 
 function lineInBucket(lineSigned: number, bucket: AmountOffLineBucket, absValues: boolean): boolean {
   const v = absValues ? Math.abs(lineSigned) : lineSigned;
+  // Favorite-side buckets are the underdog ladder mirrored, so match them on the line's size the same way the
+  // underdog side does: [-3, -2.5) as a raw range would hold -3 and drop -2.5, so test |line| in [2.5, 3) instead.
+  if (!absValues && bucket.max <= 0 && bucket.min < 0) return -v >= -bucket.max && -v < -bucket.min;
+  if (!absValues && bucket.min < 0 && bucket.max > 0) return v > bucket.min && v < bucket.max; // center
   return v >= bucket.min && v < bucket.max;
 }
 

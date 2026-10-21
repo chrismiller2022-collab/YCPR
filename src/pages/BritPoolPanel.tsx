@@ -1,3 +1,4 @@
+import { pickVegasLine } from "../lib/linePick";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -7,7 +8,7 @@ import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { hfaFor, moneylineToImpliedWinPct, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { formatProjectedScore } from "../lib/gameTotals";
-import { billRAwayWinPct } from "../lib/moneylineBetHistory";
+import { billRAwayWinPct, BILL_R_HFA } from "../lib/moneylineBetHistory";
 import { useWeeklyStats, type WeeklyTeamStats } from "../lib/api/weeklyStats";
 import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
 import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
@@ -24,22 +25,14 @@ import {
   type BritPickWithGame,
 } from "../lib/api/britPool";
 
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-function pickLine(lines: BettingLineRow[]): BettingLineRow | null {
-  if (lines.length === 0) return null;
-  for (const p of PREFERRED_PROVIDERS) {
-    const m = lines.find((l) => l.provider === p);
-    if (m) return m;
-  }
-  return lines[0];
-}
+const pickLine = (lines: BettingLineRow[]): BettingLineRow | null => pickVegasLine(lines);
 
 // Shared by the auto-pick default (below) and the render — computing this
 // twice with two copies of the formula is exactly the kind of divergence
 // bug Chris has hit before (see conventions), so it's one function used
 // both places.
 function computeProjection(
-  g: { away_team: string; home_team: string },
+  g: { away_team: string; home_team: string; neutral_site?: boolean | null },
   liveByTeam: Record<string, WeeklyTeamStats>,
   lock?: { my_away_spread: number | null; my_away_win_pct: number | null } | null
 ) {
@@ -55,12 +48,12 @@ function computeProjection(
     lock?.my_away_spread != null
       ? lock.my_away_spread
       : awayTeam && homeTeam
-        ? awayTeam.rating - homeTeam.rating + hfaFor(g.home_team, liveByTeam)
+        ? awayTeam.rating - homeTeam.rating + (g.neutral_site ? 0 : hfaFor(g.home_team, liveByTeam))
         : null;
   // Bill R Method — the canonical site-wide moneyline model — not the
   // spread-derived curve, matching every other pool tool.
   const awayWinPct =
-    lock?.my_away_win_pct != null ? lock.my_away_win_pct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating) : null;
+    lock?.my_away_win_pct != null ? lock.my_away_win_pct : awayTeam && homeTeam ? billRAwayWinPct(awayTeam.rating, homeTeam.rating, undefined, g.neutral_site ? 0 : BILL_R_HFA) : null;
   return { awayTeam, homeTeam, projAwaySpread, awayWinPct };
 }
 
@@ -293,7 +286,7 @@ function GameSelectionStep({
             style={{ width: 200 }}
           />
           {nonFbsSearching && <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Searching…</span>}
-          {nonFbsError && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{nonFbsError}</p>}
+          {nonFbsError && <p style={{ color: "var(--c-err)", fontSize: "0.8rem" }}>{nonFbsError}</p>}
           {nonFbsResults.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginTop: "0.4rem" }}>
               {nonFbsResults.map((g) => (
@@ -325,7 +318,7 @@ function GameSelectionStep({
           {saving ? "Saving…" : "Save selected games"}
         </button>
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -597,7 +590,7 @@ function PickingStep({
       <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.75rem" }}>
         {saving ? "Saving…" : "Save picks"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {handicapGame && (
         <MatchupHandicapPopup
           season={season}
@@ -666,8 +659,8 @@ function WeeklyEntryStep({ season, week }: { season: number; week: number }) {
         <button onClick={handleSave} disabled={saving}>
           {saving ? "Saving…" : "Save"}
         </button>
-        {saved && <span style={{ color: "green" }}>Saved</span>}
-        {saveError && <span style={{ color: "crimson" }}>Error: {saveError}</span>}
+        {saved && <span style={{ color: "var(--c-ok)" }}>Saved</span>}
+        {saveError && <span style={{ color: "var(--c-err)" }}>Error: {saveError}</span>}
       </div>
     </div>
   );
@@ -764,7 +757,7 @@ function SeasonTrackingTab({ season }: { season: number }) {
                       {record.pending > 0 ? ` (${record.pending} pending)` : ""}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {entry ? `$${entry.entry_fee.toFixed(2)}` : <span style={{ color: "#a15c00" }}>not saved</span>}
+                      {entry ? `$${entry.entry_fee.toFixed(2)}` : <span style={{ color: "var(--c-warn)" }}>not saved</span>}
                     </td>
                     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {entry ? `$${entry.winnings.toFixed(2)}` : "–"}
@@ -774,7 +767,7 @@ function SeasonTrackingTab({ season }: { season: number }) {
                         padding: "0.4rem 0.6rem",
                         borderBottom: "1px solid var(--hash)",
                         textAlign: "right",
-                        color: !entry ? undefined : net >= 0 ? "green" : "crimson",
+                        color: !entry ? undefined : net >= 0 ? "var(--c-ok)" : "var(--c-err)",
                       }}
                     >
                       {entry ? `${net >= 0 ? "+" : ""}${net.toFixed(2)}` : "–"}
@@ -807,8 +800,8 @@ function SeasonTrackingTab({ season }: { season: number }) {
           <button onClick={saveBonus} disabled={savingBonus}>
             {savingBonus ? "Saving…" : "Save"}
           </button>
-          {bonusSaved && <span style={{ color: "green" }}>Saved</span>}
-          {bonusError && <span style={{ color: "crimson" }}>Error: {bonusError}</span>}
+          {bonusSaved && <span style={{ color: "var(--c-ok)" }}>Saved</span>}
+          {bonusError && <span style={{ color: "var(--c-err)" }}>Error: {bonusError}</span>}
         </div>
       </div>
 
@@ -832,9 +825,6 @@ export default function BritPoolPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <h2 style={{ marginTop: 0 }}>The Brit</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>

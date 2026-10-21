@@ -4,7 +4,7 @@ import TeamLogo from "../components/TeamLogo";
 import { CONF_FUTURES_BY_TEAM } from "../data/confFutures";
 import { TEAMS_BY_NAME } from "../data/teams";
 import { fmtOdds } from "../lib/format";
-import { hfaFor, spreadColor, spreadToMoneyline } from "../lib/odds";
+import { fairMoneylineFromWinPct, hfaFor, spreadColor, spreadToMoneyline } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchMonteCarloRuns, fetchMonteCarloRun } from "../lib/api/monteCarlo";
 import type { TeamSimResult } from "../lib/montecarlo/engine";
@@ -61,9 +61,12 @@ export function BracketGame({ seedA, teamA, seedB, teamB, neutral, liveByTeam, o
 }
 
 
-function NattyRow({ team, nattyPct, onNavigateTeam }: any) {
+function NattyRow({ team, nattyPct, confPct, onNavigateTeam }: any) {
   const pct = nattyPct ?? 0;
-  const f = CONF_FUTURES_BY_TEAM[team.team];
+  // Conference-title odds from the same Monte Carlo run as the field (0-1); the static preseason futures only when the
+  // run has none for this team. Independents have no conference to win.
+  const fallback = CONF_FUTURES_BY_TEAM[team.team]?.confWinPct ?? null;
+  const conf: number | null = team.conf === "FBS Independents" ? null : confPct ?? fallback;
   return (
     <tr>
       <td>
@@ -77,8 +80,8 @@ function NattyRow({ team, nattyPct, onNavigateTeam }: any) {
         {team.rating.toFixed(2)}
       </td>
       <td className="wintotals-total-cell">
-        {f ? `${(f.confWinPct * 100).toFixed(1)}%` : "–"}
-        {f && <span className="compare-value-sub"> {fmtOdds(f.fairPrice)}</span>}
+        {conf != null ? `${(conf * 100).toFixed(1)}%` : "–"}
+        {conf != null && conf > 0 && <span className="compare-value-sub"> {fmtOdds(Math.round(fairMoneylineFromWinPct(conf)))}</span>}
       </td>
       <td className="wintotals-total-cell">{(pct * 100).toFixed(2)}%</td>
     </tr>
@@ -140,6 +143,11 @@ export default function BracketPage({ subLabel, weekNum, onNavigateTeam, onHome 
   const nattyPctByTeam = useMemo(() => {
     const map: Record<string, number> = {};
     for (const r of mcResults ?? []) map[r.team] = r.nattyPct;
+    return map;
+  }, [mcResults]);
+  const confPctByTeam = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of mcResults ?? []) if (r.confTitlePct != null) map[r.team] = r.confTitlePct / 100;
     return map;
   }, [mcResults]);
 
@@ -388,7 +396,7 @@ export default function BracketPage({ subLabel, weekNum, onNavigateTeam, onHome 
             </thead>
             <tbody>
               {nattyRows.map((t) => (
-                <NattyRow key={t.team} team={t} nattyPct={nattyPctByTeam[t.team]} onNavigateTeam={onNavigateTeam} />
+                <NattyRow confPct={confPctByTeam[t.team]} key={t.team} team={t} nattyPct={nattyPctByTeam[t.team]} onNavigateTeam={onNavigateTeam} />
               ))}
             </tbody>
           </table>

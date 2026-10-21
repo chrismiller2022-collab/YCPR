@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAdminWeek } from "../lib/adminWeek";
 import type { CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
@@ -6,7 +7,9 @@ import { CONFERENCES } from "../data/teams";
 import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusMemberKey, isInConsensus } from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
-import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows } from "../lib/ratingsCsv";
+import { SP_CSV_TEMPLATE, spFreshness, spValuesFromSheet, type SpValue } from "../lib/spPlusPull";
+import { TEAMS_BY_NAME } from "../data/teams";
+import { parseSheetCsv, parseMcilleceCsv, parseSpPlusCsv, parseMasseyCsv, normalizeMasseyRows, parseJpPlusPaste } from "../lib/ratingsCsv";
 import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, teamDivConf, type ConglomeratedRow } from "../lib/ratingConglomerate";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
@@ -17,7 +20,12 @@ import {
   fetchMcilleceRatings,
   fetchJpPlusRatings,
   fetchTeamRankingsRatings,
+  fetchTeamRankingsHfaPage,
+  saveTeamHfa,
+  fetchSpPlusSheet,
   fetchRecentPullRuns,
+  fetchSavedRatingsAtOrBefore,
+  logManualPullRun,
   type PullRunRow,
   saveRatingWeights,
   syncCfbdRatings,
@@ -118,98 +126,75 @@ function WeightsEditor({
 }
 
 // ---------------------------------------------------------------------
-// Automatic pulls — what the hourly GitHub job (scripts/pull-ratings.ts) has
-// done. It only refreshes the live ratings above; it never saves or
-// overwrites a week.
+// Rating sources. Sync All runs every one of them; Fill gaps re-runs only the
+// ones with no successful run since this week started (Sunday 12am). Every
+// run is logged to rating_pull_runs (trigger "manual"), which is what Fill
+// gaps and the status chips read.
 // ---------------------------------------------------------------------
-const AUTO_SOURCE_LABELS: Record<string, string> = {
-  sagarin: "Sagarin",
-  cfbd: "CFBD (FPI/SP+/SRS/Core/Elo)",
-  fei: "FEI/F+",
-  jpplus: "JP+",
+type SourceKey = "cfbd" | "spplus" | "sheet" | "sagarin" | "mcillece" | "jpplus" | "tr";
+const SOURCE_LABELS: Record<SourceKey, string> = {
+  cfbd: "CFBD",
+  spplus: "SP+",
+  sheet: "Sheet",
+  sagarin: "Sagarin/FEI/F+",
   mcillece: "McIllece",
-  tr: "TR",
-  sheet: "Google Sheet",
+  jpplus: "JP+",
+  tr: "TeamRankings",
 };
+const SOURCE_ORDER = Object.keys(SOURCE_LABELS) as SourceKey[];
+
+function weekStart(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
 
 function fmtWhen(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
-function AutoPullStatus() {
-  const [runs, setRuns] = useState<PullRunRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    fetchRecentPullRuns(14)
-      .then(setRuns)
-      .catch((e) => setError(e.message ?? "Failed to load"));
-  }, []);
+type SourceResult = { summary: string; unmatchedNames?: string[]; label?: string | null };
 
-  const rows = useMemo(() => {
-    return Object.keys(AUTO_SOURCE_LABELS).map((source) => {
-      const mine = (runs ?? []).filter((r) => r.source === source);
-      return {
-        source,
-        last: mine[0] ?? null,
-        lastOk: mine.find((r) => r.ok) ?? null,
-        lastChange: mine.find((r) => r.ok && (r.changed ?? 0) + (r.new_teams ?? 0) > 0) ?? null,
-      };
-    });
-  }, [runs]);
-
-  return (
-    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
-      <div className="section-label" style={{ marginBottom: "0.4rem" }}>
-        Automatic pulls (hourly GitHub job)
-      </div>
-      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
-        Refreshes the live ratings above on a schedule during the season (Aug 1 – Feb 10). It never saves a week, overwrites a saved week or changes the public
-        ratings — Save as Week and Push YC stay manual.
-      </p>
-      {error && <p style={{ color: "crimson", fontSize: "0.8rem" }}>{error}</p>}
-      {runs && runs.length === 0 && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>No scheduled runs recorded yet.</p>}
-      <div className="table-scroll" style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", fontSize: "0.76rem", width: "100%" }}>
-          <thead>
-            <tr>
-              {["Source", "Last run", "Result", "Last time it changed", "Unmatched names"].map((h) => (
-                <th key={h} style={{ textAlign: "left", padding: "0.25rem 0.6rem", color: "var(--chalk-dim)", fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ source, last, lastChange }) => (
-              <tr key={source} style={{ borderTop: "1px solid var(--hash)" }}>
-                <td style={{ padding: "0.25rem 0.6rem", fontWeight: 700, whiteSpace: "nowrap" }}>{AUTO_SOURCE_LABELS[source]}</td>
-                <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>{last ? fmtWhen(last.ran_at) : "–"}</td>
-                <td style={{ padding: "0.25rem 0.6rem", color: last ? (last.ok ? "#8fd39a" : "#e07a7a") : undefined }} title={last?.error ?? undefined}>
-                  {last ? (last.ok ? `OK — ${last.changed ?? 0} changed${last.label ? ` (${last.label})` : ""}` : `FAILED${last.error ? `: ${last.error.slice(0, 60)}` : ""}`) : "–"}
-                </td>
-                <td style={{ padding: "0.25rem 0.6rem", whiteSpace: "nowrap" }}>
-                  {lastChange ? `${fmtWhen(lastChange.ran_at)} — ${(lastChange.changed ?? 0) + (lastChange.new_teams ?? 0)} teams${lastChange.label ? ` (${lastChange.label})` : ""}` : "–"}
-                </td>
-                <td style={{ padding: "0.25rem 0.6rem", color: last?.unmatched?.length ? "#d9a441" : undefined }}>
-                  {last?.unmatched?.length ? last.unmatched.slice(0, 6).join(", ") + (last.unmatched.length > 6 ? "…" : "") : "–"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Sync / upload controls.
-// ---------------------------------------------------------------------
 function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   const [year, setYear] = useState(new Date().getFullYear());
+  // HFA pulled alongside Massey / TeamRankings is saved as the HFA going into the admin week (Teams → HFA).
+  const { week: hfaWeek } = useAdminWeek();
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
   const [unmatched, setUnmatched] = useState<{ source: string; names: string[] } | null>(null);
+  const [running, setRunning] = useState<SourceKey | null>(null);
+  // JP+ paste box: opens when the JP+ pull fails (or from the Paste JP+ button).
+  const [jpPasteOpen, setJpPasteOpen] = useState(false);
+  const [jpPasteText, setJpPasteText] = useState("");
+  const [jpPasteMsg, setJpPasteMsg] = useState<string | null>(null);
+  const jpParsed = useMemo(() => parseJpPlusPaste(jpPasteText), [jpPasteText]);
+
+  async function saveJpPaste() {
+    const { matched, unmatched: um } = matchTeamRows(jpParsed, (r) => r.team);
+    if (matched.length === 0) {
+      setJpPasteMsg("Couldn't read any teams from that — paste the JP+ table as copied from jpplusratings.com.");
+      return;
+    }
+    try {
+      const result = await saveRatingRows(matched.map((m) => ({ team: m.team, values: { jpplus: m.row.value } })));
+      const summary = `JP+ (pasted) — read ${jpParsed.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`;
+      await logManualPullRun({ source: "jpplus", ok: true, label: "pasted", detail: summary.slice(0, 500) }).catch(() => {});
+      setJpPasteMsg(summary + (um.length ? ` Unmatched: ${um.map((u) => u.team).join(", ")}` : ""));
+      setJpPasteText("");
+      loadRuns();
+      onDataChanged();
+    } catch (e: any) {
+      setJpPasteMsg(e.message ?? "Save failed");
+    }
+  }
+  const [runs, setRuns] = useState<PullRunRow[] | null>(null);
+  function loadRuns() {
+    fetchRecentPullRuns(10)
+      .then(setRuns)
+      .catch(() => setRuns([]));
+  }
+  useEffect(loadRuns, []);
 
   // "Core" versions return a summary string (and optional unmatched-name
   // list) instead of touching busy/log/unmatched state directly, so
@@ -232,8 +217,9 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     return parts.length > 0 ? ` — ${parts.join(", ")}` : "";
   }
 
-  async function syncCfbdCore(): Promise<{ summary: string }> {
-    const data = await syncCfbdRatings(year);
+  async function syncCfbdCore(): Promise<SourceResult> {
+    // SP+ has its own source (CFBD first, then the SP+ sheet), so the general CFBD pull skips it.
+    const data = await syncCfbdRatings(year, { skip: ["sp"] });
     const parts = Object.entries(data.results).map(([key, r]: [string, any]) => {
       const label = RATING_SYSTEMS_BY_KEY[key]?.label ?? key;
       if (r.error) return `${label}: error (${r.error})`;
@@ -259,21 +245,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     return { summary: `CFBD sync — ${parts.join("; ")}` };
   }
 
-  async function handleCfbdSync() {
-    setBusy("cfbd");
-    setLog(null);
-    try {
-      const { summary } = await syncCfbdCore();
-      setLog(summary);
-      onDataChanged();
-    } catch (err: any) {
-      setLog(err.message ?? "CFBD sync failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function syncSheetCore(): Promise<{ summary: string; unmatchedNames?: string[] }> {
+  async function syncSheetCore(): Promise<SourceResult> {
     const csv = await fetchPublishedSheetCsv();
     const parsed = parseSheetCsv(csv);
     if (parsed.length === 0) {
@@ -288,26 +260,11 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     };
   }
 
-  async function handleSheetSync() {
-    setBusy("sheet");
-    setLog(null);
-    try {
-      const { summary, unmatchedNames } = await syncSheetCore();
-      setLog(summary);
-      setUnmatched(unmatchedNames ? { source: "Google Sheet", names: unmatchedNames } : null);
-      onDataChanged();
-    } catch (err: any) {
-      setLog(err.message ?? "Sheet sync failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   // Sagarin has no year param (always "current"); FEI/F+ are year-scoped
   // (bcftoys.com/{year}-fei, {year}-fplus). Both merged into one button
   // since they're both "scraped, no manual step" sources now, same as
   // Chris asked for.
-  async function syncSagarinFeiCore(): Promise<{ summary: string; unmatchedNames?: string[] }> {
+  async function syncSagarinFeiCore(): Promise<SourceResult> {
     const [sagarinRows, feiFplusRows] = await Promise.all([fetchSagarinRatings(), fetchFeiFplusRatings(year)]);
     // Merge by team name — Sagarin and bcftoys.com are two different
     // sources, so a team present in one but not the other is normal
@@ -331,89 +288,153 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
     };
   }
 
-  async function handleSagarinFeiSync() {
-    setBusy("sagarin");
-    setLog(null);
-    try {
-      const { summary, unmatchedNames } = await syncSagarinFeiCore();
-      setLog(summary);
-      setUnmatched(unmatchedNames ? { source: "Sagarin/FEI/F+", names: unmatchedNames } : null);
-      onDataChanged();
-    } catch (err: any) {
-      setLog(err.message ?? "Sagarin/FEI/F+ sync failed");
-    } finally {
-      setBusy(null);
-    }
+  async function scrapeCore(
+    label: string,
+    fetchRows: () => Promise<{ rows: { team: string; values: Record<string, number> }[]; note: string | null }>,
+  ): Promise<SourceResult> {
+    const { rows: scraped, note } = await fetchRows();
+    const { matched, unmatched: um } = matchTeamRows(scraped, (r) => r.team);
+    const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
+    const result = await saveRatingRows(rows);
+    return {
+      summary: `${label}${note ? ` (${note})` : ""} — scraped ${scraped.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`,
+      unmatchedNames: um.length > 0 ? um.map((r) => r.team) : undefined,
+      label: note,
+    };
   }
 
-  async function handleSyncAll() {
-    setBusy("all");
+  // SP+: CFBD (FBS only) when it has new numbers for this season; the SP+ sheet for the admin week otherwise, and
+  // always for FCS. Ends by comparing against last week's saved SP+ so a stale pull can't pass as new.
+  async function syncSpPlusCore(): Promise<SourceResult> {
+    const lines: string[] = [];
+    let fbsFromCfbd = false;
+    try {
+      const data = await syncCfbdRatings(year, { systems: ["sp"] });
+      const r = data.results?.sp;
+      if (r?.error) lines.push(`CFBD SP+ failed (${r.error}) — using the sheet for FBS.`);
+      else if (!r || r.fetched === 0) lines.push("CFBD has no SP+ — using the sheet for FBS.");
+      else if (r.yearUsed !== year) lines.push(`CFBD only has ${r.yearUsed} SP+ — using the sheet for FBS.`);
+      else if (!r.changed) lines.push(`CFBD SP+ is unchanged since the last pull (${r.fetched} teams) — using the sheet for FBS.`);
+      else {
+        fbsFromCfbd = true;
+        lines.push(`CFBD SP+: ${r.saved} FBS teams, ${r.changed} changed.`);
+      }
+    } catch (e: any) {
+      lines.push(`CFBD SP+ failed (${e.message ?? e}) — using the sheet for FBS.`);
+    }
+
+    let values: SpValue[] = [];
+    let unmatchedNames: string[] = [];
+    try {
+      const sheet = await fetchSpPlusSheet(hfaWeek);
+      const parsed = spValuesFromSheet(sheet);
+      values = parsed.values.filter((v) => v.division === "FCS" || !fbsFromCfbd);
+      unmatchedNames = parsed.unmatched;
+      if (sheet.mode === "none" || parsed.values.length === 0) lines.push(`SP+ sheet: nothing for week ${hfaWeek} (${(sheet.notes ?? []).join("; ")}).`);
+      else
+        lines.push(
+          `SP+ sheet (${sheet.tabs.join(" + ")}): ${parsed.values.filter((v) => v.division === "FBS").length} FBS, ${parsed.values.filter((v) => v.division === "FCS").length} FCS${fbsFromCfbd ? " (FBS kept from CFBD)" : ""}.`
+        );
+    } catch (e: any) {
+      lines.push(`SP+ sheet failed: ${e.message ?? e}.`);
+    }
+
+    const haveFbs = fbsFromCfbd || values.some((v) => v.division === "FBS");
+    const haveFcs = values.some((v) => v.division === "FCS");
+    if (values.length > 0) {
+      const result = await saveRatingRows(values.map((v) => ({ team: v.team, division: v.division, conference: TEAMS_BY_NAME[v.team]?.conf ?? null, values: { sp: v.value } })));
+      lines.push(`Saved ${result.saved} sheet values.${formatDiffNote(result.bySystem)}`);
+    }
+
+    // New-week check against the last saved week (CFBD's FBS values are read back from the live table).
+    try {
+      const prev = await fetchSavedRatingsAtOrBefore(year, hfaWeek - 1);
+      let compare: { team: string; division: "FBS" | "FCS"; value: number }[] = values;
+      if (fbsFromCfbd) {
+        const live = (await fetchRatingPulls()).filter((r) => r.system_key === "sp" && TEAMS_BY_NAME[r.team]?.div === "FBS");
+        compare = [...live.map((r) => ({ team: r.team, division: "FBS" as const, value: Number(r.value) })), ...values];
+      }
+      lines.push(spFreshness(compare, prev.rows, prev.week));
+    } catch {
+      /* comparison is informational */
+    }
+
+    if (!haveFbs || !haveFcs) {
+      throw new Error(
+        `${lines.join(" ")} Missing ${[!haveFbs && "FBS", !haveFcs && "FCS"].filter(Boolean).join(" and ")} SP+ for week ${hfaWeek}: upload an SP+ CSV (Download SP+ template).`
+      );
+    }
+    return { summary: lines.join(" "), unmatchedNames: unmatchedNames.length ? unmatchedNames : undefined, label: `week ${hfaWeek}` };
+  }
+
+  const CORES: Record<SourceKey, () => Promise<SourceResult>> = {
+    cfbd: syncCfbdCore,
+    spplus: syncSpPlusCore,
+    sheet: syncSheetCore,
+    sagarin: syncSagarinFeiCore,
+    mcillece: () =>
+      scrapeCore("McIllece", async () => {
+        const r = await fetchMcilleceRatings();
+        return { rows: r.rows, note: r.year };
+      }),
+    jpplus: () =>
+      scrapeCore("JP+", async () => {
+        const r = await fetchJpPlusRatings();
+        return { rows: r.rows, note: r.label };
+      }),
+    tr: async () => {
+      const result = await scrapeCore("TeamRankings", async () => ({ rows: await fetchTeamRankingsRatings(), note: null }));
+      // Then TeamRankings' Home Advantage page (÷10, in points) — a second request, after the site's 10s crawl delay.
+      try {
+        await new Promise((r) => setTimeout(r, 10_000));
+        const hfaRows = await fetchTeamRankingsHfaPage("home-adv");
+        const { matched } = matchTeamRows(hfaRows, (r) => r.team);
+        const saved = await saveTeamHfa(year, hfaWeek, "tr", matched.map((m) => ({ team: m.team, value: m.row.value })));
+        result.summary += ` TR Home Advantage saved as the TR input on Teams → HFA (${saved.saved} teams, week ${hfaWeek}).`;
+      } catch (e: any) {
+        result.summary += ` TR HFA pull failed: ${e.message ?? e}.`;
+      }
+      return result;
+    },
+  };
+
+  // Runs the given sources one after another (a failed source doesn't stop the rest), logs each run and shows one
+  // combined result. Syncing only updates the live table below; nothing is saved to a week until Save as Week.
+  async function runSources(keys: SourceKey[], busyKey: string) {
+    if (keys.length === 0) {
+      setLog("Nothing to fill — every source has a successful pull since Sunday.");
+      return;
+    }
+    setBusy(busyKey);
     setLog(null);
     setUnmatched(null);
     const summaries: string[] = [];
-    const allUnmatched: { source: string; names: string[] }[] = [];
-
-    async function runStep(label: string, core: () => Promise<{ summary: string; unmatchedNames?: string[] }>) {
+    const allUnmatched: string[] = [];
+    for (const key of keys) {
+      setRunning(key);
       try {
-        const result = await core();
+        const result = await CORES[key]();
         summaries.push(result.summary);
-        if (result.unmatchedNames && result.unmatchedNames.length > 0) {
-          allUnmatched.push({ source: label, names: result.unmatchedNames });
-        }
+        for (const n of result.unmatchedNames ?? []) allUnmatched.push(`${SOURCE_LABELS[key]}: ${n}`);
+        await logManualPullRun({ source: key, ok: true, label: result.label ?? null, detail: result.summary.slice(0, 500) }).catch(() => {});
       } catch (err: any) {
-        summaries.push(`${label} sync failed: ${err.message ?? "unknown error"}`);
+        const msg = err.message ?? "unknown error";
+        summaries.push(`${SOURCE_LABELS[key]} failed: ${msg}${key === "jpplus" ? " — paste the JP+ table below instead." : ""}`);
+        if (key === "jpplus") setJpPasteOpen(true);
+        await logManualPullRun({ source: key, ok: false, error: msg }).catch(() => {});
       }
     }
-
-    await runStep("CFBD", syncCfbdCore);
-    await runStep("Sheet", syncSheetCore);
-    await runStep("Sagarin/FEI/F+", syncSagarinFeiCore);
-
+    setRunning(null);
     setLog(summaries.join("\n"));
-    if (allUnmatched.length > 0) {
-      setUnmatched({
-        source: allUnmatched.map((u) => u.source).join(" + "),
-        names: Array.from(new Set(allUnmatched.flatMap((u) => u.names))),
-      });
-    }
+    if (allUnmatched.length > 0) setUnmatched({ source: "Sync", names: allUnmatched });
+    loadRuns();
     onDataChanged();
     setBusy(null);
   }
 
-  // McIllece (replaces the CSV upload) and JP+ (new system), both scraped from
-  // their public pages. Kept as its own button — not part of Sync All — until
-  // the scrape has been trusted for a few weeks; the CSV upload still works.
-  async function handleMcilleceJpPlusScrape() {
-    setBusy("mcjp");
-    setLog(null);
-    setUnmatched(null);
-    const lines: string[] = [];
-    const unmatchedAll: { source: string; names: string[] } = { source: "McIllece/JP+ scrape", names: [] };
-    async function run(label: string, fetchRows: () => Promise<{ rows: { team: string; values: Record<string, number> }[]; note: string | null }>) {
-      try {
-        const { rows: scraped, note } = await fetchRows();
-        const { matched, unmatched: um } = matchTeamRows(scraped, (r) => r.team);
-        const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: m.row.values }));
-        const result = await saveRatingRows(rows);
-        lines.push(`${label}${note ? ` (${note})` : ""} — scraped ${scraped.length}, matched ${matched.length}, saved ${result.saved} teams.${formatDiffNote(result.bySystem)}`);
-        for (const r of um) unmatchedAll.names.push(`${label}: ${r.team}`);
-      } catch (err: any) {
-        lines.push(`${label} failed: ${err.message ?? "unknown error"}`);
-      }
-    }
-    await run("McIllece", async () => {
-      const r = await fetchMcilleceRatings();
-      return { rows: r.rows, note: r.year };
-    });
-    await run("JP+", async () => {
-      const r = await fetchJpPlusRatings();
-      return { rows: r.rows, note: r.label };
-    });
-    await run("TR", async () => ({ rows: await fetchTeamRankingsRatings(), note: null }));
-    setLog(lines.join("\n"));
-    if (unmatchedAll.names.length > 0) setUnmatched(unmatchedAll);
-    onDataChanged();
-    setBusy(null);
+  function gapSources(): SourceKey[] {
+    const since = weekStart().getTime();
+    return SOURCE_ORDER.filter((k) => !(runs ?? []).some((r) => r.source === k && r.ok && new Date(r.ran_at).getTime() >= since));
   }
 
   // Fills JP+ into the weekly snapshots you've already saved (Save as week), from
@@ -520,8 +541,22 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
       const { matched, unmatched: um } = matchTeamRows(normalized, (r) => r.team);
       const rows: RatingSaveRow[] = matched.map((m) => ({ team: m.team, values: { massey: m.row.value } }));
       const result = await saveRatingRows(rows);
+      // The same file's HFA column, saved as the HFA going into the admin week.
+      const hfaRows = matched.flatMap((m) => {
+        const hfa = raw.find((r) => r.team === m.row.team)?.hfa;
+        return hfa != null ? [{ team: m.team, value: hfa }] : [];
+      });
+      let hfaNote = " No HFA column found, so HFA wasn't updated.";
+      if (hfaRows.length > 0) {
+        try {
+          const saved = await saveTeamHfa(year, hfaWeek, "massey", hfaRows);
+          hfaNote = ` Massey HFA column saved as the Massey input on Teams → HFA (${saved.saved} teams, week ${hfaWeek}); it isn't the team's HFA on its own, the Team HFA blend there is.`;
+        } catch (e: any) {
+          hfaNote = ` HFA save failed: ${e.message ?? e}.`;
+        }
+      }
       setLog(
-        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).${formatDiffNote(result.bySystem)}`
+        `Massey upload — parsed ${raw.length}, matched ${matched.length}, saved ${result.saved} teams (min-max normalized to [-55, +30], sign-flipped).${formatDiffNote(result.bySystem)}${hfaNote}`
       );
       if (um.length > 0) setUnmatched({ source: "Massey CSV", names: um.map((r) => r.team) });
       else setUnmatched(null);
@@ -536,36 +571,65 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
   return (
     <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
       <div className="section-label" style={{ marginBottom: "0.6rem" }}>
-        Pull / upload ratings
+        Pull ratings
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
-        <label>
-          Year{" "}
-          <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || year)} style={{ width: 80 }} />
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Syncing updates the live table below. Review the changes, then Save as Week. Nothing is saved to a week automatically.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center", marginBottom: "0.75rem" }}>
+        <button
+          className="primary"
+          onClick={() => runSources(SOURCE_ORDER, "all")}
+          disabled={busy != null}
+          style={{ fontSize: "1rem", fontWeight: 700, padding: "0.65rem 1.4rem" }}
+          title="CFBD, Sheet, Sagarin/FEI/F+, McIllece, JP+ and TeamRankings, in that order"
+        >
+          {busy === "all" ? `Syncing ${running ? SOURCE_LABELS[running] : ""}…` : "Sync All"}
+        </button>
+        <button
+          onClick={() => runSources(gapSources(), "gaps")}
+          disabled={busy != null || runs == null}
+          style={{ fontSize: "0.95rem", fontWeight: 600, padding: "0.6rem 1.1rem" }}
+          title="Re-runs only the sources that failed or haven't been pulled since Sunday"
+        >
+          {busy === "gaps" ? `Filling ${running ? SOURCE_LABELS[running] : ""}…` : `Fill gaps${runs ? ` (${gapSources().length})` : ""}`}
+        </button>
+        <label style={{ fontSize: "0.8rem" }}>
+          Year <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || year)} style={{ width: 70 }} />
         </label>
-        <button onClick={handleCfbdSync} disabled={busy != null}>
-          {busy === "cfbd" ? "Syncing…" : "Sync CFBD (FPI/SP+/SRS/Core/Elo)"}
-        </button>
-        <button onClick={handleSheetSync} disabled={busy != null}>
-          {busy === "sheet" ? "Pulling…" : "Pull Google Sheet"}
-        </button>
-        <button onClick={handleSagarinFeiSync} disabled={busy != null}>
-          {busy === "sagarin" ? "Syncing…" : "Sync Sagarin/FEI/F+"}
-        </button>
-        <button onClick={handleSyncAll} disabled={busy != null} style={{ fontWeight: 700 }}>
-          {busy === "all" ? "Syncing everything…" : "Sync All (CFBD + Sheet + Sagarin/FEI/F+)"}
-        </button>
-        <button onClick={handleMcilleceJpPlusScrape} disabled={busy != null} title="Scrapes mcillecesports.com, jpplusratings.com and teamrankings.com — no CSV needed">
-          {busy === "mcjp" ? "Scraping…" : "Sync McIllece + JP+ + TR (scrape)"}
-        </button>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.6rem" }}>
+        {SOURCE_ORDER.map((k) => {
+          const since = weekStart().getTime();
+          const last = (runs ?? []).find((r) => r.source === k && new Date(r.ran_at).getTime() >= since);
+          const color = running === k ? "var(--c-info)" : last ? (last.ok ? "var(--c-ok)" : "var(--c-err)") : "var(--chalk-dim)";
+          return (
+            <span
+              key={k}
+              title={last ? (last.ok ? `Pulled ${fmtWhen(last.ran_at)}` : `Failed ${fmtWhen(last.ran_at)}: ${last.error ?? ""}`) : "Not pulled since Sunday"}
+              style={{ fontSize: "0.72rem", fontWeight: 600, padding: "0.15rem 0.55rem", borderRadius: 99, border: `1px solid ${color}`, color }}
+            >
+              {SOURCE_LABELS[k]} · {running === k ? "running" : last ? (last.ok ? fmtWhen(last.ran_at) : "failed") : "not pulled"}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", fontSize: "0.75rem" }}>
+        <span style={{ color: "var(--chalk-dim)" }}>One source:</span>
+        {SOURCE_ORDER.map((k) => (
+          <button key={k} onClick={() => runSources([k], k)} disabled={busy != null} style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}>
+            {busy === k ? "…" : SOURCE_LABELS[k]}
+          </button>
+        ))}
         <button
           onClick={handleJpPlusBackfill}
           disabled={busy != null}
+          style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}
           title="Writes JP+'s own week-by-week ratings into every week you've already saved (JP+ values only; nothing else is touched)"
         >
           {busy === "jpbackfill" ? "Backfilling…" : "Backfill JP+ into saved weeks"}
         </button>
-        <label className="menu-btn" style={{ cursor: "pointer" }}>
+        <label className="menu-btn" style={{ cursor: "pointer", fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}>
           {busy === "mcillece" ? "Uploading…" : "Upload McIllece CSV"}
           <input
             type="file"
@@ -579,7 +643,7 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
             }}
           />
         </label>
-        <label className="menu-btn" style={{ cursor: "pointer" }}>
+        <label className="menu-btn" style={{ cursor: "pointer", fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}>
           {busy === "spplus" ? "Uploading…" : "Upload SP+ CSV"}
           <input
             type="file"
@@ -593,7 +657,22 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
             }}
           />
         </label>
-        <label className="menu-btn" style={{ cursor: "pointer" }}>
+        <button
+          className="menu-btn"
+          style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}
+          title="Team, Division (FBS/FCS), SP+ — FBS on the FBS scale, FCS on the FCS scale (as in the sheet's FBS and FCS week tabs)"
+          onClick={() => {
+            const url = URL.createObjectURL(new Blob([SP_CSV_TEMPLATE], { type: "text/csv" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "sp-plus-template.csv";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}
+        >
+          Download SP+ template
+        </button>
+        <label className="menu-btn" style={{ cursor: "pointer", fontSize: "0.72rem", padding: "0.2rem 0.55rem" }}>
           {busy === "massey" ? "Uploading…" : "Upload Massey CSV"}
           <input
             type="file"
@@ -609,8 +688,47 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
         </label>
       </div>
       {log && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", marginBottom: 0, whiteSpace: "pre-line" }}>{log}</p>}
+      <div style={{ marginTop: "0.5rem" }}>
+        {!jpPasteOpen ? (
+          <button className="menu-btn" style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem" }} onClick={() => setJpPasteOpen(true)}>
+            Paste JP+
+          </button>
+        ) : (
+          <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.6rem", background: "var(--turf-panel)", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            <div style={{ fontSize: "0.82rem", fontWeight: 700 }}>Paste JP+</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>
+              Select the whole table on jpplusratings.com (from "Team" down to the last team), copy, and paste here. The team name and the JP+ rating are
+              read from each row; offense, defense and special teams are ignored.
+            </div>
+            <textarea
+              value={jpPasteText}
+              onChange={(e) => {
+                setJpPasteText(e.target.value);
+                setJpPasteMsg(null);
+              }}
+              rows={8}
+              placeholder={"Team\n1\n▲2\nLSU\n+28.2\t37.7 (10)\t9.1 (1)\t-0.4 (117)\n…"}
+              style={{ width: "100%", fontFamily: "monospace", fontSize: "0.75rem" }}
+            />
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", fontSize: "0.78rem" }}>
+              <button className="menu-btn" onClick={saveJpPaste} disabled={jpParsed.length === 0}>
+                Save {jpParsed.length > 0 ? `${jpParsed.length} teams` : ""}
+              </button>
+              <button className="admin-link" onClick={() => setJpPasteOpen(false)}>
+                Close
+              </button>
+              {jpParsed.length > 0 && (
+                <span style={{ color: "var(--chalk-dim)" }}>
+                  Read {jpParsed.length}: {jpParsed[0].team} {(-jpParsed[0].value).toFixed(1)} … {jpParsed[jpParsed.length - 1].team} {(-jpParsed[jpParsed.length - 1].value).toFixed(1)}
+                </span>
+              )}
+              {jpPasteMsg && <span style={{ color: "var(--chalk-dim)" }}>{jpPasteMsg}</span>}
+            </div>
+          </div>
+        )}
+      </div>
       {unmatched && (
-        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.5rem" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--c-warn)", marginTop: "0.5rem" }}>
           {unmatched.source}: {unmatched.names.length} team name(s) couldn't be matched and were skipped —{" "}
           {unmatched.names.join(", ")}
         </p>
@@ -686,7 +804,7 @@ function SystemPerformanceSummary({ season }: { season: number }) {
       <div className="section-label" style={{ marginBottom: "0.6rem" }}>
         Win % by system ({season} season-to-date)
       </div>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
         <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)" }}>Loading…</p>
       ) : (
@@ -784,7 +902,7 @@ function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season:
         )}
       </div>
       {willOverwrite && !saving && (
-        <p style={{ fontSize: "0.78rem", color: "#a15c00", marginTop: "0.4rem" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--c-warn)", marginTop: "0.4rem" }}>
           Week {week} already has a saved snapshot — saving again will overwrite it.
         </p>
       )}
@@ -861,7 +979,37 @@ function PushYcControl({ rows }: { rows: ConglomeratedRow[] }) {
 // ---------------------------------------------------------------------
 // Conglomerated table.
 // ---------------------------------------------------------------------
-function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
+const DELTA_EPS = 0.005;
+
+function ConglomeratedTable({
+  rows,
+  prev,
+  prevWeek,
+}: {
+  rows: ConglomeratedRow[];
+  prev: Map<string, Record<string, number>>;
+  prevWeek: number | null;
+}) {
+  const [changedOnly, setChangedOnly] = useState(false);
+  const valueOf = (r: ConglomeratedRow, key: string): number | null =>
+    key === "yc" ? r.yc : key === "consensus" ? r.consensus : (r.values[key] ?? null);
+  const deltaOf = (r: ConglomeratedRow, key: string): number | null => {
+    const now = valueOf(r, key);
+    const before = prev.get(r.team)?.[key];
+    if (now == null || before == null) return null;
+    const d = now - before;
+    return Math.abs(d) < DELTA_EPS ? 0 : d;
+  };
+  const deltaCell = (r: ConglomeratedRow, key: string) => {
+    const d = deltaOf(r, key);
+    if (d == null || d === 0) return null;
+    return (
+      <span style={{ marginLeft: "0.3rem", fontSize: "0.66rem", fontWeight: 600, color: d < 0 ? "var(--c-ok)" : "var(--c-err)" }}>
+        {d < 0 ? "▲" : "▼"}
+        {Math.abs(d).toFixed(1)}
+      </span>
+    );
+  };
   const [sortKey, setSortKey] = useState("yc");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc"); // negative-is-better -> ascending shows best first
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
@@ -875,11 +1023,21 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
     }
   }
 
+  const systemCols = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus");
+  const allKeys = ["yc", "consensus", ...systemCols.map((s) => s.key)];
+  const teamChanged = (r: ConglomeratedRow) => allKeys.some((k) => (deltaOf(r, k) ?? 0) !== 0);
+
   const filtered = rows.filter((r) => {
     if (divFilter !== "all" && r.div !== divFilter) return false;
     if (confFilter && r.conf !== confFilter) return false;
+    if (changedOnly && !teamChanged(r)) return false;
     return true;
   });
+
+  // Teams changed per system since the comparison week, for the summary line.
+  const changedCounts = systemCols
+    .map((s) => ({ label: s.label, n: rows.filter((r) => (deltaOf(r, s.key) ?? 0) !== 0).length }))
+    .filter((c) => c.n > 0);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a: any, b: any) => {
@@ -892,8 +1050,6 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
       return sortDir === "asc" ? av - bv : bv - av;
     });
   }, [filtered, sortKey, sortDir]);
-
-  const systemCols = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus");
 
   // Div/Conf/Team stay pinned while scrolling horizontally through the
   // (many) rating-system columns — Div and Conf get fixed widths so
@@ -930,7 +1086,20 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
             </option>
           ))}
         </select>
+        {prevWeek != null && (
+          <label style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+            <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} />
+            Changed since Week {prevWeek} only
+          </label>
+        )}
       </div>
+      <p style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem" }}>
+        {prevWeek == null
+          ? "No earlier saved week to compare against."
+          : changedCounts.length === 0
+            ? `Nothing has changed since saved Week ${prevWeek}.`
+            : `Changed since saved Week ${prevWeek} (▲ better, ▼ worse): ${changedCounts.map((c) => `${c.label} ${c.n}`).join(" · ")}`}
+      </p>
       <div className="table-scroll" style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8, maxHeight: 650, overflowY: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
           <thead>
@@ -981,15 +1150,18 @@ function ConglomeratedTable({ rows }: { rows: ConglomeratedRow[] }) {
                 <td style={{ ...stickyCellStyle(TEAM_COL_LEFT), whiteSpace: "nowrap" }}>
                   <TeamLink team={r.team} />
                 </td>
-                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700 }}>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>
                   {fmtNum(r.yc)}
+                  {deltaCell(r, "yc")}
                 </td>
-                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", whiteSpace: "nowrap" }}>
                   {fmtNum(r.consensus)}
+                  {deltaCell(r, "consensus")}
                 </td>
                 {systemCols.map((s) => (
-                  <td key={s.key} style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                  <td key={s.key} style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", whiteSpace: "nowrap" }}>
                     {fmtNum(r.values[s.key])}
+                    {deltaCell(r, s.key)}
                   </td>
                 ))}
               </tr>
@@ -1071,7 +1243,7 @@ function HistoryTable({
   // number means the team improved.
   function diffColor(v: number | null): string | undefined {
     if (!isDiff || v == null || v === 0) return undefined;
-    return v < 0 ? "#8fd39a" : "#e07a7a";
+    return v < 0 ? "var(--c-ok)" : "var(--c-err)";
   }
 
   return (
@@ -1143,6 +1315,14 @@ function PowerRatingsHistorySection() {
   const [sortKey, setSortKey] = useState("team");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
+  // Changing the "to" week moves the "from" week to the saved week just before it.
+  function chooseWeekB(w: number | null) {
+    setWeekB(w);
+    if (w == null) return;
+    const earlier = savedWeeks.filter((x) => x < w);
+    setWeekA(earlier.length > 0 ? earlier[earlier.length - 1] : w);
+  }
+
   useEffect(() => {
     setLoadingWeeks(true);
     setError(null);
@@ -1154,8 +1334,9 @@ function PowerRatingsHistorySection() {
       .then((weeks) => {
         setSavedWeeks(weeks);
         if (weeks.length > 0) {
-          setWeekB(weeks[weeks.length - 1]); // most recent saved week
-          setWeekA(weeks[0]); // first saved week
+          const b = weeks[weeks.length - 1]; // most recent saved week
+          setWeekB(b);
+          setWeekA(weeks.length > 1 ? weeks[weeks.length - 2] : b); // the saved week before it
         }
       })
       .catch((err) => setError(err.message ?? "Failed to load saved weeks"))
@@ -1237,11 +1418,11 @@ function PowerRatingsHistorySection() {
           <input type="number" value={season} onChange={(e) => setSeason(parseInt(e.target.value, 10) || season)} style={{ width: 90 }} />
         </label>
         <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>From {weekSelect(weekA, setWeekA)}</label>
-        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>To {weekSelect(weekB, setWeekB)}</label>
+        <label style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>To {weekSelect(weekB, chooseWeekB)}</label>
         {loadingWeeks && <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Loading weeks…</span>}
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {!loadingWeeks && savedWeeks.length === 0 && (
         <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
@@ -1310,13 +1491,28 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
 
   useEffect(loadAll, []);
 
+  // The saved week before the admin week: what "changed" deltas in the table compare against.
+  const { week: adminWeek, ready: adminWeekReady } = useAdminWeek();
+  const [prev, setPrev] = useState<{ week: number | null; byTeam: Map<string, Record<string, number>> }>({ week: null, byTeam: new Map() });
+  useEffect(() => {
+    if (!adminWeekReady) return;
+    fetchSavedRatingsAtOrBefore(new Date().getFullYear(), adminWeek - 1)
+      .then(({ week, rows }) => {
+        const byTeam = new Map<string, Record<string, number>>();
+        for (const r of rows) {
+          const v = byTeam.get(r.team) ?? {};
+          v[r.system_key] = r.value;
+          byTeam.set(r.team, v);
+        }
+        setPrev({ week, byTeam });
+      })
+      .catch(() => setPrev({ week: null, byTeam: new Map() }));
+  }, [adminWeek, adminWeekReady]);
+
   const conglomerated = useMemo(() => computeConglomeratedTable(pulls, weights), [pulls, weights]);
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem" }}>
         <button className={`mode-btn ${panelTab === "manage" ? "mode-btn-active" : ""}`} onClick={() => setPanelTab("manage")}>
@@ -1338,7 +1534,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
           <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
             Each system's live win % this season, and the weight editor for YC's customizable weighted average.
           </p>
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
           {loading ? (
             <p>Loading…</p>
           ) : (
@@ -1357,16 +1553,15 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
             source systems). Save the current table to a specific week once you're happy with it.
           </p>
 
-          {error && <p style={{ color: "crimson" }}>{error}</p>}
+          {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
           {loading ? (
             <p>Loading…</p>
           ) : (
             <>
               <SyncControls onDataChanged={loadAll} />
-              <AutoPullStatus />
               <SaveAsWeekControl rows={conglomerated} season={new Date().getFullYear()} />
               <PushYcControl rows={conglomerated} />
-              <ConglomeratedTable rows={conglomerated} />
+              <ConglomeratedTable rows={conglomerated} prevWeek={prev.week} prev={prev.byTeam} />
             </>
           )}
         </>

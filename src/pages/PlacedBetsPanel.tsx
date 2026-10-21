@@ -4,6 +4,8 @@ import TeamLink from "../components/TeamLink";
 import {
   fetchPlacedBets,
   importPlacedBets,
+  deletePlaceholderBet,
+  isPlaceholderBet,
   fetchPlacedParlays,
   BOOK_LABELS,
   fetchJuicereelAuthorizeUrl,
@@ -27,6 +29,7 @@ import { moneylineToImpliedWinPct } from "../lib/odds";
 import { fetchPoolBalanceSummary, type PoolBalanceSummary } from "../lib/api/poolBalanceSummary";
 import { useGameTotalsEngine, type EnrichedGameRow } from "../lib/gameTotalsEngine";
 import { splitTeamTotal } from "../lib/gameTotals";
+import { addBetToRecord, betProfit, betProfitForResult, emptyRecord, roi, type BetRecord } from "../lib/betRecord";
 
 function fmtPrice(v: number | null): string {
   if (v == null) return "–";
@@ -130,7 +133,7 @@ function gradeAgainstScore(
   return "pending";
 }
 
-function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined): BetResult {
+export function gradeBetAgainstGame(bet: PlacedBetRow, game: GameWithLines | undefined): BetResult {
   if (!game || !game.completed || game.home_points == null || game.away_points == null) return "pending";
   return gradeAgainstScore(bet, game, game.home_points, game.away_points);
 }
@@ -185,50 +188,7 @@ function computeClv(bet: PlacedBetRow, game: GameWithLines | undefined): ClvResu
   return { currentLine: null, clv: null, favorable: null };
 }
 
-// Profit/loss in dollars for a settled bet. Prefers the stated to_win
-// (what the book actually quoted) over deriving one from price+stake,
-// since real books round odd cents in ways a formula won't reproduce
-// exactly. Returns null for a pending bet or one missing a stake (e.g.
-// bets logged from Admin Matchups' checkbox before this had a stake
-// column) — null is excluded from every record/ROI total below, not
-// treated as a zero.
-function betProfitForResult(bet: { stake: number | null; to_win: number | null; price: number }, result: BetResult): number | null {
-  if (result === "pending" || bet.stake == null) return null;
-  if (result === "push") return 0;
-  if (result === "loss") return -bet.stake;
-  if (bet.to_win != null) return bet.to_win;
-  return bet.price > 0 ? bet.stake * (bet.price / 100) : bet.stake * (100 / Math.abs(bet.price));
-}
-function betProfit(bet: PlacedBetRow): number | null {
-  return betProfitForResult(bet, bet.result);
-}
-
-interface Record_ {
-  wins: number;
-  losses: number;
-  pushes: number;
-  pending: number;
-  staked: number;
-  profit: number;
-}
-function emptyRecord(): Record_ {
-  return { wins: 0, losses: 0, pushes: 0, pending: 0, staked: 0, profit: 0 };
-}
-function addBetToRecord(rec: Record_, bet: PlacedBetRow) {
-  if (bet.result === "pending") {
-    rec.pending++;
-    return;
-  }
-  if (bet.result === "win") rec.wins++;
-  else if (bet.result === "loss") rec.losses++;
-  else if (bet.result === "push") rec.pushes++;
-  if (bet.stake != null) rec.staked += bet.stake;
-  const p = betProfit(bet);
-  if (p != null) rec.profit += p;
-}
-function roi(rec: Record_): number | null {
-  return rec.staked > 0 ? (rec.profit / rec.staked) * 100 : null;
-}
+type Record_ = BetRecord;
 
 function fmtMoneyPlain(v: number): string {
   return v.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
@@ -473,7 +433,7 @@ function ExposureSummaryBar({ bets, parlays, gamesById }: { bets: PlacedBetRow[]
     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
       <SummaryChip label="Total Staked" value={fmtStake(totalStake)} />
       <SummaryChip label="Total To Win" value={fmtStake(totalToWin)} />
-      <SummaryChip label="Live P&L" value={fmtMoney(livePnl)} color={livePnl > 0 ? "#8fd39a" : livePnl < 0 ? "#e07a7a" : undefined} />
+      <SummaryChip label="Live P&L" value={fmtMoney(livePnl)} color={livePnl > 0 ? "var(--c-ok)" : livePnl < 0 ? "var(--c-err)" : undefined} />
       <SummaryChip label="Games" value={`${completed} final · ${inProgress} live · ${notStarted} upcoming`} />
     </div>
   );
@@ -585,8 +545,8 @@ function GameExposureCard({ ex, enriched }: { ex: GameExposure; enriched: Enrich
           {fmtScore(ex.game)}
         </div>
         <div style={{ fontSize: "0.78rem" }}>
-          Best <span style={{ color: "#8fd39a", fontWeight: 700 }}>{fmtMoney(ex.bestCase)}</span> · Worst{" "}
-          <span style={{ color: "#e07a7a", fontWeight: 700 }}>{fmtMoney(ex.worstCase)}</span>
+          Best <span style={{ color: "var(--c-ok)", fontWeight: 700 }}>{fmtMoney(ex.bestCase)}</span> · Worst{" "}
+          <span style={{ color: "var(--c-err)", fontWeight: 700 }}>{fmtMoney(ex.worstCase)}</span>
         </div>
         <div style={{ fontWeight: 700, color: "var(--gold, #d9a441)" }}>{fmtStake(ex.totalStake)} total {open ? "▲" : "▼"}</div>
       </div>
@@ -736,7 +696,7 @@ function PoolSummaryChip({ label, cost, winnings }: { label: string; cost: numbe
       <div style={{ fontSize: "0.8rem" }}>
         {fmtMoneyPlain(cost)} in · {fmtMoneyPlain(winnings)} back
       </div>
-      <div style={{ fontSize: "0.9rem", fontWeight: 700, color: net > 0 ? "#8fd39a" : net < 0 ? "#e07a7a" : undefined }}>{fmtMoney(net)}</div>
+      <div style={{ fontSize: "0.9rem", fontWeight: 700, color: net > 0 ? "var(--c-ok)" : net < 0 ? "var(--c-err)" : undefined }}>{fmtMoney(net)}</div>
     </div>
   );
 }
@@ -750,7 +710,7 @@ function RecordSummary({ label, rec }: { label: string; rec: Record_ }) {
         {rec.wins}-{rec.losses}
         {rec.pushes > 0 ? `-${rec.pushes}` : ""}
       </div>
-      <div style={{ fontSize: "0.8rem", color: rec.profit > 0 ? "#8fd39a" : rec.profit < 0 ? "#e07a7a" : undefined }}>{fmtMoney(rec.profit)}</div>
+      <div style={{ fontSize: "0.8rem", color: rec.profit > 0 ? "var(--c-ok)" : rec.profit < 0 ? "var(--c-err)" : undefined }}>{fmtMoney(rec.profit)}</div>
       <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>
         {r != null ? `${r > 0 ? "+" : ""}${r.toFixed(1)}% ROI` : "–"}
         {rec.pending > 0 ? ` · ${rec.pending} pending` : ""}
@@ -948,9 +908,10 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
     setImporting(true);
     setMessage(null);
     try {
-      const { inserted, updated } = await importPlacedBets(resolved);
+      const { inserted, updated, confirmed } = await importPlacedBets(resolved);
       setMessage(
-        `Saved ${resolved.length} bet${resolved.length === 1 ? "" : "s"}: ${inserted} new, ${updated} matched an existing bet and had its result/stake/price updated instead of duplicating.`
+        `Saved ${resolved.length} bet${resolved.length === 1 ? "" : "s"}: ${inserted} new, ${updated} matched an existing bet and had its result/stake/price updated instead of duplicating` +
+          (confirmed ? `, ${confirmed} confirmed a placeholder from Matchups.` : ".")
       );
       setResolved([]);
       setErrors([]);
@@ -1061,11 +1022,11 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
         {checking ? "Checking…" : "Check"}
       </button>
 
-      {message && <p style={{ color: message.startsWith("Error") ? "crimson" : "#8fd39a" }}>{message}</p>}
+      {message && <p style={{ color: message.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{message}</p>}
 
       {resolved.length > 0 && (
         <div style={{ marginTop: "0.8rem" }}>
-          <p style={{ color: "#8fd39a", fontSize: "0.85rem" }}>
+          <p style={{ color: "var(--c-ok)", fontSize: "0.85rem" }}>
             {resolved.length} row(s) ready to import.
             {duplicatesInFile > 0 && ` ${duplicatesInFile} row(s) in this file matched another row in the same file (same game/book/type/side/line/price/stake) and were merged, keeping the last.`}
           </p>
@@ -1080,7 +1041,7 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
       )}
       {errors.length > 0 && (
         <div style={{ marginTop: "0.8rem" }}>
-          <p style={{ color: "#e07a7a", fontSize: "0.85rem" }}>{errors.length} row(s) couldn't be matched — fix and re-check:</p>
+          <p style={{ color: "var(--c-err)", fontSize: "0.85rem" }}>{errors.length} row(s) couldn't be matched — fix and re-check:</p>
           <ul style={{ fontSize: "0.75rem", color: "var(--chalk-dim)" }}>
             {errors.map((e, i) => (
               <li key={i}>
@@ -1090,6 +1051,83 @@ function CsvImportControl({ onImported }: { onImported: () => void }) {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+// Placeholders sent from Matchups ("Send to Placed Bets"), waiting for a CSV import with the same game, bet type and
+// side to confirm them. One whose game has kicked off without a match is flagged "Not bet". They never count in any
+// record above.
+function PlaceholderBets({ season, games, reloadTick, onChanged }: { season: number; games: GameWithLines[]; reloadTick: number; onChanged: () => void }) {
+  const [rows, setRows] = useState<PlacedBetRow[]>([]);
+  useEffect(() => {
+    fetchPlacedBets(season, { includePlaceholders: true })
+      .then((all) => setRows(all.filter(isPlaceholderBet)))
+      .catch(() => setRows([]));
+  }, [season, reloadTick]);
+  if (rows.length === 0) return null;
+  const gameById = new Map(games.map((g) => [g.id, g]));
+  const started = (b: PlacedBetRow) => {
+    const g = b.game_id ? gameById.get(b.game_id) : undefined;
+    return !!g && (g.completed || (g.start_date != null && Date.parse(g.start_date) <= Date.now()));
+  };
+  const notBet = rows.filter(started).length;
+  const cell = { padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", fontSize: "0.8rem", whiteSpace: "nowrap" as const };
+  return (
+    <div className="admin-panel" style={{ margin: "1rem 0 1.5rem", borderColor: notBet ? "var(--c-warn)" : undefined }}>
+      <div className="admin-panel-head">
+        <h3>
+          Awaiting CSV · {rows.length} placeholder{rows.length === 1 ? "" : "s"}
+          {notBet > 0 && <span style={{ color: "var(--c-warn)", fontWeight: 600 }}> · {notBet} not bet (game started, no CSV match)</span>}
+        </h3>
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: 0 }}>
+        Sent from Matchups. Importing a CSV with the same game, bet type and side turns a placeholder into the real bet; anything else in the CSV is
+        added as a new bet. Placeholders don't count in any record.
+      </p>
+      <div className="table-scroll" style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["Week", "Game", "Bet", "Line when sent", "Status", ""].map((h) => (
+                <th key={h} style={{ ...cell, textAlign: "left", color: "var(--chalk-dim)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((b) => {
+              const late = started(b);
+              return (
+                <tr key={b.id}>
+                  <td style={cell}>{b.week ?? "–"}</td>
+                  <td style={cell}>
+                    {b.away_team} @ {b.home_team}
+                  </td>
+                  <td style={{ ...cell, fontWeight: 700 }}>
+                    {b.side} {b.bet_type}
+                  </td>
+                  <td style={cell}>{b.line_value != null ? `${b.line_value > 0 ? "+" : ""}${b.line_value}` : "–"}</td>
+                  <td style={{ ...cell, color: late ? "var(--c-warn)" : "var(--chalk-dim)", fontWeight: late ? 700 : 400 }}>{late ? "Not bet" : "Waiting for CSV"}</td>
+                  <td style={cell}>
+                    <button
+                      className="admin-link"
+                      onClick={() =>
+                        deletePlaceholderBet(b.id)
+                          .then(onChanged)
+                          .catch(() => {})
+                      }
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1231,9 +1269,6 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Placed Bets</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Bets logged from Admin Matchups' Bet checkbox, plus anything imported here from a CSV — book, type, side,
@@ -1243,9 +1278,10 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
 
       <JuicereelConnectControl onImported={() => setReloadTick((n) => n + 1)} />
       <CsvImportControl onImported={() => setReloadTick((n) => n + 1)} />
+      <PlaceholderBets season={season} games={games} reloadTick={reloadTick} onChanged={() => setReloadTick((n) => n + 1)} />
 
       {loading && <p>Loading…</p>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
 
       {!loading && bets.length === 0 && <p style={{ color: "var(--chalk-dim)" }}>No bets logged for {season} yet.</p>}
 
@@ -1343,7 +1379,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                   const clv = computeClv(bet, game);
                   const profit = betProfit(bet);
                   return (
-                    <tr key={bet.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <tr key={bet.id} style={{ borderBottom: "1px solid var(--a-tint-2)" }}>
                       <td style={{ padding: "0.35rem 0.6rem", color: "var(--chalk-dim)" }}>{fmtDate(bet.placed_at ?? bet.created_at)}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>{bet.week ?? "–"}</td>
                       <td style={{ padding: "0.35rem 0.6rem" }}>
@@ -1372,7 +1408,7 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                           padding: "0.35rem 0.6rem",
                           textAlign: "right",
                           fontWeight: 700,
-                          color: clv.favorable == null ? undefined : clv.favorable ? "#8fd39a" : "#c45c52",
+                          color: clv.favorable == null ? undefined : clv.favorable ? "var(--c-ok)" : "var(--c-err)",
                         }}
                       >
                         {clv.clv != null ? `${clv.clv > 0 ? "+" : ""}${clv.clv.toFixed(1)}${bet.bet_type === "moneyline" ? "pp" : ""}` : "–"}
@@ -1383,12 +1419,12 @@ export default function PlacedBetsPanel({ onBack }: { onBack: () => void }) {
                           padding: "0.35rem 0.6rem",
                           textAlign: "right",
                           textTransform: "capitalize",
-                          color: bet.result === "win" ? "#8fd39a" : bet.result === "loss" ? "#e07a7a" : undefined,
+                          color: bet.result === "win" ? "var(--c-ok)" : bet.result === "loss" ? "var(--c-err)" : undefined,
                         }}
                       >
                         {bet.result}
                       </td>
-                      <td style={{ padding: "0.35rem 0.6rem", textAlign: "right", color: profit == null ? undefined : profit > 0 ? "#8fd39a" : profit < 0 ? "#e07a7a" : undefined }}>
+                      <td style={{ padding: "0.35rem 0.6rem", textAlign: "right", color: profit == null ? undefined : profit > 0 ? "var(--c-ok)" : profit < 0 ? "var(--c-err)" : undefined }}>
                         {fmtMoney(profit)}
                       </td>
                     </tr>

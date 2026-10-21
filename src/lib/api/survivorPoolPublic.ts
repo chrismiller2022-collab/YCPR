@@ -1,3 +1,4 @@
+import { pickVegasLine } from "../linePick";
 import { supabase } from "../supabaseClient";
 
 export interface SurvivorPoolEntrantPublic {
@@ -84,8 +85,6 @@ export interface GameSpreads {
   fpiAwaySpread: number | null;
 }
 
-const PREFERRED_PROVIDERS = ["consensus", "DraftKings", "Bovada"];
-
 // Per explicit request: FPI mode always uses a flat 2.4-point home-field
 // edge, not each team's live/custom HFA value.
 const FPI_FLAT_HFA = 2.4;
@@ -110,7 +109,7 @@ export async function fetchSpreadsForGames(season: number, gameIds: string[]): P
     await Promise.all([
       supabase.from("betting_lines").select("*").in("game_id", gameIds),
       supabase.from("fpi_ratings").select("*").eq("season", season),
-      supabase.from("games").select("id, home_team, away_team, neutral_site").in("id", gameIds),
+      supabase.from("games").select("id, home_team, away_team, neutral_site, completed").in("id", gameIds),
     ]);
   if (linesError) throw linesError;
   if (fpiError) throw fpiError;
@@ -125,14 +124,7 @@ export async function fetchSpreadsForGames(season: number, gameIds: string[]): P
   const fpiByTeam = new Map((fpiRows ?? []).map((r) => [r.team, r.fpi]));
   const gamesById = new Map((gameRows ?? []).map((g) => [g.id, g]));
 
-  function pickLine(candidateLines: any[]): any | null {
-    if (candidateLines.length === 0) return null;
-    for (const p of PREFERRED_PROVIDERS) {
-      const m = candidateLines.find((l) => l.provider === p);
-      if (m) return m;
-    }
-    return candidateLines[0];
-  }
+  const pickLine = (candidateLines: any[], completed?: boolean): any | null => pickVegasLine(candidateLines, completed);
 
   for (const gameId of gameIds) {
     const g = gamesById.get(gameId);
@@ -141,7 +133,7 @@ export async function fetchSpreadsForGames(season: number, gameIds: string[]): P
       continue;
     }
 
-    const line = pickLine(linesByGame.get(gameId) ?? []);
+    const line = pickLine(linesByGame.get(gameId) ?? [], g.completed);
     const vegasAwaySpread = line?.spread != null ? -line.spread : null;
 
     const homeFpi = fpiByTeam.get(g.home_team);

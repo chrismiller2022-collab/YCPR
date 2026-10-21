@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 // Consolidated multi-rating-system endpoint — Vercel's Hobby plan caps
@@ -10,6 +11,34 @@ import { createClient } from "@supabase/supabase-js";
 // dispatched from one function instead of five.
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const CFBD_API_KEY = process.env.CFBD_API_KEY;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -146,7 +175,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, action } = req.body ?? {};
-  if (password !== ADMIN_PASSWORD) {
+  if (!(await isAdmin(password))) {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -324,10 +353,20 @@ export default async function handler(req: any, res: any) {
   // -----------------------------------------------------------------
   if (action === "jpplusProxy") {
     try {
-      const pageRes = await fetch("https://www.jpplusratings.com/", {
-        headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" },
-      });
-      if (!pageRes.ok) throw new Error(`JP+ fetch failed (${pageRes.status})`);
+      // jpplusratings.com rate-limits (429) requests from shared server IPs now and then: wait as long as it asks
+      // (capped at 8s, 4s if it doesn't say) and try once more before giving up.
+      const getPage = () =>
+        fetch("https://www.jpplusratings.com/", {
+          headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
+        });
+      let pageRes = await getPage();
+      if (pageRes.status === 429 || pageRes.status === 503) {
+        const retryAfter = Number(pageRes.headers.get("retry-after"));
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : 4000;
+        await new Promise((r) => setTimeout(r, waitMs));
+        pageRes = await getPage();
+      }
+      if (!pageRes.ok) throw new Error(`JP+ fetch failed (${pageRes.status}${pageRes.status === 429 ? ", rate-limited by jpplusratings.com" : ""})`);
       const html = (await pageRes.text()).replace(/\\"/g, '"');
 
       const selected = /<option value="([^"]+)" selected/.exec(html)?.[1] ?? null;
@@ -415,6 +454,183 @@ export default async function handler(req: any, res: any) {
       res.status(200).json({ ok: true, rows: out });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "TeamRankings fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "trHfaProxy" — one TeamRankings home-field page: "home-adv"
+  // (Home Advantage rating, divided by 10 to read as points), "home" or
+  // "away" (the team's rating from home / road games only, in points,
+  // same scale as the predictive rating). `date` (YYYY-MM-DD) asks for the
+  // page as it stood that day, which is how past weeks are backfilled.
+  // One request per call; the client spaces calls out for the crawl delay.
+  // -----------------------------------------------------------------
+  if (action === "trHfaProxy") {
+    const { page, date } = req.body ?? {};
+    const slug = page === "home-adv" ? "home-adv-by-other" : page === "home" ? "home-by-other" : page === "away" ? "away-by-other" : null;
+    if (!slug) {
+      res.status(400).json({ error: "page must be home-adv, home or away" });
+      return;
+    }
+    if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      res.status(400).json({ error: "date must be YYYY-MM-DD" });
+      return;
+    }
+    try {
+      const url = `https://www.teamrankings.com/college-football/ranking/${slug}${date ? `?date=${date}` : ""}`;
+      const pageRes = await fetch(url, { headers: { "User-Agent": SCRAPE_USER_AGENT, Accept: "text/html" } });
+      if (!pageRes.ok) throw new Error(`TeamRankings fetch failed (${pageRes.status})`);
+      const rows = tableRows(await pageRes.text());
+      const headerIdx = rows.findIndex((cells) => cells.includes("Team") && cells.includes("Rating"));
+      if (headerIdx === -1) throw new Error("TeamRankings page no longer has a table with Team and Rating columns — its layout may have changed");
+      const teamIdx = rows[headerIdx].indexOf("Team");
+      const ratingIdx = rows[headerIdx].indexOf("Rating");
+      const scale = page === "home-adv" ? 0.1 : 1;
+      const out: { team: string; value: number }[] = [];
+      for (const cells of rows.slice(headerIdx + 1)) {
+        if (cells.includes("Team")) break;
+        const team = (cells[teamIdx] ?? "").replace(/\s*\(\d+-\d+(?:-\d+)?\)\s*$/, "").trim();
+        const raw = (cells[ratingIdx] ?? "").trim();
+        const rating = Number(raw);
+        if (!team || raw === "" || Number.isNaN(rating)) continue;
+        out.push({ team, value: Math.round(rating * scale * 1000) / 1000 });
+      }
+      if (out.length === 0) throw new Error("Parsed 0 rows from TeamRankings' table");
+      res.status(200).json({ ok: true, rows: out });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "TeamRankings fetch failed" });
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "spSheetProxy" — Bill Connelly's SP+ Google Sheet, for the
+  // week asked. Tab names come from the sheet's htmlview; tabs are read
+  // as CSV through gviz by exact name. gviz quietly returns the FIRST tab
+  // when a name doesn't exist, so every tab is checked by its headers.
+  // Prefers "TOP <n> WEEK <w>" (every division on one scale); else the
+  // "FBS Week <w>" + "FCS Week <w>" pair. Returns raw ratings; the client
+  // matches teams and applies each layout's offsets.
+  // -----------------------------------------------------------------
+  if (action === "spSheetProxy") {
+    const { week } = req.body ?? {};
+    if (typeof week !== "number" || week < 0) {
+      res.status(400).json({ error: "Missing or invalid 'week'" });
+      return;
+    }
+    const SHEET_ID = "1vwoVl-Dxy0es87Z9I1RTvFzr72Lb1fAkREfbLxbK-eg";
+    const csvRows = (text: string): string[][] =>
+      text
+        .split(/\r?\n/)
+        .filter((l) => l.length > 0)
+        .map((line) => {
+          const out: string[] = [];
+          let cur = "";
+          let q = false;
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (q) {
+              if (ch === '"' && line[i + 1] === '"') {
+                cur += '"';
+                i++;
+              } else if (ch === '"') q = false;
+              else cur += ch;
+            } else if (ch === '"') q = true;
+            else if (ch === ",") {
+              out.push(cur);
+              cur = "";
+            } else cur += ch;
+          }
+          out.push(cur);
+          return out;
+        });
+    const readTab = async (name: string) => {
+      const r = await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`, { headers: { "User-Agent": SCRAPE_USER_AGENT } });
+      if (!r.ok) throw new Error(`Sheet tab "${name}" fetch failed (${r.status})`);
+      return csvRows(await r.text());
+    };
+    const num = (v: string | undefined) => {
+      const n = Number((v ?? "").trim());
+      return (v ?? "").trim() === "" || Number.isNaN(n) ? null : n;
+    };
+    try {
+      const html = await (await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/htmlview`, { headers: { "User-Agent": SCRAPE_USER_AGENT } })).text();
+      const tabs = Array.from(new Set(Array.from(html.matchAll(/name: "([^"]{1,80})"/g)).map((m) => m[1])));
+      const notes: string[] = [];
+      const topTab = tabs.find((t) => new RegExp(`^top \\d+ week ${week}$`, "i").test(t.trim()));
+      if (topTab) {
+        const rows = await readTab(topTab);
+        const h = rows[0] ?? [];
+        const ti = h.findIndex((x) => x.trim().toLowerCase() === "team");
+        const si = h.findIndex((x) => x.trim().toLowerCase() === "sp+");
+        if (ti !== -1 && si !== -1 && !h.some((x) => x.trim().toLowerCase() === "week")) {
+          const out: { team: string; sp: number; tab: "top" | "fcs" }[] = rows.slice(1).flatMap((c) => {
+            const sp = num(c[si]);
+            const team = (c[ti] ?? "").trim();
+            return team && sp != null ? [{ team, sp, tab: "top" as const }] : [];
+          });
+          if (out.length > 0) {
+            // FCS teams the TOP tab leaves out (it has skipped Mississippi Valley State) come from the FCS week tab.
+            const tabsUsed = [topTab];
+            const fcsFill = tabs.find((t) => new RegExp(`^fcs week ${week}$`, "i").test(t.trim()));
+            if (fcsFill) {
+              try {
+                const fr = await readTab(fcsFill);
+                const fh = fr[0] ?? [];
+                if ((fh[0] ?? "").trim().toLowerCase() === "team" && /sp\+/i.test(fh[3] ?? "")) {
+                  const rows: { team: string; sp: number; tab: "top" | "fcs" }[] = out;
+                  for (const c of fr.slice(1)) {
+                    const sp = num(c[3]);
+                    const team = (c[0] ?? "").trim();
+                    if (team && sp != null) rows.push({ team, sp, tab: "fcs" });
+                  }
+                  tabsUsed.push(fcsFill);
+                }
+              } catch {
+                /* the TOP tab alone is still a complete pull */
+              }
+            }
+            res.status(200).json({ ok: true, mode: "top", tabs: tabsUsed, rows: out });
+            return;
+          }
+        }
+        notes.push(`"${topTab}" didn't have Team and SP+ columns`);
+      } else notes.push(`no "TOP … WEEK ${week}" tab`);
+
+      const fbsTab = tabs.find((t) => new RegExp(`^fbs week ${week}$`, "i").test(t.trim()));
+      const fcsTab = tabs.find((t) => new RegExp(`^fcs week ${week}$`, "i").test(t.trim()));
+      const out: { team: string; sp: number; tab: "fbs" | "fcs" }[] = [];
+      const used: string[] = [];
+      if (fbsTab) {
+        // FBS tab: a games table on the left, ratings on the right — Team in column O, SP+ in column R.
+        const rows = await readTab(fbsTab);
+        const h = rows[0] ?? [];
+        if ((h[14] ?? "").trim().toLowerCase() === "team" && (h[17] ?? "").trim().toLowerCase() === "sp+") {
+          for (const c of rows.slice(1)) {
+            const sp = num(c[17]);
+            const team = (c[14] ?? "").trim();
+            if (team && sp != null) out.push({ team, sp, tab: "fbs" });
+          }
+          used.push(fbsTab);
+        } else notes.push(`"${fbsTab}" columns O/R aren't Team/SP+`);
+      } else notes.push(`no "FBS Week ${week}" tab`);
+      if (fcsTab) {
+        // FCS tab: Team in column A, SP+ in column D.
+        const rows = await readTab(fcsTab);
+        const h = rows[0] ?? [];
+        if ((h[0] ?? "").trim().toLowerCase() === "team" && /sp\+/i.test(h[3] ?? "")) {
+          for (const c of rows.slice(1)) {
+            const sp = num(c[3]);
+            const team = (c[0] ?? "").trim();
+            if (team && sp != null) out.push({ team, sp, tab: "fcs" });
+          }
+          used.push(fcsTab);
+        } else notes.push(`"${fcsTab}" columns A/D aren't Team/SP+`);
+      } else notes.push(`no "FCS Week ${week}" tab`);
+      res.status(200).json({ ok: true, mode: out.length > 0 ? "split" : "none", tabs: used, rows: out, notes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "SP+ sheet fetch failed" });
     }
     return;
   }
@@ -598,7 +814,11 @@ export default async function handler(req: any, res: any) {
       maxAbsDelta?: number;
     }
     const results: Record<string, SyncResult> = {};
+    // `systems` pulls only those; `skip` pulls everything else (SP+ has its own source with a sheet fallback).
+    const { systems, skip } = req.body ?? {};
     for (const [systemKey, pull] of Object.entries(pullers)) {
+      if (Array.isArray(systems) && !systems.includes(systemKey)) continue;
+      if (Array.isArray(skip) && skip.includes(systemKey)) continue;
       try {
         const { rows, yearUsed } = await pullWithFallback(pull, year);
         results[systemKey] = { fetched: rows.length, saved: 0, yearUsed };
@@ -803,11 +1023,10 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
-  // actions: "logPullRun" / "getPullRuns" — the run log for the scheduled
-  // pulls (scripts/pull-ratings.ts, run hourly by the GitHub Actions
-  // workflow). The scheduled job only ever calls the pull actions above plus
-  // "save"/"sync", which write rating_pulls — never weekly_power_ratings — and
-  // then records what happened here.
+  // actions: "logPullRun" / "getPullRuns" — the run log for rating pulls.
+  // Rating Systems' Sync All / Fill gaps record one row per source here
+  // (trigger "manual"); Fill gaps reads it to find sources not yet pulled
+  // successfully this week.
   // -----------------------------------------------------------------
   if (action === "logPullRun") {
     const r = req.body ?? {};
@@ -1095,6 +1314,59 @@ export default async function handler(req: any, res: any) {
     }
 
     res.status(200).json({ ok: true, saved: count ?? saveRows.length });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "hfaSave" — per-team HFA inputs into team_hfa, keyed by
+  // (season, week, team, source). Week N holds the values known going
+  // into week N, so a backtest of week N games never sees later data.
+  // -----------------------------------------------------------------
+  if (action === "hfaSave") {
+    const { season, week, source, asOf, rows } = req.body ?? {};
+    if (!season || typeof season !== "number" || typeof week !== "number" || week < 0) {
+      res.status(400).json({ error: "Missing or invalid 'season'/'week'" });
+      return;
+    }
+    if (!["massey", "tr", "tr_home", "tr_away"].includes(source)) {
+      res.status(400).json({ error: "source must be massey, tr, tr_home or tr_away" });
+      return;
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      res.status(400).json({ error: "Missing or empty 'rows'" });
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const saveRows = dedupeByKey(
+      rows
+        .filter((r: any) => typeof r?.team === "string" && typeof r?.value === "number" && Number.isFinite(r.value))
+        .map((r: any) => ({ season, week, team: r.team, source, value: r.value, as_of: asOf ?? null, updated_at: nowIso })),
+      (r) => r.team
+    );
+    const { error } = await supabaseAdmin.from("team_hfa").upsert(saveRows, { onConflict: "season,week,team,source" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true, saved: saveRows.length });
+    return;
+  }
+
+  // -----------------------------------------------------------------
+  // action: "hfaSettingsSave" — the Team HFA definition (blend weights etc.) for a season.
+  // -----------------------------------------------------------------
+  if (action === "hfaSettingsSave") {
+    const { season, settings } = req.body ?? {};
+    if (!season || typeof season !== "number" || !settings || typeof settings !== "object") {
+      res.status(400).json({ error: "Missing season or settings" });
+      return;
+    }
+    const { error } = await supabaseAdmin.from("hfa_settings").upsert({ season, settings, updated_at: new Date().toISOString() }, { onConflict: "season" });
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(200).json({ ok: true });
     return;
   }
 

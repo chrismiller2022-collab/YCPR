@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import OverlayView from "../components/overlay/OverlayView";
 import { supabase } from "../lib/supabaseClient";
+import { passkeysSupported, restorePasskeySession, signInWithPasskey } from "../lib/adminAuth";
 import { espnDate, fetchScoreboard, needsFantasy, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
 import { POOLS, usePoolPicksForGames, usePoolsBoard } from "../lib/pools";
 import { fetchSleeperLeagues, useSleeper, type SleeperLeagueInfo } from "../lib/sleeper";
@@ -42,7 +43,7 @@ async function fetchSlate(day: string): Promise<SlateGame[]> {
   const ids = (games ?? []).map((g: any) => g.id);
   if (!ids.length) return [];
   const [bets, locks] = await Promise.all([
-    supabase.from("placed_bets").select("game_id").in("game_id", ids),
+    supabase.from("placed_bets").select("game_id").in("game_id", ids).neq("book", "placeholder"),
     supabase.from("game_projection_locks").select("game_id").in("game_id", ids),
   ]);
   const betCount: Record<string, number> = {};
@@ -186,6 +187,15 @@ function SleeperSection({ state, update }: { state: OverlayState; update: (p: Pa
 function PasswordGate({ onOk }: { onOk: (pw: string) => void }) {
   const [pw, setPw] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const passkey = async () => {
+    setErr(null);
+    try {
+      await signInWithPasskey();
+      onOk(sessionStorage.getItem(PASSWORD_KEY) ?? "");
+    } catch (e: any) {
+      setErr(e?.message ?? "Passkey sign-in failed");
+    }
+  };
   const submit = async () => {
     setErr(null);
     const res = await fetch("/api/admin-save", {
@@ -206,6 +216,7 @@ function PasswordGate({ onOk }: { onOk: (pw: string) => void }) {
       <p>Enter the admin password to control the overlay.</p>
       <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
       <button onClick={submit}>Unlock</button>
+      {passkeysSupported() ? <button onClick={passkey}>Sign in with passkey</button> : null}
       {err ? <div className="oc-error">{err}</div> : null}
     </div>
   );
@@ -214,7 +225,10 @@ function PasswordGate({ onOk }: { onOk: (pw: string) => void }) {
 export default function OverlayControlPage() {
   const [params] = useSearchParams();
   const screen = params.get("screen") || "default";
-  const [password, setPassword] = useState<string | null>(() => sessionStorage.getItem(PASSWORD_KEY));
+  const [password, setPassword] = useState<string | null>(() => {
+    restorePasskeySession(); // a device signed in with a passkey in the last 14 days is already signed in
+    return sessionStorage.getItem(PASSWORD_KEY);
+  });
   const holdUntil = useRef(0);
   const [state, setState] = useOverlayState(screen, holdUntil);
   const { contexts, scores } = useOverlayData(state, false);

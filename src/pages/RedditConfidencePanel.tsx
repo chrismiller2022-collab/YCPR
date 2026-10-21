@@ -1,3 +1,4 @@
+import { autoConfidencePoints } from "../lib/confidenceRank";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -122,7 +123,7 @@ function GameSelectionStep({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="section-label">
           1. Select this week's games (FBS vs FBS){" "}
-          <span style={{ color: selected.size === MAX_GAMES ? "green" : "#a15c00", fontWeight: 400 }}>
+          <span style={{ color: selected.size === MAX_GAMES ? "var(--c-ok)" : "var(--c-warn)", fontWeight: 400 }}>
             · {selected.size}/{MAX_GAMES}
           </span>
         </div>
@@ -193,7 +194,7 @@ function GameSelectionStep({
           {saving ? "Saving…" : "Save selected games"}
         </button>
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -216,7 +217,6 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     fetchRedditConfidencePicksForWeek(season, week, liveByTeam)
       .then((data) => {
         if (!isCurrent(token)) return;
-        setPicks(data);
         const d: Record<number, any> = {};
         // Confidence points auto-assign by spread magnitude, biggest
         // favorite = 10 down to smallest = 1 — only when NONE are saved
@@ -238,6 +238,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
           };
         }
         setDraft(d);
+        // Listed 10 → 1 by confidence (ordered once here, so rows don't jump while a number is typed).
+        setPicks([...data].sort((a, b) => (d[b.id]?.confidence_points ?? -1) - (d[a.id]?.confidence_points ?? -1)));
       })
       .catch((err) => {
         if (isCurrent(token)) setError(err.message);
@@ -412,7 +414,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       </div>
 
       {!allPointsAssigned && (
-        <p style={{ color: "#a15c00", fontSize: "0.8rem", marginTop: "0.5rem" }}>
+        <p style={{ color: "var(--c-warn)", fontSize: "0.8rem", marginTop: "0.5rem" }}>
           Confidence points need to be exactly 1-{MAX_GAMES}, each used once, before exporting — check for duplicates or gaps above.
         </p>
       )}
@@ -420,6 +422,18 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.75rem", flexWrap: "wrap" }}>
         <button onClick={handleSave} disabled={saving}>
           {saving ? "Saving…" : "Save picks"}
+        </button>
+        <button
+          className="menu-btn"
+          onClick={() => {
+            const ranked = autoConfidencePoints(picks.map((p) => ({ id: p.id, pickedSide: draft[p.id]?.picked_side ?? null, myAwaySpread: p.myProjAwaySpread })));
+            setDraft((prev) => Object.fromEntries(Object.entries(prev).map(([id, v]: any) => [id, { ...v, confidence_points: ranked.get(Number(id)) ?? null }])));
+            setPicks((prev) => [...prev].sort((a, b) => (ranked.get(b.id) ?? -1) - (ranked.get(a.id) ?? -1)));
+          }}
+          disabled={saving}
+          title="Number every picked game 10..1 by your projected margin for the picked side"
+        >
+          Auto-rank
         </button>
         <button className="menu-btn" onClick={handleCopyCsv} disabled={!csvLine}>
           Copy picks for Reddit
@@ -434,7 +448,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
           onFocus={(e) => e.target.select()}
         />
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {handicapGame && (
         <MatchupHandicapPopup
           season={season}
@@ -456,9 +470,6 @@ export default function RedditConfidencePanel({ onBack }: { onBack: () => void }
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>Reddit Confidence</h2>

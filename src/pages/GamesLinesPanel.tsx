@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import TeamLink from "../components/TeamLink";
+import WeeklyDataPanel from "../components/WeeklyDataPanel";
 import { fetchGamesWithLines, fetchSyncedWeeks, type GameWithLines } from "../lib/api/gamesLines";
 import { invalidateCache } from "../lib/api/cache";
 
@@ -126,11 +127,9 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Games & Lines</h2>
+      <WeeklyDataPanel />
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Games and betting lines pulled from CFBD, stored in Supabase. Includes FBS vs FBS,
         FBS vs FCS, FCS vs FCS, and FCS vs other-division games — games where both sides
@@ -183,11 +182,11 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {fpiResult && <p style={{ color: "green" }}>{fpiResult}</p>}
-      {fpiError && <p style={{ color: "crimson" }}>{fpiError}</p>}
+      {fpiResult && <p style={{ color: "var(--c-ok)" }}>{fpiResult}</p>}
+      {fpiError && <p style={{ color: "var(--c-err)" }}>{fpiError}</p>}
 
       {wholeSeason && (
-        <p style={{ fontSize: "0.78rem", color: "#a15c00" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--c-warn)" }}>
           A whole-season sync pulls every FBS/FCS-involved game for the year in one call —
           it can take a while and may be more prone to timing out than a single week. If it
           fails partway, re-running is safe; already-saved games and lines just get
@@ -195,9 +194,9 @@ export default function GamesLinesPanel({ onBack }: { onBack: () => void }) {
         </p>
       )}
 
-      {syncResult && <p style={{ color: "green" }}>{syncResult}</p>}
-      {syncError && <p style={{ color: "crimson" }}>{syncError}</p>}
-      {loadError && <p style={{ color: "crimson" }}>{loadError}</p>}
+      {syncResult && <p style={{ color: "var(--c-ok)" }}>{syncResult}</p>}
+      {syncError && <p style={{ color: "var(--c-err)" }}>{syncError}</p>}
+      {loadError && <p style={{ color: "var(--c-err)" }}>{loadError}</p>}
 
       {syncedWeeks.length > 0 && (
         <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>

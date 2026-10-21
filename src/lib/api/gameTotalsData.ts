@@ -1,3 +1,4 @@
+import { pickVegasLine } from "../linePick";
 import { supabase } from "../supabaseClient";
 import { fetchDistinctWeeks } from "./distinctWeeks";
 import { fetchAllRows } from "./fetchAll";
@@ -252,12 +253,16 @@ async function fetchGamesForTotalsUncached(season: number): Promise<GameForTotal
       .range(from, to)
   );
 
-  const lineByGame = new Map<string, any>();
+  const linesByGame = new Map<string, any[]>();
   for (const l of lines) {
-    // Prefer a consensus/first-seen line per game — last write wins here,
-    // fine for now since most games only have one provider synced.
-    lineByGame.set(l.game_id, l);
+    const list = linesByGame.get(l.game_id) ?? [];
+    list.push(l);
+    linesByGame.set(l.game_id, list);
   }
+  // Same Vegas line as every other page (linePick.ts); final games use CFBD's closing line.
+  const completedById = new Map((games ?? []).map((g: any) => [g.id, !!g.completed]));
+  const lineByGame = new Map<string, any>();
+  for (const [id, list] of linesByGame) lineByGame.set(id, pickVegasLine(list, completedById.get(id)));
 
   return (games ?? []).map((g) => {
     const line = lineByGame.get(g.id);

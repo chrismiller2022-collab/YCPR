@@ -1,3 +1,4 @@
+import { autoConfidencePoints, projectedWinner } from "../lib/confidenceRank";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -134,7 +135,7 @@ function GameSelectionStep({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="section-label">
           1. Select this week's games (FBS vs FBS){" "}
-          <span style={{ color: selected.size >= MAX_GAMES ? "#a15c00" : "var(--chalk-dim)", fontWeight: 400 }}>
+          <span style={{ color: selected.size >= MAX_GAMES ? "var(--c-warn)" : "var(--chalk-dim)", fontWeight: 400 }}>
             · {selected.size}/{MAX_GAMES}
           </span>
         </div>
@@ -211,7 +212,7 @@ function GameSelectionStep({
           {saving ? "Saving…" : "Save selected games"}
         </button>
       )}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }
@@ -222,11 +223,14 @@ function GameSelectionStep({
 function PickingStep({ season, week, refreshToken }: { season: number; week: number; refreshToken: number }) {
   const [picks, setPicks] = useState<EspnConfidencePickWithGame[]>([]);
   const [draft, setDraft] = useState<Record<number, any>>({});
+  // The points the confidence sort uses: taken at load and on Auto-rank, so rows don't jump while a number is typed.
+  const [rankSnapshot, setRankSnapshot] = useState<Record<number, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState("start_date");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Sorted 10 → 1 by confidence by default.
+  const [sortKey, setSortKey] = useState("confidence_points");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const { rows: totalsRowsRaw } = useGameTotalsEngine(season);
@@ -273,10 +277,16 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
         if (!isCurrent(token)) return;
         setPicks(data);
         const d: Record<number, any> = {};
+        // Nothing saved yet this week: pick each projected winner and number them N..1 by projected margin. Once
+        // anything is saved this never re-ranks on its own (use Auto-rank).
+        const anySaved = data.some((p) => p.picked_side != null || p.confidence_points != null);
+        const autoSide = (p: EspnConfidencePickWithGame) => p.picked_side ?? (anySaved ? null : projectedWinner(p.myProjAwaySpread));
+        const auto = anySaved ? null : autoConfidencePoints(data.map((p) => ({ id: p.id, pickedSide: autoSide(p), myAwaySpread: p.myProjAwaySpread })));
         for (const p of data) {
-          d[p.id] = { picked_side: p.picked_side, confidence_points: p.confidence_points };
+          d[p.id] = { picked_side: autoSide(p), confidence_points: auto ? auto.get(p.id) ?? null : p.confidence_points };
         }
         setDraft(d);
+        setRankSnapshot(Object.fromEntries(Object.entries(d).map(([id, v]: any) => [id, v.confidence_points])));
       })
       .catch((err) => {
         if (isCurrent(token)) setError(err.message);
@@ -330,6 +340,15 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
     }
   }
 
+  // Re-numbers every picked game N..1 by projected margin for the picked side (unsaved until Save).
+  function handleAutoRank() {
+    const ranked = autoConfidencePoints(picks.map((p) => ({ id: p.id, pickedSide: draft[p.id]?.picked_side ?? null, myAwaySpread: p.myProjAwaySpread })));
+    setDraft((prev) => Object.fromEntries(Object.entries(prev).map(([id, v]: any) => [id, { ...v, confidence_points: ranked.get(Number(id)) ?? null }])));
+    setRankSnapshot(Object.fromEntries(picks.map((p) => [p.id, ranked.get(p.id) ?? null])));
+    setSortKey("confidence_points");
+    setSortDir("desc");
+  }
+
   async function handleResetPicks() {
     if (!confirm("Clear all picks and confidence points for this week? The game list stays as-is.")) return;
     setSaving(true);
@@ -358,7 +377,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       case "vegasAwayMoneyline":
         return p.vegasAwayMoneyline;
       case "confidence_points":
-        return draft[p.id]?.confidence_points ?? null;
+        return rankSnapshot[p.id] ?? null;
       default:
         return null;
     }
@@ -393,9 +412,14 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
             · Points: {earned} earned / {possible} decided so far (max possible {(N * (N + 1)) / 2})
           </span>
         </div>
-        <button className="menu-btn" onClick={handleResetPicks} disabled={saving}>
-          Reset picks
-        </button>
+        <span style={{ display: "inline-flex", gap: "0.5rem" }}>
+          <button className="menu-btn" onClick={handleAutoRank} disabled={saving} title="Number every picked game N..1 by your projected margin for the picked side">
+            Auto-rank
+          </button>
+          <button className="menu-btn" onClick={handleResetPicks} disabled={saving}>
+            Reset picks
+          </button>
+        </span>
       </div>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.8rem" }}>
@@ -548,7 +572,7 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
       <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.5rem" }}>
         {saving ? "Saving…" : "Save picks"}
       </button>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {handicapGame && (
         <MatchupHandicapPopup
           season={season}
@@ -570,9 +594,6 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
         <h2 style={{ margin: 0 }}>ESPN Confidence</h2>

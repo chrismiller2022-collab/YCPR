@@ -114,6 +114,10 @@ const ALIASES: Record<string, string> = {
   "fau": "Florida Atlantic",
   "james madison": "James Madison",
   "jmu": "James Madison",
+  // TeamRankings home/away and home-advantage pages abbreviate these two.
+  "j madison": "James Madison",
+  "georgia so": "Georgia Southern",
+  "mvsu": "Mississippi Valley State",
   "n texas": "North Texas",
   "north texas": "North Texas",
   "s alabama": "South Alabama",

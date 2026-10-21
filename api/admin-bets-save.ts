@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 
@@ -12,6 +13,34 @@ import crypto from "crypto";
 // application — see juicereel-oauth-callback.ts.)
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const WEEKLY_REPORTS_BUCKET = "weekly-reports";
@@ -137,7 +166,7 @@ export default async function handler(req: any, res: any) {
   // ever touched them. Freezing a week is now a single deliberate admin
   // action (see LockGamesPanel.tsx) and requires the password like any
   // other write.
-  if (password !== ADMIN_PASSWORD && action !== "syncTeamTotals") {
+  if (!(await isAdmin(password)) && action !== "syncTeamTotals") {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -256,6 +285,56 @@ export default async function handler(req: any, res: any) {
     // FanDuel (or any book) spread snapshots from The Odds API. Snapshots are immutable: an existing
     // (game, book, snapshot time) is never rewritten. Every call is also logged in book_snapshot_pulls
     // — even when it returned nothing — so the page can skip snapshots that were already paid for.
+    // The site-wide "Vegas" line: the median across sportsbooks from The Odds API, stored in betting_lines as provider
+    // "market_median" (every line picker prefers it). Each refresh overwrites spread/total/moneylines with the latest
+    // median; opening_spread / opening_over_under are set from the first median ever saved for the game and never
+    // overwritten after that.
+    if (action === "saveMarketLines") {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (rows.length === 0) {
+        res.status(200).json({ saved: 0 });
+        return;
+      }
+      const ids = rows.map((r: any) => String(r.game_id));
+      const { data: existing, error: readError } = await supabaseAdmin
+        .from("betting_lines")
+        .select("game_id, provider, opening_spread, opening_over_under")
+        .in("game_id", ids);
+      if (readError) throw readError;
+      // Opening line: one already saved on the median row wins; else CFBD's consensus opener (the true open); else
+      // this first median.
+      const openByGame = new Map<string, { opening_spread: number | null; opening_over_under: number | null }>();
+      for (const e of (existing ?? []).filter((x: any) => x.provider === "consensus")) openByGame.set(String(e.game_id), e);
+      for (const e of (existing ?? []).filter((x: any) => x.provider === "market_median")) {
+        const cfbd = openByGame.get(String(e.game_id));
+        openByGame.set(String(e.game_id), {
+          opening_spread: e.opening_spread ?? cfbd?.opening_spread ?? null,
+          opening_over_under: e.opening_over_under ?? cfbd?.opening_over_under ?? null,
+        });
+      }
+      const now = new Date().toISOString();
+      const saveRows = rows.map((r: any) => {
+        const prior: any = openByGame.get(String(r.game_id));
+        return {
+          game_id: String(r.game_id),
+          season: r.season,
+          week: r.week,
+          provider: "market_median",
+          spread: r.spread ?? null,
+          over_under: r.over_under ?? null,
+          home_moneyline: r.home_moneyline ?? null,
+          away_moneyline: r.away_moneyline ?? null,
+          opening_spread: prior?.opening_spread ?? r.spread ?? null,
+          opening_over_under: prior?.opening_over_under ?? r.over_under ?? null,
+          pulled_at: now,
+        };
+      });
+      const { error, count } = await supabaseAdmin.from("betting_lines").upsert(saveRows, { onConflict: "game_id,provider", count: "exact" });
+      if (error) throw error;
+      res.status(200).json({ saved: count ?? saveRows.length });
+      return;
+    }
+
     if (action === "saveBookSpreadSnapshots") {
       const { rows, pull } = req.body;
       let saved = 0;
@@ -752,12 +831,30 @@ export default async function handler(req: any, res: any) {
         if (!existingIdByKey.has(key)) existingIdByKey.set(key, e.id);
       }
 
+      // Placeholders from Matchups' "Send to Placed Bets" (book "placeholder"): a new CSV bet on the same game, bet
+      // type and side takes over the placeholder row (it becomes the real bet) instead of inserting a second row.
+      const placeholders = (existing as any[]).filter((e) => e.book === "placeholder");
+      const claimed = new Set<number>();
       const toInsert: typeof rows = [];
       const toUpdate: { id: number; row: (typeof rows)[number] }[] = [];
+      const toConfirm: { id: number; row: (typeof rows)[number] }[] = [];
       for (const row of rows) {
         const id = existingIdByKey.get(betKey(row));
-        if (id != null) toUpdate.push({ id, row });
-        else toInsert.push(row);
+        if (id != null) {
+          toUpdate.push({ id, row });
+          continue;
+        }
+        const ph = row.game_id
+          ? placeholders.find((p) => !claimed.has(p.id) && p.game_id === row.game_id && p.bet_type === row.bet_type && String(p.side).toLowerCase() === String(row.side).toLowerCase())
+          : undefined;
+        if (ph) {
+          claimed.add(ph.id);
+          toConfirm.push({ id: ph.id, row });
+        } else toInsert.push(row);
+      }
+      for (const { id, row } of toConfirm) {
+        const { error } = await supabaseAdmin.from("placed_bets").update(row).eq("id", id);
+        if (error) throw error;
       }
 
       if (toInsert.length > 0) {
@@ -781,7 +878,20 @@ export default async function handler(req: any, res: any) {
         if (error) throw error;
       }
 
-      res.status(200).json({ inserted: toInsert.length, updated: toUpdate.length });
+      res.status(200).json({ inserted: toInsert.length, updated: toUpdate.length, confirmed: toConfirm.length });
+      return;
+    }
+
+    // Removes one placeholder bet (only placeholders: a real bet can't be deleted from here).
+    if (action === "deletePlaceholderBet") {
+      const id = Number(req.body?.id);
+      if (!Number.isFinite(id)) {
+        res.status(400).json({ error: "id is required" });
+        return;
+      }
+      const { error } = await supabaseAdmin.from("placed_bets").delete().eq("id", id).eq("book", "placeholder");
+      if (error) throw error;
+      res.status(200).json({ ok: true });
       return;
     }
 

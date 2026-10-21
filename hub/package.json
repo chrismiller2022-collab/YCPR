@@ -1,0 +1,6 @@
+{
+  "name": "ycpr-bot-hub",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard for the Kalshi ladder bot. Deployed as the ycpr-bot Vercel project (Root Directory: hub)."
+}

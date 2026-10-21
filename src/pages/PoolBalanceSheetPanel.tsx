@@ -63,7 +63,7 @@ function LedgerRow({
           fmtMoney(item.winnings)
         )}
       </td>
-      <td style={{ ...cellStyle, textAlign: "right", color: net >= 0 ? "green" : "crimson", fontWeight: 600 }}>{fmtMoney(net)}</td>
+      <td style={{ ...cellStyle, textAlign: "right", color: net >= 0 ? "var(--c-ok)" : "var(--c-err)", fontWeight: 600 }}>{fmtMoney(net)}</td>
       <td style={cellStyle}>
         {canSave && (
           <button className="menu-btn" onClick={handleSave} disabled={saving} style={{ padding: "0.15rem 0.4rem" }}>
@@ -177,9 +177,6 @@ export default function PoolBalanceSheetPanel({ onBack }: { onBack: () => void }
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Pools
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Balance Sheet</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
@@ -202,7 +199,7 @@ export default function PoolBalanceSheetPanel({ onBack }: { onBack: () => void }
         </div>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {(loading || ratingsLoading) && <p>Loading…</p>}
 
       {!loading && (
@@ -249,7 +246,7 @@ export default function PoolBalanceSheetPanel({ onBack }: { onBack: () => void }
                       padding: "0.4rem 0.5rem",
                       borderTop: "2px solid var(--hash)",
                       textAlign: "right",
-                      color: net >= 0 ? "green" : "crimson",
+                      color: net >= 0 ? "var(--c-ok)" : "var(--c-err)",
                     }}
                   >
                     {fmtMoney(net)}

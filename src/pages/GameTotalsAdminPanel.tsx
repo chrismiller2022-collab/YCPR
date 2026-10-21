@@ -1,3 +1,5 @@
+import { totalKeysBetween } from "../lib/keyNumberCross";
+import { getAdminPassword } from "../lib/adminAuth";
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { parseSeasonCsv, mergeAdvancedCsv, mergedRowsToArray } from "../lib/csvImport";
 import SortHeader from "../components/SortHeader";
@@ -31,7 +33,7 @@ import { useGameProjectionLocks } from "../lib/api/gameProjectionLocks";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { TotalsMethodologyTab, HypotheticalTotalTab } from "../components/TotalsMethodologyTab";
 
-const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid rgba(255,255,255,0.05)", whiteSpace: "nowrap" };
+const CP: CSSProperties = { padding: "0.3rem 0.5rem", fontSize: "0.78rem", borderBottom: "1px solid var(--a-tint-2)", whiteSpace: "nowrap" };
 // Team Stats / Games Ahead used to be bolted onto Admin Matchups' tab
 // bar instead of living here — moved back per Chris, since this is the
 // Totals admin page and Matchups is meant for the working views that
@@ -64,7 +66,7 @@ function kickoffLabel(iso: string | null): string {
 }
 
 async function saveSettings(season: number, settings: GameTotalsSettings) {
-  const password = window.prompt("Admin password:");
+  const password = getAdminPassword();
   if (!password) return;
   const res = await fetch("/api/admin-bets-save", {
     method: "POST",
@@ -125,7 +127,7 @@ function SettingsBar({ settings, setSettings, season }: any) {
       <button className="menu-btn" onClick={() => setSettings({ ...DEFAULT_GAME_TOTALS_SETTINGS })}>
         Reset Defaults
       </button>
-      {msg && <span style={{ color: msg.startsWith("Error") ? "#c45c52" : "#8fd39a", fontSize: "0.8rem" }}>{msg}</span>}
+      {msg && <span style={{ color: msg.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)", fontSize: "0.8rem" }}>{msg}</span>}
     </div>
   );
 }
@@ -344,7 +346,7 @@ function sortValue(b: BetRow, key: SortKey, absMode: boolean): number | string {
   }
 }
 
-const GRADE_COLOR: Record<string, string> = { win: "#8fd39a", loss: "#e07a7a", push: "var(--chalk-dim)" };
+const GRADE_COLOR: Record<string, string> = { win: "var(--c-ok)", loss: "var(--c-err)", push: "var(--chalk-dim)" };
 
 
 // Click-to-open for Totals / Team Totals rows (Admin Matchups opens the totals popup). A click on a link or
@@ -366,12 +368,36 @@ function rowOpenProps(open: ((g: TotalsRowOpen) => void) | undefined, g: TotalsR
   };
 }
 
-export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[]; onOpenTotals?: (g: TotalsRowOpen) => void }) {
-  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
+export function TotalsTab({
+  rows,
+  settings,
+  poolRows,
+  onOpenTotals,
+  keyTier = 2,
+  throughKeyOnly = false,
+}: {
+  rows: EnrichedGameRow[];
+  settings: GameTotalsSettings;
+  poolRows?: EnrichedGameRow[];
+  onOpenTotals?: (g: TotalsRowOpen) => void;
+  /** Highest key-total tier that counts for the Key column and the Through key filter. */
+  keyTier?: number;
+  /** Only games whose total crosses a key total, sorted by amount off (largest first). */
+  throughKeyOnly?: boolean;
+}) {
+  const allBetRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
+  const keysFor = (b: BetRow) => totalKeysBetween(b.projectedTotal, b.vegasTotal, keyTier);
+  const betRows = useMemo(() => (throughKeyOnly ? allBetRows.filter((b) => keysFor(b).length > 0) : allBetRows), [allBetRows, throughKeyOnly, keyTier]); // eslint-disable-line react-hooks/exhaustive-deps
   const [absMode, setAbsMode] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("week");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  useEffect(() => {
+    if (!throughKeyOnly) return;
+    setSortKey("amountOff");
+    setSortDir("desc");
+    setAbsMode(true);
+  }, [throughKeyOnly]);
 
   function handleSort(key: string) {
     const k = key as SortKey;
@@ -416,6 +442,7 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
               <th style={{ ...CP, textAlign: "right" }}>FB</th>
               {sh("Amt Off", "amountOff", "right")}
               {sh("Std Dev Off", "stdDevOff", "right")}
+              <th style={CP} title="Key totals sitting between my total and Vegas's (bold = Tier 1)">Key</th>
               <th style={{ ...CP, textAlign: "right" }}>Actual Total</th>
               <th style={{ ...CP, textAlign: "right" }}>Result</th>
               <th style={{ ...CP, textAlign: "right" }}>W/L</th>
@@ -431,14 +458,14 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
                 <td style={CP}><TeamLink team={b.row.game.homeTeam} /></td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.vegasTotal, 1)}</td>
                 <td style={{ ...CP, textAlign: "right", fontWeight: 700 }}>{fmt(b.projectedTotal)}</td>
-                <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "#8fd39a" : b.call === "Under" ? "#e07a7a" : undefined }}>
+                <td style={{ ...CP, textAlign: "right", color: b.call === "Over" ? "var(--c-ok)" : b.call === "Under" ? "var(--c-err)" : undefined }}>
                   {b.call ?? "–"}
                 </td>
                 <td
                   style={{
                     ...CP,
                     textAlign: "right",
-                    color: b.isFiltered ? (b.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+                    color: b.isFiltered ? (b.call === "Over" ? "var(--c-ok)" : "var(--c-err)") : undefined,
                     fontWeight: b.isFiltered ? 700 : undefined,
                   }}
                 >
@@ -446,6 +473,22 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
                 </td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.amountOff != null ? Math.abs(b.amountOff) : b.amountOff)}</td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(absMode && b.stdDevOff != null ? Math.abs(b.stdDevOff) : b.stdDevOff, 2)}</td>
+                <td style={{ ...CP, color: "var(--gold, #d4af37)", whiteSpace: "nowrap" }}>
+                  {(() => {
+                    const keys = keysFor(b);
+                    return keys.length ? (
+                      <>
+                        🔑
+                        {keys.map((k, i) => (
+                          <span key={k.key} style={{ fontWeight: k.tier === 1 ? 800 : 500 }} title={`Tier ${k.tier}`}>
+                            {i ? ", " : ""}
+                            {k.key}
+                          </span>
+                        ))}
+                      </>
+                    ) : null;
+                  })()}
+                </td>
                 <td style={{ ...CP, textAlign: "right" }}>{fmt(b.row.actualTotal, 0)}</td>
                 <td style={{ ...CP, textAlign: "right", textTransform: "capitalize" }}>{b.actualResult ?? "–"}</td>
                 <td style={{ ...CP, textAlign: "right", textTransform: "capitalize", color: b.grade ? GRADE_COLOR[b.grade] : undefined, fontWeight: 700 }}>
@@ -455,7 +498,7 @@ export function TotalsTab({ rows, settings, poolRows, onOpenTotals }: { rows: En
             ))}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={14} className="empty">
+                <td colSpan={15} className="empty">
                   No games.
                 </td>
               </tr>
@@ -588,11 +631,11 @@ function TeamTotalsStatCells({ t, absMode }: { t: TeamSplitBetRow; absMode: bool
       <td style={TT_STAT_CELL}>{fmt(t.vegasTeamTotal, 1)}</td>
       <td style={TT_STAT_CELL}>{t.actualVegasTeamTotal != null ? fmt(t.actualVegasTeamTotal, 1) : "–"}</td>
       <td style={{ ...TT_STAT_CELL, fontWeight: 700 }}>{fmt(t.myTeamTotal, 1)}</td>
-      <td style={{ ...TT_STAT_CELL, color: t.call === "Over" ? "#8fd39a" : t.call === "Under" ? "#e07a7a" : undefined }}>{t.call ?? "–"}</td>
+      <td style={{ ...TT_STAT_CELL, color: t.call === "Over" ? "var(--c-ok)" : t.call === "Under" ? "var(--c-err)" : undefined }}>{t.call ?? "–"}</td>
       <td
         style={{
           ...TT_STAT_CELL,
-          color: t.isFiltered ? (t.call === "Over" ? "#8fd39a" : "#e07a7a") : undefined,
+          color: t.isFiltered ? (t.call === "Over" ? "var(--c-ok)" : "var(--c-err)") : undefined,
           fontWeight: t.isFiltered ? 700 : undefined,
         }}
       >
@@ -1219,7 +1262,7 @@ export function SyncControl({ season }: { season: number }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function handleSync() {
-    const password = window.prompt("Admin password:");
+    const password = getAdminPassword();
     if (!password) return;
     setSyncing(true);
     setMsg(null);
@@ -1252,7 +1295,7 @@ export function SyncControl({ season }: { season: number }) {
         <input type="checkbox" checked={includeStats} onChange={(e) => setIncludeStats(e.target.checked)} /> Also pull team
         stats (heavier — skip if you're importing those via CSV instead)
       </label>
-      {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{msg}</span>}
+      {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{msg}</span>}
     </div>
   );
 }
@@ -1268,7 +1311,7 @@ export function SyncControl({ season }: { season: number }) {
 // and Totals: Games Ahead tabs' week-over-week comparisons.
 // ---------------------------------------------------------------------
 async function saveGameTotalSnapshot(season: number, week: number, rows: EnrichedGameRow[]) {
-  const password = window.prompt("Admin password:");
+  const password = getAdminPassword();
   if (!password) return null;
   const payloadRows = rows.map((r) => {
     const myTotal = r.projection?.projectedTotal ?? null;
@@ -1352,7 +1395,7 @@ function SaveTotalsSnapshotControl({ rows, season }: { rows: EnrichedGameRow[]; 
             Weeks already saved for {season}: {savedWeeks.join(", ")}
           </span>
         )}
-        {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") || msg === "Save failed" ? "#c45c52" : "#8fd39a" }}>{msg}</span>}
+        {msg && <span style={{ fontSize: "0.8rem", color: msg.startsWith("Error") || msg === "Save failed" ? "var(--c-err)" : "var(--c-ok)" }}>{msg}</span>}
       </div>
     </div>
   );
@@ -1378,7 +1421,7 @@ export function CsvImportControl({ season }: { season: number }) {
       setMsg("Error: select both season.csv and advanced.csv first.");
       return;
     }
-    const password = window.prompt("Admin password:");
+    const password = getAdminPassword();
     if (!password) return;
     setImporting(true);
     setMsg(null);
@@ -1428,7 +1471,7 @@ export function CsvImportControl({ season }: { season: number }) {
       <button className="menu-btn" onClick={handleImport} disabled={importing}>
         {importing ? "Importing…" : "Import Stats CSV"}
       </button>
-      {msg && <span style={{ fontSize: "0.78rem", color: msg.startsWith("Error") ? "#c45c52" : "#8fd39a" }}>{msg}</span>}
+      {msg && <span style={{ fontSize: "0.78rem", color: msg.startsWith("Error") ? "var(--c-err)" : "var(--c-ok)" }}>{msg}</span>}
     </div>
   );
 }
@@ -1512,9 +1555,6 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
       <h2 style={{ marginTop: 0 }}>Totals</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Sync, CSV import, and model settings for the Totals engine. The actual Totals/Team Totals
@@ -1551,7 +1591,7 @@ export default function GameTotalsAdminPanel({ onBack }: { onBack: () => void })
 
       <ShowMore rows={rows} />
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
     </div>
   );
 }

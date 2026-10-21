@@ -1,3 +1,4 @@
+import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 // This runs on Vercel's servers, not in the browser — it's the only place
 // the service role key is used, and it's the only code path allowed to write
@@ -12,6 +13,34 @@ import { createClient } from "@supabase/supabase-js";
 // like the original admin-save.ts (saving weekly team stats), so the one
 // existing caller that predates this merge didn't need to change.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+// Passkey sessions: a device signed in with a passkey gets a token ("pk.<credential id>.<expiry>.<signature>") that is
+// accepted anywhere the admin password is, until it expires or that device is removed. Every api/ file that checks the admin
+// password carries this same copy — api/ files can't share code (an extensionless relative import crashes the function under
+// ES modules), so keep the copies identical. The token is only trusted while its credential still exists in admin_passkeys.
+async function isAdmin(supplied: unknown): Promise<boolean> {
+  if (typeof supplied !== "string" || !ADMIN_PASSWORD) return false;
+  if (supplied === ADMIN_PASSWORD) return true;
+  const parts = supplied.split(".");
+  if (parts.length !== 4 || parts[0] !== "pk") return false;
+  const [, credId, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return false;
+  const want = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${exp}`).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return false;
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  try {
+    const r = await fetch(`${url}/rest/v1/admin_passkeys?id=eq.${encodeURIComponent(credId)}&select=id`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    if (!r.ok) return false;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows.length === 1;
+  } catch {
+    return false;
+  }
+}
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const STAT_FIELDS = [
@@ -62,6 +91,148 @@ function weekToNumber(week: string): number {
   return m ? parseInt(m[1], 10) : -1;
 }
 
+
+// ---------------------------------------------------------------------
+// Passkeys (WebAuthn). A device registers once while signed in (register*), after which it can sign in with
+// Face ID / Touch ID / Windows Hello / a PIN (login*) and gets a 14-day session token that every admin api/ file
+// accepts in place of the password (see isAdmin). Only the public half of each key is stored (admin_passkeys).
+// Challenges are single-use rows in admin_passkey_challenges so a captured sign-in can't be replayed.
+// ---------------------------------------------------------------------
+const PASSKEY_SESSION_MS = 14 * 24 * 3600_000;
+const CHALLENGE_MS = 5 * 60_000;
+
+function rpInfo(req: any): { rpID: string; origin: string } {
+  const host = String(req.headers?.["x-forwarded-host"] ?? req.headers?.host ?? "").split(",")[0].trim();
+  const rpID = host.replace(/:\d+$/, "");
+  const local = rpID === "localhost" || rpID === "127.0.0.1";
+  return { rpID, origin: `${local ? "http" : "https"}://${host}` };
+}
+
+async function saveChallenge(supabaseAdmin: any, challenge: string, kind: "register" | "login") {
+  await supabaseAdmin.from("admin_passkey_challenges").delete().lt("expires_at", new Date().toISOString()); // sweep old ones
+  const { error } = await supabaseAdmin.from("admin_passkey_challenges").insert({ challenge, kind, expires_at: new Date(Date.now() + CHALLENGE_MS).toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+// Deletes the challenge and says whether it was a live one of the right kind: each can be used once.
+async function consumeChallenge(supabaseAdmin: any, challenge: unknown, kind: "register" | "login"): Promise<boolean> {
+  if (typeof challenge !== "string" || !challenge) return false;
+  const { data } = await supabaseAdmin.from("admin_passkey_challenges").delete().eq("challenge", challenge).eq("kind", kind).gt("expires_at", new Date().toISOString()).select("challenge");
+  return (data ?? []).length === 1;
+}
+
+function sessionToken(credId: string): { token: string; expiresAt: number } {
+  const expiresAt = Date.now() + PASSKEY_SESSION_MS;
+  const sig = pkCreateHmac("sha256", `${ADMIN_PASSWORD}|passkey-session`).update(`pk.${credId}.${expiresAt}`).digest("hex");
+  return { token: `pk.${credId}.${expiresAt}.${sig}`, expiresAt };
+}
+
+// Loaded only when a passkey request comes in, so a problem with the library can never stop the password path or any other action here.
+const webauthn = () => import("@simplewebauthn/server");
+
+async function handlePasskeyLogin(req: any, res: any, action: string, supabaseAdmin: any) {
+  const { rpID, origin } = rpInfo(req);
+  const { generateAuthenticationOptions, verifyAuthenticationResponse } = await webauthn();
+  if (action === "passkeyLoginOptions") {
+    // No allowCredentials: the device offers whichever passkey it holds for this address.
+    const options = await generateAuthenticationOptions({ rpID, userVerification: "required" });
+    await saveChallenge(supabaseAdmin, options.challenge, "login");
+    res.status(200).json({ options });
+    return;
+  }
+  const { response, challenge } = req.body ?? {};
+  if (!(await consumeChallenge(supabaseAdmin, challenge, "login"))) {
+    res.status(400).json({ error: "That sign-in attempt expired — try again" });
+    return;
+  }
+  const { data: row } = await supabaseAdmin.from("admin_passkeys").select("*").eq("id", String(response?.id ?? "")).maybeSingle();
+  if (!row || row.rp_id !== rpID) {
+    res.status(401).json({ error: "This passkey isn't registered here" });
+    return;
+  }
+  try {
+    const result = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: { id: row.id, publicKey: new Uint8Array(Buffer.from(row.public_key, "base64url")), counter: Number(row.counter), transports: row.transports ?? undefined },
+    });
+    if (!result.verified) {
+      res.status(401).json({ error: "Passkey not accepted" });
+      return;
+    }
+    await supabaseAdmin.from("admin_passkeys").update({ counter: result.authenticationInfo.newCounter, last_used_at: new Date().toISOString() }).eq("id", row.id);
+    res.status(200).json({ ok: true, ...sessionToken(row.id), name: row.name });
+  } catch (err: any) {
+    res.status(401).json({ error: err?.message ?? "Passkey not accepted" });
+  }
+}
+
+async function handlePasskeyManage(req: any, res: any, action: string, supabaseAdmin: any) {
+  const { rpID, origin } = rpInfo(req);
+  const { generateRegistrationOptions, verifyRegistrationResponse } = await webauthn();
+  if (action === "passkeyList") {
+    const { data, error } = await supabaseAdmin.from("admin_passkeys").select("id, name, rp_id, created_at, last_used_at").order("created_at");
+    if (error) throw new Error(error.message);
+    res.status(200).json({ passkeys: data ?? [], rpID });
+    return;
+  }
+  if (action === "passkeyRemove") {
+    const { id } = req.body ?? {};
+    if (typeof id !== "string" || !id) {
+      res.status(400).json({ error: "Missing id" });
+      return;
+    }
+    const { error } = await supabaseAdmin.from("admin_passkeys").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    res.status(200).json({ ok: true });
+    return;
+  }
+  if (action === "passkeyRegisterOptions") {
+    const { data: existing } = await supabaseAdmin.from("admin_passkeys").select("id, transports").eq("rp_id", rpID);
+    const options = await generateRegistrationOptions({
+      rpName: "YCPR Admin",
+      rpID,
+      userName: "admin",
+      userID: new TextEncoder().encode("ycpr-admin"),
+      attestationType: "none",
+      excludeCredentials: (existing ?? []).map((c: any) => ({ id: c.id, transports: c.transports ?? undefined })),
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
+    });
+    await saveChallenge(supabaseAdmin, options.challenge, "register");
+    res.status(200).json({ options });
+    return;
+  }
+  // passkeyRegisterVerify
+  const { response, challenge, name } = req.body ?? {};
+  if (!(await consumeChallenge(supabaseAdmin, challenge, "register"))) {
+    res.status(400).json({ error: "That attempt expired — try again" });
+    return;
+  }
+  try {
+    const result = await verifyRegistrationResponse({ response, expectedChallenge: challenge, expectedOrigin: origin, expectedRPID: rpID });
+    if (!result.verified || !result.registrationInfo) {
+      res.status(400).json({ error: "Passkey could not be verified" });
+      return;
+    }
+    const c = result.registrationInfo.credential;
+    const label = String(name ?? "").trim().slice(0, 60) || "Unnamed device";
+    const { error } = await supabaseAdmin.from("admin_passkeys").insert({
+      id: c.id,
+      public_key: Buffer.from(c.publicKey).toString("base64url"),
+      counter: c.counter,
+      transports: c.transports ?? null,
+      name: label,
+      rp_id: rpID,
+    });
+    if (error) throw new Error(error.message);
+    res.status(200).json({ ok: true, name: label });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message ?? "Passkey could not be verified" });
+  }
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -73,7 +244,22 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, action } = req.body ?? {};
-  if (password !== ADMIN_PASSWORD) {
+
+  // Passkey sign-in is the one path that works without a password; everything else below needs one (or a passkey session).
+  if (action === "passkeyLoginOptions" || action === "passkeyLoginVerify") {
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      res.status(500).json({ error: "Supabase server env vars are not configured" });
+      return;
+    }
+    try {
+      await handlePasskeyLogin(req, res, action, createClient(SUPABASE_URL, SERVICE_ROLE_KEY));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Passkey sign-in failed" });
+    }
+    return;
+  }
+
+  if (!(await isAdmin(password))) {
     res.status(401).json({ error: "Incorrect password" });
     return;
   }
@@ -90,6 +276,15 @@ export default async function handler(req: any, res: any) {
     return;
   }
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+  if (action === "passkeyList" || action === "passkeyRemove" || action === "passkeyRegisterOptions" || action === "passkeyRegisterVerify") {
+    try {
+      await handlePasskeyManage(req, res, action, supabaseAdmin);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Passkey request failed" });
+    }
+    return;
+  }
 
   // Formerly montecarlo-save.ts in full.
   if (action === "saveMonteCarloRun") {

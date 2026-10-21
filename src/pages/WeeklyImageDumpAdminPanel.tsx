@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { fetchFinishedResumeForWeek } from "../lib/api/resumeWeights";
 import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import CompactPowerRatingsGraphic from "../components/CompactPowerRatingsGraphic";
@@ -180,7 +181,7 @@ interface DumpTarget {
 // ancestor chain does, which is the fix.
 function OffscreenStage({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1, pointerEvents: "none" }}>
+    <div className="export-surface" style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1, pointerEvents: "none" }}>
       {children}
     </div>
   );
@@ -604,6 +605,32 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const crossMidweekRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "midweek"), [crossSlateRows]);
   const crossSaturdayRows = useMemo(() => filterSlateRowsByDay(crossSlateRows, "saturday"), [crossSlateRows]);
 
+  // Single-day graphics: one image per non-Saturday game day (Tue/Wed/Thu/Fri, and the odd Sunday/Monday), FBS vs
+  // FBS and FBS vs FCS together, so a day can be posted on its own. Saturday keeps its own two graphics.
+  const singleDayGroups = useMemo(() => {
+    const byDate = new Map<string, { fbsFbs: typeof fbsFbsSlateRows; cross: typeof crossSlateRows; iso: string }>();
+    const add = (rows: typeof fbsFbsSlateRows, key: "fbsFbs" | "cross") => {
+      for (const r of rows) {
+        if (!r.kickoffIso || isSaturdayET(r.kickoffIso)) continue;
+        const d = etDateString(r.kickoffIso);
+        const g = byDate.get(d) ?? { fbsFbs: [], cross: [], iso: r.kickoffIso };
+        g[key].push(r);
+        byDate.set(d, g);
+      }
+    };
+    add(fbsFbsSlateRows, "fbsFbs");
+    add(crossSlateRows, "cross");
+    return Array.from(byDate.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, g]) => ({
+        date,
+        weekday: new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long" }).format(new Date(g.iso)),
+        label: new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric" }).format(new Date(g.iso)),
+        fbsFbs: g.fbsFbs,
+        cross: g.cross,
+      }));
+  }, [fbsFbsSlateRows, crossSlateRows]);
+
   // Lookahead — next week's FBS-vs-FBS games, my projection only (Vegas
   // usually hasn't lined them yet). Live ratings, not a week-accurate
   // snapshot (see lookaheadGames above for why).
@@ -772,6 +799,40 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsGainers = metricGainersLosers(fcsRows, (r) => r.rank, ratingChangeByTeam, "gainers", false, TOP_N);
   const fcsLosers = metricGainersLosers(fcsRows, (r) => r.rank, ratingChangeByTeam, "losers", false, TOP_N);
 
+  // --- Résumé so far (team_resume_ratings_finished): FBS, ranked by score, and its change from the week before ---
+  const [soFar, setSoFar] = useState<{ now: Record<string, number>; prev: Record<string, number> } | null>(null);
+  useEffect(() => {
+    if (scheduleWeekNum == null) {
+      setSoFar(null);
+      return;
+    }
+    let cancelled = false;
+    const pick = (m: Record<string, { score: number | null }>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v.score != null).map(([t, v]) => [t, v.score as number]));
+    Promise.all([fetchFinishedResumeForWeek(season, scheduleWeekNum), scheduleWeekNum > 1 ? fetchFinishedResumeForWeek(season, scheduleWeekNum - 1) : Promise.resolve({})])
+      .then(([now, prev]) => !cancelled && setSoFar({ now: pick(now), prev: pick(prev as any) }))
+      .catch(() => !cancelled && setSoFar(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [season, scheduleWeekNum]);
+  const soFarFull = useMemo(() => {
+    if (!soFar) return [];
+    return fbsRows
+      .filter((r) => soFar.now[r.team] != null)
+      .map((r) => ({ team: r.team, conf: r.conf, rating: soFar.now[r.team] }))
+      .sort((a, b) => b.rating - a.rating)
+      .map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [soFar, fbsRows]);
+  const soFarTop = soFarFull.slice(0, TOP_N);
+  const soFarMoves = useMemo(() => {
+    if (!soFar || Object.keys(soFar.prev).length === 0) return { gainers: [], losers: [] };
+    const withChange = soFarFull.filter((r) => soFar.prev[r.team] != null).map((r) => ({ ...r, rating: r.rating - soFar.prev[r.team] }));
+    return {
+      gainers: [...withChange].sort((a, b) => b.rating - a.rating).slice(0, TOP_N),
+      losers: [...withChange].sort((a, b) => a.rating - b.rating).slice(0, TOP_N),
+    };
+  }, [soFar, soFarFull]);
+
   // --- Resume Ratings (FBS only) ---
   const fbsResumeFull = toResumeRows(fbsRows);
   const fbsResumeTop = fbsResumeFull.slice(0, TOP_N);
@@ -881,6 +942,9 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsGainersLosersRef = useRef<HTMLDivElement>(null);
   // Resume Ratings refs. Gainers/Losers merged, same as Power Ratings above.
   const resumeFullRef = useRef<HTMLDivElement>(null);
+  const soFarFullRef = useRef<HTMLDivElement>(null);
+  const soFarTopRef = useRef<HTMLDivElement>(null);
+  const soFarMovesRef = useRef<HTMLDivElement>(null);
   const resumeTopRef = useRef<HTMLDivElement>(null);
   const resumeGainersLosersRef = useRef<HTMLDivElement>(null);
   // SOS refs
@@ -906,6 +970,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // division bucket below, but stays its own separate image — not
   // merged into FBS-vs-FBS.
   const upcomingMidweekRef = useRef<HTMLDivElement>(null);
+  const singleDayRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fbsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsMidweekRef = useRef<HTMLDivElement>(null);
   const fcsMatchupsSaturdayRef = useRef<HTMLDivElement>(null);
@@ -982,6 +1047,13 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "07b-fcs-power-ratings-since-preseason", node: () => fcsSincePreseasonRef.current, branding: false, division: "FCS" },
     { key: "08-fbs-resume-ratings-full", node: () => resumeFullRef.current, branding: false, division: "FBS" },
     { key: "09-fbs-resume-ratings-top30", node: () => resumeTopRef.current, branding: false, division: "FBS" },
+    ...(soFarFull.length > 0
+      ? [
+          { key: "09b-fbs-resume-so-far-full", node: () => soFarFullRef.current, branding: false, division: "FBS" as const },
+          { key: "09c-fbs-resume-so-far-top30", node: () => soFarTopRef.current, branding: false, division: "FBS" as const },
+        ]
+      : []),
+    ...(soFarMoves.gainers.length > 0 ? [{ key: "09d-fbs-resume-so-far-gainers-losers", node: () => soFarMovesRef.current, branding: false, division: "FBS" as const }] : []),
     { key: "10-fbs-resume-ratings-gainers-losers", node: () => resumeGainersLosersRef.current, branding: false, division: "FBS" },
     ...(resumeSinceLabel ? [{ key: "10b-fbs-resume-since-start", node: () => resumeSinceStartRef.current, branding: false, division: "FBS" as const }] : []),
     { key: "11-fbs-sos-full", node: () => sosFullRef.current, branding: false, division: "FBS" },
@@ -1007,6 +1079,12 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     // combined into one graphic per Chris, replacing what used to be
     // FBS-vs-FBS midweek's own solo target.
     { key: "23-matchups-upcoming-midweek", node: () => upcomingMidweekRef.current, branding: false, division: "FBS" },
+    ...singleDayGroups.map((d, i) => ({
+      key: `23${String.fromCharCode(97 + i)}-matchups-${d.weekday.toLowerCase()}-${d.date}`,
+      node: () => singleDayRefs.current[d.date] ?? null,
+      branding: false,
+      division: "FBS" as const,
+    })),
     { key: "24-fbs-matchups-saturday", node: () => fbsMatchupsSaturdayRef.current, branding: false, division: "FBS" },
     // Cross-divisional Saturday — previously cross-div wasn't split by
     // day at all (one combined "All" graphic); now split the same way
@@ -1055,6 +1133,38 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     [targets, dumpDivision, includeConferencePreviews]
   );
   const divisionConferences = useMemo(() => conferences.filter((c) => c.div === dumpDivision), [conferences, dumpDivision]);
+
+  const [oneKey, setOneKey] = useState("");
+  const [oneBusy, setOneBusy] = useState(false);
+  const [oneError, setOneError] = useState<string | null>(null);
+
+  // Any one graphic from the bundle, captured the same way the ZIP does.
+  async function handleDownloadOne() {
+    const target = targets.find((t) => t.key === oneKey);
+    const node = target?.node();
+    if (!target || !node) {
+      setOneError("That graphic has nothing to capture right now.");
+      return;
+    }
+    setOneBusy(true);
+    setOneError(null);
+    const restore = target.beforeCapture?.(node);
+    try {
+      const size = { width: node.scrollWidth, height: node.scrollHeight };
+      const blob = await withTimeout(exportNodeAsPngBlob(node, undefined, undefined, undefined, size, target.branding ?? true), CAPTURE_TIMEOUT_MS, target.key);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${target.key}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e: any) {
+      setOneError(e.message ?? "Capture failed");
+    } finally {
+      restore?.();
+      setOneBusy(false);
+    }
+  }
 
   async function handleGenerateZip() {
     setZipping(true);
@@ -1241,9 +1351,6 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
   return (
     <div>
-      <button className="menu-btn" onClick={onBack} style={{ marginBottom: "1.5rem" }}>
-        ‹ Admin
-      </button>
 
       <h2 style={{ marginTop: 0 }}>Weekly Image Dump</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", maxWidth: 640 }}>
@@ -1259,7 +1366,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       {loadingWeeks ? (
         <p>Loading weeks…</p>
       ) : weeks.length === 0 ? (
-        <p style={{ color: "crimson" }}>No weekly data has been uploaded yet.</p>
+        <p style={{ color: "var(--c-err)" }}>No weekly data has been uploaded yet.</p>
       ) : (
         <>
           <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", margin: "1rem 0 1.5rem" }}>
@@ -1323,15 +1430,30 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
           <button className="menu-btn" onClick={handleGenerateZip} disabled={zipping || loadingCurrent}>
             {zipping ? "Building ZIP…" : `Generate ${dumpDivision} ZIP (${divisionTargets.length} images)`}
           </button>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", margin: "0.6rem 0" }}>
+            <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Or just one:</span>
+            <select value={oneKey} onChange={(e) => setOneKey(e.target.value)} disabled={oneBusy || zipping}>
+              <option value="">Pick a graphic…</option>
+              {divisionTargets.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.key}
+                </option>
+              ))}
+            </select>
+            <button className="menu-btn" onClick={handleDownloadOne} disabled={!oneKey || oneBusy || zipping || loadingCurrent}>
+              {oneBusy ? "Capturing…" : "Download PNG"}
+            </button>
+            {oneError && <span style={{ color: "var(--c-err)", fontSize: "0.8rem" }}>{oneError}</span>}
+          </div>
           {captureProgress && (
             <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
               Capturing {captureProgress.current}/{captureProgress.total}: {captureProgress.label}
             </p>
           )}
-          {zipDone && <p style={{ color: "green" }}>{zipDone}</p>}
-          {zipError && <p style={{ color: "crimson" }}>{zipError}</p>}
+          {zipDone && <p style={{ color: "var(--c-ok)" }}>{zipDone}</p>}
+          {zipError && <p style={{ color: "var(--c-err)" }}>{zipError}</p>}
           {publishResult && (
-            <p style={{ color: publishResult.ok ? "green" : "crimson", fontWeight: publishResult.ok ? 400 : 700 }}>
+            <p style={{ color: publishResult.ok ? "var(--c-ok)" : "var(--c-err)", fontWeight: publishResult.ok ? 400 : 700 }}>
               {publishResult.message}
             </p>
           )}
@@ -1416,6 +1538,26 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             </div>
             <div ref={resumeTopRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Resume Ratings — Top 30" sections={[{ title: "", rows: fbsResumeTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="RESUME" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={soFarFullRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Résumé So Far — Full List" sections={[{ title: "", rows: soFarFull }]} valueLabel="SO FAR" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={soFarTopRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic eyebrow={fbsEyebrow} header="Résumé So Far — Top 30" sections={[{ title: "", rows: soFarTop }]} targetRowsPerColumn={TOP_N_ROWS_PER_COLUMN} valueLabel="SO FAR" higherIsBetter colorScale="percentile" />
+            </div>
+            <div ref={soFarMovesRef} style={CAPTURE_WRAP_STYLE}>
+              <CompactPowerRatingsGraphic
+                eyebrow={fbsEyebrow}
+                header="Résumé So Far — Top 30 Gainers & Losers"
+                sections={[
+                  { title: "Top 30 Gainers", rows: soFarMoves.gainers },
+                  { title: "Top 30 Losers", rows: soFarMoves.losers },
+                ]}
+                targetRowsPerColumn={TOP_N}
+                valueLabel="CHANGE"
+                higherIsBetter
+                sideBySide
+              />
             </div>
             <div ref={resumeGainersLosersRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
@@ -1638,6 +1780,18 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 ]}
               />
             </div>
+            {singleDayGroups.map((d) => (
+              <div key={d.date} ref={(el) => { singleDayRefs.current[d.date] = el; }} style={CAPTURE_WRAP_STYLE}>
+                <MatchupGridGraphic
+                  eyebrow={fbsEyebrow}
+                  header={`${d.label} Games`}
+                  sections={[
+                    { label: "FBS vs FBS", rows: d.fbsFbs },
+                    { label: "FBS vs FCS", rows: d.cross },
+                  ].filter((x) => x.rows.length > 0)}
+                />
+              </div>
+            ))}
             <div ref={fbsMatchupsSaturdayRef} style={CAPTURE_WRAP_STYLE}>
               <MatchupGridGraphic
                 eyebrow={fbsEyebrow}
