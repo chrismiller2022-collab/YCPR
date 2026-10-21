@@ -87,6 +87,18 @@ describe("ladderOrders", () => {
     }
   });
 
+  it("spends a tight loss budget on the middle of the ladder, not the tails", () => {
+    const { orders } = ladderOrders(rungs, [], mine, { ...cfg, maxWorstCaseLoss: 1.2 });
+    const dist = orders.map((o) => Math.abs(o.fair - 0.5));
+    expect(orders.length).toBeGreaterThan(0);
+    // Placed in order of closeness to 50¢, starting with the closest rung on the ladder.
+    expect(dist).toEqual([...dist].sort((a, b) => a - b));
+    const closest = Math.min(...rungs.map((r) => Math.abs(kalshiSpreadYesProb(mine, r.side, r.strike) - 0.5)));
+    expect(dist[0]).toBeCloseTo(closest, 10);
+    // The far tail (B over 13.5, fair ≈ 27¢) gets nothing when the budget is this tight.
+    expect(orders.some((o) => o.ticker === "B13.5")).toBe(false);
+  });
+
   it("resting quotes never cross the book; takes only when edge clears the taker fee", () => {
     const { orders } = ladderOrders(rungs, [], mine, cfg);
     for (const o of orders) {

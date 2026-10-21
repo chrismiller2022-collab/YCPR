@@ -311,3 +311,23 @@ Per-game parameters:
   pushes, ~2% of net winnings); Novig manual unless API access is granted.
 - **Expectations:** at 54% on ~50 selected games, ≈3–4.5¢ per contract per game from the directional edge; bid–ask
   adds ≈0.3–1¢ per round trip. Over 50 games a true 54% bettor still finishes down ~30% of the time.
+
+## 15. Paper bot + dashboard (built 2026-10-21)
+
+- **Tables** (YCPR Supabase, migration `supabase/migrations/bot_tables.sql`): `bot_state` (mode, kill switch),
+  `bot_watchlist` (game, pick, Chris's number as a home margin, caps/edges/target), `bot_orders`, `bot_fills`
+  (with `close_mid` and `result` filled in after kickoff for CLV and P&L), `bot_snapshots` (rungs whose quote or fair
+  changed), `bot_runs`. RLS on, **no policies**: the publishable key can't read or write them (verified).
+- **Runner** `bot/runner/paper.ts`, scheduled by `.github/workflows/bot-paper.yml` every ~10 min (repo is public, so
+  Actions minutes are free; logs are public too, so the runner logs counts only). Per watched game: match the open
+  Kalshi event, simulate fills on resting quotes (only if the market traded *through* our price or the book moved
+  through it; `bot/runner/paperFills.ts`), stop quoting `stop_minutes_before` kickoff, blend fair (Kalshi-implied +
+  sportsbook + our number fading to kickoff), run `ladderOrders`, keep identical resting quotes, cancel the rest, place
+  new ones; after kickoff record results and closing mids. Only paper mode is implemented; demo/live do nothing yet.
+- **Engine change:** the loss budget is spent on rungs nearest 50¢ first, not the tails.
+- **Dashboard** `hub/` = the **ycpr-bot** Vercel project (Root Directory `hub`): `hub/api/data.js` and
+  `hub/api/admin.js` hold the service key server-side behind `BOT_ADMIN_PASSWORD`; `hub/index.html` + `app.js` show
+  the kill switch, each game's lean / worst-best / P&L-by-final-margin chart / ladder with our orders, fills with CLV
+  and P&L, recent runs, and an add-game form (enter your line for the home team, e.g. −4.3).
+- **Setup Chris does once:** GitHub repo secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; ycpr-bot Vercel env vars
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BOT_ADMIN_PASSWORD`; redeploy ycpr-bot.

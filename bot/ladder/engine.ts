@@ -229,8 +229,13 @@ export function ladderOrders(
     assumed.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price });
   };
 
-  for (const r of rungs) {
-    const fair = kalshiSpreadYesProb(pmf, r.side, r.strike);
+  // Spend the loss budget on the middle of the ladder first: near 50¢ is where
+  // the liquidity is and where risk and reward per contract are balanced
+  // (selling a 92¢-risk tail rung for 8¢ is a poor use of the cap).
+  const fairOf = (r: Rung) => kalshiSpreadYesProb(pmf, r.side, r.strike);
+  const byCenter = [...rungs].sort((a, b) => Math.abs(fairOf(a) - 0.5) - Math.abs(fairOf(b) - 0.5));
+  for (const r of byCenter) {
+    const fair = fairOf(r);
     const backsPick = r.side === cfg.pick;
     const h = pos.get(r.ticker)?.yes ?? 0;
     // Buying YES backs r.side; selling YES backs the other team.
