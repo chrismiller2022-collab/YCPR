@@ -111,7 +111,7 @@
   .empty { padding:28px; text-align:center; color:var(--a-muted); }
   .lab tr[data-strat] { cursor:pointer; }
   .lab tr[data-strat]:hover td { background:var(--a-hover); }
-  .lab td small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .lab td small, .review td small { display:block; color:var(--a-muted); font-size:.72rem; }
   .best { box-shadow:inset 3px 0 0 var(--gold); }
 
   /* Drawer */
@@ -152,7 +152,7 @@
 <body>
 <div id="gate" class="gate" hidden>
   <form id="gateForm" class="gate-card">
-    <div class="brand"><i>YC</i><div><b style="color:var(--a-ink)">YCPR BOT</b><small style="color:var(--a-muted)">Kalshi ladder · paper</small></div></div>
+    <div class="brand"><i>YC</i><div><b style="color:var(--a-ink)">YCPR BOT</b><small style="color:var(--a-muted)">Kalshi · Novig · ProphetX · paper</small></div></div>
     <label class="field">Dashboard password<input id="pw" type="password" autocomplete="current-password"></label>
     <button class="btn primary" style="justify-content:center">Open</button>
     <p id="gateErr" class="err" style="margin:0"></p>
@@ -161,10 +161,11 @@
 
 <div id="app" class="shell" hidden>
   <aside class="side">
-    <div class="brand"><i>YC</i><div><b>YCPR BOT</b><small>Kalshi ladder</small></div></div>
+    <div class="brand"><i>YC</i><div><b>YCPR BOT</b><small>Kalshi · Novig · ProphetX</small></div></div>
     <nav class="nav" id="nav">
       <button data-view="board" class="on">Board <span class="count" id="navCount">0</span></button>
       <button data-view="fills">Fills</button>
+      <button data-view="review">Review</button>
       <button data-view="add">Add game</button>
       <button data-view="lab">Strategy lab</button>
       <button data-view="settings">Settings</button>
@@ -184,6 +185,7 @@
     <nav class="mobile-tabs" id="mtabs">
       <button data-view="board" class="on">Board</button>
       <button data-view="fills">Fills</button>
+      <button data-view="review">Review</button>
       <button data-view="add">Add game</button>
       <button data-view="lab">Lab</button>
       <button data-view="settings">Settings</button>
@@ -192,6 +194,7 @@
       <p id="err" class="err"></p>
       <section data-pane="board"></section>
       <section data-pane="fills" hidden></section>
+      <section data-pane="review" hidden></section>
       <section data-pane="add" hidden>
         <form id="addForm" class="panel">
           <h3>Add a game</h3>
