@@ -20,6 +20,7 @@ describe("Novig", () => {
     expect(novigTeams(fx.event.description)).toEqual(["Miami (OH)", "Central Michigan"]);
     expect(novigTeams("North Carolina State @ Wake Forest")).toEqual(["NC State", "Wake Forest"]); // not South Carolina State
     expect(novigTeams("Championship Winner @ Nobody")).toBeNull();
+    expect(novigTeams("Pittsburgh @ Miami Florida")).toEqual(["Pittsburgh", "Miami"]); // ProphetX spells it the same way
   });
 
   it("scores short codes against team names", () => {
