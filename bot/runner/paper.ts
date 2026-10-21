@@ -197,6 +197,8 @@ export async function runCycle(): Promise<CycleTotals> {
   const started = Date.now();
   const recent = await db.select<{ id: number }>("bot_runs", `select=id&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
+  // Runs the platform killed at its time limit never reach `finally`; close them out.
+  await db.update("bot_runs", `finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
   try {
     const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number }>("bot_state", "select=mode,kill_switch,default_ycpr_weight&id=eq.1");
@@ -317,7 +319,13 @@ export async function runCycle(): Promise<CycleTotals> {
       for (const [v] of ladders) {
         const rv = allResting.filter((r) => r.venue === v);
         const tickers = [...new Set(rv.map((r) => r.ticker))];
-        trades.set(v, tickers.length ? await adapters[v].trades(tickers, Math.min(...rv.map(placedAt))) : []);
+        // A venue's tape failing (e.g. rate limit) only costs that venue's fills this cycle.
+        try {
+          trades.set(v, tickers.length ? await adapters[v].trades(tickers, Math.min(...rv.map(placedAt))) : []);
+        } catch (err) {
+          trades.set(v, []);
+          (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
+        }
       }
 
       const bookList: Book[] = [

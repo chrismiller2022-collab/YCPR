@@ -38,12 +38,27 @@ export interface NovigBook {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// At most MAX_INFLIGHT requests at once across the whole cycle (Novig rate-limits bursts).
+const MAX_INFLIGHT = 4;
+let inflight = 0;
+const waiting: (() => void)[] = [];
+async function slot<T>(fn: () => Promise<T>): Promise<T> {
+  if (inflight >= MAX_INFLIGHT) await new Promise<void>((r) => waiting.push(r));
+  inflight++;
+  try {
+    return await fn();
+  } finally {
+    inflight--;
+    waiting.shift()?.();
+  }
+}
 async function get<T>(path: string): Promise<T> {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(BASE + path, { headers: { "User-Agent": "ycpr-bot" } });
+    const res = await slot(() => fetch(BASE + path, { headers: { "User-Agent": "ycpr-bot" } }));
     if (res.ok) return (await res.json()) as T;
-    if ((res.status === 429 || res.status >= 500) && attempt < 4) {
-      await sleep(500 * 2 ** attempt);
+    if ((res.status === 429 || res.status >= 500) && attempt < 5) {
+      const retry = Number(res.headers.get("retry-after"));
+      await sleep(retry > 0 ? retry * 1000 : 750 * 2 ** attempt);
       continue;
     }
     throw new Error(`Novig ${res.status} on ${path.split("?")[0]}`);
