@@ -25,7 +25,7 @@ concurrency:
 jobs:
   cycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -41,6 +41,14 @@ jobs:
           PROPHETX_SECRET_KEY: ${{ secrets.PROPHETX_SECRET_KEY }}
       # Market recorder for Hypotheticals (also kicked off by ycpr-bot's /api/cycle).
       - run: npx tsx bot/runner/record.ts
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROPHETX_ACCESS_KEY: ${{ secrets.PROPHETX_ACCESS_KEY }}
+          PROPHETX_SECRET_KEY: ${{ secrets.PROPHETX_SECRET_KEY }}
+      # Hypotheticals replay (also run hourly by /api/record); no time limit here, so it can catch up.
+      - run: npx tsx bot/hypo/run.ts
         if: always()
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

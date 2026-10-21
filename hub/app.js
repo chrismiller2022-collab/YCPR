@@ -13,6 +13,7 @@ let lab = null; // /api/lab payload
 let openStrat = null; // strategy id, or "new"
 let review = null; // /api/review payload
 let openReview = null; // game_id shown in the Review drawer
+let openHypo = null; // { gameId, methodKey } shown in the Hypotheticals drawer (hypo.js)
 let venue = "all"; // venue filter: all | kalshi | novig | prophetx
 try { venue = localStorage.getItem("botvenue") || "all"; } catch {}
 const VENUES = ["kalshi", "novig", "prophetx"];
@@ -594,20 +595,22 @@ function render() {
   renderFills();
   renderSettings();
   renderAddOptions();
-  if (openStrat == null && openReview == null) renderDrawer();
+  if (openStrat == null && openReview == null && openHypo == null) renderDrawer();
 }
 
 function setView(v) {
   view = v;
   for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === v);
   for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== v;
-  $("title").textContent = { board: "Board", fills: "Fills", review: "Review", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
+  $("title").textContent = { board: "Board", fills: "Fills", review: "Review", hypo: "Hypotheticals", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
   openGame = null;
   openStrat = null;
   openReview = null;
+  openHypo = null;
   $("drawerRoot").innerHTML = "";
   if (v === "lab") { renderLab(); loadLab(); }
   if (v === "review") { renderReview(); loadReview(); }
+  if (v === "hypo") { renderHypo(); loadHypo(); }
 }
 
 async function load() {
@@ -666,11 +669,11 @@ document.querySelector('[data-pane="board"]').addEventListener("keydown", (e) =>
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && (openGame || openStrat != null || openReview != null)) { openGame = null; openStrat = null; openReview = null; $("drawerRoot").innerHTML = ""; }
+  if (e.key === "Escape" && (openGame || openStrat != null || openReview != null || openHypo != null)) { openGame = null; openStrat = null; openReview = null; openHypo = null; $("drawerRoot").innerHTML = ""; }
 });
 
 $("drawerRoot").addEventListener("click", async (e) => {
-  if (e.target.closest("[data-close]")) { openGame = null; openStrat = null; openReview = null; $("drawerRoot").innerHTML = ""; return; }
+  if (e.target.closest("[data-close]")) { openGame = null; openStrat = null; openReview = null; openHypo = null; $("drawerRoot").innerHTML = ""; return; }
   const t = e.target.closest("[data-dtab]");
   if (t) { drawerTab = t.dataset.dtab; renderDrawer(); return; }
   const p = e.target.closest("[data-pick]");

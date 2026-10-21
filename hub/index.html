@@ -111,7 +111,15 @@
   .empty { padding:28px; text-align:center; color:var(--a-muted); }
   .lab tr[data-strat] { cursor:pointer; }
   .lab tr[data-strat]:hover td { background:var(--a-hover); }
-  .lab td small, .review td small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .lab td small, .review td small, .hypo-totals td small, .hypo-games td small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .hc-row { display:grid; gap:10px 14px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); align-items:end; }
+  .hc-row > .field:first-child { grid-column:span 2; }
+  @media (max-width:520px) { .hc-row > .field:first-child { grid-column:auto; } }
+  .chk { display:inline-flex; gap:6px; align-items:center; font-weight:500; font-size:.8rem; color:var(--a-ink); white-space:nowrap; }
+  .hypo-games tr.off td { opacity:.45; }
+  .hypo-games th:nth-child(2), .hypo-games td:nth-child(2), .hypo-totals th:first-child, .hypo-totals td:first-child { text-align:left; }
+  .hypo-games td:first-child { width:28px; } .hypo-games td.hcell { cursor:pointer; } .hypo-games td.hcell:hover { background:var(--a-row); }
+  .hypo-totals tr.best td, tr.hbest td { background:var(--c-warn-bg); }
   .best { box-shadow:inset 3px 0 0 var(--gold); }
 
   /* Drawer */
@@ -166,6 +174,7 @@
       <button data-view="board" class="on">Board <span class="count" id="navCount">0</span></button>
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
+      <button data-view="hypo">Hypotheticals</button>
       <button data-view="add">Add game</button>
       <button data-view="lab">Strategy lab</button>
       <button data-view="settings">Settings</button>
@@ -186,6 +195,7 @@
       <button data-view="board" class="on">Board</button>
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
+      <button data-view="hypo">What-if</button>
       <button data-view="add">Add game</button>
       <button data-view="lab">Lab</button>
       <button data-view="settings">Settings</button>
@@ -195,6 +205,7 @@
       <section data-pane="board"></section>
       <section data-pane="fills" hidden></section>
       <section data-pane="review" hidden></section>
+      <section data-pane="hypo" hidden></section>
       <section data-pane="add" hidden>
         <form id="addForm" class="panel">
           <h3>Add a game</h3>
@@ -223,5 +234,6 @@
 </div>
 <div id="drawerRoot"></div>
 <script src="app.js"></script>
+<script src="hypo.js"></script>
 </body>
 </html>
