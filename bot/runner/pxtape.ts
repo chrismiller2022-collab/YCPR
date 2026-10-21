@@ -55,14 +55,14 @@ export function unwrap(x: unknown, depth = 0): Record<string, unknown>[] {
 }
 
 /** A trade print from any object carrying a strike id and a fill price (CFTC or legacy vocabulary). */
-export function asPrint(o: Record<string, unknown>): { strikeId: string; odds: number; qty: number; t: number } | null {
+export function asPrint(o: Record<string, unknown>): { strikeId: string; odds: number; qty: number; t: number; aggressive?: boolean } | null {
   const strikeId = (o.strike_id ?? o.line_id) as string | undefined;
   const odds = Number(o.fill_price ?? o.matched_odds ?? o.price ?? o.odds);
   if (!strikeId || !Number.isFinite(odds) || odds === 0) return null;
   const seq = Number(o.sequence_number);
   // sequence_number looks like epoch nanoseconds; fall back to now.
   const t = seq > 1e18 ? Math.floor(seq / 1e9) : Math.floor(Date.now() / 1000);
-  return { strikeId: String(strikeId), odds, qty: Number(o.filled_quantity ?? o.matched_stake ?? 0), t };
+  return { strikeId: String(strikeId), odds, qty: Number(o.filled_quantity ?? o.matched_stake ?? 0), t, aggressive: o.aggressive as boolean | undefined };
 }
 
 export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
@@ -158,13 +158,16 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
         // Keep a few raw non-protocol frames so the wire format can be checked.
         if (totals.samples!.length < 4 && /tournament|trade|matched/i.test(ev)) totals.samples!.push(text.slice(0, 600));
         if (!/tournament|trade_execution|matched_bet/i.test(ev)) return;
+        // Each trade arrives on both the v2 (CFTC) and legacy bindings; read only v2 when we have it.
+        if (bindings.size && [...bindings].some((b) => b.startsWith("v2.")) && !ev.startsWith("v2.")) return;
         const objs = unwrap(frame.data);
         // The tournament binding may carry other change types; only trade prints count.
         const kind = objs.map((o) => o.change_type).find((x) => typeof x === "string") as string | undefined;
         if (kind && !/trade|match/i.test(kind)) return;
         for (const o of objs) {
           const p = asPrint(o);
-          if (!p) continue;
+          // A match is broadcast once per side (taker and maker, opposite outcomes, same YES price): keep the taker's.
+          if (!p || p.aggressive === false) continue;
           const gameId = strikeGame.get(p.strikeId);
           const hit = adapter.strikes.get(p.strikeId);
           const prob = oddsToProb(p.odds);

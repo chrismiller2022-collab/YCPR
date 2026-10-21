@@ -118,6 +118,7 @@ describe("ProphetX trade tape", () => {
       const prints = unwrap(data).map(asPrint).filter(Boolean);
       expect(prints).toHaveLength(1);
       expect(prints[0]).toMatchObject({ strikeId: "B", odds: -450, qty: 12, t: 1792620000 });
+      expect(prints[0]!.aggressive).toBe(true);
     }
     // Backing B (NMSU +7.5) at −450 = 81.8%, so YES (Sam Houston −7.5) traded at 18.2¢.
     expect(1 - oddsToProb(-450)!).toBeCloseTo(0.182, 3);

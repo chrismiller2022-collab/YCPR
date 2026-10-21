@@ -254,11 +254,62 @@ function renderSettings() {
       </div>
     </div>
     <div class="panel" style="margin-top:16px">
-      <h3>Recent runs</h3>
-      <div class="scroll"><table><tr><th>Started</th><th>Games</th><th>Placed</th><th>Cancelled</th><th>Fills</th><th>Status</th></tr>
-      ${runs.length ? runs.map((r) => `<tr><td>${when(r.started_at)}</td><td>${r.games ?? "–"}</td><td>${r.orders_placed ?? "–"}</td><td>${r.orders_cancelled ?? "–"}</td><td>${r.fills ?? "–"}</td><td class="${r.error ? "bad" : ""}">${r.error ? esc(r.error.slice(0, 80)) : r.finished_at ? "ok" : "running"}</td></tr>`).join("") : '<tr><td colspan="6" class="muted">No runs yet.</td></tr>'}
+      <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0">Run history</h3>
+        <label class="field" style="min-width:200px">Show<select id="runsMode">${Object.entries(RUN_MODES).map(([k, l]) => `<option value="${k}" ${runsMode === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      </div>
+      <div class="scroll runs-scroll"><table class="runs"><tr><th>Started</th>${runsMode === "paper" ? "" : "<th>Type</th>"}<th>Took</th><th>Games</th><th>Placed</th><th>Cancelled</th><th>Fills</th><th>Details</th><th>Status</th></tr>
+      ${runRows(runsList ?? (runsMode === "paper" ? runs : []))}
       </table></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+        <button class="btn" type="button" id="runsMore" ${runsMore ? "" : "disabled"}>${runsMore ? "Load older runs" : "No older runs"}</button>
+        <span class="muted" style="font-size:.78rem">${(runsList ?? runs).length} shown</span>
+      </div>
     </div>`;
+  if (runsList == null && runsMode !== "paper") loadRuns(true);
+}
+
+// ---------- Run history (Settings)
+
+const RUN_MODES = { paper: "Paper trading cycles", record: "Market recorder", hypo: "Hypotheticals replays", pxtape: "ProphetX trade listener", all: "Everything" };
+let runsMode = "paper";
+let runsList = null; // null = the latest paper runs from /api/data
+let runsMore = true;
+
+function runDetails(r) {
+  const v = r.venues ? Object.entries(r.venues).map(([k, x]) => `${VSHORT[k] || k} ${x.fills}/${x.placed}`).join(" · ") : "";
+  const bits = [
+    v && `fills/placed ${v}`,
+    r.labFills ? `lab fills ${r.labFills}` : "",
+    r.snaps != null ? `${r.snaps} price changes` : "",
+    r.trades != null ? `${r.trades} trades` : "",
+    r.combos != null ? `${r.combos} replays` : "",
+    r.venueErrors ? `⚠ ${Object.entries(r.venueErrors).map(([k, e]) => `${VNAME[k] || k}: ${String(e).slice(0, 60)}`).join("; ")}` : "",
+  ].filter(Boolean);
+  return esc(bits.join(" · "));
+}
+
+function runRows(list) {
+  if (!list.length) return '<tr><td colspan="9" class="muted">No runs yet.</td></tr>';
+  return list.map((r) => {
+    const took = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) : null;
+    return `<tr><td>${when(r.started_at)}</td>${runsMode === "paper" ? "" : `<td>${esc(RUN_MODES[r.mode] || r.mode || "")}</td>`}<td>${took == null ? "–" : took < 90 ? `${took}s` : `${Math.round(took / 60)}m`}</td><td>${r.games ?? "–"}</td><td>${r.orders_placed ?? "–"}</td><td>${r.orders_cancelled ?? "–"}</td><td>${r.fills ?? "–"}</td><td class="runs-detail">${runDetails(r)}</td><td class="${r.error ? "bad" : ""}">${r.error ? esc(r.error.slice(0, 80)) : r.finished_at ? "ok" : "running"}</td></tr>`;
+  }).join("");
+}
+
+async function loadRuns(reset = false) {
+  try {
+    const cur = reset ? [] : runsList ?? data.runs;
+    const before = cur.length ? cur[cur.length - 1].started_at : "";
+    const r = await api(`/api/runs?mode=${runsMode}&limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`);
+    runsList = [...cur, ...r.runs];
+    runsMore = r.more;
+  } catch (e) {
+    runsList = runsList ?? (reset ? [] : data.runs); // don't retry in a loop on failure
+    runsMore = false;
+    if (e.message === "unauthorized") return;
+  }
+  renderSettings();
 }
 
 // ---------- Review
@@ -831,3 +882,15 @@ setInterval(() => {
   const a = document.activeElement;
   if (view === "lab" && !(a?.closest?.("#stratForm") && a.matches("input"))) loadLab();
 }, 30000);
+
+// Settings → run history
+document.querySelector('[data-pane="settings"]').addEventListener("change", (e) => {
+  if (e.target.id !== "runsMode") return;
+  runsMode = e.target.value;
+  runsList = null;
+  runsMore = true;
+  renderSettings();
+});
+document.querySelector('[data-pane="settings"]').addEventListener("click", (e) => {
+  if (e.target.id === "runsMore") { e.target.disabled = true; e.target.textContent = "Loading…"; loadRuns(); }
+});

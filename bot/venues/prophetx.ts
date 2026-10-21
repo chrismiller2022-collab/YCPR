@@ -126,6 +126,9 @@ export function prophetxStrikeMap(markets: PxMarket[], homeId: string, awayId: s
     if (outs.length !== 2) continue;
     const [a, b] = outs;
     if (![homeId, awayId].includes(String(a.competitor_id))) continue;
+    // Same lines as prophetxRungs: active, half-point (no pushes).
+    const line = a.strike ?? m.strike;
+    if ((m.status && !/open|active/i.test(m.status)) || line == null || Number.isInteger(line)) continue;
     const ticker = `PX:${a.strike_id ?? m.id}`;
     // Every level of a ladder shares its outcome's strike_id; take any that's present.
     const idOf = (k: number) => {

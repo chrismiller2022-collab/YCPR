@@ -14,7 +14,7 @@ export default async function handler(req, res) {
       // The Board is strategy_id null; lab strategies live in /api/lab.
       sb(`bot_orders?select=id,venue,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
       sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
-      sb("bot_runs?mode=eq.paper&select=started_at,finished_at,games,orders_placed,orders_cancelled,fills,error&order=started_at.desc&limit=12"),
+      sb("bot_runs?mode=eq.paper&select=id,mode,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills&order=started_at.desc&limit=25"),
     ]);
     // Latest snapshot per rung for watched games.
     const snaps = ids.length ? await sb(`bot_snapshots?select=game_id,venue,ticker,side,strike,bid,ask,fair,taken_at${inIds}&order=taken_at.desc&limit=3000`) : [];

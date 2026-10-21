@@ -115,6 +115,8 @@
   .hc-row { display:grid; gap:10px 14px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); align-items:end; }
   .hc-row > .field:first-child { grid-column:span 2; }
   @media (max-width:520px) { .hc-row > .field:first-child { grid-column:auto; } }
+  .runs-scroll { max-height:460px; overflow:auto; } .runs td.runs-detail { text-align:left; font-size:.76rem; color:var(--a-muted); min-width:220px; }
+  .runs th { position:sticky; top:0; background:var(--a-surface); z-index:1; }
   .chk { display:inline-flex; gap:6px; align-items:center; font-weight:500; font-size:.8rem; color:var(--a-ink); white-space:nowrap; }
   .hypo-games tr.off td { opacity:.45; }
   .hypo-games th:nth-child(2), .hypo-games td:nth-child(2), .hypo-totals th:first-child, .hypo-totals td:first-child { text-align:left; }
