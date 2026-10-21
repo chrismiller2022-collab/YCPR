@@ -11,6 +11,8 @@ let drawerTab = "outcomes";
 let fillsFilter = "";
 let lab = null; // /api/lab payload
 let openStrat = null; // strategy id, or "new"
+let review = null; // /api/review payload
+let openReview = null; // game_id shown in the Review drawer
 let venue = "all"; // venue filter: all | kalshi | novig | prophetx
 try { venue = localStorage.getItem("botvenue") || "all"; } catch {}
 const VENUES = ["kalshi", "novig", "prophetx"];
@@ -258,6 +260,112 @@ function renderSettings() {
     </div>`;
 }
 
+// ---------- Review
+
+async function loadReview() {
+  try {
+    review = await api("/api/review");
+    renderReview();
+    if (openReview != null) renderReviewDrawer();
+  } catch (e) {
+    if (e.message !== "unauthorized") document.querySelector('[data-pane="review"]').innerHTML = `<p class="err">Couldn't load Review: ${esc(e.message)}</p>`;
+  }
+}
+
+const finalLabel = (r) => (r.final == null ? (r.completed ? "–" : "in progress") : `${r.final < 0 ? r.away_team : r.home_team} by ${Math.abs(r.final)}`);
+const roi = (pnl, risk) => (pnl == null || !risk ? "–" : ((pnl / risk) * 100).toFixed(1) + "%");
+
+function renderReview() {
+  const pane = document.querySelector('[data-pane="review"]');
+  if (!review) { pane.innerHTML = '<p class="muted">Loading…</p>'; return; }
+  const { games, strategies, season } = review;
+  if (!games.length) { pane.innerHTML = '<div class="empty">No games have kicked off yet. Post-mortems appear here once a watchlist game starts.</div>'; return; }
+  // Venue totals across settled games (Board).
+  const vt = {};
+  for (const g of games) for (const [v, x] of Object.entries(g.venues)) {
+    const t = (vt[v] ??= { fills: 0, settled: 0, any: false, risked: 0 });
+    t.fills += x.fills;
+    if (x.settled != null) { t.settled += x.settled; t.any = true; t.risked += x.risked; }
+  }
+  const weeks = [...new Set(games.map((g) => g.week))].sort((a, b) => b - a);
+  pane.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="l">Settled P&amp;L · Board</div><div class="v ${cls(season.settled)}">${usd(season.settled)}</div><div class="d">${season.won}–${season.lost} games · ${season.settledGames} settled</div></div>
+      <div class="stat"><div class="l">Return on risk</div><div class="v ${cls(season.settled)}">${roi(season.settled, season.risked)}</div><div class="d">P&amp;L ÷ worst cases (${usd(season.risked)})</div></div>
+      <div class="stat"><div class="l">Average CLV</div><div class="v ${cls(season.clv)}">${c(season.clv)}</div><div class="d">per contract, vs last pregame mid</div></div>
+      <div class="stat"><div class="l">Your number vs the close</div><div class="v">${season.graded ? `${season.oursCloser}/${season.graded}` : "–"}</div><div class="d">finals closer to yours</div></div>
+      <div class="stat"><div class="l">Fees</div><div class="v">${usd(season.fees)}</div><div class="d">all venues</div></div>
+    </div>
+    <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));align-items:start;margin-bottom:16px">
+      <div class="panel"><h3>By venue</h3><div class="scroll"><table><tr><th>Venue</th><th>Fills</th><th>Settled</th><th>Return</th></tr>
+        ${Object.entries(vt).map(([v, t]) => `<tr><td>${VNAME[v]}</td><td>${t.fills}</td><td class="${cls(t.any ? t.settled : null)}">${t.any ? usd(t.settled) : "–"}</td><td>${t.any ? roi(t.settled, t.risked) : "–"}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No fills.</td></tr>'}
+      </table></div></div>
+      <div class="panel"><h3>Strategies (lab)</h3><div class="scroll"><table><tr><th>Strategy</th><th>Games</th><th>Settled</th><th>Return</th><th>CLV</th></tr>
+        ${strategies.map((st) => `<tr><td>${esc(st.name)}${st.enabled ? "" : ' <span class="pill">Off</span>'}</td><td>${st.games}</td><td class="${cls(st.settled)}">${usd(st.settled)}</td><td>${roi(st.settled, st.risked)}</td><td class="${cls(st.clv)}">${c(st.clv)}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No strategies.</td></tr>'}
+      </table></div></div>
+    </div>
+    ${weeks.map((wk) => `<h3 style="margin:14px 0 8px">Week ${wk ?? "–"}</h3>
+      <div class="panel" style="padding:8px 10px"><div class="scroll"><table class="review">
+        <tr><th>Game</th><th>Lean</th><th>Yours / close / final</th><th>Fills</th><th>CLV</th><th>Settled</th><th>Return</th><th>Your bets</th></tr>
+        ${games.filter((g) => g.week === wk).map((g) => `<tr data-review="${esc(g.game_id)}" tabindex="0" style="cursor:pointer">
+          <td><b>${esc(g.away_team)} @ ${esc(g.home_team)}</b><small>${when(g.kickoff)}</small></td>
+          <td>${esc(g.pick === "home" ? g.home_team : g.away_team)}</td>
+          <td>${signed(g.ours)} / ${signed(g.close)} / ${g.final == null ? "–" : signed(g.final)}<small>${g.oursCloser == null ? finalLabel(g) : g.oursCloser ? "final closer to yours" : "final closer to the close"}</small></td>
+          <td>${g.board.fills}<small>${Object.keys(g.venues).map((v) => VSHORT[v]).join(" · ") || "none"}</small></td>
+          <td class="${cls(g.board.clv)}">${c(g.board.clv)}</td>
+          <td class="${cls(g.board.settled)}">${usd(g.board.settled)}<small>${g.board.unsettled ? `${g.board.unsettled} ungraded` : ""}</small></td>
+          <td>${roi(g.board.settled, g.board.risked)}<small>risked ${usd(g.board.risked)}</small></td>
+          <td>${g.bets.length || "–"}</td>
+        </tr>`).join("")}
+      </table></div></div>`).join("")}
+    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Lines are away spreads (negative = away favored). Close = last pregame line the bot saw (Kalshi, else Novig/ProphetX). Risked = the worst final-margin outcome of what was held. Paper results only; your real bets are shown for comparison and never changed.</p>`;
+}
+
+function renderReviewDrawer() {
+  const root = $("drawerRoot");
+  const r = openReview != null && review?.games.find((g) => g.game_id === openReview);
+  if (!r) { root.innerHTML = ""; return; }
+  const pts = curve(positions(r.fills), -45, 45);
+  const atFinal = r.final == null ? null : pts.find((p) => p.m === r.final)?.v ?? null;
+  const lines = [["Yours", r.ours], ["Close", r.close], ...VENUES.filter((v) => r.venueClose?.[v] != null).map((v) => [VNAME[v], Number(r.venueClose[v])]), ["Final", r.final]];
+  const story = r.final == null || r.ours == null || r.close == null ? "" :
+    `<div class="callout">${esc(r.final < 0 ? r.away_team : r.home_team)} won by ${Math.abs(r.final)}. Your number (${esc(r.away_team)} ${signed(r.ours)}) was ${Math.abs(r.final - r.ours).toFixed(1)} pts from the final; the close (${signed(r.close)}) was ${Math.abs(r.final - r.close).toFixed(1)} pts away${r.oursCloser ? " — yours was closer." : " — the market was closer."}${atFinal != null ? ` The Board's position paid ${usd(atFinal)} at that margin.` : ""}</div>`;
+  const vrows = Object.entries(r.venues);
+  const srows = (review.strategies || []).filter((st) => r.byStrategy[st.id]);
+  root.innerHTML = `<div class="scrim" data-close="1"></div>
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Post-mortem">
+      <div class="drawer-head"><div><h2>${esc(r.away_team)} @ ${esc(r.home_team)}</h2><div class="muted" style="font-size:.8rem;margin-top:4px">${when(r.kickoff)} · lean ${esc(r.pick === "home" ? r.home_team : r.away_team)} · ${finalLabel(r)}</div></div><button class="xbtn" data-close="1" aria-label="Close">✕</button></div>
+      <div class="drawer-body">
+        <div class="mini-stats">
+          ${lines.map(([l, v]) => `<div class="stat"><div class="l">${l} · ${esc(r.away_team)}</div><div class="v num">${v == null ? "–" : signed(v)}</div></div>`).join("")}
+        </div>
+        ${story}
+        <div class="mini-stats">
+          <div class="stat"><div class="l">Settled</div><div class="v num ${cls(r.board.settled)}">${usd(r.board.settled)}</div><div class="d">${r.board.unsettled ? `${r.board.unsettled} ungraded` : "after fees"}</div></div>
+          <div class="stat"><div class="l">Risked</div><div class="v num">${usd(r.board.risked)}</div><div class="d">return ${roi(r.board.settled, r.board.risked)}</div></div>
+          <div class="stat"><div class="l">CLV</div><div class="v num ${cls(r.board.clv)}">${c(r.board.clv)}</div><div class="d">edge at fill ${c(r.board.edgeAtFill)}</div></div>
+          <div class="stat"><div class="l">Fills</div><div class="v num">${r.board.fills}</div><div class="d">${r.board.contracts} contracts · fees ${usd(r.board.fees)}</div></div>
+        </div>
+        <h3>P&amp;L by final margin</h3>
+        ${curveSvg(r, pts)}
+        ${vrows.length > 1 ? `<div class="panel" style="padding:10px 12px;margin-bottom:12px"><div class="scroll"><table><tr><th>Venue</th><th>Fills</th><th>Settled</th><th>CLV</th></tr>
+          ${vrows.map(([v, x]) => `<tr><td>${VNAME[v]}</td><td>${x.fills}</td><td class="${cls(x.settled)}">${usd(x.settled)}</td><td class="${cls(x.clv)}">${c(x.clv)}</td></tr>`).join("")}</table></div></div>` : ""}
+        ${srows.length ? `<div class="panel" style="padding:10px 12px;margin-bottom:12px"><div class="scroll"><table><tr><th>Lab strategy</th><th>Fills</th><th>Settled</th><th>Return</th><th>CLV</th></tr>
+          ${srows.map((st) => { const x = r.byStrategy[st.id]; return `<tr><td>${esc(st.name)}</td><td>${x.fills}</td><td class="${cls(x.settled)}">${usd(x.settled)}</td><td>${roi(x.settled, x.risked)}</td><td class="${cls(x.clv)}">${c(x.clv)}</td></tr>`; }).join("")}</table></div></div>` : ""}
+        <h3>Fills</h3>
+        <div class="panel" style="padding:10px 12px;margin-bottom:12px"><div class="scroll"><table>
+          <tr><th>When</th><th>Venue</th><th>Number</th><th>Side</th><th>Price</th><th>Fair</th><th>Close</th><th>Result</th><th>P&amp;L</th></tr>
+          ${r.fills.map((f) => {
+            const pnl = f.result == null ? null : (f.action === "buy" ? f.count * (f.result - f.price) : f.count * (f.price - f.result)) - f.fee;
+            return `<tr><td>${when(f.filled_at)}</td><td>${VSHORT[vOf(f)]}</td><td>${esc(numLabel(f, r))}</td><td>${f.action === "buy" ? "Buy" : "Sell"} ${f.count}</td><td>${c(Number(f.price), 1)}</td><td>${c(f.fair_at_fill)}</td><td>${c(f.close_mid)}</td><td>${f.result == null ? "–" : f.result ? "YES" : "NO"}</td><td class="${cls(pnl)}">${usd(pnl)}</td></tr>`;
+          }).join("") || '<tr><td colspan="9" class="muted">The Board didn\'t trade this game.</td></tr>'}
+        </table></div></div>
+        ${r.bets.length ? `<h3>Your bets on this game</h3><div class="panel" style="padding:10px 12px"><div class="scroll"><table><tr><th>Book</th><th>Side</th><th>Line</th><th>Price</th><th>Stake</th><th>Result</th></tr>
+          ${r.bets.map((b) => `<tr><td>${esc(b.book)}</td><td>${esc(b.side)}</td><td>${b.line_value == null ? "–" : signed(Number(b.line_value))}</td><td>${esc(b.price)}</td><td>${b.stake == null ? "–" : usd(Number(b.stake))}</td><td>${esc(b.result || "pending")}</td></tr>`).join("")}</table></div></div>` : ""}
+      </div>
+    </aside>`;
+}
+
 // ---------- Strategy lab
 
 async function loadLab() {
@@ -486,18 +594,20 @@ function render() {
   renderFills();
   renderSettings();
   renderAddOptions();
-  if (openStrat == null) renderDrawer();
+  if (openStrat == null && openReview == null) renderDrawer();
 }
 
 function setView(v) {
   view = v;
   for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === v);
   for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== v;
-  $("title").textContent = { board: "Board", fills: "Fills", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
+  $("title").textContent = { board: "Board", fills: "Fills", review: "Review", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
   openGame = null;
   openStrat = null;
+  openReview = null;
   $("drawerRoot").innerHTML = "";
   if (v === "lab") { renderLab(); loadLab(); }
+  if (v === "review") { renderReview(); loadReview(); }
 }
 
 async function load() {
@@ -556,11 +666,11 @@ document.querySelector('[data-pane="board"]').addEventListener("keydown", (e) =>
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && (openGame || openStrat != null)) { openGame = null; openStrat = null; $("drawerRoot").innerHTML = ""; }
+  if (e.key === "Escape" && (openGame || openStrat != null || openReview != null)) { openGame = null; openStrat = null; openReview = null; $("drawerRoot").innerHTML = ""; }
 });
 
 $("drawerRoot").addEventListener("click", async (e) => {
-  if (e.target.closest("[data-close]")) { openGame = null; openStrat = null; $("drawerRoot").innerHTML = ""; return; }
+  if (e.target.closest("[data-close]")) { openGame = null; openStrat = null; openReview = null; $("drawerRoot").innerHTML = ""; return; }
   const t = e.target.closest("[data-dtab]");
   if (t) { drawerTab = t.dataset.dtab; renderDrawer(); return; }
   const p = e.target.closest("[data-pick]");
@@ -603,6 +713,16 @@ $("drawerRoot").addEventListener("submit", async (e) => {
   } catch (err) {
     $("gMsg").textContent = err.message;
   }
+});
+
+// Review → post-mortem drawer
+document.querySelector('[data-pane="review"]').addEventListener("click", (e) => {
+  const row = e.target.closest("tr[data-review]");
+  if (row) { openReview = row.dataset.review; renderReviewDrawer(); }
+});
+document.querySelector('[data-pane="review"]').addEventListener("keydown", (e) => {
+  const row = e.target.closest("tr[data-review]");
+  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
 });
 
 // Strategy lab
