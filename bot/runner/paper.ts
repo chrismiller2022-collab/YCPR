@@ -195,7 +195,7 @@ async function settle(w: Watch) {
 export async function runCycle(): Promise<CycleTotals> {
   const totals: CycleTotals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
   const started = Date.now();
-  const recent = await db.select<{ id: number }>("bot_runs", `select=id&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
+  const recent = await db.select<{ id: number }>("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   // Runs the platform killed at its time limit never reach `finally`; close them out.
   await db.update("bot_runs", `finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });

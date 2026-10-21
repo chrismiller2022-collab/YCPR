@@ -24,6 +24,8 @@ export interface NovigEvent {
 export interface NovigOutcome {
   outcomeId: string;
   name: string; // "CMU -2.5"
+  /** Best bid, embedded in the market listing (matches the book's top level). */
+  bid?: { price: string; qty: number } | null;
 }
 export interface NovigMarket {
   marketId: string;
@@ -32,6 +34,7 @@ export interface NovigMarket {
   strike: string; // signed line of outcomes[0]
   status: string;
   outcomes: NovigOutcome[];
+  volume?: number;
 }
 export interface NovigBook {
   orders: Record<string, { price: string; qty: number }[]>;
@@ -111,7 +114,7 @@ export function codeScore(code: string, team: string): number {
  * "A −2.5" → A wins by over 2.5; "A +1.5" → A wins by over −1.5.
  * Whole-number lines (pushes) are skipped for now.
  */
-export function novigRungs(markets: NovigMarket[], books: Map<string, NovigBook>, firstIsHome: boolean): { rungs: Rung[]; yesOutcome: Map<string, string> } {
+export function novigRungs(markets: NovigMarket[], books: Map<string, NovigBook> | null, firstIsHome: boolean): { rungs: Rung[]; yesOutcome: Map<string, string> } {
   const rungs: Rung[] = [];
   const yesOutcome = new Map<string, string>();
   for (const m of markets) {
@@ -119,13 +122,13 @@ export function novigRungs(markets: NovigMarket[], books: Map<string, NovigBook>
     const line = Number(m.strike);
     if (!Number.isFinite(line) || Number.isInteger(line)) continue;
     const [yes, no] = m.outcomes;
-    const book = books.get(m.marketId);
-    const best = (oid: string) => {
-      const p = book?.orders?.[oid]?.[0]?.price;
+    const book = books?.get(m.marketId);
+    const best = (o: NovigOutcome) => {
+      const p = book ? book.orders?.[o.outcomeId]?.[0]?.price : o.bid?.price;
       return p == null ? null : Number(p);
     };
-    const yb = best(yes.outcomeId);
-    const nb = best(no.outcomeId);
+    const yb = best(yes);
+    const nb = best(no);
     const ticker = `NV:${m.marketId}`;
     yesOutcome.set(ticker, yes.outcomeId);
     rungs.push({
@@ -144,7 +147,7 @@ export function novigRungs(markets: NovigMarket[], books: Map<string, NovigBook>
  * sportsbook line; fall back to the short codes when the line can't tell
  * (near pick'em) — and refuse (null) when neither is convincing.
  */
-export function resolveFirstIsHome(markets: NovigMarket[], books: Map<string, NovigBook>, game: VenueGame): boolean | null {
+export function resolveFirstIsHome(markets: NovigMarket[], books: Map<string, NovigBook> | null, game: VenueGame): boolean | null {
   const asHome = impliedHomeMargin(novigRungs(markets, books, true).rungs);
   const firstCode = markets.find((m) => m.outcomes.length === 2)?.outcomes[0].name.split(/\s+/)[0] ?? "";
   const otherCode = markets.find((m) => m.outcomes.length === 2)?.outcomes[1].name.split(/\s+/)[0] ?? "";
@@ -164,6 +167,7 @@ export function resolveFirstIsHome(markets: NovigMarket[], books: Map<string, No
 export function novigAdapter(): VenueAdapter {
   let events: NovigEvent[] = [];
   const yesOutcome = new Map<string, string>(); // ticker → YES outcomeId, for trade normalization
+  const volume = new Map<string, number>(); // ticker → traded volume, so callers can skip tapes that didn't move
   const notListed: string[] = [];
   const unresolved: string[] = [];
   return {
@@ -186,22 +190,18 @@ export function novigAdapter(): VenueAdapter {
         return null;
       }
       const markets = (await get<{ items: NovigMarket[] }>(`/catalog/markets?event=${ev.eventId}&marketType=SPREAD&limit=200`)).items.filter((m) => m.eventId === ev.eventId);
-      const books = new Map<string, NovigBook>();
-      const open = markets.filter((m) => m.status === "OPEN" && !Number.isInteger(Number(m.strike)));
-      for (let i = 0; i < open.length; i += 8) {
-        const batch = open.slice(i, i + 8);
-        const got = await Promise.all(batch.map((m) => get<NovigBook>(`/catalog/markets/${m.marketId}/book?depth=1`)));
-        batch.forEach((m, j) => books.set(m.marketId, got[j]));
-      }
-      const firstIsHome = resolveFirstIsHome(markets, books, game);
+      // The listing embeds each outcome's best bid, so one request gives the whole ladder.
+      const firstIsHome = resolveFirstIsHome(markets, null, game);
       if (firstIsHome == null) {
         unresolved.push(`${game.away_team} @ ${game.home_team}`);
         return null;
       }
-      const built = novigRungs(markets, books, firstIsHome);
+      const built = novigRungs(markets, null, firstIsHome);
+      for (const m of markets) volume.set(`NV:${m.marketId}`, Number(m.volume ?? 0));
       for (const [k, v] of built.yesOutcome) yesOutcome.set(k, v);
       return { eventKey: ev.eventId, rungs: built.rungs };
     },
+    volume: (ticker: string) => volume.get(ticker),
     diag: () => ({ events: events.length, notListed, unresolved }),
     async trades(tickers, sinceTs) {
       const out: VenueTrade[] = [];

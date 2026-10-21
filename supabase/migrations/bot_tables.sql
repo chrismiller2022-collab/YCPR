@@ -164,3 +164,35 @@ create index if not exists bot_fills_venue on bot_fills (venue, game_id);
 
 -- Snapshot rungs carry side/strike so Novig/ProphetX tickers (which don't encode the number) can be labeled.
 alter table bot_snapshots add column if not exists side text, add column if not exists strike numeric;
+
+-- Market recorder: every FBS game's ladders and trades on every venue, for Hypotheticals replay.
+create table if not exists bot_mkt_games (
+  game_id text primary key,
+  season int, week int, kickoff timestamptz,
+  home_team text not null, away_team text not null,
+  ycpr_home_margin numeric, book_home_margin numeric,
+  venue_events jsonb not null default '{}', venue_margins jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+create table if not exists bot_mkt_snaps (
+  id bigserial primary key,
+  game_id text not null, venue text not null, ticker text not null,
+  side text not null, strike numeric not null, bid numeric, ask numeric,
+  taken_at timestamptz not null default now()
+);
+create index if not exists bot_mkt_snaps_game on bot_mkt_snaps (game_id, venue, taken_at);
+create table if not exists bot_mkt_trades (
+  id bigserial primary key,
+  game_id text not null, venue text not null, ticker text not null,
+  t timestamptz not null, yes_price numeric not null
+);
+create index if not exists bot_mkt_trades_game on bot_mkt_trades (game_id, venue, t);
+create table if not exists bot_mkt_last (
+  venue text not null, ticker text not null,
+  bid numeric, ask numeric, volume numeric, last_trade_t bigint,
+  primary key (venue, ticker)
+);
+alter table bot_mkt_games enable row level security;
+alter table bot_mkt_snaps enable row level security;
+alter table bot_mkt_trades enable row level security;
+alter table bot_mkt_last enable row level security;

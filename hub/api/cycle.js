@@ -5,6 +5,13 @@ import { timingSafeEqual } from "node:crypto";
 import { send } from "./_lib.js";
 import { runCycle } from "./_bot.mjs";
 
+/** Kick off the market recorder as its own function run (it has its own time limit and lock). */
+function startRecorder(req) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  if (!host) return;
+  fetch(`https://${host}/api/record`, { headers: { authorization: req.headers.authorization } }).catch(() => {});
+}
+
 function cronAuthorized(req) {
   const want = process.env.CRON_SECRET || "";
   const got = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
@@ -14,6 +21,7 @@ function cronAuthorized(req) {
 
 export default async function handler(req, res) {
   if (!cronAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+  startRecorder(req);
   try {
     const totals = await runCycle();
     send(res, 200, totals);

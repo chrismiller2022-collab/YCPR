@@ -3,3 +3,4 @@ export { runCycle } from "./paper";
 export { ycprAwaySpreads } from "./ycpr";
 export { outcomeRanges } from "../ladder/outcomes";
 export { marginPmf } from "../fairPrice/marginDistribution";
+export { runRecord } from "./record";
