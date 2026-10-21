@@ -1,5 +1,6 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
 import { authorized, sb, send } from "./_lib.js";
+import { ycprAwaySpreads } from "./_bot.mjs";
 
 export default async function handler(req, res) {
   if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
@@ -29,7 +30,12 @@ export default async function handler(req, res) {
     const rank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);
     const spread = {};
     for (const l of lines.sort((a, b) => rank(a.provider) - rank(b.provider))) if (spread[l.game_id] == null) spread[l.game_id] = Number(l.spread);
-    const upcoming = games.map((g) => ({ ...g, home_spread: spread[g.id] ?? null }));
+    // YC's number for each upcoming game, computed exactly like Admin Matchups.
+    let yc = new Map();
+    try {
+      yc = await ycprAwaySpreads(games);
+    } catch {}
+    const upcoming = games.map((g) => ({ ...g, home_spread: spread[g.id] ?? null, yc_away_spread: yc.get(String(g.id)) ?? null }));
 
     send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming });
   } catch (err) {

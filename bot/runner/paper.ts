@@ -14,6 +14,7 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { diffOrders, fillFee, paperFills, type Trade } from "./paperFills";
 import { db, eventMarkets, openSpreadEvents, tradesSince, type LiveEvent, type LiveMarket } from "./io";
+import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 
 const MODE = "paper";
 const now = () => Math.floor(Date.now() / 1000);
@@ -28,7 +29,10 @@ interface Watch {
   away_team: string;
   kickoff: string | null;
   pick: "home" | "away";
-  my_home_margin: number;
+  /** Optional typed override (home margin = away spread); null = use YCPR. */
+  my_home_margin: number | null;
+  ycpr_home_margin: number | null;
+  ycpr_weight: number;
   max_worst_case_loss: number;
   per_rung_cap: number;
   order_size: number;
@@ -160,6 +164,16 @@ export async function runCycle(): Promise<CycleTotals> {
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
     const events = watch.length ? await openSpreadEvents() : [];
+    // YCPR's current number for every watched game, computed like Admin Matchups.
+    const games = watch.length ? await db.select<YcprGame>("games", `select=id,season,week,home_team,away_team,neutral_site&id=in.(${watch.map((w) => w.game_id).join(",")})`) : [];
+    const ycpr = await ycprAwaySpreads(games);
+    for (const w of watch) {
+      const yc = ycpr.get(String(w.game_id)) ?? null;
+      if (yc != null && num(w.ycpr_home_margin) !== yc) {
+        await db.update("bot_watchlist", `id=eq.${w.id}`, { ycpr_home_margin: yc, ycpr_updated_at: iso() });
+        w.ycpr_home_margin = yc;
+      }
+    }
     for (const w of watch) {
       if (!w.kickoff) {
         const [g] = await db.select<{ start_date: string }>("games", `select=start_date&id=eq.${w.game_id}`);
@@ -221,7 +235,15 @@ export async function runCycle(): Promise<CycleTotals> {
       // 3. Fair price: Kalshi-implied + sportsbooks + our number (fading toward kickoff).
       const hours = kickoff != null ? (kickoff - now()) / 3600 : 72;
       const kalshiCenter = impliedHomeMargin(rungs);
-      const center = blendedHomeMargin({ ycpr: Number(w.my_home_margin), kalshi: kalshiCenter, book: await bookHomeMargin(w.game_id), hoursToKickoff: hours });
+      const ours = num(w.my_home_margin) ?? num(w.ycpr_home_margin);
+      if (ours == null) {
+        totals.skipped++;
+        continue;
+      }
+      const center = blendedHomeMargin(
+        { ycpr: ours, kalshi: kalshiCenter, book: await bookHomeMargin(w.game_id), hoursToKickoff: hours },
+        { ycprWeight: num(w.ycpr_weight) ?? 1, fade: false }
+      );
       if (center == null) continue;
       // If our blended number doesn't favor the pick versus the market, there's no edge to lean on:
       // don't add exposure (a likely data-entry error, e.g. a sign flip).

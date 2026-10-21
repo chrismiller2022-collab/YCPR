@@ -80,10 +80,13 @@ export interface Order {
 
 /** Market-implied home margin: the pmf center that best fits the ladder's mids (tighter quotes weigh more). */
 export function impliedHomeMargin(rungs: Rung[], model: MarginModel = DEFAULT_MARGIN_MODEL): number | null {
-  const pts = rungs
+  const quoted = rungs
     .filter((r) => r.bid != null && r.ask != null && r.ask > r.bid)
-    .map((r) => ({ r, mid: (r.bid! + r.ask!) / 2, w: 1 / Math.max(0.01, r.ask! - r.bid!) }))
-    .filter((p) => p.mid > 0.03 && p.mid < 0.97);
+    .map((r) => ({ r, mid: (r.bid! + r.ask!) / 2, w: 1 / Math.max(0.01, r.ask! - r.bid!) }));
+  // Fit on the middle of the ladder: long-shot rungs tend to be overpriced and
+  // would drag the implied margin toward the tails.
+  const middle = quoted.filter((p) => p.mid >= 0.15 && p.mid <= 0.85);
+  const pts = middle.length >= 2 ? middle : quoted.filter((p) => p.mid > 0.03 && p.mid < 0.97);
   if (pts.length === 0) return null;
   const err = (mean: number) => {
     const pmf = marginPmf(mean, model);
@@ -112,12 +115,15 @@ export interface FairInputs {
 }
 
 /**
- * Blended home margin. YCPR's weight starts at `ycprWeight` a week out and
- * fades linearly to 0 at kickoff (the backtest found it adds nothing at the
- * close); the rest is split between Kalshi and the sportsbooks.
+ * Blended home margin. With `fade` (default), YCPR's weight starts at
+ * `ycprWeight` a week out and fades linearly to 0 at kickoff (the backtest
+ * found it adds nothing at the close); with `fade: false` it stays at
+ * `ycprWeight` (1 = trade our number outright). The rest is split between
+ * Kalshi and the sportsbooks.
  */
-export function blendedHomeMargin(x: FairInputs, opts: { ycprWeight?: number; fadeHours?: number; kalshiShare?: number } = {}): number | null {
-  const wY = x.ycpr == null ? 0 : (opts.ycprWeight ?? 0.35) * Math.min(1, Math.max(0, x.hoursToKickoff) / (opts.fadeHours ?? 144));
+export function blendedHomeMargin(x: FairInputs, opts: { ycprWeight?: number; fade?: boolean; fadeHours?: number; kalshiShare?: number } = {}): number | null {
+  const base = opts.ycprWeight ?? 0.35;
+  const wY = x.ycpr == null ? 0 : opts.fade === false ? base : base * Math.min(1, Math.max(0, x.hoursToKickoff) / (opts.fadeHours ?? 144));
   const share = opts.kalshiShare ?? 0.6;
   let wK = x.kalshi == null ? 0 : share;
   let wB = x.book == null ? 0 : 1 - share;

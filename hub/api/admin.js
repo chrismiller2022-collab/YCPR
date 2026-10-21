@@ -1,7 +1,7 @@
 // POST { action, ... }: kill switch and watchlist edits. Requires x-bot-password.
 import { authorized, sb, send } from "./_lib.js";
 
-const NUMERIC = ["my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
+const NUMERIC = ["ycpr_weight", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
 const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
 
 function cleanWatch(body) {
@@ -14,6 +14,7 @@ function cleanWatch(body) {
   for (const k of INTS) if (body[k] !== undefined) w[k] = Math.round(Number(body[k]));
   for (const [k, v] of Object.entries(w)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
   if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
+  if (w.ycpr_weight != null && (w.ycpr_weight < 0 || w.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
   if (body.enabled !== undefined) w.enabled = !!body.enabled;
   if (body.notes !== undefined) w.notes = String(body.notes).slice(0, 500);
   return w;
@@ -33,7 +34,7 @@ export default async function handler(req, res) {
         const [g] = await sb(`games?select=id,season,week,start_date,home_team,away_team&id=eq.${encodeURIComponent(body.game_id)}`);
         if (!g) throw new Error("Unknown game");
         const w = cleanWatch(body);
-        if (w.pick == null || w.my_home_margin == null) throw new Error("pick and your number are required");
+        if (w.pick == null) throw new Error("pick is required");
         const row = { game_id: String(g.id), season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team, kickoff: g.start_date, ...w };
         const [saved] = await sb("bot_watchlist?on_conflict=game_id", { method: "POST", headers: { Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(row) });
         return send(res, 200, { watch: saved });

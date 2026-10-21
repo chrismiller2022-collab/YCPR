@@ -107,3 +107,10 @@ create table if not exists bot_runs (
   error text
 );
 alter table bot_runs enable row level security;
+
+-- 2026-10-21: the bot reads YCPR projections itself; a typed line is an optional override.
+alter table bot_watchlist alter column my_home_margin drop not null;
+alter table bot_watchlist add column if not exists ycpr_home_margin numeric;
+alter table bot_watchlist add column if not exists ycpr_updated_at timestamptz;
+-- How much the fair price trusts our number vs the market: 1 = our number only.
+alter table bot_watchlist add column if not exists ycpr_weight numeric not null default 1 check (ycpr_weight >= 0 and ycpr_weight <= 1);
