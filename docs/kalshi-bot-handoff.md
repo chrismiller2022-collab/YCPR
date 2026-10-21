@@ -367,3 +367,14 @@ lines, Ed25519/P-256 signed requests, subaccounts with per-subaccount trading ke
 only, and game lines charge only while the event is live (pre-game ≈ free), makers get a share of taker fees.
 ProphetX: decimal-odds `price` + `quantity` per `strike_id`, `ALO` (post-only) and `fillOrKill`, maker rebates, 50 req/s,
 trading keys need no approval (market data and higher limits do).
+
+## 17. Multi-venue paper trading (2026-10-21)
+
+- `bot/venues/` holds one adapter per venue (`kalshi`, `novig`, `prophetx`): ladder → engine rungs, trades since a time, tick, fee function.
+- The runner prepares every available adapter once per cycle, then for each watched game and each enabled venue (`bot_watchlist.venues`) runs the Board and every lab strategy with that venue's tick and fee. Orders, fills and snapshots carry `venue`.
+- **One loss cap per game across venues**: a book's positions on the other venues enter the engine as `otherPnl`, so the worst case is checked on the combined P&L by margin.
+- Fair price on each venue blends our number with *that venue's* implied margin (`venue_margins`), falling back to Kalshi's.
+- Settlement grades every fill from the final score (YES = side wins by over strike), so it works the same for all venues.
+- Novig: public production books and trades, no key. Home/away resolved against the sportsbook line, then short codes; unverifiable games are skipped. Pre-game fills are fee-free.
+- ProphetX: needs `PROPHETX_ACCESS_KEY` / `PROPHETX_SECRET_KEY` (Vercel ycpr-bot env + GitHub secrets). Response parsing is unverified until real keys exist; no public trade tape, so paper fills only happen when the book moves through a quote.
+- Dashboard: venue filter (All | Kalshi | Novig | ProphetX) on top; All is the combined view. Per-game "Trade on" toggles in game settings.

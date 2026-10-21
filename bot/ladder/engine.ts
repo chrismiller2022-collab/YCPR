@@ -51,7 +51,12 @@ export interface LadderConfig {
   profitTarget: number | null;
   /** Price grid. */
   tick: number;
+  /** Fee per fill for this venue; defaults to Kalshi's schedule. */
+  fee?: FeeFn;
 }
+
+/** Venue fee for a fill at `price`; `maker` = a resting quote that got filled. */
+export type FeeFn = (price: number, opts?: { count?: number; maker?: boolean }) => number;
 
 export const DEFAULT_LADDER_CONFIG: Omit<LadderConfig, "pick"> = {
   maxWorstCaseLoss: 5,
@@ -196,7 +201,12 @@ export function ladderOrders(
   positions: Position[],
   pmf: MarginPmf,
   cfg: LadderConfig,
-  state: { realizedPnl?: number } = {}
+  state: {
+    realizedPnl?: number;
+    /** P&L by final margin from this book's positions on OTHER venues for the same game (same index as pnlByMargin),
+     *  so the loss cap covers the whole game across venues. */
+    otherPnl?: number[];
+  } = {}
 ): { orders: Order[]; notes: string[] } {
   const notes: string[] = [];
   const orders: Order[] = [];
@@ -212,14 +222,16 @@ export function ladderOrders(
   // blow through the loss cap. Anti-pick fills only reduce risk, so they
   // aren't assumed — that keeps the check conservative.
   const assumed = new Map(positions.map((p) => [p.ticker, { ...p }]));
-  const worstOf = (book: Map<string, Position>) => exposureSummary(pnlByMargin(rungs, [...book.values()], pmf.maxMargin), pmf).worst;
+  const fee: FeeFn = cfg.fee ?? kalshiFee;
+  const withOther = (pnl: number[]) => (state.otherPnl ? pnl.map((v, i) => v + (state.otherPnl![i] ?? 0)) : pnl);
+  const worstOf = (book: Map<string, Position>) => exposureSummary(withOther(pnlByMargin(rungs, [...book.values()], pmf.maxMargin)), pmf).worst;
   let antiBudget = Math.max(0, pro); // anti-pick contracts allowed without flipping the lean
   const fits = (o: { ticker: string; action: "buy" | "sell"; price: number; count: number }) => {
     const cur = assumed.get(o.ticker) ?? { ticker: o.ticker, yes: 0, cost: 0 };
     const delta = o.action === "buy" ? o.count : -o.count;
     if (Math.abs(cur.yes + delta) > cfg.perRungCap) return false;
     const next = new Map(assumed);
-    next.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + kalshiFee(o.price, { count: o.count }) });
+    next.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + fee(o.price, { count: o.count }) });
     const before = worstOf(assumed);
     const after = worstOf(next);
     // Risk-reducing orders are always fine; others must stay within the loss cap.
@@ -233,7 +245,7 @@ export function ladderOrders(
     }
     const cur = assumed.get(o.ticker) ?? { ticker: o.ticker, yes: 0, cost: 0 };
     const delta = o.action === "buy" ? o.count : -o.count;
-    assumed.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + kalshiFee(o.price, { count: o.count }) });
+    assumed.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + fee(o.price, { count: o.count }) });
   };
 
   // Spend the loss budget on the middle of the ladder first: near 50¢ is where
@@ -264,7 +276,7 @@ export function ladderOrders(
       // Take a resting price when it beats fair by takeEdge after the taker fee.
       const takePrice = p.action === "buy" ? r.ask : r.bid;
       if (takePrice != null) {
-        const edge = p.action === "buy" ? fair - takePrice - kalshiFee(takePrice) : takePrice - fair - kalshiFee(takePrice);
+        const edge = p.action === "buy" ? fair - takePrice - fee(takePrice) : takePrice - fair - fee(takePrice);
         const need = p.direction === "pro" ? Math.max(cfg.takeEdge, proEdgeNow) : Math.max(cfg.takeEdge, cfg.antiEdge);
         const o = { ticker: r.ticker, action: p.action, price: takePrice, count };
         if (edge >= need && fits(o)) {
@@ -274,7 +286,7 @@ export function ladderOrders(
       }
 
       // Otherwise rest a post-only quote at fair ∓ (edge + maker fee), never crossing the book.
-      let price = p.action === "buy" ? floorTick(fair - p.edge - kalshiFee(fair, { maker: true }), cfg.tick) : ceilTick(fair + p.edge + kalshiFee(fair, { maker: true }), cfg.tick);
+      let price = p.action === "buy" ? floorTick(fair - p.edge - fee(fair, { maker: true }), cfg.tick) : ceilTick(fair + p.edge + fee(fair, { maker: true }), cfg.tick);
       if (p.action === "buy" && r.ask != null) price = Math.min(price, r.ask - cfg.tick);
       if (p.action === "sell" && r.bid != null) price = Math.max(price, r.bid + cfg.tick);
       if (price < cfg.tick || price > 1 - cfg.tick) continue;

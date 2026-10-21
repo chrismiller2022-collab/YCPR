@@ -16,6 +16,10 @@ function cleanWatch(body) {
   if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
   if (w.ycpr_weight != null && (w.ycpr_weight < 0 || w.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
   if (body.enabled !== undefined) w.enabled = !!body.enabled;
+  if (body.venues !== undefined) {
+    if (!Array.isArray(body.venues) || body.venues.some((v) => !["kalshi", "novig", "prophetx"].includes(v))) throw new Error("venues must be kalshi, novig and/or prophetx");
+    w.venues = [...new Set(body.venues)];
+  }
   if (body.notes !== undefined) w.notes = String(body.notes).slice(0, 500);
   return w;
 }
