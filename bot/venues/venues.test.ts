@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { impliedHomeMargin, ladderOrders, DEFAULT_LADDER_CONFIG, exposureSummary, pnlByMargin } from "../ladder/engine";
 import { marginPmf } from "../fairPrice/marginDistribution";
 import { codeScore, novigRungs, novigTeams, resolveFirstIsHome, type NovigBook, type NovigMarket } from "./novig";
-import { bestPerOutcome, isGameSpread, oddsToProb, prophetxRungs } from "./prophetx";
+import { bestPerOutcome, isGameSpread, oddsToProb, prophetxRungs, prophetxStrikeMap } from "./prophetx";
+import { asPrint, unwrap } from "../runner/pxtape";
 
 // Real Novig snapshot (2026-10-21): Miami (OH) @ Central Michigan, 28 spread markets with books.
 const fx = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/novig-cmu.json", import.meta.url)), "utf8")) as {
@@ -98,6 +99,28 @@ describe("ProphetX v4 market_strikes", () => {
     expect(rungs.find((r) => r.ticker === "PX:b")).toMatchObject({ side: "home", strike: 7.5 });
     expect(isGameSpread({ id: 9, type: "spread", name: "Q1 Spread" })).toBe(false);
     expect(isGameSpread({ id: 9, type: "spread", name: "Spread", category_name: "Game Lines" })).toBe(true);
+  });
+});
+
+describe("ProphetX trade tape", () => {
+  const line = { id: 1, strike: -7.5, status: "active", selections: [[{ competitor_id: 11, strike: -7.5, price: 320, strike_id: "A" }], [{ competitor_id: 22, strike: 7.5, price: -445, strike_id: "B" }]] };
+  const markets = [{ id: 9, type: "spread", name: "Spread", status: "active", market_strikes: [line] }];
+
+  it("maps both outcomes' strike ids to the rung, YES for the first", () => {
+    const m = prophetxStrikeMap(markets, "11", "22");
+    expect(m.get("A")).toEqual({ ticker: "PX:A", isYes: true });
+    expect(m.get("B")).toEqual({ ticker: "PX:A", isYes: false });
+  });
+
+  it("finds prints in the documented payload, stringified or base64-wrapped", () => {
+    const info = { strike: -7.5, strike_id: "B", market_id: 9, fill_price: -450, filled_quantity: 12, price: -450, sequence_number: 1792620000123456789, aggressive: true };
+    for (const data of [JSON.stringify({ info }), JSON.stringify({ timestamp: 1, change_type: "trade_execution", payload: Buffer.from(JSON.stringify({ info })).toString("base64") })]) {
+      const prints = unwrap(data).map(asPrint).filter(Boolean);
+      expect(prints).toHaveLength(1);
+      expect(prints[0]).toMatchObject({ strikeId: "B", odds: -450, qty: 12, t: 1792620000 });
+    }
+    // Backing B (NMSU +7.5) at −450 = 81.8%, so YES (Sam Houston −7.5) traded at 18.2¢.
+    expect(1 - oddsToProb(-450)!).toBeCloseTo(0.182, 3);
   });
 });
 

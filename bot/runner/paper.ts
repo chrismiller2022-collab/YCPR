@@ -323,12 +323,13 @@ export async function runCycle(): Promise<CycleTotals> {
         try {
           const since = Math.min(...rv.map(placedAt));
           if (!tickers.length) trades.set(v, []);
-          // Novig rate-limits its trade tape, so read what the market recorder (/api/record) already
-          // pulled; a trade recorded after this cycle is picked up next cycle (fills go by placed time).
-          else if (v === "novig")
+          // Novig rate-limits its trade tape and ProphetX only broadcasts trades over a websocket, so
+          // read what the recorder (/api/record) and the ProphetX listener (/api/pxtape) saved; a trade
+          // saved after this cycle is picked up next cycle (fills go by placed time).
+          else if (v === "novig" || v === "prophetx")
             trades.set(v, (await db.select<{ ticker: string; t: string; yes_price: number }>(
               "bot_mkt_trades",
-              `select=ticker,t,yes_price&game_id=eq.${w.game_id}&venue=eq.novig&t=gt.${new Date(since * 1000).toISOString()}&order=t&limit=5000`
+              `select=ticker,t,yes_price&game_id=eq.${w.game_id}&venue=eq.${v}&t=gt.${new Date(since * 1000).toISOString()}&order=t&limit=5000`
             )).filter((x) => tickers.includes(x.ticker)).map((x) => ({ ticker: x.ticker, t: Math.floor(new Date(x.t).getTime() / 1000), yesPrice: Number(x.yes_price) })));
           else trades.set(v, await adapters[v].trades(tickers, since));
         } catch (err) {
