@@ -42,10 +42,30 @@ export interface PxSelection {
 }
 export interface PxMarket {
   id: number | string;
+  name?: string;
+  category_name?: string;
+  sub_type?: string;
   type?: string;
   status?: string;
   strike?: number;
   selections?: (PxSelection | PxSelection[])[];
+  /** v4: one child market per line, each with its own selections. */
+  market_strikes?: PxMarket[];
+}
+
+/** Full-game spread markets only (not halves or quarters). */
+export const isGameSpread = (m: PxMarket) =>
+  /spread/i.test(m.type ?? "") && !/half|quarter|\b[1-4](st|nd|rd|th)?\s*(h|q)\b|\b(1h|2h|q[1-4])\b|period|team total/i.test(`${m.name ?? ""} ${m.category_name ?? ""} ${m.sub_type ?? ""}`);
+
+/** Each line of a game-spread market as its own market (v4 nests lines under market_strikes). */
+export function spreadLines(markets: PxMarket[]): PxMarket[] {
+  const out: PxMarket[] = [];
+  for (const m of markets) {
+    if (!isGameSpread(m)) continue;
+    if (m.market_strikes?.length) for (const k of m.market_strikes) out.push({ ...k, type: k.type ?? m.type, status: k.status ?? m.status });
+    else out.push(m);
+  }
+  return out;
 }
 
 /** Odds → implied probability. |x| ≥ 100 = American; 1 < x < 100 = decimal. */
@@ -71,8 +91,9 @@ export function bestPerOutcome(m: PxMarket): PxSelection[] {
 /** Engine rungs from ProphetX spread markets. homeId/awayId = competitor ids. */
 export function prophetxRungs(markets: PxMarket[], homeId: string, awayId: string): Rung[] {
   const rungs: Rung[] = [];
-  for (const m of markets) {
-    if (!/spread/i.test(m.type ?? "") || (m.status && !/open|active/i.test(m.status))) continue;
+  const seen = new Set<string>();
+  for (const m of spreadLines(markets)) {
+    if (m.status && !/open|active/i.test(m.status)) continue;
     const outs = bestPerOutcome(m);
     if (outs.length !== 2) continue;
     const [a, b] = outs;
@@ -82,8 +103,11 @@ export function prophetxRungs(markets: PxMarket[], homeId: string, awayId: strin
     if (!side || line == null || Number.isInteger(line)) continue;
     const backA = oddsToProb(a.price); // cost to buy "A covers"
     const backB = oddsToProb(b.price); // buying B = selling A
+    const ticker = `PX:${a.strike_id ?? m.id}`;
+    if (seen.has(ticker)) continue;
+    seen.add(ticker);
     rungs.push({
-      ticker: `PX:${a.strike_id ?? m.id}`,
+      ticker,
       side,
       strike: -line,
       ask: backA != null && backA > 0 && backA < 1 ? Math.round(backA * 1000) / 1000 : null,
@@ -147,7 +171,11 @@ export function prophetxAdapter(): VenueAdapter {
       const ev = game.eventKey ? events.find((e) => String(e.event_id) === game.eventKey) : events.find((e) => match(e));
       const sides = ev && match(ev);
       if (!ev || !sides) {
-        ladders.push({ game: `${game.away_team} @ ${game.home_team}`, found: false });
+        const words = [game.home_team, game.away_team].flatMap((t) => t.split(/[\s()]+/).filter((x) => x.length > 3));
+        ladders.push({
+          game: `${game.away_team} @ ${game.home_team}`, found: false,
+          nearMisses: events.filter((e) => words.some((x) => (e.name ?? "").includes(x))).slice(0, 5).map((e) => ({ name: e.name, competitors: e.competitors?.map((c) => `${c.side}: ${c.display_name ?? c.name}`) })),
+        });
         return null;
       }
       const r = await call<any>(`/v4/mm/get_markets?event_id=${ev.event_id}`);
@@ -155,12 +183,15 @@ export function prophetxAdapter(): VenueAdapter {
       const rungs = prophetxRungs(markets, String(sides.home.id), String(sides.away.id));
       const types: Record<string, number> = {};
       for (const m of markets) types[String(m.type)] = (types[String(m.type)] ?? 0) + 1;
-      const spread = markets.find((m) => /spread/i.test(m.type ?? ""));
-      const sel = spread?.selections?.[0];
+      const spreads = markets.filter((m) => /spread/i.test(m.type ?? ""));
+      const line = spreadLines(markets)[0];
+      const sel = line?.selections?.[0];
       ladders.push({
         game: `${game.away_team} @ ${game.home_team}`, found: true, markets: markets.length, types, rungs: rungs.length,
-        response: keysOf(r?.data ?? r), marketKeys: keysOf(spread), selectionKeys: keysOf(Array.isArray(sel) ? sel[0] : sel), nested: Array.isArray(sel),
-        sampleSelections: (spread?.selections ?? []).slice(0, 4).map((x) => (Array.isArray(x) ? x.slice(0, 2) : x)),
+        response: keysOf(r?.data ?? r),
+        spreads: spreads.map((m) => ({ name: m.name, category: m.category_name, sub_type: m.sub_type, status: m.status, game: isGameSpread(m), lines: m.market_strikes?.length ?? 0 })),
+        lineKeys: keysOf(line), selectionKeys: keysOf(Array.isArray(sel) ? sel[0] : sel), nested: Array.isArray(sel),
+        sampleLine: line ? { strike: line.strike, status: line.status, selections: (line.selections ?? []).slice(0, 2).map((x) => (Array.isArray(x) ? x.slice(0, 2) : x)) } : null,
       });
       return { eventKey: String(ev.event_id), rungs };
     },
