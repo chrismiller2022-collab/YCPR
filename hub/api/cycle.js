@@ -5,11 +5,11 @@ import { timingSafeEqual } from "node:crypto";
 import { send } from "./_lib.js";
 import { runCycle } from "./_bot.mjs";
 
-/** Kick off the market recorder as its own function run (it has its own time limit and lock). */
+/** Kick off the market recorder and the ProphetX trade listener as their own function runs (own time limits and locks). */
 function startRecorder(req) {
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   if (!host) return;
-  fetch(`https://${host}/api/record`, { headers: { authorization: req.headers.authorization } }).catch(() => {});
+  for (const path of ["/api/record", "/api/pxtape"]) fetch(`https://${host}${path}`, { headers: { authorization: req.headers.authorization } }).catch(() => {});
 }
 
 function cronAuthorized(req) {
