@@ -173,7 +173,7 @@ export function computeSlatePerformance(rows: SlateGameRow[]): SlatePerformanceS
 
     if (r.myAwaySpread != null && r.awayScore != null && r.homeScore != null) {
       // Home-perspective, matching BET_HISTORY's own prediction/actualFinalSpread convention.
-      const predictedHomeMargin = -r.myAwaySpread;
+      const predictedHomeMargin = r.myAwaySpread; // away-perspective spread == projected home margin
       const actualHomeMargin = r.homeScore - r.awayScore;
       errors.push(predictedHomeMargin - actualHomeMargin);
     }

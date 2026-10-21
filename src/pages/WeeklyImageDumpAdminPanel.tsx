@@ -692,24 +692,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   // everywhere else in this file — Cross has none: FBS-vs-FCS games
   // don't reliably carry a total line/projection, so that performance
   // block only ever shows spreads (see showTotals={false} below).
-  // buildLiveBetHistoryRecords now takes a per-week ratings map (see
-  // betHistory.ts) so it can be week-accurate the way BetHistoryAdminPanel
-  // now is — but doing that properly here too would mean fetching
-  // week-accurate ratings for every week of the whole season just for
-  // this one season-long summary block (the exact cost the comment above
-  // already opted out of). This blanket map preserves that same
-  // deliberate simplification (every week gets today's live ratings)
-  // while satisfying the new signature — not a regression, just not yet
-  // upgraded to match BetHistoryAdminPanel's fix.
-  const blanketRatingsByWeek = useMemo(() => {
-    const weeks = new Set(seasonGamesAll.map((g) => g.week));
-    return Object.fromEntries(Array.from(weeks).map((w) => [w, liveByTeam]));
-  }, [seasonGamesAll, liveByTeam]);
+  // Week-accurate: each week is graded with that week's own saved ratings
+  // and its frozen pregame locks (same as Bet History's locked records),
+  // through the week being reviewed. Grading every week with today's live
+  // ratings leaked results into the projections and inflated the record.
+  const reviewThroughWeek = previousWeekNum ?? scheduleWeekNum ?? 0;
+  const seasonWeeksThroughReview = useMemo(
+    () => Array.from(new Set(seasonGamesAll.map((g) => g.week))).filter((w) => w <= reviewThroughWeek).sort((a, b) => a - b),
+    [seasonGamesAll, reviewThroughWeek]
+  );
+  const { byWeek: seasonRatingsByWeek } = useWeekAccurateRatings(season, seasonWeeksThroughReview, season);
+  const { locks: seasonLocks } = useGameProjectionLocks(season, seasonWeeksThroughReview);
   const seasonSpreadRecords = useMemo(() => {
     const historical = BET_HISTORY.filter((r) => r.season === season);
-    const live = historical.length > 0 ? [] : buildLiveBetHistoryRecords(seasonGamesAll, blanketRatingsByWeek, "team");
-    return [...historical, ...live];
-  }, [season, seasonGamesAll, blanketRatingsByWeek]);
+    if (historical.length > 0) return historical;
+    const games = seasonGamesAll.filter((g) => g.week <= reviewThroughWeek);
+    return buildLiveBetHistoryRecords(games, seasonRatingsByWeek, "team", "close", seasonLocks);
+  }, [season, seasonGamesAll, reviewThroughWeek, seasonRatingsByWeek, seasonLocks]);
 
   function classifyRecord(r: BetHistoryRecord): "fbsfbs" | "cross" | "fcsfcs" | "other" {
     const home = TEAMS_BY_NAME[r.homeTeam]?.div;
@@ -735,7 +734,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         else if (result === "loss") spreadBets.l++;
         else if (result === "push") spreadBets.push++;
       }
-      errors.push(r.prediction - r.actualFinalSpread);
+      errors.push(r.actualFinalSpread + r.prediction);
     }
     const absErrors = errors.map((e) => Math.abs(e)).sort((a, b) => a - b);
     const meanAbsError = absErrors.length > 0 ? absErrors.reduce((a, b) => a + b, 0) / absErrors.length : null;
@@ -775,10 +774,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     return { everyGameTotals, totalBets };
   }
 
-  const seasonTotalsPerformanceFbsFbs = useMemo(
-    () => tallyTotalsRows(totalsEngineRows.filter((r) => r.game.homeClassification === "fbs" && r.game.awayClassification === "fbs")),
-    [totalsEngineRows]
-  );
+  // Totals likewise only count games with a frozen pregame total — the live
+  // totals engine re-projects past games with today's ratings (lookahead).
+  const seasonLockedTotalByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const g of seasonGamesAll) {
+      const v = seasonLocks[g.id]?.my_total;
+      if (v != null && g.week <= reviewThroughWeek) map.set(`${g.week}|${g.home_team}|${g.away_team}`, v);
+    }
+    return map;
+  }, [seasonGamesAll, seasonLocks, reviewThroughWeek]);
+  const seasonTotalsPerformanceFbsFbs = useMemo(() => {
+    const locked = applyLockedTotals(
+      totalsEngineRowsRaw.filter((r) => seasonLockedTotalByKey.has(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`)),
+      seasonLockedTotalByKey
+    );
+    return tallyTotalsRows(locked.filter((r) => r.game.homeClassification === "fbs" && r.game.awayClassification === "fbs"));
+  }, [totalsEngineRowsRaw, seasonLockedTotalByKey]);
 
   const fbsRows = useMemo(
     () => buildDivisionResolvedTeams("FBS", reportByTeam, ratingChangeByTeam, actualRecordByTeam, projectedWinsByTeam),
