@@ -153,7 +153,7 @@ function appendBrandingFooter(root: HTMLElement): () => void {
     "gap:12px",
     "padding:10px 16px",
     "margin-top:10px",
-    "border-top:1px solid rgba(255,255,255,0.15)",
+    `border-top:1px solid ${root.classList.contains("export-light") ? "#e1e3ec" : "rgba(255,255,255,0.15)"}`,
     "font-size:13px",
     "font-weight:700",
     "letter-spacing:0.05em",
@@ -165,7 +165,7 @@ function appendBrandingFooter(root: HTMLElement): () => void {
 
   const right = document.createElement("span");
   right.textContent = TWITTER_HANDLE;
-  right.style.color = "var(--gold, #d9a441)";
+  right.style.color = root.classList.contains("export-light") ? "#8a5a00" : "var(--gold, #d9a441)";
 
   bar.appendChild(left);
   bar.appendChild(right);
