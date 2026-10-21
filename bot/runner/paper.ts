@@ -20,6 +20,8 @@ import { db } from "./io";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 
 const MODE = "paper";
+/** Stop starting new games after this long (ycpr-bot's /api/cycle allows 300 s). */
+const BUDGET_MS = Number(process.env.BOT_CYCLE_BUDGET_MS) || 170e3;
 const now = () => Math.floor(Date.now() / 1000);
 const iso = () => new Date().toISOString();
 const num = (v: unknown) => (v == null ? null : Number(v));
@@ -111,6 +113,10 @@ export interface CycleTotals {
   venues: Partial<Record<VenueId, { ladders: number; fills: number; placed: number }>>;
   venueErrors?: Partial<Record<VenueId, string>>;
   overlapped?: boolean;
+  /** Games left for the next cycle because this one hit its time budget. */
+  deferred?: number;
+  /** Per-venue response-shape notes (no prices or positions), for checking new adapters. */
+  diag?: Partial<Record<VenueId, unknown>>;
 }
 
 const placedAt = (r: { created_at: string }) => Math.floor(new Date(r.created_at).getTime() / 1000);
@@ -188,6 +194,7 @@ async function settle(w: Watch) {
  */
 export async function runCycle(): Promise<CycleTotals> {
   const totals: CycleTotals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
+  const started = Date.now();
   const recent = await db.select<{ id: number }>("bot_runs", `select=id&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
@@ -220,6 +227,12 @@ export async function runCycle(): Promise<CycleTotals> {
         (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
       }
     }
+    const recordDiag = () => {
+      for (const v of VENUES) {
+        const d = adapters[v].diag?.();
+        if (d) (totals.diag ??= {})[v] = d;
+      }
+    };
 
     // YCPR's current number for every watched game, computed like Admin Matchups.
     const games = await db.select<YcprGame>("games", `select=id,season,week,home_team,away_team,neutral_site&id=in.(${watch.map((w) => w.game_id).join(",")})`);
@@ -232,7 +245,15 @@ export async function runCycle(): Promise<CycleTotals> {
       }
     }
 
-    for (const w of watch) {
+    // Time budget: stop starting games before the function limit; start from a different game each
+    // cycle so a slow cycle never starves the same games.
+    const deadline = started + BUDGET_MS;
+    const off = run.id % watch.length;
+    for (const w of [...watch.slice(off), ...watch.slice(0, off)]) {
+      if (Date.now() > deadline) {
+        totals.deferred = (totals.deferred ?? 0) + 1;
+        continue;
+      }
       if (!w.kickoff) {
         const [g] = await db.select<{ start_date: string }>("games", `select=start_date&id=eq.${w.game_id}`);
         if (g) w.kickoff = g.start_date;
@@ -339,16 +360,16 @@ export async function runCycle(): Promise<CycleTotals> {
           const fee = adapter.fee(hours);
           const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
           let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
-          const insertFill = async (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
+          const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
             const r = L.rungs.find((x) => x.ticker === o.ticker);
             const row: FillRow & Record<string, unknown> = {
               mode: MODE, venue: v, strategy_id: sid, order_id: orderId, game_id: w.game_id, ticker: o.ticker, side: r?.side ?? "home", strike: r?.strike ?? 0,
               action: o.action, price: o.price, count: o.count, fee: fee(o.price, { count: o.count, maker }), fair_at_fill: fair,
               mid_at_fill: r?.bid != null && r?.ask != null ? (r.bid + r.ask) / 2 : null,
             };
-            await db.insert("bot_fills", row);
             bookFills.push(row);
             count(v, "fills");
+            return row;
           };
 
           // 1. Simulate fills on what was resting since the last cycle.
@@ -357,10 +378,9 @@ export async function runCycle(): Promise<CycleTotals> {
             trades.get(v) ?? [],
             books
           );
-          for (const f of filled) {
-            const order = resting.find((x) => x.id === f.id)!;
-            await db.update("bot_orders", `id=eq.${f.id}`, { status: "filled", closed_at: iso() });
-            await insertFill(f.id, f, true, order.fair);
+          if (filled.length) {
+            await db.update("bot_orders", `id=in.(${filled.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+            await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
           }
           resting = resting.filter((r) => !filled.some((f) => f.id === r.id));
           const cancel = async (rows: RestingRow[]) => {
@@ -400,18 +420,24 @@ export async function runCycle(): Promise<CycleTotals> {
           const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl });
           const plan = diffOrders(resting, orders, adapter.tick);
           await cancel(plan.cancel);
-          for (const o of plan.place) {
-            const full = orders.find((x) => x.ticker === o.ticker && x.action === o.action && x.price === o.price && x.kind === o.kind)!;
-            const [row] = await db.insert<{ id: number }>("bot_orders", {
-              mode: MODE, venue: v, strategy_id: sid, game_id: w.game_id, ticker: o.ticker, action: o.action, price: o.price, count: o.count, kind: o.kind,
-              direction: full.direction, fair: full.fair, reason: full.reason, status: o.kind === "take" ? "filled" : "resting", closed_at: o.kind === "take" ? iso() : null,
-            });
-            count(v, "placed");
-            if (o.kind === "take") await insertFill(row.id, o, false, full.fair);
+          // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.
+          if (plan.place.length) {
+            const fulls = plan.place.map((o) => orders.find((x) => x.ticker === o.ticker && x.action === o.action && x.price === o.price && x.kind === o.kind)!);
+            const rows = await db.insert<{ id: number }>(
+              "bot_orders",
+              plan.place.map((o, i) => ({
+                mode: MODE, venue: v, strategy_id: sid, game_id: w.game_id, ticker: o.ticker, action: o.action, price: o.price, count: o.count, kind: o.kind,
+                direction: fulls[i].direction, fair: fulls[i].fair, reason: fulls[i].reason, status: o.kind === "take" ? "filled" : "resting", closed_at: o.kind === "take" ? iso() : null,
+              }))
+            );
+            plan.place.forEach(() => count(v, "placed"));
+            const takes = plan.place.map((o, i) => (o.kind === "take" ? fillRow(rows[i].id, o, false, fulls[i].fair) : null)).filter((x) => x != null);
+            if (takes.length) await db.insert("bot_fills", takes);
           }
         }
       }
     }
+    recordDiag();
   } catch (err) {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(err).slice(0, 2000) });
     throw err;

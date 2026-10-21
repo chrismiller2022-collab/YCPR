@@ -149,6 +149,8 @@ export function resolveFirstIsHome(markets: NovigMarket[], books: Map<string, No
 export function novigAdapter(): VenueAdapter {
   let events: NovigEvent[] = [];
   const yesOutcome = new Map<string, string>(); // ticker → YES outcomeId, for trade normalization
+  const notListed: string[] = [];
+  const unresolved: string[] = [];
   return {
     id: "novig",
     label: "Novig",
@@ -164,26 +166,36 @@ export function novigAdapter(): VenueAdapter {
             const t = novigTeams(e.description);
             return t != null && t[0] === game.away_team && t[1] === game.home_team;
           });
-      if (!ev) return null;
+      if (!ev) {
+        notListed.push(`${game.away_team} @ ${game.home_team}`);
+        return null;
+      }
       const markets = (await get<{ items: NovigMarket[] }>(`/catalog/markets?event=${ev.eventId}&marketType=SPREAD&limit=200`)).items.filter((m) => m.eventId === ev.eventId);
       const books = new Map<string, NovigBook>();
-      for (const m of markets) {
-        if (m.status !== "OPEN" || Number.isInteger(Number(m.strike))) continue;
-        books.set(m.marketId, await get<NovigBook>(`/catalog/markets/${m.marketId}/book?depth=1`));
+      const open = markets.filter((m) => m.status === "OPEN" && !Number.isInteger(Number(m.strike)));
+      for (let i = 0; i < open.length; i += 8) {
+        const batch = open.slice(i, i + 8);
+        const got = await Promise.all(batch.map((m) => get<NovigBook>(`/catalog/markets/${m.marketId}/book?depth=1`)));
+        batch.forEach((m, j) => books.set(m.marketId, got[j]));
       }
       const firstIsHome = resolveFirstIsHome(markets, books, game);
-      if (firstIsHome == null) return null;
+      if (firstIsHome == null) {
+        unresolved.push(`${game.away_team} @ ${game.home_team}`);
+        return null;
+      }
       const built = novigRungs(markets, books, firstIsHome);
       for (const [k, v] of built.yesOutcome) yesOutcome.set(k, v);
       return { eventKey: ev.eventId, rungs: built.rungs };
     },
+    diag: () => ({ events: events.length, notListed, unresolved }),
     async trades(tickers, sinceTs) {
       const out: VenueTrade[] = [];
-      for (const ticker of tickers) {
-        const marketId = ticker.replace(/^NV:/, "");
+      const pages = await Promise.all(
+        tickers.map((ticker) => get<{ items: { outcomeId: string; price: string; ts: number }[] }>(`/catalog/markets/${ticker.replace(/^NV:/, "")}/trades?limit=100`))
+      );
+      for (const [i, ticker] of tickers.entries()) {
         const yes = yesOutcome.get(ticker);
-        const d = await get<{ items: { outcomeId: string; price: string; ts: number }[] }>(`/catalog/markets/${marketId}/trades?limit=100`);
-        for (const tr of d.items) {
+        for (const tr of pages[i].items) {
           const t = Math.floor(tr.ts / 1000);
           if (t <= sinceTs || !yes) continue;
           const p = Number(tr.price);

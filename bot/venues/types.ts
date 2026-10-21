@@ -44,4 +44,6 @@ export interface VenueAdapter {
   trades(tickers: string[], sinceTs: number): Promise<VenueTrade[]>;
   /** Fee for one fill, as the engine's FeeFn; `hoursToKickoff` lets venues that only charge live return 0 pre-game. */
   fee(hoursToKickoff: number): FeeFn;
+  /** Response-shape notes for this cycle (names and counts only), stored with the run. */
+  diag?(): unknown;
 }
