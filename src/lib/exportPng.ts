@@ -161,7 +161,7 @@ function appendBrandingFooter(root: HTMLElement): () => void {
 
   const left = document.createElement("span");
   left.textContent = SITE_BRAND;
-  left.style.color = "rgba(255,255,255,0.55)";
+  left.style.color = root.classList.contains("export-light") ? "rgba(22,23,46,0.6)" : "rgba(255,255,255,0.55)";
 
   const right = document.createElement("span");
   right.textContent = TWITTER_HANDLE;
@@ -197,8 +197,11 @@ async function withCapturePrep<T>(
   // Share graphics always use the site's dark look, even when they're
   // captured from an admin page that's showing the light theme (see
   // .export-surface in styles/admin.css).
+  // Nodes marked .export-light (e.g. the Viz Builder chart) keep their own
+  // light palette instead.
+  const light = node.classList.contains("export-light");
   const hadSurface = node.classList.contains("export-surface");
-  node.classList.add("export-surface");
+  if (!light) node.classList.add("export-surface");
   try {
     return await capture();
   } finally {
@@ -213,6 +216,12 @@ async function withCapturePrep<T>(
 }
 
 const CAPTURE_OPTS = { backgroundColor: "#1f2041", pixelRatio: 2, filter: shouldInclude };
+const LIGHT_BG = "#ffffff";
+
+function captureOptsFor(node: HTMLElement, explicitSize?: { width: number; height: number }) {
+  const base = node.classList.contains("export-light") ? { ...CAPTURE_OPTS, backgroundColor: LIGHT_BG } : CAPTURE_OPTS;
+  return explicitSize ? { ...base, ...explicitSize } : base;
+}
 
 /**
  * @param topN - When set (e.g. from the Top 25 choice), body rows past
@@ -253,7 +262,7 @@ export async function exportNodeAsPng(
   includeBranding = true,
   sectionMatch?: (section: string) => boolean
 ) {
-  const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
+  const captureOpts = captureOptsFor(node, explicitSize);
   const dataUrl = await withCapturePrep(node, () => toPng(node, captureOpts), topN, rowMatch, tighten, includeBranding, sectionMatch);
   const link = document.createElement("a");
   link.download = filename.endsWith(".png") ? filename : `${filename}.png`;
@@ -273,7 +282,7 @@ export async function exportNodeAsPngBlob(
   includeBranding = true,
   sectionMatch?: (section: string) => boolean
 ): Promise<Blob> {
-  const captureOpts = explicitSize ? { ...CAPTURE_OPTS, ...explicitSize } : CAPTURE_OPTS;
+  const captureOpts = captureOptsFor(node, explicitSize);
   const blob = await withCapturePrep(node, () => toBlob(node, captureOpts), topN, rowMatch, tighten, includeBranding, sectionMatch);
   if (!blob) throw new Error("Failed to render PNG");
   return blob;

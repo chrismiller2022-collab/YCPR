@@ -216,7 +216,7 @@ export default function VizBuilderPanel() {
         </p>
       )}
 
-      <div ref={exportRef} className="admin-panel" style={{ position: "relative", padding: 8, overflowX: "auto" }}>
+      <div ref={exportRef} className="admin-panel export-light" style={{ position: "relative", padding: 8, overflowX: "auto" }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: "block" }} role="img" aria-label={`${ym.label} vs ${xm.label}`}>
           <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill="var(--a-inset, transparent)" />
           {niceTicks(x0, x1).map((v) => (
