@@ -345,7 +345,12 @@
   margin-left: calc(var(--u) * 0.6);
   vertical-align: middle;
 }
-.oc-league { margin: 4px 0 8px; }
+.oc-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--gold); margin: 0 0 4px; }
+.oc-page .oc-tabs button {
+  flex: 1; padding: 12px; font-size: 1.1rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  border-radius: 8px 8px 0 0; border-bottom: 0; background: transparent; color: var(--chalk-dim);
+}
+.oc-page .oc-tabs button.on { background: var(--gold); color: #1f2041; }
 .oc-page button:disabled { opacity: 0.4; cursor: default; }
 
 /* Live win % beside each score. */
