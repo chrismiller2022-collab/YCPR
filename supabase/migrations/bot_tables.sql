@@ -151,3 +151,16 @@ insert into bot_strategies (name, pro_edge, anti_edge, take_edge, edge_step, not
   ('Default', 0.02, 0.04, 0.03, 0.01, 'Same edges as the Board defaults'),
   ('Patient', 0.02, 0.03, 0.08, 0.01, 'Rarely takes; rests quotes and sells back sooner')
 on conflict (name) do nothing;
+
+-- 2026-10-21: Multi-venue paper trading (Kalshi, Novig, ProphetX). Existing rows are Kalshi.
+alter table bot_orders add column if not exists venue text not null default 'kalshi';
+alter table bot_fills add column if not exists venue text not null default 'kalshi';
+alter table bot_snapshots add column if not exists venue text not null default 'kalshi';
+alter table bot_watchlist add column if not exists venues text[] not null default '{kalshi,novig,prophetx}';
+alter table bot_watchlist add column if not exists venue_events jsonb not null default '{}'::jsonb;
+alter table bot_watchlist add column if not exists venue_margins jsonb not null default '{}'::jsonb;
+create index if not exists bot_orders_venue on bot_orders (venue, status, game_id);
+create index if not exists bot_fills_venue on bot_fills (venue, game_id);
+
+-- Snapshot rungs carry side/strike so Novig/ProphetX tickers (which don't encode the number) can be labeled.
+alter table bot_snapshots add column if not exists side text, add column if not exists strike numeric;

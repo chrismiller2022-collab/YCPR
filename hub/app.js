@@ -11,6 +11,11 @@ let drawerTab = "outcomes";
 let fillsFilter = "";
 let lab = null; // /api/lab payload
 let openStrat = null; // strategy id, or "new"
+let venue = "all"; // venue filter: all | kalshi | novig | prophetx
+try { venue = localStorage.getItem("botvenue") || "all"; } catch {}
+const VENUES = ["kalshi", "novig", "prophetx"];
+const VNAME = { all: "All", kalshi: "Kalshi", novig: "Novig", prophetx: "ProphetX" };
+const VSHORT = { kalshi: "K", novig: "NV", prophetx: "PX" };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -28,6 +33,13 @@ const ago = (iso) => {
 };
 const ourAway = (w) => num(w.my_home_margin) ?? num(w.ycpr_home_margin);
 const marketAway = (g) => (g?.home_spread == null ? null : -g.home_spread);
+const vOf = (r) => r.venue || "kalshi";
+const vf = (rows) => (venue === "all" ? rows : rows.filter((r) => vOf(r) === venue));
+const vMargin = (w, v) => num(w.venue_margins?.[v]) ?? (v === "kalshi" ? num(w.kalshi_home_margin) : null);
+// The market line the current view compares against: the venue's own, or Kalshi's (else any) in the combined view.
+const mktOf = (w) => (venue === "all" ? vMargin(w, "kalshi") ?? vMargin(w, "novig") ?? vMargin(w, "prophetx") : vMargin(w, venue));
+const mktName = (w) => (venue !== "all" ? VNAME[venue] : vMargin(w, "kalshi") != null ? "Kalshi" : vMargin(w, "novig") != null ? "Novig" : "ProphetX");
+const outcomeOf = (w) => data.outcomes?.[w.game_id]?.[venue];
 const gameOf = (w) => data.upcoming.find((x) => String(x.id) === String(w.game_id));
 
 function applyTheme() {
@@ -82,9 +94,9 @@ function statusOf(w, g) {
   if (kick && now > kick) return ["Final / settling", "info"];
   if (kick && now > kick - (w.stop_minutes_before ?? 30) * 60000) return ["Stopped", "warn"];
   const ours = ourAway(w);
-  const mkt = num(w.kalshi_home_margin) ?? marketAway(g);
+  const mkt = mktOf(w) ?? marketAway(g);
   if (ours != null && mkt != null && !(w.pick === "home" ? ours > mkt : ours < mkt)) return ["No edge", "warn"];
-  const resting = data.orders.filter((o) => o.game_id === w.game_id).length;
+  const resting = vf(data.orders).filter((o) => o.game_id === w.game_id).length;
   return resting ? [`Quoting · ${resting}`, "ok"] : ["Waiting", ""];
 }
 
@@ -93,6 +105,20 @@ function marginLabel(w, from, to, limit = 60) {
   const lo = Math.min(Math.abs(from), Math.abs(to)), hi = Math.max(Math.abs(from), Math.abs(to));
   if (hi >= limit) return `${esc(team)} by ${lo}+`;
   return lo === hi ? `${esc(team)} by ${lo}` : `${esc(team)} by ${lo}–${hi}`;
+}
+
+/** "Central Michigan −2.5" from a rung's side/strike (YES = side wins by over strike); Kalshi ticker fallback. */
+function numLabel(r, w) {
+  if (r.side && r.strike != null && w) {
+    const s = Number(r.strike);
+    return `${r.side === "home" ? w.home_team : w.away_team} ${s >= 0 ? "−" : "+"}${Math.abs(s)}`;
+  }
+  return rungLabel(r.ticker);
+}
+
+function linesHtml(w, g) {
+  const v = VENUES.filter((x) => vMargin(w, x) != null && (venue === "all" || venue === x));
+  return `<div><em>YC</em>${signed(ourAway(w))}</div>${v.map((x) => `<div><em>${VSHORT[x]}</em>${signed(vMargin(w, x))}</div>`).join("")}<div><em>Mkt</em>${signed(marketAway(g))}</div>`;
 }
 
 function rungLabel(ticker) {
@@ -135,7 +161,8 @@ function curveSvg(w, pts) {
 // ---------- Views
 
 function renderBoard() {
-  const { watchlist, fills, outcomes = {} } = data;
+  const { watchlist } = data;
+  const fills = vf(data.fills);
   let worst = 0, best = 0, evY = 0, evK = 0, anyK = false;
   const rows = watchlist.map((w) => {
     const g = gameOf(w);
@@ -143,29 +170,28 @@ function renderBoard() {
     const pts = curve(positions(gFills));
     const wv = pts.length ? Math.min(...pts.map((p) => p.v)) : 0;
     const bv = pts.length ? Math.max(...pts.map((p) => p.v)) : 0;
-    const o = outcomes[w.game_id];
+    const o = outcomeOf(w);
     if (w.enabled) { worst += wv; best += bv; }
     if (o) { evY += o.expected; if (o.marketExpected != null) { evK += o.marketExpected; anyK = true; } }
     const [st, stCls] = statusOf(w, g);
-    const kalshi = num(w.kalshi_home_margin);
     return `<div class="brow ${w.enabled ? "" : "off"}" data-game="${esc(w.game_id)}" tabindex="0" role="button" aria-label="Open ${esc(w.away_team)} at ${esc(w.home_team)}">
       <div class="game"><b>${esc(w.away_team)} @ ${esc(w.home_team)}</b><span>${when(w.kickoff)}</span></div>
       <div class="lean"><span class="pill">${esc(w.pick === "home" ? w.home_team : w.away_team)}</span></div>
-      <div class="lines"><div><em>YC</em>${signed(ourAway(w))}</div><div><em>Kalshi</em>${signed(kalshi)}</div><div><em>Mkt</em>${signed(marketAway(g))}</div></div>
+      <div class="lines">${linesHtml(w, g)}</div>
       <div class="spark">${sparkSvg(pts)}</div>
       <div class="r risk"><span class="${cls(wv)}">${usd(wv)}</span> / <span class="${cls(bv)}">${usd(bv)}</span><small>worst / best</small></div>
-      <div class="r ev"><span class="${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</span><small>${o?.marketExpected != null ? `Kalshi ${usd(o.marketExpected)}` : "EV (yours)"}</small></div>
+      <div class="r ev"><span class="${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</span><small>${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "EV (yours)"}</small></div>
       <div class="r st"><span class="pill ${stCls}">${esc(st)}</span><small>${gFills.length} fills</small></div>
     </div>`;
   }).join("");
   const last = data.runs?.[0];
-  const resting = data.orders.length;
+  const resting = vf(data.orders).length;
   document.querySelector('[data-pane="board"]').innerHTML = `
     <div class="stats">
       <div class="stat"><div class="l">Worst case (all games)</div><div class="v ${cls(worst)}">${usd(worst)}</div><div class="d">if every game lands badly</div></div>
       <div class="stat"><div class="l">Best case</div><div class="v ${cls(best)}">${usd(best)}</div><div class="d">if every game lands well</div></div>
-      <div class="stat"><div class="l">Expected · your number</div><div class="v ${cls(evY)}">${usd(evY)}</div><div class="d">${anyK ? `Kalshi's number: ${usd(evK)}` : "after fees"}</div></div>
-      <div class="stat"><div class="l">Fills / resting</div><div class="v">${data.fills.length} / ${resting}</div><div class="d">paper</div></div>
+      <div class="stat"><div class="l">Expected · your number</div><div class="v ${cls(evY)}">${usd(evY)}</div><div class="d">${anyK ? `market's number: ${usd(evK)}` : "after fees"}</div></div>
+      <div class="stat"><div class="l">Fills / resting</div><div class="v">${fills.length} / ${resting}</div><div class="d">paper · ${VNAME[venue]}</div></div>
       <div class="stat"><div class="l">Last run</div><div class="v" style="font-size:1.05rem">${last ? ago(last.started_at) : "–"}</div><div class="d ${last?.error ? "bad" : ""}">${last ? (last.error ? "error" : `${last.games ?? 0} games · ${last.fills ?? 0} fills`) : "not yet"}</div></div>
     </div>
     <div class="board">
@@ -176,8 +202,10 @@ function renderBoard() {
 }
 
 function renderFills() {
-  const { fills, watchlist } = data;
+  const { watchlist } = data;
+  const fills = vf(data.fills);
   const name = new Map(watchlist.map((w) => [w.game_id, `${w.away_team} @ ${w.home_team}`]));
+  const wOf = new Map(watchlist.map((w) => [w.game_id, w]));
   const list = fillsFilter ? fills.filter((f) => f.game_id === fillsFilter) : fills;
   const settled = list.filter((f) => f.result != null);
   const settledPnl = settled.reduce((s, f) => s + (f.action === "buy" ? f.count * (f.result - f.price) : f.count * (f.price - f.result)) - f.fee, 0);
@@ -189,19 +217,19 @@ function renderFills() {
       <div class="stat"><div class="l">Fills</div><div class="v">${list.length}</div><div class="d">${settled.length} settled</div></div>
       <div class="stat"><div class="l">Settled P&amp;L</div><div class="v ${cls(settledPnl)}">${settled.length ? usd(settledPnl) : "–"}</div><div class="d">after fees</div></div>
       <div class="stat"><div class="l">Average CLV</div><div class="v ${cls(avgClv)}">${avgClv == null ? "–" : c(avgClv)}</div><div class="d">vs last pregame mid</div></div>
-      <div class="stat"><div class="l">Fees</div><div class="v">${usd(fees)}</div><div class="d">Kalshi model fee</div></div>
+      <div class="stat"><div class="l">Fees</div><div class="v">${usd(fees)}</div><div class="d">each venue's fee model</div></div>
     </div>
     <div class="panel">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <label class="field" style="min-width:220px">Game<select id="fillsGame"><option value="">All games</option>${watchlist.map((w) => `<option value="${esc(w.game_id)}" ${w.game_id === fillsFilter ? "selected" : ""}>${esc(w.away_team)} @ ${esc(w.home_team)}</option>`).join("")}</select></label>
       </div>
       <div class="scroll"><table>
-        <tr><th>When</th><th>Game</th><th>Number</th><th>Side</th><th>Price</th><th>Fair</th><th>Fee</th><th>CLV</th><th>Result</th><th>P&amp;L</th></tr>
+        <tr><th>When</th><th>Venue</th><th>Game</th><th>Number</th><th>Side</th><th>Price</th><th>Fair</th><th>Fee</th><th>CLV</th><th>Result</th><th>P&amp;L</th></tr>
         ${list.length ? list.map((f) => {
           const clv = f.close_mid == null ? null : f.action === "buy" ? f.close_mid - f.price : f.price - f.close_mid;
           const pnl = f.result == null ? null : (f.action === "buy" ? f.count * (f.result - f.price) : f.count * (f.price - f.result)) - f.fee;
-          return `<tr><td>${when(f.filled_at)}</td><td>${esc(name.get(f.game_id) || f.game_id)}</td><td>${esc(rungLabel(f.ticker))}</td><td>${f.action === "buy" ? "Buy" : "Sell"} ${f.count}</td><td>${c(Number(f.price), 0)}</td><td>${c(f.fair_at_fill)}</td><td>${c(Number(f.fee), 2)}</td><td class="${cls(clv)}">${c(clv)}</td><td>${f.result == null ? "–" : f.result ? "YES" : "NO"}</td><td class="${cls(pnl)}">${usd(pnl)}</td></tr>`;
-        }).join("") : '<tr><td colspan="10" class="muted">No fills yet.</td></tr>'}
+          return `<tr><td>${when(f.filled_at)}</td><td>${VNAME[vOf(f)]}</td><td>${esc(name.get(f.game_id) || f.game_id)}</td><td>${esc(numLabel(f, wOf.get(f.game_id)))}</td><td>${f.action === "buy" ? "Buy" : "Sell"} ${f.count}</td><td>${c(Number(f.price), 0)}</td><td>${c(f.fair_at_fill)}</td><td>${c(Number(f.fee), 2)}</td><td class="${cls(clv)}">${c(clv)}</td><td>${f.result == null ? "–" : f.result ? "YES" : "NO"}</td><td class="${cls(pnl)}">${usd(pnl)}</td></tr>`;
+        }).join("") : '<tr><td colspan="11" class="muted">No fills yet.</td></tr>'}
       </table></div>
     </div>`;
 }
@@ -250,7 +278,7 @@ function renderLab() {
   const bestId = scored.length ? scored.reduce((a, b) => (b.stats.evPerDollar > a.stats.evPerDollar ? b : a)).id : null;
   const trust = (x) => (x.ycpr_weight == null ? "default" : Math.round(x.ycpr_weight * 100) + "%");
   pane.innerHTML = `
-    <div class="callout" style="border-color:var(--c-info);background:var(--c-info-bg)">Each strategy paper-trades <b>every game on your watchlist</b> against the same Kalshi books as the Board, with its own orders and fills. The Board is unaffected. Compare <b>expected value per dollar risked</b> and <b>CLV</b> first; settled P&amp;L needs many games before it means much.</div>
+    <div class="callout" style="border-color:var(--c-info);background:var(--c-info-bg)">Each strategy paper-trades <b>every game on your watchlist</b> against the same venue books as the Board (Kalshi, Novig, ProphetX), with its own orders and fills. The Board is unaffected. Compare <b>expected value per dollar risked</b> and <b>CLV</b> first; settled P&amp;L needs many games before it means much.</div>
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn primary" id="newStrat" type="button">New strategy</button></div>
     <div class="panel lab" style="padding:8px 10px"><div class="scroll"><table>
       <tr><th>Strategy</th><th title="pro-pick / sell-back / take / extra per contract">Edges ¢</th><th>Fills</th><th>Edge at fill</th><th>CLV</th><th>Worst / best</th><th>Expected</th><th>EV per $</th><th>Settled</th></tr>
@@ -323,9 +351,9 @@ function renderDrawer() {
   const w = openGame && data.watchlist.find((x) => x.game_id === openGame);
   if (!w) { root.innerHTML = ""; return; }
   const g = gameOf(w);
-  const gFills = data.fills.filter((f) => f.game_id === w.game_id);
+  const gFills = vf(data.fills).filter((f) => f.game_id === w.game_id);
   const pts = curve(positions(gFills));
-  const o = data.outcomes?.[w.game_id];
+  const o = outcomeOf(w);
   const [st, stCls] = statusOf(w, g);
   const worst = pts.length ? Math.min(...pts.map((p) => p.v)) : 0;
   const best = pts.length ? Math.max(...pts.map((p) => p.v)) : 0;
@@ -344,9 +372,9 @@ function renderDrawer() {
       <div class="drawer-body">
         <div class="mini-stats">
           <div class="stat"><div class="l">${w.my_home_margin != null ? "Your line" : "YC"} · ${esc(w.away_team)}</div><div class="v num">${signed(ourAway(w))}</div></div>
-          <div class="stat"><div class="l">Kalshi · ${esc(w.away_team)}</div><div class="v num">${signed(num(w.kalshi_home_margin))}</div><div class="d">market ${signed(marketAway(g))}</div></div>
+          <div class="stat"><div class="l">${mktName(w)} · ${esc(w.away_team)}</div><div class="v num">${signed(mktOf(w))}</div><div class="d">${VENUES.filter((x) => vMargin(w, x) != null).map((x) => `${VSHORT[x]} ${signed(vMargin(w, x))}`).join(" · ") || "no venue ladder"} · book ${signed(marketAway(g))}</div></div>
           <div class="stat"><div class="l">Worst / best</div><div class="v num"><span class="${cls(worst)}">${usd(worst)}</span></div><div class="d">best ${usd(best)}</div></div>
-          <div class="stat"><div class="l">Expected</div><div class="v num ${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</div><div class="d">${o?.marketExpected != null ? `Kalshi ${usd(o.marketExpected)}` : "your number"}</div></div>
+          <div class="stat"><div class="l">Expected</div><div class="v num ${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</div><div class="d">${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "your number"}</div></div>
         </div>
         ${statusNote(w, g)}
         <div class="tabs">${tabs}</div>
@@ -359,7 +387,7 @@ function statusNote(w, g) {
   const [st] = statusOf(w, g);
   if (st !== "No edge") return "";
   const team = w.pick === "home" ? w.home_team : w.away_team;
-  return `<div class="callout">Kalshi (${esc(w.away_team)} ${signed(num(w.kalshi_home_margin) ?? marketAway(g))}) already prices ${esc(team)} at or past your number (${signed(ourAway(w))}), so the bot isn't adding exposure.</div>`;
+  return `<div class="callout">${mktName(w)} (${esc(w.away_team)} ${signed(mktOf(w) ?? marketAway(g))}) already prices ${esc(team)} at or past your number (${signed(ourAway(w))}), so the bot isn't adding exposure.</div>`;
 }
 
 function outcomeTable(w, o) {
@@ -370,23 +398,23 @@ function outcomeTable(w, o) {
     return `<tr><td>${marginLabel(w, r.from, r.to)}</td><td class="${cls(r.pnl)}">${usd(r.pnl)}</td><td>${pct(r.prob)}</td>${hasMkt ? `<td>${pct(r.marketProb)}</td><td class="${cls(diff)}">${diff > 0 ? "+" : diff < 0 ? "−" : ""}${Math.abs(diff * 100).toFixed(1)}</td>` : ""}</tr>`;
   }).join("");
   return `<div class="panel" style="padding:10px 12px"><div class="scroll"><table>
-    <tr><th>If the game ends</th><th>Win / lose</th><th>Yours</th>${hasMkt ? "<th>Kalshi</th><th>Diff (pts)</th>" : ""}</tr>${rows}</table></div></div>
-    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Chances by your number (${esc(w.away_team)} ${signed(o.center)})${hasMkt ? ` and by the margin Kalshi's ladder implies (${esc(w.away_team)} ${signed(o.market)})` : ""}.</p>`;
+    <tr><th>If the game ends</th><th>Win / lose</th><th>Yours</th>${hasMkt ? `<th>${mktName(w)}</th><th>Diff (pts)</th>` : ""}</tr>${rows}</table></div></div>
+    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Chances by your number (${esc(w.away_team)} ${signed(o.center)})${hasMkt ? ` and by the margin ${mktName(w)}'s ladder implies (${esc(w.away_team)} ${signed(o.market)})` : ""}.</p>`;
 }
 
 function ladderTable(w, gFills) {
-  const snaps = data.snapshots.filter((s) => s.game_id === w.game_id).sort((a, b) => Number(b.fair) - Number(a.fair));
+  const snaps = vf(data.snapshots).filter((s) => s.game_id === w.game_id).sort((a, b) => vOf(a).localeCompare(vOf(b)) || Number(b.fair) - Number(a.fair));
   const pos = new Map(positions(gFills).map((p) => [p.ticker, p]));
-  const mine = data.orders.filter((o) => o.game_id === w.game_id);
+  const mine = vf(data.orders).filter((o) => o.game_id === w.game_id);
   if (!snaps.length) return '<p class="muted">No ladder snapshot yet.</p>';
   return `<div class="panel" style="padding:10px 12px"><div class="scroll"><table>
-    <tr><th>Number (YES)</th><th>Bid / ask</th><th>Fair</th><th>Fair − mid</th><th>Our orders</th><th>Held</th></tr>
+    <tr><th>Venue</th><th>Number (YES)</th><th>Bid / ask</th><th>Fair</th><th>Fair − mid</th><th>Our orders</th><th>Held</th></tr>
     ${snaps.map((s) => {
       const mid = s.bid != null && s.ask != null ? (Number(s.bid) + Number(s.ask)) / 2 : null;
       const edge = s.fair != null && mid != null ? Number(s.fair) - mid : null;
       const p = pos.get(s.ticker);
       const ords = mine.filter((o) => o.ticker === s.ticker).map((o) => `${o.action === "buy" ? "bid" : "ask"} ${c(Number(o.price), 0)}`).join(", ");
-      return `<tr><td>${esc(rungLabel(s.ticker))}</td><td>${c(s.bid, 0)} / ${c(s.ask, 0)}</td><td>${c(s.fair)}</td><td class="${cls(edge)}">${c(edge)}</td><td>${esc(ords) || '<span class="muted">–</span>'}</td><td>${p && p.yes ? (p.yes > 0 ? "+" : "") + p.yes : "–"}</td></tr>`;
+      return `<tr><td>${VSHORT[vOf(s)]}</td><td>${esc(numLabel(s, w))}</td><td>${c(s.bid, 0)} / ${c(s.ask, 0)}</td><td>${c(s.fair)}</td><td class="${cls(edge)}">${c(edge)}</td><td>${esc(ords) || '<span class="muted">–</span>'}</td><td>${p && p.yes ? (p.yes > 0 ? "+" : "") + p.yes : "–"}</td></tr>`;
     }).join("")}</table></div></div>`;
 }
 
@@ -402,6 +430,9 @@ function settingsForm(w) {
       <div class="field" style="grid-column:1/-1">Trust in your number
         <div style="display:flex;gap:10px;align-items:center"><input id="gTrust" type="range" min="0" max="100" step="5" value="${t}" ${own == null ? "disabled" : ""}><b id="gTrustVal" class="num" style="min-width:44px;text-align:right">${t}%</b></div>
         <label style="display:flex;gap:6px;align-items:center;font-weight:500"><input id="gTrustDef" type="checkbox" ${own == null ? "checked" : ""}> Use default (${Math.round(def * 100)}%)</label></div>
+      <div class="field" style="grid-column:1/-1">Trade on
+        <div style="display:flex;gap:14px;flex-wrap:wrap">${VENUES.map((x) => `<label style="display:flex;gap:6px;align-items:center;font-weight:500"><input type="checkbox" class="gVenue" value="${x}" ${(w.venues ?? VENUES).includes(x) ? "checked" : ""}> ${VNAME[x]}${vMargin(w, x) != null ? ` <span class="muted">${signed(vMargin(w, x))}</span>` : ""}</label>`).join("")}</div>
+        <span class="muted" style="font-weight:400;font-size:.76rem">One loss cap covers the game across every venue.</span></div>
       <label class="field">Override away spread<input id="gOverride" type="number" step="0.1" value="${w.my_home_margin ?? ""}" placeholder="YC ${signed(num(w.ycpr_home_margin))}"></label>
       <label class="field">Max loss on game ($)<input id="gMax" type="number" step="0.5" value="${w.max_worst_case_loss}"></label>
       <label class="field">Contracts per number<input id="gCap" type="number" step="1" value="${w.per_rung_cap}"></label>
@@ -450,6 +481,7 @@ function render() {
   $("killBtn").className = state?.kill_switch ? "btn danger" : "btn";
   const last = data.runs?.[0];
   $("sideRun").textContent = last ? `Last run ${ago(last.started_at)}` : "No runs yet";
+  $("venueSeg").innerHTML = ["all", ...VENUES].map((x) => `<button type="button" data-venue="${x}" class="${venue === x ? "on" : ""}">${VNAME[x]}</button>`).join("");
   renderBoard();
   renderFills();
   renderSettings();
@@ -497,6 +529,13 @@ $("themeBtn").addEventListener("click", () => {
   applyTheme();
 });
 for (const b of document.querySelectorAll("[data-view]")) b.addEventListener("click", () => setView(b.dataset.view));
+$("venueSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-venue]");
+  if (!b) return;
+  venue = b.dataset.venue;
+  try { localStorage.setItem("botvenue", venue); } catch {}
+  render();
+});
 $("killBtn").addEventListener("click", async () => {
   const on = !data.state?.kill_switch;
   if (on && !confirm("Turn the kill switch on? The bot cancels all resting orders on its next run and stops quoting.")) return;
@@ -554,6 +593,7 @@ $("drawerRoot").addEventListener("submit", async (e) => {
     profit_target: $("gTarget").value === "" ? null : Number($("gTarget").value),
     pro_edge: cents("gPro"), anti_edge: cents("gAnti"), take_edge: cents("gTake"), edge_step: cents("gStep"),
     stop_minutes_before: Number($("gStop").value),
+    venues: [...document.querySelectorAll(".gVenue:checked")].map((x) => x.value),
   };
   try {
     await api("/api/admin", body);
