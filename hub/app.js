@@ -9,20 +9,21 @@ const usd = (x) => (x == null ? "–" : (x < 0 ? "−$" : "$") + Math.abs(x).toF
 const cls = (x) => (x == null ? "" : x > 0 ? "good" : x < 0 ? "bad" : "");
 const when = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "–");
 const signed = (x) => (x == null || !Number.isFinite(x) ? "–" : x === 0 ? "PK" : (x < 0 ? "−" : "+") + Math.abs(x).toFixed(1));
-// Lines are from the picked team's view: −4.3 = picked team favored by 4.3.
-const pickLine = (w) => signed(w.pick === "home" ? -Number(w.my_home_margin) : Number(w.my_home_margin));
+// Away orientation, like the site: away spread, negative = away favored.
+// Internally the bot stores a home margin (home − away), which is the same number.
+const ourAway = (w) => num(w.my_home_margin) ?? num(w.ycpr_home_margin);
+function num(v) { return v == null || v === "" ? null : Number(v); }
+const marketAway = (g) => (g?.home_spread == null ? null : -g.home_spread);
 // Our number favors the pick only if it's better for the pick than the market's.
-function favorsPick(pick, myHomeMargin, homeSpread) {
-  if (homeSpread == null) return true;
-  const marketHomeMargin = -homeSpread;
-  return pick === "home" ? myHomeMargin > marketHomeMargin : myHomeMargin < marketHomeMargin;
+function favorsPick(pick, oursAway, mktAway) {
+  if (oursAway == null || mktAway == null) return true;
+  return pick === "home" ? oursAway > mktAway : oursAway < mktAway;
 }
 function noEdgeWarning(w, upcoming) {
   const g = upcoming.find((x) => String(x.id) === String(w.game_id));
-  if (!g || favorsPick(w.pick, Number(w.my_home_margin), g.home_spread)) return "";
+  if (!g || favorsPick(w.pick, ourAway(w), marketAway(g))) return "";
   const team = w.pick === "home" ? w.home_team : w.away_team;
-  const mkt = w.pick === "home" ? g.home_spread : -g.home_spread;
-  return `<p class="warn">Your line (${esc(team)} ${pickLine(w)}) isn't better for ${esc(team)} than the market (${signed(mkt)}), so the bot won't add exposure on this game.</p>`;
+  return `<p class="warn">Your number (${esc(w.away_team)} ${signed(ourAway(w))}) isn't better for ${esc(team)} than the market (${esc(w.away_team)} ${signed(marketAway(g))}), so the bot won't add exposure on this game.</p>`;
 }
 
 async function api(path, body) {
@@ -125,7 +126,8 @@ function render() {
       ${noEdgeWarning(w, upcoming)}
       <div class="stats">
         <div class="stat"><span class="muted">Lean</span><b>${esc(pickTeam)}</b></div>
-        <div class="stat"><span class="muted">Your line</span><b>${esc(pickTeam)} ${pickLine(w)}</b></div>
+        <div class="stat"><span class="muted">${w.my_home_margin != null ? "Your line (override)" : "YC line"}</span><b>${esc(w.away_team)} ${signed(ourAway(w))}</b></div>
+        <div class="stat"><span class="muted">Market</span><b>${(() => { const g = upcoming.find((x) => String(x.id) === String(w.game_id)); return g ? esc(w.away_team) + " " + signed(marketAway(g)) : "–"; })()}</b></div>
         <div class="stat"><span class="muted">Worst / best</span><b><span class="${cls(worst)}">${usd(worst)}</span> / <span class="${cls(best)}">${usd(best)}</span></b></div>
         <div class="stat"><span class="muted">Max loss cap</span><b>${usd(Number(w.max_worst_case_loss))}</b></div>
         <div class="stat"><span class="muted">Resting / fills</span><b>${gOrders.length} / ${gFills.length}</b></div>
@@ -137,7 +139,7 @@ function render() {
       </details>
       <div class="row" style="margin-top:8px">
         <button data-act="toggle" data-id="${w.id}" data-on="${w.enabled ? 0 : 1}">${w.enabled ? "Turn off" : "Turn on"}</button>
-        <span class="muted">Edges ${c(Number(w.pro_edge), 0)} / ${c(Number(w.anti_edge), 0)} / take ${c(Number(w.take_edge), 0)} · ${w.per_rung_cap} per number${w.profit_target != null ? ` · target ${usd(Number(w.profit_target))}` : ""}</span>
+        <span class="muted">Trust ${Math.round((num(w.ycpr_weight) ?? 1) * 100)}% · Edges ${c(Number(w.pro_edge), 0)} / ${c(Number(w.anti_edge), 0)} / take ${c(Number(w.take_edge), 0)} · ${w.per_rung_cap} per number${w.profit_target != null ? ` · target ${usd(Number(w.profit_target))}` : ""}</span>
       </div>`;
     $("games").appendChild(el);
   }
@@ -145,7 +147,7 @@ function render() {
   // Add-game form.
   const sel = $("addGame");
   const keep = sel.value;
-  sel.innerHTML = upcoming.map((g) => `<option value="${esc(g.id)}">${esc(g.away_team)} @ ${esc(g.home_team)} · ${when(g.start_date)} · home ${g.home_spread == null ? "no line" : (g.home_spread > 0 ? "+" : "") + g.home_spread}</option>`).join("");
+  sel.innerHTML = upcoming.map((g) => `<option value="${esc(g.id)}">${esc(g.away_team)} @ ${esc(g.home_team)} · ${when(g.start_date)} · YC ${signed(g.yc_away_spread)} · Mkt ${signed(marketAway(g))}</option>`).join("");
   if (keep) sel.value = keep;
   updatePick();
 
@@ -162,18 +164,16 @@ function render() {
     (runs.length ? runs.map((r) => `<tr><td>${when(r.started_at)}</td><td>${r.games ?? "–"}</td><td>${r.orders_placed ?? "–"}</td><td>${r.orders_cancelled ?? "–"}</td><td>${r.fills ?? "–"}</td><td class="${r.error ? "bad" : ""}">${r.error ? esc(r.error.slice(0, 80)) : r.finished_at ? "ok" : "running"}</td></tr>`).join("") : '<tr><td colspan="6" class="muted">The bot has not run yet.</td></tr>');
 }
 
-function updatePick() {
+function updatePick(gameChanged = false) {
   const g = data?.upcoming.find((x) => String(x.id) === $("addGame").value);
   const cur = $("addPick").value;
   $("addPick").innerHTML = g ? `<option value="away">${esc(g.away_team)} (away)</option><option value="home">${esc(g.home_team)} (home)</option>` : "";
-  if (cur) $("addPick").value = cur;
-  updateLineLabel();
-}
-
-function updateLineLabel() {
-  const g = data?.upcoming.find((x) => String(x.id) === $("addGame").value);
   if (!g) return;
-  $("addLineTeam").textContent = $("addPick").value === "home" ? g.home_team : g.away_team;
+  $("addYc").value = g.yc_away_spread == null ? "no rating" : `${g.away_team} ${signed(g.yc_away_spread)}`;
+  const ours = num($("addOverride").value) ?? g.yc_away_spread;
+  const mkt = marketAway(g);
+  if (gameChanged || !cur) $("addPick").value = ours != null && mkt != null && ours > mkt ? "home" : "away";
+  else $("addPick").value = cur;
 }
 
 async function load() {
@@ -194,8 +194,8 @@ $("gateForm").addEventListener("submit", (e) => {
   try { localStorage.setItem("botpw", PW); } catch {}
   load();
 });
-$("addGame").addEventListener("change", updatePick);
-$("addPick").addEventListener("change", updateLineLabel);
+$("addGame").addEventListener("change", () => updatePick(true));
+$("addOverride").addEventListener("change", () => updatePick(true));
 $("killBtn").addEventListener("click", async () => {
   const on = !data.state?.kill_switch;
   if (on && !confirm("Turn the kill switch on? The bot cancels all resting orders on its next run and stops quoting.")) return;
@@ -211,13 +211,13 @@ $("games").addEventListener("click", async (e) => {
 $("addForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const pick = $("addPick").value;
-  const pickLineVal = Number($("addLine").value); // picked team's line: −4.3 = favored by 4.3
-  const myHomeMargin = pick === "home" ? -pickLineVal : pickLineVal;
+  const override = num($("addOverride").value); // away spread, or null to use YC
   const g = data.upcoming.find((x) => String(x.id) === $("addGame").value);
-  if (g && !favorsPick(pick, myHomeMargin, g.home_spread)) {
+  const ours = override ?? g?.yc_away_spread ?? null;
+  if (ours == null) return alert("No YC number for this game; enter an override away spread.");
+  if (g && !favorsPick(pick, ours, marketAway(g))) {
     const team = pick === "home" ? g.home_team : g.away_team;
-    const mkt = pick === "home" ? g.home_spread : -g.home_spread;
-    if (!confirm(`Your line (${team} ${signed(pickLineVal)}) isn't better for ${team} than the market (${signed(mkt)}). The bot won't add exposure unless it is. Save anyway?`)) return;
+    if (!confirm(`Your number (${g.away_team} ${signed(ours)}) isn't better for ${team} than the market (${g.away_team} ${signed(marketAway(g))}). The bot won't add exposure unless it is. Save anyway?`)) return;
   }
   const cents = (id) => Number($(id).value) / 100;
   try {
@@ -225,7 +225,8 @@ $("addForm").addEventListener("submit", async (e) => {
       action: "addWatch",
       game_id: $("addGame").value,
       pick,
-      my_home_margin: myHomeMargin,
+      my_home_margin: override, // away spread == home margin; null = follow YC
+      ycpr_weight: Number($("addTrust").value),
       max_worst_case_loss: Number($("addMax").value),
       per_rung_cap: Number($("addCap").value),
       profit_target: $("addTarget").value === "" ? null : Number($("addTarget").value),

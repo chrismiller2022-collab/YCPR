@@ -339,3 +339,11 @@ Per-game parameters:
   ycpr-bot's `/api/cycle` (bundled from `bot/runner/paper.ts` at deploy, `Authorization: Bearer $CRON_SECRET`) called
   every 5 min by cron-job.org; the GitHub workflow is an hourly backup and cycles skip if one is already running.
   (3) Resting quotes within 1¢ on the safer side are kept instead of cancel/replace (queue priority).
+- **2026-10-21 (later):** (1) The bot computes YCPR's number itself (`bot/runner/ycpr.ts`, same resolution as Admin
+  Matchups: saved week if "Saved As Week", else latest live label ≤ week, then `computeRow`); verified 219/220 weeks 6–7
+  locks to 0.05. `bot_watchlist.my_home_margin` is now an optional override; `ycpr_home_margin` is refreshed each cycle.
+  (2) The fair price now trusts our number per game (`ycpr_weight`, default 1 = our number only, no fade to kickoff).
+  The old default (≤35% fading to 0) made the fair ≈ Kalshi near kickoff, which is why NMSU/JMU showed no edge.
+  (3) The dashboard is away-oriented like the site: YC line and market as away spreads, pick auto-selected to the side YC
+  favors vs the market, optional override, trust selector. (4) Kalshi-implied margin fits rungs between 15¢ and 85¢
+  (tails skew it).

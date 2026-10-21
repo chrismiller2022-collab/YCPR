@@ -47,6 +47,9 @@ describe("fair price inputs", () => {
     expect(blendedHomeMargin({ ycpr: 4.3, kalshi: 6.5, book: 6.5, hoursToKickoff: 0 })).toBeCloseTo(6.5, 6);
     expect(blendedHomeMargin({ ycpr: 4.3, kalshi: null, book: 7, hoursToKickoff: 0 })).toBeCloseTo(7, 6);
     expect(blendedHomeMargin({ ycpr: 4.3, kalshi: null, book: null, hoursToKickoff: 50 })).toBe(4.3);
+    // Trading our number outright: no fade, any time before kickoff.
+    expect(blendedHomeMargin({ ycpr: 4.3, kalshi: 6.5, book: 6.5, hoursToKickoff: 1 }, { ycprWeight: 1, fade: false })).toBeCloseTo(4.3, 6);
+    expect(blendedHomeMargin({ ycpr: 4.3, kalshi: 6.5, book: 6.5, hoursToKickoff: 1 }, { ycprWeight: 0.5, fade: false })).toBeCloseTo(5.4, 6);
   });
 });
 

@@ -17,6 +17,15 @@ async function sb(path: string, init: RequestInit = {}): Promise<any> {
 
 export const db = {
   select: <T = any>(table: string, query = ""): Promise<T[]> => sb(`${table}?${query}`),
+  /** Every matching row, paging past PostgREST's 1,000-row cap (query must include an order). */
+  selectAll: async <T = any>(table: string, query: string): Promise<T[]> => {
+    const out: T[] = [];
+    for (let from = 0; ; from += 1000) {
+      const rows: T[] = await sb(`${table}?${query}`, { headers: { Range: `${from}-${from + 999}` } });
+      out.push(...rows);
+      if (rows.length < 1000) return out;
+    }
+  },
   insert: <T = any>(table: string, rows: object | object[]): Promise<T[]> => sb(table, { method: "POST", body: JSON.stringify(rows) }),
   update: <T = any>(table: string, filter: string, patch: object): Promise<T[]> => sb(`${table}?${filter}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };
