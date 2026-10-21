@@ -55,23 +55,30 @@ export interface DesiredOrder {
 /**
  * Diff what's resting against what the engine wants: keep identical orders
  * (so they keep their queue position), cancel the rest, place the new ones.
+ * With `tolerance`, a resting quote also survives if it's within that much
+ * of the new price on the safer side (a bid at or below, an ask at or above),
+ * so a fair price drifting by a fraction of a cent doesn't churn the book.
  */
 export function diffOrders<R extends { id: number; ticker: string; action: string; price: number; count: number }, D extends DesiredOrder>(
   resting: R[],
-  desired: D[]
+  desired: D[],
+  tolerance = 0
 ): { keep: R[]; cancel: R[]; place: D[] } {
-  const key = (o: { ticker: string; action: string; price: number; count: number }) => `${o.ticker}|${o.action}|${Number(o.price).toFixed(4)}|${o.count}`;
-  const want = new Map<string, D[]>();
-  for (const d of desired.filter((d) => d.kind === "quote")) (want.get(key(d)) ?? want.set(key(d), []).get(key(d))!).push(d);
+  const quotes = desired.filter((d) => d.kind === "quote");
+  const unmatched = new Set(quotes);
   const keep: R[] = [];
   const cancel: R[] = [];
   for (const r of resting) {
-    const list = want.get(key(r));
-    if (list?.length) {
-      list.pop();
+    const rp = Number(r.price);
+    const match = [...unmatched].find((d) => {
+      if (d.ticker !== r.ticker || d.action !== r.action || d.count !== r.count) return false;
+      const diff = d.action === "buy" ? d.price - rp : rp - d.price; // ≥ 0 means resting is the safer price
+      return Math.abs(diff) < 1e-9 || (diff > 0 && diff <= tolerance + 1e-9);
+    });
+    if (match) {
+      unmatched.delete(match);
       keep.push(r);
     } else cancel.push(r);
   }
-  const place = [...[...want.values()].flat(), ...desired.filter((d) => d.kind === "take")];
-  return { keep, cancel, place };
+  return { keep, cancel, place: [...unmatched, ...desired.filter((d) => d.kind === "take")] };
 }

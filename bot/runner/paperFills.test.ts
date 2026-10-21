@@ -42,4 +42,21 @@ describe("diffOrders", () => {
     expect(d.cancel.map((r) => r.id)).toEqual([2]);
     expect(d.place.map((p) => p.ticker).sort()).toEqual(["B", "C"]);
   });
+
+  it("with a tolerance, keeps a quote one tick safer than the new price instead of churning it", () => {
+    const resting = [
+      { id: 1, ticker: "A", action: "buy", price: 0.49, count: 1 },
+      { id: 2, ticker: "B", action: "sell", price: 0.6, count: 1 },
+      { id: 3, ticker: "C", action: "buy", price: 0.52, count: 1 },
+    ];
+    const desired = [
+      { ticker: "A", action: "buy" as const, price: 0.5, count: 1, kind: "quote" as const }, // resting 1¢ lower: safer, keep
+      { ticker: "B", action: "sell" as const, price: 0.59, count: 1, kind: "quote" as const }, // resting 1¢ higher: safer, keep
+      { ticker: "C", action: "buy" as const, price: 0.5, count: 1, kind: "quote" as const }, // resting 2¢ HIGHER than wanted: cancel
+    ];
+    const d = diffOrders(resting, desired, 0.01);
+    expect(d.keep.map((r) => r.id)).toEqual([1, 2]);
+    expect(d.cancel.map((r) => r.id)).toEqual([3]);
+    expect(d.place.map((p) => p.ticker)).toEqual(["C"]);
+  });
 });

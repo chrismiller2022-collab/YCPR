@@ -1,7 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "echo no install needed",
-  "buildCommand": "echo no build needed",
-  "outputDirectory": "."
+  "installCommand": "cd .. && npm ci --no-audit --no-fund",
+  "buildCommand": "cd .. && npx esbuild bot/runner/paper.ts --bundle --platform=node --format=esm --target=node20 --outfile=hub/api/_bot.mjs",
+  "outputDirectory": ".",
+  "functions": {
+    "api/cycle.js": { "maxDuration": 60 }
+  }
 }
