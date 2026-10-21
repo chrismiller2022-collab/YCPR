@@ -83,6 +83,13 @@ describe("ladderOrders", () => {
     }
   });
 
+  it("counts fees toward the loss cap", () => {
+    // Fill every order at its price plus the taker fee; the worst case must still respect the cap.
+    const { orders } = ladderOrders(rungs, [], mine, { ...cfg, maxWorstCaseLoss: 3, perRungCap: 5, takeEdge: 0 });
+    const withFees = fill(orders).map((p) => ({ ...p, cost: p.cost + orders.filter((o) => o.ticker === p.ticker).reduce((s, o) => s + 0.07 * o.count * o.price * (1 - o.price), 0) }));
+    expect(exposureSummary(pnlByMargin(rungs, withFees), mine).worst).toBeGreaterThanOrEqual(-3 - 1e-9);
+  });
+
   it("keeps the worst case within the cap even if every order fills", () => {
     for (const cap of [5, 1, 0.5]) {
       const { orders } = ladderOrders(rungs, [], mine, { ...cfg, maxWorstCaseLoss: cap, perRungCap: 5 });
