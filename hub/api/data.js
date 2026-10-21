@@ -11,8 +11,9 @@ export default async function handler(req, res) {
     const ids = watchlist.map((w) => w.game_id);
     const inIds = ids.length ? `&game_id=in.(${ids.map(encodeURIComponent).join(",")})` : "&game_id=eq.__none__";
     const [orders, fills, runs] = await Promise.all([
-      sb(`bot_orders?select=id,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting${inIds}&order=ticker`),
-      sb(`bot_fills?select=*&mode=eq.${mode}${inIds}&order=filled_at.desc&limit=500`),
+      // The Board is strategy_id null; lab strategies live in /api/lab.
+      sb(`bot_orders?select=id,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
+      sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
       sb("bot_runs?select=started_at,finished_at,games,orders_placed,orders_cancelled,fills,error&order=started_at.desc&limit=12"),
     ]);
     // Latest snapshot per rung for watched games.
