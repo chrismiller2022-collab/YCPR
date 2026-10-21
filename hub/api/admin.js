@@ -30,6 +30,12 @@ export default async function handler(req, res) {
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ kill_switch: !!body.on, updated_at: new Date().toISOString() }) });
         return send(res, 200, { state: row });
       }
+      case "defaultTrust": {
+        const v = Number(body.value);
+        if (!Number.isFinite(v) || v < 0 || v > 1) throw new Error("trust must be between 0 and 1");
+        const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ default_ycpr_weight: v, updated_at: new Date().toISOString() }) });
+        return send(res, 200, { state: row });
+      }
       case "addWatch": {
         const [g] = await sb(`games?select=id,season,week,start_date,home_team,away_team&id=eq.${encodeURIComponent(body.game_id)}`);
         if (!g) throw new Error("Unknown game");

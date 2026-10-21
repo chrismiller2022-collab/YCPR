@@ -347,3 +347,8 @@ Per-game parameters:
   (3) The dashboard is away-oriented like the site: YC line and market as away spreads, pick auto-selected to the side YC
   favors vs the market, optional override, trust selector. (4) Kalshi-implied margin fits rungs between 15¢ and 85¢
   (tails skew it).
+- **Trust + outcomes (2026-10-21):** `bot_state.default_ycpr_weight` is the trust default for all games;
+  `bot_watchlist.ycpr_weight` null = follow it, a value = that game's own setting (moving the default doesn't change it).
+  Dashboard: default slider, per-game slider with "Use default", and a "Win / loss by final margin" table per game
+  (`bot/ladder/outcomes.ts`: ranges with equal P&L after fees, chance under our number, expected value). At the loss
+  cap the bot stops adding risk but still places orders that don't worsen the worst case (sell-backs, middles, hedges).

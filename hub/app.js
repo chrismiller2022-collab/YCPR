@@ -26,6 +26,32 @@ function noEdgeWarning(w, upcoming) {
   return `<p class="warn">Your number (${esc(w.away_team)} ${signed(ourAway(w))}) isn't better for ${esc(team)} than the market (${esc(w.away_team)} ${signed(marketAway(g))}), so the bot won't add exposure on this game.</p>`;
 }
 
+// Home margin (home − away) → "Air Force by 8–10" / "Wyoming by 25+".
+function marginLabel(w, from, to, limit = 60) {
+  const team = from < 0 ? w.away_team : w.home_team;
+  const a = Math.abs(from), b = Math.abs(to);
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  if (hi >= limit) return `${esc(team)} by ${lo}+`;
+  return lo === hi ? `${esc(team)} by ${lo}` : `${esc(team)} by ${lo}–${hi}`;
+}
+
+function outcomeTable(w, o) {
+  if (!o || !o.ranges?.length) return "";
+  const rows = o.ranges.map((r) => `<tr><td>${marginLabel(w, r.from, r.to)}</td><td class="${cls(r.pnl)}">${usd(r.pnl)}</td><td>${(r.prob * 100).toFixed(1)}%</td></tr>`).join("");
+  return `<details open><summary>Win / loss by final margin</summary>
+    <div class="scroll"><table><tr><th>If the game ends</th><th>You win / lose</th><th>Chance (your number)</th></tr>${rows}</table></div>
+    <p class="muted" style="margin:4px 0 0">After fees, held to settlement. Expected by your number (${esc(w.away_team)} ${signed(o.center)}): <b class="${cls(o.expected)}">${usd(o.expected)}</b>.</p></details>`;
+}
+
+function trustRow(w, defTrust) {
+  const own = num(w.ycpr_weight);
+  const v = Math.round((own ?? defTrust) * 100);
+  return `<div class="trustRow"><span class="muted">Trust</span>
+    <input type="range" min="0" max="100" step="5" value="${v}" data-trust="${w.id}" ${own == null ? "disabled" : ""} aria-label="Trust for this game">
+    <b>${v}%</b>
+    <label><input type="checkbox" data-trust-default="${w.id}" ${own == null ? "checked" : ""}> Use default (${Math.round(defTrust * 100)}%)</label></div>`;
+}
+
 async function api(path, body) {
   const res = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -88,7 +114,10 @@ function curveSvg(pts) {
 }
 
 function render() {
-  const { state, watchlist, orders, fills, snapshots, runs, upcoming } = data;
+  const { state, watchlist, orders, fills, snapshots, runs, upcoming, outcomes = {} } = data;
+  const defTrust = num(state?.default_ycpr_weight) ?? 1;
+  if (document.activeElement !== $("trustDefault")) $("trustDefault").value = Math.round(defTrust * 100);
+  $("trustDefaultVal").textContent = Math.round(defTrust * 100) + "%";
   $("modeChip").textContent = `Mode: ${state?.mode || "?"}`;
   $("killBtn").textContent = state?.kill_switch ? "Kill switch ON — resume" : "Kill switch";
   $("killBtn").className = state?.kill_switch ? "danger" : "";
@@ -134,12 +163,14 @@ function render() {
         <div class="stat"><span class="muted">Settled P&amp;L</span><b class="${cls(settledPnl)}">${settled.length ? usd(settledPnl) : "–"}</b></div>
       </div>
       ${curveSvg(curve)}
+      ${outcomeTable(w, outcomes[w.game_id])}
+      ${trustRow(w, defTrust)}
       <details ${rows ? "" : "hidden"}><summary>Ladder (${tickers.length} numbers)</summary>
         <div class="scroll"><table><tr><th>Number (YES)</th><th>Book bid / ask</th><th>Fair</th><th>Fair − mid</th><th>Our orders</th><th>Position</th></tr>${rows}</table></div>
       </details>
       <div class="row" style="margin-top:8px">
         <button data-act="toggle" data-id="${w.id}" data-on="${w.enabled ? 0 : 1}">${w.enabled ? "Turn off" : "Turn on"}</button>
-        <span class="muted">Trust ${Math.round((num(w.ycpr_weight) ?? 1) * 100)}% · Edges ${c(Number(w.pro_edge), 0)} / ${c(Number(w.anti_edge), 0)} / take ${c(Number(w.take_edge), 0)} · ${w.per_rung_cap} per number${w.profit_target != null ? ` · target ${usd(Number(w.profit_target))}` : ""}</span>
+        <span class="muted">Edges ${c(Number(w.pro_edge), 0)} / ${c(Number(w.anti_edge), 0)} / take ${c(Number(w.take_edge), 0)} · ${w.per_rung_cap} per number${w.profit_target != null ? ` · target ${usd(Number(w.profit_target))}` : ""}</span>
       </div>`;
     $("games").appendChild(el);
   }
@@ -177,6 +208,8 @@ function updatePick(gameChanged = false) {
 }
 
 async function load() {
+  // Don't redraw under someone mid-drag on a slider.
+  if (document.activeElement?.matches?.('input[type="range"]')) return;
   try {
     data = await api("/api/data");
     $("err").textContent = "";
@@ -200,6 +233,28 @@ $("killBtn").addEventListener("click", async () => {
   const on = !data.state?.kill_switch;
   if (on && !confirm("Turn the kill switch on? The bot cancels all resting orders on its next run and stops quoting.")) return;
   await api("/api/admin", { action: "kill", on }).catch((e) => alert(e.message));
+  load();
+});
+$("trustDefault").addEventListener("input", () => { $("trustDefaultVal").textContent = $("trustDefault").value + "%"; });
+$("trustDefault").addEventListener("change", async () => {
+  await api("/api/admin", { action: "defaultTrust", value: Number($("trustDefault").value) / 100 }).catch((e) => alert(e.message));
+  load();
+});
+$("games").addEventListener("input", (e) => {
+  const r = e.target.closest("input[data-trust]");
+  if (r) r.nextElementSibling.textContent = r.value + "%";
+});
+$("games").addEventListener("change", async (e) => {
+  const slider = e.target.closest("input[data-trust]");
+  const box = e.target.closest("input[data-trust-default]");
+  if (slider) {
+    await api("/api/admin", { action: "updateWatch", id: Number(slider.dataset.trust), ycpr_weight: Number(slider.value) / 100 }).catch((err) => alert(err.message));
+  } else if (box) {
+    const id = Number(box.dataset.trustDefault);
+    const r = document.querySelector(`input[data-trust="${id}"]`);
+    // Checked = follow the default (null); unchecked = keep the slider's value as this game's own setting.
+    await api("/api/admin", { action: "updateWatch", id, ycpr_weight: box.checked ? null : Number(r.value) / 100 }).catch((err) => alert(err.message));
+  } else return;
   load();
 });
 $("games").addEventListener("click", async (e) => {
@@ -226,7 +281,7 @@ $("addForm").addEventListener("submit", async (e) => {
       game_id: $("addGame").value,
       pick,
       my_home_margin: override, // away spread == home margin; null = follow YC
-      ycpr_weight: Number($("addTrust").value),
+      ycpr_weight: $("addTrust").value === "" ? null : Number($("addTrust").value), // "" = follow the default
       max_worst_case_loss: Number($("addMax").value),
       per_rung_cap: Number($("addCap").value),
       profit_target: $("addTarget").value === "" ? null : Number($("addTarget").value),

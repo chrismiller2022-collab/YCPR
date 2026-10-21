@@ -32,7 +32,8 @@ interface Watch {
   /** Optional typed override (home margin = away spread); null = use YCPR. */
   my_home_margin: number | null;
   ycpr_home_margin: number | null;
-  ycpr_weight: number;
+  /** Per-game trust in our number; null = use bot_state.default_ycpr_weight. */
+  ycpr_weight: number | null;
   max_worst_case_loss: number;
   per_rung_cap: number;
   order_size: number;
@@ -152,7 +153,8 @@ export async function runCycle(): Promise<CycleTotals> {
   if (recent.length) return { ...totals, overlapped: true };
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean }>("bot_state", "select=mode,kill_switch&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number }>("bot_state", "select=mode,kill_switch,default_ycpr_weight&id=eq.1");
+    const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     if (state?.kill_switch) {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
@@ -243,7 +245,7 @@ export async function runCycle(): Promise<CycleTotals> {
       }
       const center = blendedHomeMargin(
         { ycpr: ours, kalshi: kalshiCenter, book: await bookHomeMargin(w.game_id), hoursToKickoff: hours },
-        { ycprWeight: num(w.ycpr_weight) ?? 1, fade: false }
+        { ycprWeight: num(w.ycpr_weight) ?? defaultTrust, fade: false } // per-game trust wins over the default
       );
       if (center == null) continue;
       // If our blended number doesn't favor the pick versus the market, there's no edge to lean on:
