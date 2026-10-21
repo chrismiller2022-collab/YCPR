@@ -9,6 +9,8 @@ let view = "board";
 let openGame = null; // game_id shown in the drawer
 let drawerTab = "outcomes";
 let fillsFilter = "";
+let lab = null; // /api/lab payload
+let openStrat = null; // strategy id, or "new"
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -228,6 +230,92 @@ function renderSettings() {
     </div>`;
 }
 
+// ---------- Strategy lab
+
+async function loadLab() {
+  try {
+    lab = await api("/api/lab");
+    renderLab();
+    if (openStrat != null) renderLabDrawer();
+  } catch (e) {
+    if (e.message !== "unauthorized") document.querySelector('[data-pane="lab"]').innerHTML = `<p class="err">Couldn't load the lab: ${esc(e.message)}</p>`;
+  }
+}
+
+function renderLab() {
+  const pane = document.querySelector('[data-pane="lab"]');
+  if (!lab) { pane.innerHTML = '<p class="muted">Loading…</p>'; return; }
+  const list = lab.strategies;
+  const scored = list.filter((x) => x.stats.evPerDollar != null);
+  const bestId = scored.length ? scored.reduce((a, b) => (b.stats.evPerDollar > a.stats.evPerDollar ? b : a)).id : null;
+  const trust = (x) => (x.ycpr_weight == null ? "default" : Math.round(x.ycpr_weight * 100) + "%");
+  pane.innerHTML = `
+    <div class="callout" style="border-color:var(--c-info);background:var(--c-info-bg)">Each strategy paper-trades <b>every game on your watchlist</b> against the same Kalshi books as the Board, with its own orders and fills. The Board is unaffected. Compare <b>expected value per dollar risked</b> and <b>CLV</b> first; settled P&amp;L needs many games before it means much.</div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn primary" id="newStrat" type="button">New strategy</button></div>
+    <div class="panel lab" style="padding:8px 10px"><div class="scroll"><table>
+      <tr><th>Strategy</th><th title="pro-pick / sell-back / take / extra per contract">Edges ¢</th><th>Fills</th><th>Edge at fill</th><th>CLV</th><th>Worst / best</th><th>Expected</th><th>EV per $</th><th>Settled</th></tr>
+      ${list.map((x) => {
+        const t = x.stats;
+        return `<tr data-strat="${x.id}" class="${x.id === bestId ? "best" : ""}">
+          <td><b>${esc(x.name)}</b> ${x.enabled ? "" : '<span class="pill">Off</span>'}<small>trust ${trust(x)} · cap ${usd(Number(x.max_worst_case_loss))} · ${x.per_rung_cap}/number</small></td>
+          <td>${[x.pro_edge, x.anti_edge, x.take_edge, x.edge_step].map((e) => +(Number(e) * 100).toFixed(1)).join(" / ")}<small>pro / sell / take / step</small></td>
+          <td>${t.fills}<small>${t.resting} resting · ${t.games} games</small></td>
+          <td class="${cls(t.avgEdgeAtFill)}">${c(t.avgEdgeAtFill)}</td>
+          <td class="${cls(t.avgClv)}">${c(t.avgClv)}<small>${t.clvFills} graded</small></td>
+          <td><span class="${cls(t.worst)}">${usd(t.worst)}</span> / <span class="${cls(t.best)}">${usd(t.best)}</span></td>
+          <td class="${cls(t.expected)}">${usd(t.expected)}<small>Kalshi ${usd(t.marketExpected)}</small></td>
+          <td class="${cls(t.evPerDollar)}">${t.evPerDollar == null ? "–" : (t.evPerDollar * 100).toFixed(1) + "¢"}<small>${usd(t.risked)} risked</small></td>
+          <td class="${cls(t.settled)}">${usd(t.settled)}<small>${t.settledFills} settled</small></td>
+        </tr>`;
+      }).join("") || '<tr><td colspan="9" class="muted">No strategies yet.</td></tr>'}
+    </table></div></div>
+    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Edge at fill = fair minus price when filled. CLV = move to the last pregame mid. EV per $ = expected value by your number ÷ dollars at risk. Gold bar = best EV per $.</p>`;
+}
+
+function renderLabDrawer() {
+  const root = $("drawerRoot");
+  if (openStrat == null || !lab) { root.innerHTML = ""; return; }
+  const x = openStrat === "new" ? null : lab.strategies.find((s) => s.id === openStrat);
+  if (openStrat !== "new" && !x) { root.innerHTML = ""; return; }
+  const v = (val, mult = 100) => (val == null ? "" : Math.round(Number(val) * mult * 100) / 100);
+  const st = x || { name: "", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, ycpr_weight: null, stop_minutes_before: 30, enabled: true, notes: "" };
+  const def = num(data?.state?.default_ycpr_weight) ?? 1;
+  const t = Math.round((num(st.ycpr_weight) ?? def) * 100);
+  const games = x ? x.perGame : [];
+  root.innerHTML = `<div class="scrim" data-close="1"></div>
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Strategy">
+      <div class="drawer-head"><div><h2>${x ? esc(x.name) : "New strategy"}</h2><div class="muted" style="font-size:.8rem;margin-top:4px">${x ? esc(x.notes || "") : "Runs on every watchlist game from the next cycle."}</div></div><button class="xbtn" data-close="1" aria-label="Close">✕</button></div>
+      <div class="drawer-body">
+        <form id="stratForm" class="panel" data-id="${x ? x.id : ""}">
+          <div class="grid2">
+            <label class="field" style="grid-column:1/-1">Name<input id="sName" value="${esc(st.name)}" maxlength="40" required></label>
+            <label class="field">Pro-pick edge (¢)<input id="sPro" type="number" step="0.5" value="${v(st.pro_edge)}"></label>
+            <label class="field">Sell-back edge (¢)<input id="sAnti" type="number" step="0.5" value="${v(st.anti_edge)}"></label>
+            <label class="field">Take edge (¢)<input id="sTake" type="number" step="0.5" value="${v(st.take_edge)}"></label>
+            <label class="field">Extra edge per contract (¢)<input id="sStep" type="number" step="0.5" value="${v(st.edge_step)}"></label>
+            <label class="field">Max loss per game ($)<input id="sMax" type="number" step="0.5" value="${st.max_worst_case_loss}"></label>
+            <label class="field">Contracts per number<input id="sCap" type="number" step="1" value="${st.per_rung_cap}"></label>
+            <label class="field">Stop quoting (min before)<input id="sStop" type="number" step="5" value="${st.stop_minutes_before}"></label>
+            <div class="field" style="grid-column:1/-1">Trust in your number
+              <div style="display:flex;gap:10px;align-items:center"><input id="sTrust" type="range" min="0" max="100" step="5" value="${t}" ${st.ycpr_weight == null ? "disabled" : ""}><b id="sTrustVal" class="num" style="min-width:44px;text-align:right">${t}%</b></div>
+              <label style="display:flex;gap:6px;align-items:center;font-weight:500"><input id="sTrustDef" type="checkbox" ${st.ycpr_weight == null ? "checked" : ""}> Use default (${Math.round(def * 100)}%)</label></div>
+            <label class="field" style="grid-column:1/-1">Notes<input id="sNotes" value="${esc(st.notes || "")}" maxlength="300" placeholder="What this strategy tests"></label>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+            <button class="btn primary">${x ? "Save" : "Create"}</button>
+            ${x ? `<button class="btn" type="button" id="sToggle">${x.enabled ? "Turn off" : "Turn on"}</button>` : ""}
+            <span id="sMsg" class="muted"></span>
+          </div>
+          ${x ? '<p class="muted" style="font-size:.76rem;margin:10px 0 0">Changes apply from the next cycle. Fills already made stay as they are, so for a clean comparison create a new strategy instead of editing one mid-week.</p>' : ""}
+        </form>
+        ${x ? `<div class="panel" style="margin-top:14px;padding:10px 12px"><h3 style="margin:4px 0 8px">By game</h3><div class="scroll"><table>
+          <tr><th>Game</th><th>Fills</th><th>Worst / best</th><th>Expected</th><th>Settled</th></tr>
+          ${games.length ? games.map((g) => `<tr><td>${esc(g.game)}<small class="muted" style="display:block;font-size:.72rem">${g.resting} resting</small></td><td>${g.fills}</td><td><span class="${cls(g.worst)}">${usd(g.worst)}</span> / <span class="${cls(g.best)}">${usd(g.best)}</span></td><td class="${cls(g.expected)}">${usd(g.expected)}<small class="muted" style="display:block;font-size:.72rem">Kalshi ${usd(g.marketExpected)}</small></td><td class="${cls(g.settled)}">${usd(g.settled)}</td></tr>`).join("") : '<tr><td colspan="5" class="muted">No fills yet.</td></tr>'}
+        </table></div></div>` : ""}
+      </div>
+    </aside>`;
+}
+
 // ---------- Drawer
 
 function renderDrawer() {
@@ -366,14 +454,18 @@ function render() {
   renderFills();
   renderSettings();
   renderAddOptions();
-  renderDrawer();
+  if (openStrat == null) renderDrawer();
 }
 
 function setView(v) {
   view = v;
   for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === v);
   for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== v;
-  $("title").textContent = { board: "Board", fills: "Fills", add: "Add game", settings: "Settings" }[v];
+  $("title").textContent = { board: "Board", fills: "Fills", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
+  openGame = null;
+  openStrat = null;
+  $("drawerRoot").innerHTML = "";
+  if (v === "lab") { renderLab(); loadLab(); }
 }
 
 async function load() {
@@ -424,10 +516,12 @@ document.querySelector('[data-pane="board"]').addEventListener("keydown", (e) =>
   const row = e.target.closest(".brow[data-game]");
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openGame) { openGame = null; renderDrawer(); } });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && (openGame || openStrat != null)) { openGame = null; openStrat = null; $("drawerRoot").innerHTML = ""; }
+});
 
 $("drawerRoot").addEventListener("click", async (e) => {
-  if (e.target.closest("[data-close]")) { openGame = null; renderDrawer(); return; }
+  if (e.target.closest("[data-close]")) { openGame = null; openStrat = null; $("drawerRoot").innerHTML = ""; return; }
   const t = e.target.closest("[data-dtab]");
   if (t) { drawerTab = t.dataset.dtab; renderDrawer(); return; }
   const p = e.target.closest("[data-pick]");
@@ -468,6 +562,47 @@ $("drawerRoot").addEventListener("submit", async (e) => {
     load();
   } catch (err) {
     $("gMsg").textContent = err.message;
+  }
+});
+
+// Strategy lab
+document.querySelector('[data-pane="lab"]').addEventListener("click", (e) => {
+  if (e.target.closest("#newStrat")) { openStrat = "new"; renderLabDrawer(); return; }
+  const row = e.target.closest("tr[data-strat]");
+  if (row) { openStrat = Number(row.dataset.strat); renderLabDrawer(); }
+});
+$("drawerRoot").addEventListener("input", (e) => {
+  if (e.target.id === "sTrust") $("sTrustVal").textContent = e.target.value + "%";
+});
+$("drawerRoot").addEventListener("change", (e) => {
+  if (e.target.id === "sTrustDef") $("sTrust").disabled = e.target.checked;
+});
+$("drawerRoot").addEventListener("click", async (e) => {
+  if (e.target.id !== "sToggle") return;
+  const x = lab.strategies.find((s) => s.id === openStrat);
+  await api("/api/admin", { action: "saveStrategy", id: x.id, enabled: !x.enabled }).catch((err) => alert(err.message));
+  loadLab();
+});
+$("drawerRoot").addEventListener("submit", async (e) => {
+  if (e.target.id !== "stratForm") return;
+  e.preventDefault();
+  const cents = (id) => Number($(id).value) / 100;
+  const id = e.target.dataset.id ? Number(e.target.dataset.id) : undefined;
+  try {
+    const res = await api("/api/admin", {
+      action: "saveStrategy", id,
+      name: $("sName").value, notes: $("sNotes").value,
+      pro_edge: cents("sPro"), anti_edge: cents("sAnti"), take_edge: cents("sTake"), edge_step: cents("sStep"),
+      max_worst_case_loss: Number($("sMax").value), per_rung_cap: Number($("sCap").value), stop_minutes_before: Number($("sStop").value),
+      ycpr_weight: $("sTrustDef").checked ? null : Number($("sTrust").value) / 100,
+      ...(id ? {} : { enabled: true }),
+    });
+    openStrat = res.strategy?.id ?? openStrat;
+    document.activeElement?.blur?.();
+    await loadLab();
+    $("sMsg") && ($("sMsg").textContent = "Saved. Applies from the next cycle.");
+  } catch (err) {
+    $("sMsg").textContent = err.message;
   }
 });
 
@@ -527,4 +662,9 @@ $("addForm").addEventListener("submit", async (e) => {
 
 applyTheme();
 if (PW) load(); else showGate();
-setInterval(() => { if (PW && !document.hidden) load(); }, 30000);
+setInterval(() => {
+  if (!PW || document.hidden) return;
+  load();
+  const a = document.activeElement;
+  if (view === "lab" && !(a?.closest?.("#stratForm") && a.matches("input"))) loadLab();
+}, 30000);

@@ -109,6 +109,10 @@
   .r small { display:block; color:var(--a-muted); font-size:.72rem; }
   .spark svg { display:block; }
   .empty { padding:28px; text-align:center; color:var(--a-muted); }
+  .lab tr[data-strat] { cursor:pointer; }
+  .lab tr[data-strat]:hover td { background:var(--a-hover); }
+  .lab td small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .best { box-shadow:inset 3px 0 0 var(--gold); }
 
   /* Drawer */
   .scrim { position:fixed; inset:0; background:rgba(15,16,40,.35); z-index:40; }
@@ -162,6 +166,7 @@
       <button data-view="board" class="on">Board <span class="count" id="navCount">0</span></button>
       <button data-view="fills">Fills</button>
       <button data-view="add">Add game</button>
+      <button data-view="lab">Strategy lab</button>
       <button data-view="settings">Settings</button>
     </nav>
     <div class="side-foot">
@@ -179,6 +184,7 @@
       <button data-view="board" class="on">Board</button>
       <button data-view="fills">Fills</button>
       <button data-view="add">Add game</button>
+      <button data-view="lab">Lab</button>
       <button data-view="settings">Settings</button>
     </nav>
     <main class="content">
@@ -206,6 +212,7 @@
           <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="btn primary">Add / update</button><span id="addMsg" class="muted"></span></div>
         </form>
       </section>
+      <section data-pane="lab" hidden></section>
       <section data-pane="settings" hidden></section>
     </main>
   </div>

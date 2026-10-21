@@ -123,3 +123,31 @@ alter table bot_watchlist alter column ycpr_weight drop default;
 -- 2026-10-21: Kalshi-implied home margin (margin distribution fit to the live ladder), refreshed each cycle.
 alter table bot_watchlist add column if not exists kalshi_home_margin numeric;
 alter table bot_watchlist add column if not exists kalshi_updated_at timestamptz;
+
+-- 2026-10-21: Strategy lab. Parallel paper strategies run on every watchlist game against the same
+-- Kalshi books, each with its own orders/fills. strategy_id null = the main Board.
+create table if not exists bot_strategies (
+  id bigint generated always as identity primary key,
+  name text not null unique,
+  enabled boolean not null default true,
+  pro_edge numeric not null default 0.02,
+  anti_edge numeric not null default 0.04,
+  take_edge numeric not null default 0.03,
+  edge_step numeric not null default 0.01,
+  max_worst_case_loss numeric not null default 10,
+  per_rung_cap int not null default 1,
+  ycpr_weight numeric check (ycpr_weight is null or (ycpr_weight >= 0 and ycpr_weight <= 1)),
+  stop_minutes_before int not null default 30,
+  notes text,
+  created_at timestamptz not null default now()
+);
+alter table bot_strategies enable row level security;
+alter table bot_orders add column if not exists strategy_id bigint references bot_strategies (id);
+alter table bot_fills add column if not exists strategy_id bigint references bot_strategies (id);
+create index if not exists bot_orders_strategy on bot_orders (strategy_id, status, game_id);
+create index if not exists bot_fills_strategy on bot_fills (strategy_id, game_id);
+insert into bot_strategies (name, pro_edge, anti_edge, take_edge, edge_step, notes) values
+  ('Aggressive', 0.01, 0.03, 0.03, 0.005, 'Quotes near the touch and takes anything 3¢+ under fair'),
+  ('Default', 0.02, 0.04, 0.03, 0.01, 'Same edges as the Board defaults'),
+  ('Patient', 0.02, 0.03, 0.08, 0.01, 'Rarely takes; rests quotes and sells back sooner')
+on conflict (name) do nothing;

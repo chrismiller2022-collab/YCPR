@@ -36,6 +36,25 @@ export default async function handler(req, res) {
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ default_ycpr_weight: v, updated_at: new Date().toISOString() }) });
         return send(res, 200, { state: row });
       }
+      case "saveStrategy": {
+        const st = {};
+        if (body.name !== undefined) {
+          st.name = String(body.name).trim().slice(0, 40);
+          if (!st.name) throw new Error("name is required");
+        }
+        for (const k of ["pro_edge", "anti_edge", "take_edge", "edge_step", "max_worst_case_loss"]) if (body[k] !== undefined) st[k] = Number(body[k]);
+        for (const k of ["per_rung_cap", "stop_minutes_before"]) if (body[k] !== undefined) st[k] = Math.round(Number(body[k]));
+        if (body.ycpr_weight !== undefined) st.ycpr_weight = body.ycpr_weight === null || body.ycpr_weight === "" ? null : Number(body.ycpr_weight);
+        if (body.enabled !== undefined) st.enabled = !!body.enabled;
+        if (body.notes !== undefined) st.notes = String(body.notes).slice(0, 300);
+        for (const [k, v] of Object.entries(st)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
+        if (st.ycpr_weight != null && (st.ycpr_weight < 0 || st.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
+        if (st.max_worst_case_loss != null && (st.max_worst_case_loss <= 0 || st.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
+        const [saved] = body.id
+          ? await sb(`bot_strategies?id=eq.${Number(body.id)}`, { method: "PATCH", body: JSON.stringify(st) })
+          : await sb("bot_strategies", { method: "POST", body: JSON.stringify(st) });
+        return send(res, 200, { strategy: saved });
+      }
       case "addWatch": {
         const [g] = await sb(`games?select=id,season,week,start_date,home_team,away_team&id=eq.${encodeURIComponent(body.game_id)}`);
         if (!g) throw new Error("Unknown game");

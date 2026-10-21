@@ -352,3 +352,18 @@ Per-game parameters:
   Dashboard: default slider, per-game slider with "Use default", and a "Win / loss by final margin" table per game
   (`bot/ladder/outcomes.ts`: ranges with equal P&L after fees, chance under our number, expected value). At the loss
   cap the bot stops adding risk but still places orders that don't worsen the worst case (sell-backs, middles, hedges).
+
+## 16. Strategy lab (2026-10-21)
+
+`bot_strategies` (seeded: Aggressive, Default, Patient) each paper-trade every **watchlist** game against the same Kalshi
+books as the Board, with their own orders/fills (`strategy_id`; null = Board). The runner reads each game's book and
+trades once per cycle, then runs the Board and every enabled strategy as independent books (`Book` in
+`bot/runner/paper.ts`). The Board's data excludes strategy rows; `hub/api/lab.js` serves the comparison (fills,
+edge at fill, CLV, worst/best, expected yours vs Kalshi, EV per dollar risked, settled). Verified end to end with an
+in-memory DB/Kalshi stub: separate fills per book, disabled strategy idle, each book inside its cap.
+
+**Novig / ProphetX notes (from their docs, 2026-10-21):** Novig: 0–1 binary contracts, order book, pushes on whole-number
+lines, Ed25519/P-256 signed requests, subaccounts with per-subaccount trading keys; fee = 0.06·P(1−P) per contract, taker
+only, and game lines charge only while the event is live (pre-game ≈ free), makers get a share of taker fees.
+ProphetX: decimal-odds `price` + `quantity` per `strike_id`, `ALO` (post-only) and `fillOrKill`, maker rebates, 50 req/s,
+trading keys need no approval (market data and higher limits do).
