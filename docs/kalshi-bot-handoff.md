@@ -378,3 +378,12 @@ trading keys need no approval (market data and higher limits do).
 - Novig: public production books and trades, no key. Home/away resolved against the sportsbook line, then short codes; unverifiable games are skipped. Pre-game fills are fee-free.
 - ProphetX: needs `PROPHETX_ACCESS_KEY` / `PROPHETX_SECRET_KEY` (Vercel ycpr-bot env + GitHub secrets). Response parsing is unverified until real keys exist; no public trade tape, so paper fills only happen when the book moves through a quote.
 - Dashboard: venue filter (All | Kalshi | Novig | ProphetX) on top; All is the combined view. Per-game "Trade on" toggles in game settings.
+
+## 18. Review, market recorder and Hypotheticals (2026-10-21)
+
+- **Review** (`/api/review`, Review tab): post-mortems for watchlist games that kicked off — your number vs close vs final, Board results by venue, lab strategies, every fill, and your real `placed_bets` on the game (read-only; paper fills are never written to Bet History).
+- **Market recorder** (`bot/runner/record.ts`, `/api/record`, kicked off by `/api/cycle`): every game in the next 8 days with an FBS team, on all venues. `bot_mkt_snaps` stores a rung only when bid/ask changes; `bot_mkt_trades` pulls trades only for tickers whose volume moved. Novig ladders come from the market listing's embedded best bids (one request per game). The paper cycle reads Novig trades from here (Novig rate-limits its tape).
+- **Hypotheticals** (`bot/hypo/`, `/api/hypo`, Hypotheticals tab): replays the ladder engine over recorded history for every game × method × venue set (`kalshi`, `novig`, `prophetx`, `all` = one shared cap) with the paper fill rules. Methods: ladder at default trust, trust 25/50/75/100%, maker-only, take-only, straight bet early / near kickoff, every lab strategy; plus an on-demand custom what-if (not saved).
+  - Incremental: `bot_hypo_results` keeps each combo's state (fills, resting, pick) without books; `bot_hypo_games` keeps the shared books at the last processed step; `bot_mkt_implied` caches each venue's implied margin per step (the slow fit). Editing a lab strategy restarts its replays.
+  - Updated hourly by `/api/record` (with its remaining time) and the GitHub backup (no time limit). The newest 2 minutes are left alone so a cycle's trades are complete.
+  - Pick per game = the side our number favors versus the market when both are first known. Built-in methods risk $10 per game.

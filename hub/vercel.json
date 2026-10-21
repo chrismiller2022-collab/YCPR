@@ -6,6 +6,7 @@
   "outputDirectory": ".",
   "functions": {
     "api/cycle.js": { "maxDuration": 300 },
-    "api/record.js": { "maxDuration": 300 }
+    "api/record.js": { "maxDuration": 300 },
+    "api/hypo.js": { "maxDuration": 300 }
   }
 }

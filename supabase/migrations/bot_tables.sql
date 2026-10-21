@@ -196,3 +196,33 @@ alter table bot_mkt_games enable row level security;
 alter table bot_mkt_snaps enable row level security;
 alter table bot_mkt_trades enable row level security;
 alter table bot_mkt_last enable row level security;
+
+-- Hypotheticals: incremental replay state + summary per game × method × venue set.
+create table if not exists bot_hypo_results (
+  game_id text not null,
+  method text not null,
+  venues text not null,
+  hash text not null,
+  state jsonb not null,
+  summary jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (game_id, method, venues)
+);
+-- Implied home margin per venue after each recorder step (shared by every replay, incl. custom what-ifs).
+create table if not exists bot_mkt_implied (
+  game_id text not null,
+  venue text not null,
+  t timestamptz not null,
+  margin numeric,
+  primary key (game_id, venue, t)
+);
+-- Shared per-game replay position: the books after the last processed step (method-independent).
+create table if not exists bot_hypo_games (
+  game_id text primary key,
+  t bigint not null default 0,
+  books jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+alter table bot_hypo_results enable row level security;
+alter table bot_mkt_implied enable row level security;
+alter table bot_hypo_games enable row level security;
