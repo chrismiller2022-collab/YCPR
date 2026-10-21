@@ -31,6 +31,7 @@ export function findKalshiEvent(game: Pick<VenueGame, "home_team" | "away_team">
 
 export function kalshiAdapter(): VenueAdapter {
   let events: LiveEvent[] = [];
+  const volume = new Map<string, number>();
   return {
     id: "kalshi",
     label: "Kalshi",
@@ -38,7 +39,9 @@ export function kalshiAdapter(): VenueAdapter {
     available: () => true,
     async prepare() {
       events = await openSpreadEvents();
+      for (const e of events) for (const m of e.markets) volume.set(m.ticker, Number(m.volume_fp ?? 0));
     },
+    volume: (ticker) => volume.get(ticker),
     async ladder(game) {
       const e = game.eventKey ? events.find((x) => x.event_ticker === game.eventKey) ?? null : findKalshiEvent(game, events);
       return e ? { eventKey: e.event_ticker, rungs: kalshiRungs(game, e) } : null;

@@ -39,3 +39,11 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PROPHETX_ACCESS_KEY: ${{ secrets.PROPHETX_ACCESS_KEY }}
           PROPHETX_SECRET_KEY: ${{ secrets.PROPHETX_SECRET_KEY }}
+      # Market recorder for Hypotheticals (also kicked off by ycpr-bot's /api/cycle).
+      - run: npx tsx bot/runner/record.ts
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROPHETX_ACCESS_KEY: ${{ secrets.PROPHETX_ACCESS_KEY }}
+          PROPHETX_SECRET_KEY: ${{ secrets.PROPHETX_SECRET_KEY }}

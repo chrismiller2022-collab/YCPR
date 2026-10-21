@@ -27,6 +27,9 @@ export const db = {
     }
   },
   insert: <T = any>(table: string, rows: object | object[]): Promise<T[]> => sb(table, { method: "POST", body: JSON.stringify(rows) }),
+  /** Insert or update on the given conflict columns; returns nothing. */
+  upsert: (table: string, rows: object[], onConflict: string): Promise<null> =>
+    sb(`${table}?on_conflict=${onConflict}`, { method: "POST", headers: { Prefer: "return=minimal,resolution=merge-duplicates" }, body: JSON.stringify(rows) }),
   update: <T = any>(table: string, filter: string, patch: object): Promise<T[]> => sb(`${table}?${filter}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };
 
@@ -53,6 +56,7 @@ export interface LiveMarket {
   yes_ask_dollars: string;
   result: string;
   status: string;
+  volume_fp?: string;
 }
 export interface LiveEvent {
   event_ticker: string;
