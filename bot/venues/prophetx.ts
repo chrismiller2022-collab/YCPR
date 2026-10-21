@@ -99,6 +99,10 @@ export function prophetxAdapter(): VenueAdapter {
   let token: string | null = null;
   let tokenUntil = 0;
   let events: PxEvent[] = [];
+  // Shape notes for the run record: names, keys and counts only (the repo's logs are public; this goes to the DB).
+  const diag: Record<string, unknown> = {};
+  const keysOf = (x: unknown) => (x && typeof x === "object" ? Object.keys(x as object).slice(0, 30) : typeof x);
+  const ladders: unknown[] = [];
 
   async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(BASE + path, { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers ?? {}) } });
@@ -113,13 +117,27 @@ export function prophetxAdapter(): VenueAdapter {
     available: () => Boolean(access && secret),
     async prepare() {
       if (!token || Date.now() > tokenUntil) {
-        const r = await call<{ data: { access_token: string } }>("/auth/login", { method: "POST", body: JSON.stringify({ access_key: access, secret_key: secret }) });
-        token = r.data.access_token;
+        const r = await call<any>("/auth/login", { method: "POST", body: JSON.stringify({ access_key: access, secret_key: secret }) });
+        diag.login = keysOf(r?.data ?? r);
+        token = r?.data?.access_token ?? r?.access_token ?? null;
+        if (!token) throw new Error("ProphetX login returned no access_token");
         tokenUntil = Date.now() + 8 * 60e3; // access tokens last ~10 minutes
       }
-      const r = await call<{ data: { sport_events: PxEvent[] } }>("/mm/get_sport_events");
-      events = (r.data?.sport_events ?? []).filter((e) => /college|ncaa/i.test(`${e.tournament_name} ${e.sport_name}`) && /football/i.test(`${e.sport_name} ${e.tournament_name}`));
+      const r = await call<any>("/mm/get_sport_events");
+      const all: PxEvent[] = r?.data?.sport_events ?? r?.sport_events ?? (Array.isArray(r?.data) ? r.data : []);
+      events = all.filter((e) => /college|ncaa/i.test(`${e.tournament_name} ${e.sport_name}`) && /football/i.test(`${e.sport_name} ${e.tournament_name}`));
+      const kinds: Record<string, number> = {};
+      for (const e of all) kinds[`${e.sport_name} / ${e.tournament_name}`] = (kinds[`${e.sport_name} / ${e.tournament_name}`] ?? 0) + 1;
+      Object.assign(diag, {
+        response: keysOf(r?.data ?? r),
+        events: all.length,
+        cfb: events.length,
+        kinds: Object.fromEntries(Object.entries(kinds).sort((a, b) => b[1] - a[1]).slice(0, 15)),
+        eventKeys: keysOf(events[0] ?? all[0]),
+        sample: events.slice(0, 4).map((e) => ({ name: e.name, competitors: e.competitors?.map((c) => ({ ...c, id: undefined, keys: keysOf(c) })) })),
+      });
     },
+    diag: () => (access && secret ? { ...diag, ladders } : undefined),
     async ladder(game: VenueGame) {
       const match = (e: PxEvent) => {
         const home = e.competitors?.find((c) => /home/i.test(c.side ?? ""));
@@ -128,9 +146,23 @@ export function prophetxAdapter(): VenueAdapter {
       };
       const ev = game.eventKey ? events.find((e) => String(e.event_id) === game.eventKey) : events.find((e) => match(e));
       const sides = ev && match(ev);
-      if (!ev || !sides) return null;
-      const r = await call<{ data: { markets: PxMarket[] } }>(`/v4/mm/get_markets?event_id=${ev.event_id}`);
-      return { eventKey: String(ev.event_id), rungs: prophetxRungs(r.data?.markets ?? [], String(sides.home.id), String(sides.away.id)) };
+      if (!ev || !sides) {
+        ladders.push({ game: `${game.away_team} @ ${game.home_team}`, found: false });
+        return null;
+      }
+      const r = await call<any>(`/v4/mm/get_markets?event_id=${ev.event_id}`);
+      const markets: PxMarket[] = r?.data?.markets ?? r?.markets ?? (Array.isArray(r?.data) ? r.data : []);
+      const rungs = prophetxRungs(markets, String(sides.home.id), String(sides.away.id));
+      const types: Record<string, number> = {};
+      for (const m of markets) types[String(m.type)] = (types[String(m.type)] ?? 0) + 1;
+      const spread = markets.find((m) => /spread/i.test(m.type ?? ""));
+      const sel = spread?.selections?.[0];
+      ladders.push({
+        game: `${game.away_team} @ ${game.home_team}`, found: true, markets: markets.length, types, rungs: rungs.length,
+        response: keysOf(r?.data ?? r), marketKeys: keysOf(spread), selectionKeys: keysOf(Array.isArray(sel) ? sel[0] : sel), nested: Array.isArray(sel),
+        sampleSelections: (spread?.selections ?? []).slice(0, 4).map((x) => (Array.isArray(x) ? x.slice(0, 2) : x)),
+      });
+      return { eventKey: String(ev.event_id), rungs };
     },
     trades: async () => [],
     fee: () => (price, opts = {}) => 0.02 * (opts.count ?? 1) * (1 - price),
