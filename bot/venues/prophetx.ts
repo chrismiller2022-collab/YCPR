@@ -9,12 +9,13 @@
 // a quote. Fee: 2% of net winnings, modeled conservatively as 2%·(1−p) per
 // contract on every fill.
 
-import { matchTeamName } from "../../src/lib/teamNameMatch";
+import { canon as novigCanon } from "./novig";
 import type { Rung } from "../ladder/engine";
 import type { VenueAdapter, VenueGame } from "./types";
 
 const BASE = process.env.PROPHETX_BASE || "https://cash.api.prophetx.co/partner";
-const canon = (s: string | undefined) => (s ? matchTeamName(s.trim()).matched : null);
+// Same spellings as Novig ("Miami Florida", "New Haven College"); exact or alias matches only.
+const canon = (s: string | undefined) => (s ? novigCanon(s) : null);
 
 export interface PxCompetitor {
   id: number | string;

@@ -77,7 +77,7 @@ const NOVIG_NAMES: Record<string, string> = {
 };
 
 /** Exact or alias matches only: a fuzzy match could trade the wrong game. */
-const canon = (s: string) => {
+export const canon = (s: string) => {
   const r = matchTeamName(NOVIG_NAMES[s.trim()] ?? s.trim());
   return r.confidence === "fuzzy" ? null : r.matched;
 };
