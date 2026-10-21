@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YCPR Bot</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16181d; --muted:#626a77; --line:#e3e6eb; --accent:#2557d6; --good:#147a3d; --bad:#b42318; --warn:#9a6700; --chip:#eef1f6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --text:#e8eaee; --muted:#9aa3b2; --line:#2a2f3a; --accent:#7aa2ff; --good:#4cc38a; --bad:#ff6b5e; --warn:#e3b341; --chip:#222734; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+  header h1 { font-size:16px; margin:0; margin-right:auto; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  main > *, .card { min-width:0; }
+  select { max-width:100%; text-overflow:ellipsis; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .muted { color:var(--muted); }
+  .chip { display:inline-block; background:var(--chip); border-radius:999px; padding:2px 10px; font-size:12px; }
+  .good { color:var(--good); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  button { font:inherit; border:1px solid var(--line); background:var(--chip); color:var(--text); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  input, select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; width:100%; }
+  label { display:grid; gap:4px; font-size:12px; color:var(--muted); }
+  .grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  th, td { text-align:right; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { font-weight:600; color:var(--muted); font-size:12px; }
+  .stats { display:grid; gap:8px; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); margin:8px 0 12px; }
+  .stat b { display:block; font-size:16px; }
+  details summary { cursor:pointer; color:var(--muted); margin:6px 0; }
+  #gate { max-width:360px; margin:80px auto; }
+  svg text { fill:var(--muted); font-size:10px; }
+  .err { color:var(--bad); white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<div id="gate" class="card" hidden>
+  <h2>YCPR Bot</h2>
+  <p class="muted">Enter the dashboard password (BOT_ADMIN_PASSWORD in the ycpr-bot Vercel project).</p>
+  <form id="gateForm" class="row"><input id="pw" type="password" autocomplete="current-password" placeholder="Password"><button class="primary">Open</button></form>
+  <p id="gateErr" class="err"></p>
+</div>
+<div id="app" hidden>
+  <header>
+    <h1>YCPR Bot</h1>
+    <span id="modeChip" class="chip"></span>
+    <span id="runInfo" class="muted"></span>
+    <button id="killBtn"></button>
+  </header>
+  <main>
+    <p id="err" class="err"></p>
+    <section id="games"></section>
+    <section class="card">
+      <h2>Add a game</h2>
+      <form id="addForm">
+        <div class="grid">
+          <label style="grid-column:1/-1">Game (next 8 days)<select id="addGame" required></select></label>
+          <label>Lean toward<select id="addPick"></select></label>
+          <label>Your line for the home team<input id="addLine" type="number" step="0.1" placeholder="e.g. -4.3" required></label>
+          <label>Max loss on game ($)<input id="addMax" type="number" step="0.5" value="5"></label>
+          <label>Contracts per number<input id="addCap" type="number" step="1" value="1"></label>
+          <label>Profit target ($, optional)<input id="addTarget" type="number" step="0.5"></label>
+        </div>
+        <details><summary>Edges (advanced)</summary>
+          <div class="grid">
+            <label>Pro-pick edge (¢)<input id="addPro" type="number" step="0.5" value="2"></label>
+            <label>Sell-back edge (¢)<input id="addAnti" type="number" step="0.5" value="4"></label>
+            <label>Take edge (¢)<input id="addTake" type="number" step="0.5" value="3"></label>
+            <label>Extra edge per contract held (¢)<input id="addStep" type="number" step="0.5" value="1"></label>
+            <label>Stop quoting (min before kickoff)<input id="addStop" type="number" step="5" value="30"></label>
+          </div>
+        </details>
+        <div class="row" style="margin-top:10px"><button class="primary">Add / update</button><span id="addMsg" class="muted"></span></div>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Fills</h2>
+      <div class="scroll"><table id="fills"></table></div>
+    </section>
+    <section class="card">
+      <h2>Recent runs</h2>
+      <div class="scroll"><table id="runs"></table></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

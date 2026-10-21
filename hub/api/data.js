@@ -1,0 +1,38 @@
+// GET: everything the dashboard shows. Requires the x-bot-password header.
+import { authorized, sb, send } from "./_lib.js";
+
+export default async function handler(req, res) {
+  if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
+  try {
+    const mode = "paper";
+    const [state] = await sb("bot_state?select=*&id=eq.1");
+    const watchlist = await sb("bot_watchlist?select=*&order=kickoff.asc.nullslast");
+    const ids = watchlist.map((w) => w.game_id);
+    const inIds = ids.length ? `&game_id=in.(${ids.map(encodeURIComponent).join(",")})` : "&game_id=eq.__none__";
+    const [orders, fills, runs] = await Promise.all([
+      sb(`bot_orders?select=id,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting${inIds}&order=ticker`),
+      sb(`bot_fills?select=*&mode=eq.${mode}${inIds}&order=filled_at.desc&limit=500`),
+      sb("bot_runs?select=started_at,finished_at,games,orders_placed,orders_cancelled,fills,error&order=started_at.desc&limit=12"),
+    ]);
+    // Latest snapshot per rung for watched games.
+    const snaps = ids.length ? await sb(`bot_snapshots?select=game_id,ticker,bid,ask,fair,taken_at${inIds}&order=taken_at.desc&limit=3000`) : [];
+    const latest = {};
+    for (const s of snaps) if (!latest[s.ticker]) latest[s.ticker] = s;
+
+    // Upcoming FBS games (next 8 days) with the current market spread, for the "add game" form.
+    const nowIso = new Date().toISOString();
+    const soonIso = new Date(Date.now() + 8 * 86400e3).toISOString();
+    const games = await sb(
+      `games?select=id,season,week,start_date,home_team,away_team,neutral_site&start_date=gte.${nowIso}&start_date=lte.${soonIso}&home_classification=eq.fbs&away_classification=eq.fbs&order=start_date.asc&limit=200`
+    );
+    const lines = games.length ? await sb(`betting_lines?select=game_id,provider,spread&game_id=in.(${games.map((g) => g.id).join(",")})&spread=not.is.null`) : [];
+    const rank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);
+    const spread = {};
+    for (const l of lines.sort((a, b) => rank(a.provider) - rank(b.provider))) if (spread[l.game_id] == null) spread[l.game_id] = Number(l.spread);
+    const upcoming = games.map((g) => ({ ...g, home_spread: spread[g.id] ?? null }));
+
+    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming });
+  } catch (err) {
+    send(res, 500, { error: String(err.message || err) });
+  }
+}
