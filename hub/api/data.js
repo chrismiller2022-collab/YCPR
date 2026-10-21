@@ -1,6 +1,6 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
 import { authorized, sb, send } from "./_lib.js";
-import { ycprAwaySpreads } from "./_bot.mjs";
+import { ycprAwaySpreads, outcomeRanges, marginPmf } from "./_bot.mjs";
 
 export default async function handler(req, res) {
   if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
@@ -37,7 +37,23 @@ export default async function handler(req, res) {
     } catch {}
     const upcoming = games.map((g) => ({ ...g, home_spread: spread[g.id] ?? null, yc_away_spread: yc.get(String(g.id)) ?? null }));
 
-    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming });
+    // Win/loss by final margin for each game, with each range's chance under our number.
+    const outcomes = {};
+    for (const w of watchlist) {
+      const center = w.my_home_margin ?? w.ycpr_home_margin;
+      if (center == null) continue;
+      const held = new Map();
+      for (const f of fills.filter((x) => x.game_id === w.game_id)) {
+        const h = held.get(f.ticker) || { side: f.side, strike: Number(f.strike), yes: 0, cost: 0 };
+        const d = f.action === "buy" ? f.count : -f.count;
+        h.yes += d;
+        h.cost += d * Number(f.price) + Number(f.fee);
+        held.set(f.ticker, h);
+      }
+      if (held.size) outcomes[w.game_id] = { center: Number(center), ...outcomeRanges([...held.values()], marginPmf(Number(center))) };
+    }
+
+    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes });
   } catch (err) {
     send(res, 500, { error: String(err.message || err) });
   }

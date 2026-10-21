@@ -114,3 +114,8 @@ alter table bot_watchlist add column if not exists ycpr_home_margin numeric;
 alter table bot_watchlist add column if not exists ycpr_updated_at timestamptz;
 -- How much the fair price trusts our number vs the market: 1 = our number only.
 alter table bot_watchlist add column if not exists ycpr_weight numeric not null default 1 check (ycpr_weight >= 0 and ycpr_weight <= 1);
+
+-- 2026-10-21: trust default for all games; per-game ycpr_weight null = follow it.
+alter table bot_state add column if not exists default_ycpr_weight numeric not null default 1 check (default_ycpr_weight >= 0 and default_ycpr_weight <= 1);
+alter table bot_watchlist alter column ycpr_weight drop not null;
+alter table bot_watchlist alter column ycpr_weight drop default;
