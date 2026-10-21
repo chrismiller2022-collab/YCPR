@@ -86,6 +86,25 @@ import {
   type ImageDumpTeamRow,
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
+import { fetchLatestSavedResumeRanks } from "../lib/api/resumeWeights";
+import {
+  build12FromResumeSoFar,
+  build12FromMonteCarlo,
+  soFarToRanking,
+  computeAdvanceOdds,
+  build24FbsProjected,
+  build24FbsSoFar,
+  build24FcsProjected,
+  build24FcsSoFar,
+} from "../lib/playoffGraphics";
+import TwelveTeamListGraphic from "../components/graphics/TwelveTeamListGraphic";
+import TwelveTeamBracketGraphic from "../components/graphics/TwelveTeamBracketGraphic";
+import AdvanceOddsGraphic from "../components/graphics/AdvanceOddsGraphic";
+import TwentyFourTeamBracketGraphic from "../components/graphics/TwentyFourTeamBracketGraphic";
+import ProgressionGraphic from "../components/ProgressionGraphic";
+import { useProgressionSeries, type ProgressionMetric } from "../lib/progressionSeries";
+import PollComparisonGraphic from "../components/PollComparisonGraphic";
+import { usePollComparison } from "../lib/usePollComparison";
 import { fetchReportOverlay, computeProjectedWins, savedChangeBetween, savedChangeSinceStart, type ReportOverlay } from "../lib/reportOverlays";
 import { publishWeeklyReportPdf } from "../lib/api/weeklyReports";
 
@@ -1118,6 +1137,79 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       .then((run) => setConfPreviewMc(run ? { results: run.results, numTrials: run.num_trials } : null))
       .catch(() => setConfPreviewMc(null));
   }, [season]);
+  // --- Playoff graphics: projected field (latest Monte Carlo run) and the
+  // "actual" field from Resume So Far, plus exact advance odds and the
+  // 24-team versions (see lib/playoffGraphics.ts for the bid rules).
+  const [savedResumeRanks, setSavedResumeRanks] = useState<Record<string, { rank: number; rating: number }> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestSavedResumeRanks(season)
+      .then((r) => !cancelled && setSavedResumeRanks(r?.byTeam ?? null))
+      .catch(() => !cancelled && setSavedResumeRanks(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  const soFarRanking = useMemo(() => soFarToRanking(soFarFull), [soFarFull]);
+  const projected12 = useMemo(() => (confPreviewMc ? build12FromMonteCarlo(confPreviewMc.results, liveByTeam, soFarRanking) : []), [confPreviewMc, liveByTeam, soFarRanking]);
+  const actual12 = useMemo(() => (soFarFull.length >= 12 ? build12FromResumeSoFar(soFarFull, liveByTeam) : []), [soFarFull, liveByTeam]);
+  const actual12Odds = useMemo(() => (actual12.length === 12 ? computeAdvanceOdds(actual12, { liveByTeam }) : []), [actual12, liveByTeam]);
+  const projected12Odds = useMemo(() => (projected12.length === 12 ? computeAdvanceOdds(projected12, { liveByTeam }) : []), [projected12, liveByTeam]);
+  const fbs24Projected = useMemo(() => {
+    if (!confPreviewMc) return [];
+    const confOdds = Object.fromEntries(confPreviewMc.results.map((r) => [r.team, (r.confTitlePct ?? 0) / 100]));
+    return build24FbsProjected(confOdds, savedResumeRanks, liveByTeam);
+  }, [confPreviewMc, savedResumeRanks, liveByTeam]);
+  const fbs24SoFar = useMemo(() => (soFarFull.length >= 24 ? build24FbsSoFar(soFarFull, liveByTeam) : []), [soFarFull, liveByTeam]);
+  const fcs24Projected = useMemo(() => build24FcsProjected(liveByTeam), [liveByTeam]);
+  // Résumé So Far is only saved for FBS right now; this fills in once FCS rows exist.
+  const fcs24SoFar = useMemo(() => {
+    if (!soFar) return [];
+    const rows = Object.entries(soFar.now)
+      .filter(([t]) => TEAMS_BY_NAME[t]?.div === "FCS")
+      .map(([team, rating]) => ({ team, conf: TEAMS_BY_NAME[team]?.conf ?? "", rating }))
+      .sort((a, b) => b.rating - a.rating)
+      .map((r, i) => ({ ...r, rank: i + 1 }));
+    return rows.length >= 24 ? build24FcsSoFar(rows, liveByTeam) : [];
+  }, [soFar, liveByTeam]);
+  // --- Weekly progression (rating + ranking versions of each metric) ---
+  const { series: powerSeries } = useProgressionSeries(season, scheduleWeekNum, "power");
+  const { series: resumeSeries } = useProgressionSeries(season, scheduleWeekNum, "resume");
+  const { series: winTotalSeries } = useProgressionSeries(season, scheduleWeekNum, "winTotals");
+  const { series: bracketSeries } = useProgressionSeries(season, scheduleWeekNum, "bracket12");
+  const progressionItems: { metric: ProgressionMetric; slug: string; title: string; series: typeof powerSeries }[] = [
+    { metric: "power", slug: "power-ratings", title: "Power Ratings", series: powerSeries },
+    { metric: "resume", slug: "resume-so-far", title: "Résumé So Far", series: resumeSeries },
+    { metric: "winTotals", slug: "win-totals", title: "Win Totals", series: winTotalSeries },
+    { metric: "bracket12", slug: "12-team-bracket", title: "12-Team Bracket", series: bracketSeries },
+  ];
+  const progressionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // --- How did the AP poll / committee do? Ranked against both résumés,
+  // using the same lists this dump shows. ---
+  const pollSoFarRanks = useMemo(() => Object.fromEntries(soFarFull.map((r) => [r.team, r.rank])), [soFarFull]);
+  const pollProjectedRanks = useMemo(
+    () => Object.fromEntries(fbsRows.filter((r) => r.resumeRank != null).map((r) => [r.team, r.resumeRank as number])),
+    [fbsRows]
+  );
+  const pollCompare = usePollComparison(season, scheduleWeekNum, {
+    soFarRanks: soFarFull.length > 0 ? pollSoFarRanks : null,
+    projectedRanks: Object.keys(pollProjectedRanks).length > 0 ? pollProjectedRanks : null,
+  });
+  const pollHeader = pollCompare.pollKey === "cfp" ? "How Did the Committee Do?" : `How Did the ${pollCompare.pollKey === "coaches" ? "Coaches Poll" : "AP Poll"} Do?`;
+  const pollSoFarRef = useRef<HTMLDivElement>(null);
+  const pollProjectedRef = useRef<HTMLDivElement>(null);
+
+  const projected12ListRef = useRef<HTMLDivElement>(null);
+  const actual12LinesRef = useRef<HTMLDivElement>(null);
+  const actual12BracketRef = useRef<HTMLDivElement>(null);
+  const actual12OddsRef = useRef<HTMLDivElement>(null);
+  const projected12OddsRef = useRef<HTMLDivElement>(null);
+  const fbs24ProjectedRef = useRef<HTMLDivElement>(null);
+  const fbs24SoFarRef = useRef<HTMLDivElement>(null);
+  const fcs24ProjectedRef = useRef<HTMLDivElement>(null);
+  const fcs24SoFarRef = useRef<HTMLDivElement>(null);
+
   const [activeConferenceIdx, setActiveConferenceIdx] = useState<number | null>(null);
   const conferencePreviewRef = useRef<HTMLDivElement>(null);
 
@@ -1169,6 +1261,31 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       : []),
     { key: "20-fbs-playoff-bracket", node: () => fbsBracketRef.current, division: "FBS" },
     { key: "21-fcs-playoff-bracket", node: () => fcsBracketRef.current, division: "FCS" },
+    ...(projected12.length === 12 ? [{ key: "20b-fbs-12-team-projected-list", node: () => projected12ListRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(projected12Odds.length > 0 ? [{ key: "20c-fbs-12-team-projected-advance-odds", node: () => projected12OddsRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(actual12.length === 12
+      ? [
+          { key: "20d-fbs-12-team-so-far-seeding", node: () => actual12LinesRef.current, branding: false, division: "FBS" as const },
+          { key: "20e-fbs-12-team-so-far-bracket", node: () => actual12BracketRef.current, branding: false, division: "FBS" as const },
+          { key: "20f-fbs-12-team-so-far-advance-odds", node: () => actual12OddsRef.current, branding: false, division: "FBS" as const },
+        ]
+      : []),
+    ...(fbs24Projected.length > 0 ? [{ key: "20g-fbs-24-team-projected", node: () => fbs24ProjectedRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(fbs24SoFar.length > 0 ? [{ key: "20h-fbs-24-team-so-far", node: () => fbs24SoFarRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(fcs24Projected.length > 0 ? [{ key: "21b-fcs-24-team-projected", node: () => fcs24ProjectedRef.current, branding: false, division: "FCS" as const }] : []),
+    ...(fcs24SoFar.length > 0 ? [{ key: "21c-fcs-24-team-so-far", node: () => fcs24SoFarRef.current, branding: false, division: "FCS" as const }] : []),
+    ...(pollCompare.soFar && pollCompare.pollName ? [{ key: "21d-fbs-poll-vs-resume-so-far", node: () => pollSoFarRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(pollCompare.projected && pollCompare.pollName ? [{ key: "21e-fbs-poll-vs-projected-resume", node: () => pollProjectedRef.current, branding: false, division: "FBS" as const }] : []),
+    ...progressionItems.flatMap((p) =>
+      p.series && p.series.weeks.length > 1
+        ? (["ranking", "rating"] as const).map((mode) => ({
+            key: `28-progression-${p.slug}-${mode}`,
+            node: () => progressionRefs.current[`${p.metric}-${mode}`] ?? null,
+            branding: false,
+            division: "FBS" as const,
+          }))
+        : []
+    ),
     // Review — last week's FBS-vs-FBS and FBS-vs-FCS (all days, completed
     // only), as two separate images; Week 1 reviews its own completed-so-far
     // games instead of a previous week (see reviewLabel above).
@@ -2048,6 +2165,86 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fcsBracketRef} style={CAPTURE_WRAP_STYLE}>
               <FCSBracketPage onNavigateTeam={() => {}} onNavigateConference={() => {}} onHome={() => {}} />
             </div>
+
+            {projected12.length === 12 && (
+              <div ref={projected12ListRef} style={CAPTURE_WRAP_STYLE}>
+                <TwelveTeamListGraphic eyebrow={fbsEyebrow} header="Projected 12-Team Playoff" subtitle="Latest Monte Carlo run" field={projected12} variant="logos" />
+              </div>
+            )}
+            {projected12Odds.length > 0 && (
+              <div ref={projected12OddsRef} style={CAPTURE_WRAP_STYLE}>
+                <AdvanceOddsGraphic eyebrow={fbsEyebrow} header="Projected Playoff — Advance Odds" rows={projected12Odds} />
+              </div>
+            )}
+            {actual12.length === 12 && (
+              <>
+                <div ref={actual12LinesRef} style={CAPTURE_WRAP_STYLE}>
+                  <TwelveTeamListGraphic eyebrow={fbsEyebrow} header="From Résumé So Far to Seeds" field={actual12} variant="lines" ranking={soFarRanking} rankingTitle="RÉSUMÉ SO FAR" />
+                </div>
+                <div ref={actual12BracketRef} style={CAPTURE_WRAP_STYLE}>
+                  <TwelveTeamBracketGraphic eyebrow={fbsEyebrow} header="If the Season Ended Today" subtitle="12-team bracket from Résumé So Far" field={actual12} liveByTeam={liveByTeam} />
+                </div>
+                <div ref={actual12OddsRef} style={CAPTURE_WRAP_STYLE}>
+                  <AdvanceOddsGraphic eyebrow={fbsEyebrow} header="If the Season Ended Today — Advance Odds" rows={actual12Odds} />
+                </div>
+              </>
+            )}
+            {fbs24Projected.length > 0 && (
+              <div ref={fbs24ProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fbsEyebrow} header="Projected 24-Team Playoff" field={fbs24Projected} style={{ division: "FBS", basis: "projected" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fbs24SoFar.length > 0 && (
+              <div ref={fbs24SoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fbsEyebrow} header="24-Team Playoff — Résumé So Far" field={fbs24SoFar} style={{ division: "FBS", basis: "soFar" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fcs24Projected.length > 0 && (
+              <div ref={fcs24ProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fcsEyebrow} header="Projected 24-Team FCS Playoff" field={fcs24Projected} style={{ division: "FCS", basis: "projected" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fcs24SoFar.length > 0 && (
+              <div ref={fcs24SoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fcsEyebrow} header="FCS 24-Team Playoff — Résumé So Far" field={fcs24SoFar} style={{ division: "FCS", basis: "soFar" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+
+            {pollCompare.soFar && pollCompare.pollName && (
+              <div ref={pollSoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <PollComparisonGraphic
+                  pollName={pollCompare.pollName}
+                  compareLabel="Resume So Far"
+                  rows={pollCompare.soFar.rows}
+                  stats={{ overlap: pollCompare.soFar.overlap, spearman: pollCompare.soFar.spearman }}
+                  eyebrow={fbsEyebrow}
+                  header={pollHeader}
+                />
+              </div>
+            )}
+            {pollCompare.projected && pollCompare.pollName && (
+              <div ref={pollProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <PollComparisonGraphic
+                  pollName={pollCompare.pollName}
+                  compareLabel="Projected Resume"
+                  rows={pollCompare.projected.rows}
+                  stats={{ overlap: pollCompare.projected.overlap, spearman: pollCompare.projected.spearman }}
+                  eyebrow={fbsEyebrow}
+                  header={pollHeader}
+                />
+              </div>
+            )}
+            {progressionItems.map((p) =>
+              p.series && p.series.weeks.length > 1
+                ? (["ranking", "rating"] as const).map((mode) => (
+                    <div key={`${p.metric}-${mode}`} ref={(el) => {
+                      progressionRefs.current[`${p.metric}-${mode}`] = el;
+                    }} style={CAPTURE_WRAP_STYLE}>
+                      <ProgressionGraphic metric={p.metric} mode={mode} topN={12} series={p.series!} eyebrow={fbsEyebrow} header={`${p.title} — Weekly Progression`} />
+                    </div>
+                  ))
+                : null
+            )}
 
             {/* Matchups — MatchupGridGraphic (multi-column card grid),
                 not MatchupSlateGraphic (tall single-column list, still

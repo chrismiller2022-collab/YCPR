@@ -711,6 +711,87 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // -----------------------------------------------------------------
+  // action: "pollsProxy" — AP / CFP committee / Coaches top 25 for one
+  // (season, week) from CFBD's /rankings, for the "How did the poll do?"
+  // comparison (src/lib/pollComparison.ts). Poll week N = the poll
+  // released going INTO week N, the same convention as this site's saved
+  // week N. Falls back to ESPN's public rankings feed when CFBD has no
+  // key configured, errors, or hasn't posted that week yet. Returns raw
+  // school names (plus ESPN's team id when it came from ESPN) — the
+  // client maps them onto canonical teams with teamNameMatch.
+  // Body: { season: number, week: number, seasonType?: "regular" | "postseason" }
+  // Response: { ok, source: "cfbd" | "espn", rows: [{ poll, pollKey, rank, school, espnId? }], notes: string[] }
+  // -----------------------------------------------------------------
+  if (action === "pollsProxy") {
+    const { season, week, seasonType } = req.body ?? {};
+    if (typeof season !== "number" || typeof week !== "number") {
+      res.status(400).json({ error: "Missing or invalid 'season'/'week'" });
+      return;
+    }
+    const st = seasonType === "postseason" ? "postseason" : "regular";
+    const pollKeyOf = (name: string): "ap" | "cfp" | "coaches" | "other" => {
+      const n = name.toLowerCase();
+      if (n.includes("playoff")) return "cfp";
+      if (n.startsWith("ap")) return "ap";
+      if (n.includes("coaches") && !/fcs|division|ii/.test(n)) return "coaches";
+      return "other";
+    };
+    const notes: string[] = [];
+    type PollRow = { poll: string; pollKey: string; rank: number; school: string; espnId?: string };
+    let rows: PollRow[] = [];
+    let source: "cfbd" | "espn" = "cfbd";
+    if (CFBD_API_KEY) {
+      try {
+        const data = await cfbdFetch(`/rankings?year=${season}&week=${week}&seasonType=${st}`);
+        for (const wk of Array.isArray(data) ? data : []) {
+          if (Number(wk.week) !== week) continue;
+          for (const p of wk.polls ?? []) {
+            const pollKey = pollKeyOf(String(p.poll ?? ""));
+            if (pollKey === "other") continue;
+            for (const r of p.ranks ?? []) {
+              if (typeof r.rank === "number" && r.school) rows.push({ poll: p.poll, pollKey, rank: r.rank, school: r.school });
+            }
+          }
+        }
+        if (rows.length === 0) notes.push(`CFBD has no polls for ${season} week ${week} (${st}) yet — tried ESPN`);
+      } catch (err: any) {
+        notes.push(`CFBD failed (${err.message ?? err}) — tried ESPN`);
+      }
+    } else {
+      notes.push("CFBD_API_KEY is not configured — used ESPN");
+    }
+    if (rows.length === 0) {
+      source = "espn";
+      try {
+        const espnType = st === "postseason" ? 3 : 2;
+        const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings?seasons=${season}&weeks=${week}&types=${espnType}`);
+        if (!r.ok) throw new Error(`ESPN rankings fetch failed (${r.status})`);
+        const data = await r.json();
+        for (const p of data.rankings ?? []) {
+          const pollKey = pollKeyOf(String(p.name ?? ""));
+          if (pollKey === "other") continue;
+          // ESPN ignores an unknown week and serves the current one instead — never mislabel it.
+          const headlineWeek = /week\s+(\d+)/i.exec(String(p.headline ?? ""))?.[1];
+          const occ = Number(p.occurrence?.value);
+          const servedWeek = headlineWeek != null ? Number(headlineWeek) : Number.isFinite(occ) ? occ : null;
+          if (st === "regular" && servedWeek != null && servedWeek !== week) {
+            notes.push(`ESPN served ${p.name} week ${servedWeek}, not week ${week} — skipped`);
+            continue;
+          }
+          for (const x of p.ranks ?? []) {
+            const school = x.team?.location ?? x.team?.nickname ?? x.team?.name;
+            if (typeof x.current === "number" && school) rows.push({ poll: p.name, pollKey, rank: x.current, school, espnId: x.team?.id ? String(x.team.id) : undefined });
+          }
+        }
+      } catch (err: any) {
+        notes.push(err.message ?? "ESPN rankings fetch failed");
+      }
+    }
+    res.status(200).json({ ok: true, source, season, week, seasonType: st, rows, notes });
+    return;
+  }
+
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
 
   // -----------------------------------------------------------------
