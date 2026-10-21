@@ -50,7 +50,13 @@ export default async function handler(req, res) {
         h.cost += d * Number(f.price) + Number(f.fee);
         held.set(f.ticker, h);
       }
-      if (held.size) outcomes[w.game_id] = { center: Number(center), ...outcomeRanges([...held.values()], marginPmf(Number(center))) };
+      const market = w.kalshi_home_margin == null ? null : Number(w.kalshi_home_margin);
+      if (held.size)
+        outcomes[w.game_id] = {
+          center: Number(center),
+          market,
+          ...outcomeRanges([...held.values()], marginPmf(Number(center)), 60, market == null ? undefined : marginPmf(market)),
+        };
     }
 
     send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes });

@@ -32,6 +32,7 @@ interface Watch {
   /** Optional typed override (home margin = away spread); null = use YCPR. */
   my_home_margin: number | null;
   ycpr_home_margin: number | null;
+  kalshi_home_margin: number | null;
   /** Per-game trust in our number; null = use bot_state.default_ycpr_weight. */
   ycpr_weight: number | null;
   max_worst_case_loss: number;
@@ -238,6 +239,9 @@ export async function runCycle(): Promise<CycleTotals> {
       // 3. Fair price: Kalshi-implied + sportsbooks + our number (fading toward kickoff).
       const hours = kickoff != null ? (kickoff - now()) / 3600 : 72;
       const kalshiCenter = impliedHomeMargin(rungs);
+      if (kalshiCenter != null && num(w.kalshi_home_margin) !== kalshiCenter) {
+        await db.update("bot_watchlist", `id=eq.${w.id}`, { kalshi_home_margin: kalshiCenter, kalshi_updated_at: iso() });
+      }
       const ours = num(w.my_home_margin) ?? num(w.ycpr_home_margin);
       if (ours == null) {
         totals.skipped++;

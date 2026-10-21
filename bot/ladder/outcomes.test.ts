@@ -29,4 +29,14 @@ describe("outcomeRanges", () => {
     expect([mid.from, mid.to, mid.pnl]).toEqual([-7, -5, 0.85]); // +0.45 and +0.40
     expect(ranges.filter((r) => r !== mid).every((r) => r.pnl === -0.15)).toBe(true); // lose the gap elsewhere
   });
+
+  it("adds the market's chance per range and its expected value when a market distribution is given", () => {
+    const held = [{ side: "away" as const, strike: 7.5, yes: 1, cost: 0.4 }];
+    const market = marginPmf(-3); // market: away by 3, less bullish than our away by 5
+    const { ranges, expected, marketExpected } = outcomeRanges(held, pmf, 60, market);
+    expect(ranges.reduce((s, r) => s + r.marketProb!, 0)).toBeCloseTo(1, 9);
+    const win = ranges.find((r) => r.from === -60)!; // away by 8+
+    expect(win.prob).toBeGreaterThan(win.marketProb!); // we think the winning range is likelier than the market does
+    expect(expected).toBeGreaterThan(marketExpected!);
+  });
 });

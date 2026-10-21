@@ -119,3 +119,7 @@ alter table bot_watchlist add column if not exists ycpr_weight numeric not null 
 alter table bot_state add column if not exists default_ycpr_weight numeric not null default 1 check (default_ycpr_weight >= 0 and default_ycpr_weight <= 1);
 alter table bot_watchlist alter column ycpr_weight drop not null;
 alter table bot_watchlist alter column ycpr_weight drop default;
+
+-- 2026-10-21: Kalshi-implied home margin (margin distribution fit to the live ladder), refreshed each cycle.
+alter table bot_watchlist add column if not exists kalshi_home_margin numeric;
+alter table bot_watchlist add column if not exists kalshi_updated_at timestamptz;

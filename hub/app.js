@@ -37,10 +37,20 @@ function marginLabel(w, from, to, limit = 60) {
 
 function outcomeTable(w, o) {
   if (!o || !o.ranges?.length) return "";
-  const rows = o.ranges.map((r) => `<tr><td>${marginLabel(w, r.from, r.to)}</td><td class="${cls(r.pnl)}">${usd(r.pnl)}</td><td>${(r.prob * 100).toFixed(1)}%</td></tr>`).join("");
+  const hasMkt = o.market != null;
+  const pct = (x) => (x * 100).toFixed(1) + "%";
+  const rows = o.ranges.map((r) => {
+    const diff = hasMkt ? r.prob - r.marketProb : null;
+    return `<tr><td>${marginLabel(w, r.from, r.to)}</td><td class="${cls(r.pnl)}">${usd(r.pnl)}</td><td>${pct(r.prob)}</td>${
+      hasMkt ? `<td>${pct(r.marketProb)}</td><td class="${cls(diff)}">${diff > 0 ? "+" : diff < 0 ? "−" : ""}${Math.abs(diff * 100).toFixed(1)}</td>` : ""
+    }</tr>`;
+  }).join("");
+  const head = `<tr><th>If the game ends</th><th>You win / lose</th><th>Chance (yours)</th>${hasMkt ? "<th>Chance (Kalshi)</th><th>Yours − Kalshi (pts)</th>" : ""}</tr>`;
+  const exp = `Expected by your number (${esc(w.away_team)} ${signed(o.center)}): <b class="${cls(o.expected)}">${usd(o.expected)}</b>` +
+    (hasMkt ? ` · by Kalshi's (${esc(w.away_team)} ${signed(o.market)}): <b class="${cls(o.marketExpected)}">${usd(o.marketExpected)}</b>` : "");
   return `<details open><summary>Win / loss by final margin</summary>
-    <div class="scroll"><table><tr><th>If the game ends</th><th>You win / lose</th><th>Chance (your number)</th></tr>${rows}</table></div>
-    <p class="muted" style="margin:4px 0 0">After fees, held to settlement. Expected by your number (${esc(w.away_team)} ${signed(o.center)}): <b class="${cls(o.expected)}">${usd(o.expected)}</b>.</p></details>`;
+    <div class="scroll"><table>${head}${rows}</table></div>
+    <p class="muted" style="margin:4px 0 0">After fees, held to settlement. ${exp}.${hasMkt ? " Kalshi's chances use the margin its whole ladder implies (fitted to the mid prices)." : ""}</p></details>`;
 }
 
 function trustRow(w, defTrust) {
