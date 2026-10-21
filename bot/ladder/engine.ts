@@ -9,7 +9,8 @@
 //   (buy YES on the pick's rungs, or sell YES on the opponent's rungs).
 //   "Anti-pick" = the reverse. Selling YES is the same as buying the other team.
 // - Prices are dollars per $1 contract; positions are net YES contracts
-//   (negative = short YES) with `cost` = dollars paid (negative = received).
+//   (negative = short YES) with `cost` = dollars paid (negative = received),
+//   fees included, so the loss cap covers fees too.
 
 import { kalshiFee } from "../fairPrice/kalshi";
 import { kalshiSpreadYesProb, type Side } from "../fairPrice/lines";
@@ -218,7 +219,7 @@ export function ladderOrders(
     const delta = o.action === "buy" ? o.count : -o.count;
     if (Math.abs(cur.yes + delta) > cfg.perRungCap) return false;
     const next = new Map(assumed);
-    next.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price });
+    next.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + kalshiFee(o.price, { count: o.count }) });
     const before = worstOf(assumed);
     const after = worstOf(next);
     // Risk-reducing orders are always fine; others must stay within the loss cap.
@@ -232,7 +233,7 @@ export function ladderOrders(
     }
     const cur = assumed.get(o.ticker) ?? { ticker: o.ticker, yes: 0, cost: 0 };
     const delta = o.action === "buy" ? o.count : -o.count;
-    assumed.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price });
+    assumed.set(o.ticker, { ticker: o.ticker, yes: cur.yes + delta, cost: cur.cost + delta * o.price + kalshiFee(o.price, { count: o.count }) });
   };
 
   // Spend the loss budget on the middle of the ladder first: near 50¢ is where

@@ -80,7 +80,8 @@ async function positionsFor(gameId: string): Promise<{ positions: Position[]; fe
   for (const f of fills) {
     const p = m.get(f.ticker) ?? { ticker: f.ticker, yes: 0, cost: 0 };
     const d = f.action === "buy" ? f.count : -f.count;
-    m.set(f.ticker, { ticker: f.ticker, yes: p.yes + d, cost: p.cost + d * Number(f.price) });
+    // Fees go into cost so worst-case exposure (and the loss cap) includes them.
+    m.set(f.ticker, { ticker: f.ticker, yes: p.yes + d, cost: p.cost + d * Number(f.price) + Number(f.fee) });
     fees += Number(f.fee);
   }
   return { positions: [...m.values()], fees };
@@ -275,7 +276,8 @@ export async function runCycle(): Promise<CycleTotals> {
         profitTarget: num(w.profit_target),
         tick: 0.01,
       };
-      const { orders } = ladderOrders(rungs, positions, pmf, cfg, { realizedPnl: -fees });
+      const { orders } = ladderOrders(rungs, positions, pmf, cfg); // fees are already in positions' cost
+      void fees;
       const plan = diffOrders(resting, orders, 0.01);
       if (plan.cancel.length) {
         await db.update("bot_orders", `id=in.(${plan.cancel.map((c) => c.id).join(",")})`, { status: "cancelled", closed_at: iso() });
