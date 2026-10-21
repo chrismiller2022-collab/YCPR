@@ -83,8 +83,28 @@ import {
   toWinTotalRows,
   topG6,
   useWeekPairChange,
+  type ImageDumpTeamRow,
 } from "../lib/imageDump";
 import { exportNodeAsPngBlob } from "../lib/exportPng";
+import { fetchLatestSavedResumeRanks } from "../lib/api/resumeWeights";
+import {
+  build12FromResumeSoFar,
+  build12FromMonteCarlo,
+  soFarToRanking,
+  computeAdvanceOdds,
+  build24FbsProjected,
+  build24FbsSoFar,
+  build24FcsProjected,
+  build24FcsSoFar,
+} from "../lib/playoffGraphics";
+import TwelveTeamListGraphic from "../components/graphics/TwelveTeamListGraphic";
+import TwelveTeamBracketGraphic from "../components/graphics/TwelveTeamBracketGraphic";
+import AdvanceOddsGraphic from "../components/graphics/AdvanceOddsGraphic";
+import TwentyFourTeamBracketGraphic from "../components/graphics/TwentyFourTeamBracketGraphic";
+import ProgressionGraphic from "../components/ProgressionGraphic";
+import { useProgressionSeries, type ProgressionMetric } from "../lib/progressionSeries";
+import PollComparisonGraphic from "../components/PollComparisonGraphic";
+import { usePollComparison } from "../lib/usePollComparison";
 import { fetchReportOverlay, computeProjectedWins, savedChangeBetween, savedChangeSinceStart, type ReportOverlay } from "../lib/reportOverlays";
 import { publishWeeklyReportPdf } from "../lib/api/weeklyReports";
 
@@ -152,6 +172,8 @@ interface DumpTarget {
    * dumpDivision above. Cross-divisional matchups are tagged FBS (per
    * Chris) despite covering both divisions' teams. */
   division: "FBS" | "FCS";
+  /** Conference previews only: index into that division's conferences. */
+  confIdx?: number;
   /** false for every CompactPowerRatingsGraphic target — those bake in
    * their own header/footer branding, so the generic branding bar
    * exportPng.ts adds by default would double it up. Omitted (defaults to
@@ -254,6 +276,20 @@ const CAPTURE_TIMEOUT_MS = 45000;
 // instance of "the measured size is nonsense" into a loud, specific
 // skip instead of a silently-broken multi-megabyte image.
 const MAX_CAPTURE_DIMENSION = 6000;
+
+function targetGroupLabel(t: DumpTarget): string {
+  if (t.isConferencePreview) return "Conference Previews";
+  const k = t.key;
+  if (k.includes("progression")) return "Progression";
+  if (k.includes("poll")) return "Polls";
+  if (k.includes("bracket") || k.includes("advance") || k.includes("playoff") || k.includes("12-team") || k.includes("24-team")) return "Brackets";
+  if (k.includes("power-ratings")) return "Power Ratings";
+  if (k.includes("resume")) return "Resume";
+  if (k.includes("sos")) return "Strength of Schedule";
+  if (k.includes("win-totals")) return "Win Totals";
+  if (k.includes("matchups") || k.includes("fbs-vs-fcs")) return "Matchups";
+  return "Other";
+}
 
 export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => void }) {
   const [weeks, setWeeks] = useState<string[]>([]);
@@ -812,7 +848,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsLosers = metricGainersLosers(fcsRows, (r) => r.rank, ratingChangeByTeam, "losers", false, TOP_N);
 
   // --- Résumé so far (team_resume_ratings_finished): FBS, ranked by score, and its change from the week before ---
-  const [soFar, setSoFar] = useState<{ now: Record<string, number>; prev: Record<string, number> } | null>(null);
+  const [soFar, setSoFar] = useState<{ now: Record<string, number>; prev: Record<string, number>; first: Record<string, number>; firstWeek: number | null } | null>(null);
   useEffect(() => {
     if (scheduleWeekNum == null) {
       setSoFar(null);
@@ -820,8 +856,17 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     }
     let cancelled = false;
     const pick = (m: Record<string, { score: number | null }>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v.score != null).map(([t, v]) => [t, v.score as number]));
-    Promise.all([fetchFinishedResumeForWeek(season, scheduleWeekNum), scheduleWeekNum > 1 ? fetchFinishedResumeForWeek(season, scheduleWeekNum - 1) : Promise.resolve({})])
-      .then(([now, prev]) => !cancelled && setSoFar({ now: pick(now), prev: pick(prev as any) }))
+    // Earliest saved So Far week (week 1, else week 2) for "since week 1".
+    const firstSaved = async (): Promise<{ week: number | null; scores: Record<string, number> }> => {
+      for (const wk of [1, 2]) {
+        if (wk >= scheduleWeekNum - 1) break;
+        const scores = pick(await fetchFinishedResumeForWeek(season, wk));
+        if (Object.keys(scores).length > 0) return { week: wk, scores };
+      }
+      return { week: null, scores: {} };
+    };
+    Promise.all([fetchFinishedResumeForWeek(season, scheduleWeekNum), scheduleWeekNum > 1 ? fetchFinishedResumeForWeek(season, scheduleWeekNum - 1) : Promise.resolve({}), firstSaved()])
+      .then(([now, prev, first]) => !cancelled && setSoFar({ now: pick(now), prev: pick(prev as any), first: first.scores, firstWeek: first.week }))
       .catch(() => !cancelled && setSoFar(null));
     return () => {
       cancelled = true;
@@ -839,6 +884,15 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const soFarMoves = useMemo(() => {
     if (!soFar || Object.keys(soFar.prev).length === 0) return { gainers: [], losers: [] };
     const withChange = soFarFull.filter((r) => soFar.prev[r.team] != null).map((r) => ({ ...r, rating: r.rating - soFar.prev[r.team] }));
+    return {
+      gainers: [...withChange].sort((a, b) => b.rating - a.rating).slice(0, TOP_N),
+      losers: [...withChange].sort((a, b) => a.rating - b.rating).slice(0, TOP_N),
+    };
+  }, [soFar, soFarFull]);
+
+  const soFarSinceStart = useMemo(() => {
+    if (!soFar || Object.keys(soFar.first).length === 0) return { gainers: [], losers: [] };
+    const withChange = soFarFull.filter((r) => soFar.first[r.team] != null).map((r) => ({ ...r, rating: r.rating - soFar.first[r.team] }));
     return {
       gainers: [...withChange].sort((a, b) => b.rating - a.rating).slice(0, TOP_N),
       losers: [...withChange].sort((a, b) => a.rating - b.rating).slice(0, TOP_N),
@@ -935,6 +989,40 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsWinsLeft = toWinsLeftRows(fcsRows, TOP_N);
   const fcsLossesLeft = toLossesLeftRows(fcsRows, TOP_N);
 
+  // Win total movement — the same projection (banked wins + remaining
+  // win probabilities) rebuilt with last week's and the opening week's own
+  // saved ratings, so all three totals are computed the same way.
+  const winTotalWeeks = useMemo(() => Object.keys(seasonRatingsByWeek).map(Number).sort((a, b) => a - b), [seasonRatingsByWeek]);
+  const lastWeekWinTotals = useMemo(() => {
+    const wk = scheduleWeekNum != null ? scheduleWeekNum - 1 : null;
+    const ratings = wk != null ? seasonRatingsByWeek[wk] : undefined;
+    return wk != null && ratings && Object.keys(ratings).length > 0 ? computeProjectedWins(seasonGamesAll, ratings, wk - 1) : null;
+  }, [seasonGamesAll, seasonRatingsByWeek, scheduleWeekNum]);
+  const preseasonWinTotals = useMemo(() => {
+    const wk = winTotalWeeks[0];
+    const ratings = wk != null ? seasonRatingsByWeek[wk] : undefined;
+    return wk != null && ratings && Object.keys(ratings).length > 0 ? computeProjectedWins(seasonGamesAll, ratings, wk - 1) : null;
+  }, [seasonGamesAll, seasonRatingsByWeek, winTotalWeeks]);
+  const winTotalChange = (base: Record<string, { projTotal: number }> | null) => {
+    const out: Record<string, { change: number | null }> = {};
+    if (!base) return out;
+    for (const [team, cur] of Object.entries(projectedWinsByTeam)) {
+      const prev = base[team];
+      if (prev) out[team] = { change: cur.projTotal - prev.projTotal };
+    }
+    return out;
+  };
+  const winTotalWeekly = winTotalChange(lastWeekWinTotals);
+  const winTotalSincePreseason = winTotalChange(preseasonWinTotals);
+  const winMoves = (rows: ImageDumpTeamRow[], change: Record<string, { change: number | null }>) => ({
+    up: metricGainersLosers(rows, (r) => r.winTotalRank, change, "gainers", true, TOP_N),
+    down: metricGainersLosers(rows, (r) => r.winTotalRank, change, "losers", true, TOP_N),
+  });
+  const fbsWinWeekly = winMoves(fbsRows, winTotalWeekly);
+  const fcsWinWeekly = winMoves(fcsRows, winTotalWeekly);
+  const fbsWinVsPreseason = winMoves(fbsRows, winTotalSincePreseason);
+  const fcsWinVsPreseason = winMoves(fcsRows, winTotalSincePreseason);
+
   const wLabel = weekLabel(currentWeek);
   const fbsEyebrow = `${wLabel.toUpperCase()} · FBS`;
   const fcsEyebrow = `${wLabel.toUpperCase()} · FCS`;
@@ -957,6 +1045,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const soFarFullRef = useRef<HTMLDivElement>(null);
   const soFarTopRef = useRef<HTMLDivElement>(null);
   const soFarMovesRef = useRef<HTMLDivElement>(null);
+  const soFarSinceStartRef = useRef<HTMLDivElement>(null);
   const resumeTopRef = useRef<HTMLDivElement>(null);
   const resumeGainersLosersRef = useRef<HTMLDivElement>(null);
   // SOS refs
@@ -974,6 +1063,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
   const fcsWinTotalFullRef = useRef<HTMLDivElement>(null);
   const fcsWinTotalTopRef = useRef<HTMLDivElement>(null);
   const fcsWinsLossesLeftRef = useRef<HTMLDivElement>(null);
+  const fbsWinWeeklyRef = useRef<HTMLDivElement>(null);
+  const fcsWinWeeklyRef = useRef<HTMLDivElement>(null);
+  const fbsWinVsPreseasonRef = useRef<HTMLDivElement>(null);
+  const fcsWinVsPreseasonRef = useRef<HTMLDivElement>(null);
   // Playoff Bracket refs — capture the existing BracketPage/FCSBracketPage
   // components wholesale, not a purpose-built graphic.
   const fbsBracketRef = useRef<HTMLDivElement>(null);
@@ -1044,6 +1137,79 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       .then((run) => setConfPreviewMc(run ? { results: run.results, numTrials: run.num_trials } : null))
       .catch(() => setConfPreviewMc(null));
   }, [season]);
+  // --- Playoff graphics: projected field (latest Monte Carlo run) and the
+  // "actual" field from Resume So Far, plus exact advance odds and the
+  // 24-team versions (see lib/playoffGraphics.ts for the bid rules).
+  const [savedResumeRanks, setSavedResumeRanks] = useState<Record<string, { rank: number; rating: number }> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLatestSavedResumeRanks(season)
+      .then((r) => !cancelled && setSavedResumeRanks(r?.byTeam ?? null))
+      .catch(() => !cancelled && setSavedResumeRanks(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+  const soFarRanking = useMemo(() => soFarToRanking(soFarFull), [soFarFull]);
+  const projected12 = useMemo(() => (confPreviewMc ? build12FromMonteCarlo(confPreviewMc.results, liveByTeam, soFarRanking) : []), [confPreviewMc, liveByTeam, soFarRanking]);
+  const actual12 = useMemo(() => (soFarFull.length >= 12 ? build12FromResumeSoFar(soFarFull, liveByTeam) : []), [soFarFull, liveByTeam]);
+  const actual12Odds = useMemo(() => (actual12.length === 12 ? computeAdvanceOdds(actual12, { liveByTeam }) : []), [actual12, liveByTeam]);
+  const projected12Odds = useMemo(() => (projected12.length === 12 ? computeAdvanceOdds(projected12, { liveByTeam }) : []), [projected12, liveByTeam]);
+  const fbs24Projected = useMemo(() => {
+    if (!confPreviewMc) return [];
+    const confOdds = Object.fromEntries(confPreviewMc.results.map((r) => [r.team, (r.confTitlePct ?? 0) / 100]));
+    return build24FbsProjected(confOdds, savedResumeRanks, liveByTeam);
+  }, [confPreviewMc, savedResumeRanks, liveByTeam]);
+  const fbs24SoFar = useMemo(() => (soFarFull.length >= 24 ? build24FbsSoFar(soFarFull, liveByTeam) : []), [soFarFull, liveByTeam]);
+  const fcs24Projected = useMemo(() => build24FcsProjected(liveByTeam), [liveByTeam]);
+  // Résumé So Far is only saved for FBS right now; this fills in once FCS rows exist.
+  const fcs24SoFar = useMemo(() => {
+    if (!soFar) return [];
+    const rows = Object.entries(soFar.now)
+      .filter(([t]) => TEAMS_BY_NAME[t]?.div === "FCS")
+      .map(([team, rating]) => ({ team, conf: TEAMS_BY_NAME[team]?.conf ?? "", rating }))
+      .sort((a, b) => b.rating - a.rating)
+      .map((r, i) => ({ ...r, rank: i + 1 }));
+    return rows.length >= 24 ? build24FcsSoFar(rows, liveByTeam) : [];
+  }, [soFar, liveByTeam]);
+  // --- Weekly progression (rating + ranking versions of each metric) ---
+  const { series: powerSeries } = useProgressionSeries(season, scheduleWeekNum, "power");
+  const { series: resumeSeries } = useProgressionSeries(season, scheduleWeekNum, "resume");
+  const { series: winTotalSeries } = useProgressionSeries(season, scheduleWeekNum, "winTotals");
+  const { series: bracketSeries } = useProgressionSeries(season, scheduleWeekNum, "bracket12");
+  const progressionItems: { metric: ProgressionMetric; slug: string; title: string; series: typeof powerSeries }[] = [
+    { metric: "power", slug: "power-ratings", title: "Power Ratings", series: powerSeries },
+    { metric: "resume", slug: "resume-so-far", title: "Résumé So Far", series: resumeSeries },
+    { metric: "winTotals", slug: "win-totals", title: "Win Totals", series: winTotalSeries },
+    { metric: "bracket12", slug: "12-team-bracket", title: "12-Team Bracket", series: bracketSeries },
+  ];
+  const progressionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // --- How did the AP poll / committee do? Ranked against both résumés,
+  // using the same lists this dump shows. ---
+  const pollSoFarRanks = useMemo(() => Object.fromEntries(soFarFull.map((r) => [r.team, r.rank])), [soFarFull]);
+  const pollProjectedRanks = useMemo(
+    () => Object.fromEntries(fbsRows.filter((r) => r.resumeRank != null).map((r) => [r.team, r.resumeRank as number])),
+    [fbsRows]
+  );
+  const pollCompare = usePollComparison(season, scheduleWeekNum, {
+    soFarRanks: soFarFull.length > 0 ? pollSoFarRanks : null,
+    projectedRanks: Object.keys(pollProjectedRanks).length > 0 ? pollProjectedRanks : null,
+  });
+  const pollHeader = pollCompare.pollKey === "cfp" ? "How Did the Committee Do?" : `How Did the ${pollCompare.pollKey === "coaches" ? "Coaches Poll" : "AP Poll"} Do?`;
+  const pollSoFarRef = useRef<HTMLDivElement>(null);
+  const pollProjectedRef = useRef<HTMLDivElement>(null);
+
+  const projected12ListRef = useRef<HTMLDivElement>(null);
+  const actual12LinesRef = useRef<HTMLDivElement>(null);
+  const actual12BracketRef = useRef<HTMLDivElement>(null);
+  const actual12OddsRef = useRef<HTMLDivElement>(null);
+  const projected12OddsRef = useRef<HTMLDivElement>(null);
+  const fbs24ProjectedRef = useRef<HTMLDivElement>(null);
+  const fbs24SoFarRef = useRef<HTMLDivElement>(null);
+  const fcs24ProjectedRef = useRef<HTMLDivElement>(null);
+  const fcs24SoFarRef = useRef<HTMLDivElement>(null);
+
   const [activeConferenceIdx, setActiveConferenceIdx] = useState<number | null>(null);
   const conferencePreviewRef = useRef<HTMLDivElement>(null);
 
@@ -1066,6 +1232,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         ]
       : []),
     ...(soFarMoves.gainers.length > 0 ? [{ key: "09d-fbs-resume-so-far-gainers-losers", node: () => soFarMovesRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(soFarSinceStart.gainers.length > 0 ? [{ key: "09e-fbs-resume-so-far-since-week1", node: () => soFarSinceStartRef.current, branding: false, division: "FBS" as const }] : []),
     { key: "10-fbs-resume-ratings-gainers-losers", node: () => resumeGainersLosersRef.current, branding: false, division: "FBS" },
     ...(resumeSinceLabel ? [{ key: "10b-fbs-resume-since-start", node: () => resumeSinceStartRef.current, branding: false, division: "FBS" as const }] : []),
     { key: "11-fbs-sos-full", node: () => sosFullRef.current, branding: false, division: "FBS" },
@@ -1080,8 +1247,45 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     { key: "17-fcs-win-totals-full", node: () => fcsWinTotalFullRef.current, branding: false, division: "FCS" },
     { key: "18-fcs-win-totals-top30", node: () => fcsWinTotalTopRef.current, branding: false, division: "FCS" },
     { key: "19-fcs-win-totals-wins-losses-left", node: () => fcsWinsLossesLeftRef.current, branding: false, division: "FCS" },
+    ...(fbsWinWeekly.up.length > 0
+      ? [
+          { key: "16b-fbs-win-totals-change-week", node: () => fbsWinWeeklyRef.current, branding: false, division: "FBS" as const },
+          { key: "19b-fcs-win-totals-change-week", node: () => fcsWinWeeklyRef.current, branding: false, division: "FCS" as const },
+        ]
+      : []),
+    ...(fbsWinVsPreseason.up.length > 0
+      ? [
+          { key: "16c-fbs-win-totals-vs-preseason", node: () => fbsWinVsPreseasonRef.current, branding: false, division: "FBS" as const },
+          { key: "19c-fcs-win-totals-vs-preseason", node: () => fcsWinVsPreseasonRef.current, branding: false, division: "FCS" as const },
+        ]
+      : []),
     { key: "20-fbs-playoff-bracket", node: () => fbsBracketRef.current, division: "FBS" },
     { key: "21-fcs-playoff-bracket", node: () => fcsBracketRef.current, division: "FCS" },
+    ...(projected12.length === 12 ? [{ key: "20b-fbs-12-team-projected-list", node: () => projected12ListRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(projected12Odds.length > 0 ? [{ key: "20c-fbs-12-team-projected-advance-odds", node: () => projected12OddsRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(actual12.length === 12
+      ? [
+          { key: "20d-fbs-12-team-so-far-seeding", node: () => actual12LinesRef.current, branding: false, division: "FBS" as const },
+          { key: "20e-fbs-12-team-so-far-bracket", node: () => actual12BracketRef.current, branding: false, division: "FBS" as const },
+          { key: "20f-fbs-12-team-so-far-advance-odds", node: () => actual12OddsRef.current, branding: false, division: "FBS" as const },
+        ]
+      : []),
+    ...(fbs24Projected.length > 0 ? [{ key: "20g-fbs-24-team-projected", node: () => fbs24ProjectedRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(fbs24SoFar.length > 0 ? [{ key: "20h-fbs-24-team-so-far", node: () => fbs24SoFarRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(fcs24Projected.length > 0 ? [{ key: "21b-fcs-24-team-projected", node: () => fcs24ProjectedRef.current, branding: false, division: "FCS" as const }] : []),
+    ...(fcs24SoFar.length > 0 ? [{ key: "21c-fcs-24-team-so-far", node: () => fcs24SoFarRef.current, branding: false, division: "FCS" as const }] : []),
+    ...(pollCompare.soFar && pollCompare.pollName ? [{ key: "21d-fbs-poll-vs-resume-so-far", node: () => pollSoFarRef.current, branding: false, division: "FBS" as const }] : []),
+    ...(pollCompare.projected && pollCompare.pollName ? [{ key: "21e-fbs-poll-vs-projected-resume", node: () => pollProjectedRef.current, branding: false, division: "FBS" as const }] : []),
+    ...progressionItems.flatMap((p) =>
+      p.series && p.series.weeks.length > 1
+        ? (["ranking", "rating"] as const).map((mode) => ({
+            key: `28-progression-${p.slug}-${mode}`,
+            node: () => progressionRefs.current[`${p.metric}-${mode}`] ?? null,
+            branding: false,
+            division: "FBS" as const,
+          }))
+        : []
+    ),
     // Review — last week's FBS-vs-FBS and FBS-vs-FCS (all days, completed
     // only), as two separate images; Week 1 reviews its own completed-so-far
     // games instead of a previous week (see reviewLabel above).
@@ -1137,6 +1341,7 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       node: () => null,
       division: c.div,
       isConferencePreview: true,
+      confIdx: conferences.filter((x) => x.div === c.div).indexOf(c),
     });
   });
 
@@ -1145,6 +1350,39 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     [targets, dumpDivision, includeConferencePreviews]
   );
   const divisionConferences = useMemo(() => conferences.filter((c) => c.div === dumpDivision), [conferences, dumpDivision]);
+
+  // Custom ZIP: any subset of this division's graphics (conference
+  // previews included), with named presets saved in this browser.
+  const allDivisionTargets = useMemo(() => targets.filter((t) => t.division === dumpDivision), [targets, dumpDivision]);
+  const [customKeys, setCustomKeys] = useState<Set<string>>(new Set());
+  const [customOpen, setCustomOpen] = useState(false);
+  const [presets, setPresets] = useState<Record<string, string[]>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("image_dump_presets") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  function savePresets(next: Record<string, string[]>) {
+    setPresets(next);
+    try {
+      localStorage.setItem("image_dump_presets", JSON.stringify(next));
+    } catch {
+      /* private mode: presets just won't persist */
+    }
+  }
+  const customGroups = useMemo(() => {
+    const groups: { label: string; targets: DumpTarget[] }[] = [];
+    for (const t of allDivisionTargets) {
+      const label = targetGroupLabel(t);
+      let g = groups.find((x) => x.label === label);
+      if (!g) groups.push((g = { label, targets: [] }));
+      g.targets.push(t);
+    }
+    return groups;
+  }, [allDivisionTargets]);
+  const customTargets = allDivisionTargets.filter((t) => customKeys.has(t.key));
+  const conferenceOnlyTargets = allDivisionTargets.filter((t) => t.isConferencePreview);
 
   const [oneKey, setOneKey] = useState("");
   const [oneBusy, setOneBusy] = useState(false);
@@ -1178,7 +1416,10 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
     }
   }
 
-  async function handleGenerateZip() {
+  // Full run = the division bundle, published as the Week Report. Custom /
+  // conference-only runs just download a ZIP and never publish.
+  async function handleGenerateZip(runTargets: DumpTarget[] = divisionTargets, runName?: string) {
+    const isFullRun = runName == null;
     setZipping(true);
     setZipError(null);
     setZipDone(null);
@@ -1193,11 +1434,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       // the ZIP with no explanation (this used to be a real gap: a
       // missing node just hit `continue` with no record at all).
       const skippedTargets: string[] = [];
-      const mainTargets = divisionTargets.filter((t) => !t.isConferencePreview);
+      const mainTargets = runTargets.filter((t) => !t.isConferencePreview);
       for (let i = 0; i < mainTargets.length; i++) {
         const target = mainTargets[i];
         const node = target.node();
-        setCaptureProgress({ current: i + 1, total: divisionTargets.length, label: target.key });
+        setCaptureProgress({ current: i + 1, total: runTargets.length, label: target.key });
         if (!node) {
           skippedTargets.push(`${target.key} (no node to capture)`);
           continue;
@@ -1245,11 +1486,11 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
       // here re-fetches per conference, only re-filters already-loaded
       // data. activeConferenceIdx indexes into divisionConferences, not
       // the full FBS+FCS conferences list — must match the render below.
-      const conferenceTargets = divisionTargets.filter((t) => t.isConferencePreview);
+      const conferenceTargets = runTargets.filter((t) => t.isConferencePreview);
       for (let i = 0; i < conferenceTargets.length; i++) {
         const target = conferenceTargets[i];
-        setCaptureProgress({ current: mainTargets.length + i + 1, total: divisionTargets.length, label: target.key });
-        flushSync(() => setActiveConferenceIdx(i));
+        setCaptureProgress({ current: mainTargets.length + i + 1, total: runTargets.length, label: target.key });
+        flushSync(() => setActiveConferenceIdx(target.confIdx ?? i));
         const node = conferencePreviewRef.current;
         if (!node) {
           skippedTargets.push(`${target.key} (no node to capture)`);
@@ -1304,14 +1545,14 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
         }
         const pdfBytes = await pdfDoc.save();
         pdfBlob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
-        zip.file("00-week-report.pdf", pdfBlob);
+        if (isFullRun) zip.file("00-week-report.pdf", pdfBlob);
       }
 
       const blob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `yc-power-ratings-${currentWeek ?? "week"}-${dumpDivision.toLowerCase()}.zip`;
+      link.download = `yc-power-ratings-${currentWeek ?? "week"}-${dumpDivision.toLowerCase()}${runName ? `-${runName}` : ""}.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1319,13 +1560,13 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
 
       setZipDone(
         skippedTargets.length > 0
-          ? `Downloaded ${divisionTargets.length - skippedTargets.length}/${divisionTargets.length} ${dumpDivision} images (${skippedTargets.length} skipped — see below).`
-          : `Downloaded ${divisionTargets.length} ${dumpDivision} images.`
+          ? `Downloaded ${runTargets.length - skippedTargets.length}/${runTargets.length} ${dumpDivision} images (${skippedTargets.length} skipped — see below).`
+          : `Downloaded ${runTargets.length} ${dumpDivision} images.`
       );
       if (skippedTargets.length > 0) {
         setZipError(`Skipped: ${skippedTargets.join(", ")}`);
       }
-      if (currentWeek) {
+      if (currentWeek && isFullRun) {
         if (pdfBlob) {
           try {
             const password = sessionStorage.getItem("admin_password") ?? "";
@@ -1439,9 +1680,130 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             Include Conference Previews ({divisionConferences.length} images — slowest part of the run, skip for a faster iteration)
           </label>
 
-          <button className="menu-btn" onClick={handleGenerateZip} disabled={zipping || loadingCurrent}>
+          <button className="menu-btn" onClick={() => handleGenerateZip()} disabled={zipping || loadingCurrent}>
             {zipping ? "Building ZIP…" : `Generate ${dumpDivision} ZIP (${divisionTargets.length} images)`}
           </button>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", margin: "0.6rem 0" }}>
+            <button className="menu-btn" onClick={() => setCustomOpen((v) => !v)} disabled={zipping}>
+              {customOpen ? "Hide custom ZIP" : "Custom ZIP…"}
+            </button>
+            <button
+              className="menu-btn"
+              onClick={() => handleGenerateZip(conferenceOnlyTargets, "conference-previews")}
+              disabled={zipping || loadingCurrent || conferenceOnlyTargets.length === 0}
+            >
+              Conference previews only ZIP ({conferenceOnlyTargets.length})
+            </button>
+          </div>
+          {customOpen && (
+            <div className="admin-panel" style={{ margin: "0.4rem 0 0.8rem", maxWidth: 900 }}>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.6rem" }}>
+                <button className="menu-btn" onClick={() => setCustomKeys(new Set(allDivisionTargets.map((t) => t.key)))} disabled={zipping}>
+                  Select all
+                </button>
+                <button className="menu-btn" onClick={() => setCustomKeys(new Set())} disabled={zipping}>
+                  Select none
+                </button>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const keys = presets[e.target.value];
+                    if (keys) setCustomKeys(new Set(keys));
+                  }}
+                  disabled={zipping || Object.keys(presets).length === 0}
+                >
+                  <option value="">Load preset…</option>
+                  {Object.keys(presets).map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="menu-btn"
+                  disabled={zipping || customKeys.size === 0}
+                  onClick={() => {
+                    const name = window.prompt("Preset name (e.g. Tuesday pack)")?.trim();
+                    if (name) savePresets({ ...presets, [name]: Array.from(customKeys) });
+                  }}
+                >
+                  Save as preset
+                </button>
+                {Object.keys(presets).length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      const next = { ...presets };
+                      delete next[e.target.value];
+                      savePresets(next);
+                    }}
+                    disabled={zipping}
+                  >
+                    <option value="">Delete preset…</option>
+                    {Object.keys(presets).map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "0.8rem" }}>
+                {customGroups.map((g) => {
+                  const allOn = g.targets.every((t) => customKeys.has(t.key));
+                  return (
+                    <div key={g.label}>
+                      <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontWeight: 700, fontSize: "0.85rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={allOn}
+                          onChange={() =>
+                            setCustomKeys((prev) => {
+                              const next = new Set(prev);
+                              for (const t of g.targets) (allOn ? next.delete(t.key) : next.add(t.key));
+                              return next;
+                            })
+                          }
+                          disabled={zipping}
+                        />
+                        {g.label}
+                      </label>
+                      {g.targets.map((t) => (
+                        <label key={t.key} style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.78rem", color: "var(--chalk-dim)", marginLeft: "1.2rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={customKeys.has(t.key)}
+                            onChange={() =>
+                              setCustomKeys((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(t.key)) next.delete(t.key);
+                                else next.add(t.key);
+                                return next;
+                              })
+                            }
+                            disabled={zipping}
+                          />
+                          {t.key}
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                className="menu-btn"
+                style={{ marginTop: "0.7rem" }}
+                onClick={() => handleGenerateZip(customTargets, "custom")}
+                disabled={zipping || loadingCurrent || customTargets.length === 0}
+              >
+                Generate custom ZIP ({customTargets.length} images)
+              </button>
+              <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.4rem 0 0" }}>
+                Custom and conference-only ZIPs download only; they don't publish the Week Report.
+              </p>
+            </div>
+          )}
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", margin: "0.6rem 0" }}>
             <span style={{ fontSize: "0.82rem", color: "var(--chalk-dim)" }}>Or just one:</span>
             <select value={oneKey} onChange={(e) => setOneKey(e.target.value)} disabled={oneBusy || zipping}>
@@ -1571,6 +1933,23 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
                 sideBySide
               />
             </div>
+            {soFarSinceStart.gainers.length > 0 && (
+              <div ref={soFarSinceStartRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fbsEyebrow}
+                  // A saved So Far week N is the résumé going into week N.
+                  header={`Résumé So Far — Change Since Week ${(soFar?.firstWeek ?? 2) - 1}`}
+                  sections={[
+                    { title: "Top 30 Gainers", rows: soFarSinceStart.gainers },
+                    { title: "Top 30 Losers", rows: soFarSinceStart.losers },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="CHANGE"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
             <div ref={resumeGainersLosersRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic
                 eyebrow={fbsEyebrow}
@@ -1689,6 +2068,39 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               />
             </div>
 
+            {fbsWinWeekly.up.length > 0 && (
+              <div ref={fbsWinWeeklyRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fbsEyebrow}
+                  header="Win Totals — Change Since Last Week"
+                  sections={[
+                    { title: "Top 30 Risers", rows: fbsWinWeekly.up },
+                    { title: "Top 30 Fallers", rows: fbsWinWeekly.down },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="WINS"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
+            {fbsWinVsPreseason.up.length > 0 && (
+              <div ref={fbsWinVsPreseasonRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fbsEyebrow}
+                  header="Win Totals — vs Preseason Projection"
+                  sections={[
+                    { title: "Overachievers", rows: fbsWinVsPreseason.up },
+                    { title: "Underachievers", rows: fbsWinVsPreseason.down },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="WINS"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
+
             {/* Win Totals — FCS */}
             <div ref={fcsWinTotalFullRef} style={CAPTURE_WRAP_STYLE}>
               <CompactPowerRatingsGraphic eyebrow={fcsEyebrow} header="Win Totals — Full List" sections={[{ title: "", rows: fcsWinTotalFull }]} valueLabel="WINS" higherIsBetter colorScale="percentile" signed={false} />
@@ -1711,6 +2123,39 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
               />
             </div>
 
+            {fcsWinWeekly.up.length > 0 && (
+              <div ref={fcsWinWeeklyRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fcsEyebrow}
+                  header="Win Totals — Change Since Last Week"
+                  sections={[
+                    { title: "Top 30 Risers", rows: fcsWinWeekly.up },
+                    { title: "Top 30 Fallers", rows: fcsWinWeekly.down },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="WINS"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
+            {fcsWinVsPreseason.up.length > 0 && (
+              <div ref={fcsWinVsPreseasonRef} style={CAPTURE_WRAP_STYLE}>
+                <CompactPowerRatingsGraphic
+                  eyebrow={fcsEyebrow}
+                  header="Win Totals — vs Preseason Projection"
+                  sections={[
+                    { title: "Overachievers", rows: fcsWinVsPreseason.up },
+                    { title: "Underachievers", rows: fcsWinVsPreseason.down },
+                  ]}
+                  targetRowsPerColumn={TOP_N}
+                  valueLabel="WINS"
+                  higherIsBetter
+                  sideBySide
+                />
+              </div>
+            )}
+
             {/* Playoff Brackets — the existing site pages, captured as-is.
                 No-op nav callbacks: this render is never interacted with,
                 only captured. */}
@@ -1720,6 +2165,86 @@ export default function WeeklyImageDumpAdminPanel({ onBack }: { onBack: () => vo
             <div ref={fcsBracketRef} style={CAPTURE_WRAP_STYLE}>
               <FCSBracketPage onNavigateTeam={() => {}} onNavigateConference={() => {}} onHome={() => {}} />
             </div>
+
+            {projected12.length === 12 && (
+              <div ref={projected12ListRef} style={CAPTURE_WRAP_STYLE}>
+                <TwelveTeamListGraphic eyebrow={fbsEyebrow} header="Projected 12-Team Playoff" subtitle="Latest Monte Carlo run" field={projected12} variant="logos" />
+              </div>
+            )}
+            {projected12Odds.length > 0 && (
+              <div ref={projected12OddsRef} style={CAPTURE_WRAP_STYLE}>
+                <AdvanceOddsGraphic eyebrow={fbsEyebrow} header="Projected Playoff — Advance Odds" rows={projected12Odds} />
+              </div>
+            )}
+            {actual12.length === 12 && (
+              <>
+                <div ref={actual12LinesRef} style={CAPTURE_WRAP_STYLE}>
+                  <TwelveTeamListGraphic eyebrow={fbsEyebrow} header="From Résumé So Far to Seeds" field={actual12} variant="lines" ranking={soFarRanking} rankingTitle="RÉSUMÉ SO FAR" />
+                </div>
+                <div ref={actual12BracketRef} style={CAPTURE_WRAP_STYLE}>
+                  <TwelveTeamBracketGraphic eyebrow={fbsEyebrow} header="If the Season Ended Today" subtitle="12-team bracket from Résumé So Far" field={actual12} liveByTeam={liveByTeam} />
+                </div>
+                <div ref={actual12OddsRef} style={CAPTURE_WRAP_STYLE}>
+                  <AdvanceOddsGraphic eyebrow={fbsEyebrow} header="If the Season Ended Today — Advance Odds" rows={actual12Odds} />
+                </div>
+              </>
+            )}
+            {fbs24Projected.length > 0 && (
+              <div ref={fbs24ProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fbsEyebrow} header="Projected 24-Team Playoff" field={fbs24Projected} style={{ division: "FBS", basis: "projected" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fbs24SoFar.length > 0 && (
+              <div ref={fbs24SoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fbsEyebrow} header="24-Team Playoff — Résumé So Far" field={fbs24SoFar} style={{ division: "FBS", basis: "soFar" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fcs24Projected.length > 0 && (
+              <div ref={fcs24ProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fcsEyebrow} header="Projected 24-Team FCS Playoff" field={fcs24Projected} style={{ division: "FCS", basis: "projected" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+            {fcs24SoFar.length > 0 && (
+              <div ref={fcs24SoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <TwentyFourTeamBracketGraphic eyebrow={fcsEyebrow} header="FCS 24-Team Playoff — Résumé So Far" field={fcs24SoFar} style={{ division: "FCS", basis: "soFar" }} liveByTeam={liveByTeam} />
+              </div>
+            )}
+
+            {pollCompare.soFar && pollCompare.pollName && (
+              <div ref={pollSoFarRef} style={CAPTURE_WRAP_STYLE}>
+                <PollComparisonGraphic
+                  pollName={pollCompare.pollName}
+                  compareLabel="Resume So Far"
+                  rows={pollCompare.soFar.rows}
+                  stats={{ overlap: pollCompare.soFar.overlap, spearman: pollCompare.soFar.spearman }}
+                  eyebrow={fbsEyebrow}
+                  header={pollHeader}
+                />
+              </div>
+            )}
+            {pollCompare.projected && pollCompare.pollName && (
+              <div ref={pollProjectedRef} style={CAPTURE_WRAP_STYLE}>
+                <PollComparisonGraphic
+                  pollName={pollCompare.pollName}
+                  compareLabel="Projected Resume"
+                  rows={pollCompare.projected.rows}
+                  stats={{ overlap: pollCompare.projected.overlap, spearman: pollCompare.projected.spearman }}
+                  eyebrow={fbsEyebrow}
+                  header={pollHeader}
+                />
+              </div>
+            )}
+            {progressionItems.map((p) =>
+              p.series && p.series.weeks.length > 1
+                ? (["ranking", "rating"] as const).map((mode) => (
+                    <div key={`${p.metric}-${mode}`} ref={(el) => {
+                      progressionRefs.current[`${p.metric}-${mode}`] = el;
+                    }} style={CAPTURE_WRAP_STYLE}>
+                      <ProgressionGraphic metric={p.metric} mode={mode} topN={12} series={p.series!} eyebrow={fbsEyebrow} header={`${p.title} — Weekly Progression`} />
+                    </div>
+                  ))
+                : null
+            )}
 
             {/* Matchups — MatchupGridGraphic (multi-column card grid),
                 not MatchupSlateGraphic (tall single-column list, still

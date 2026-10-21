@@ -49,6 +49,9 @@ const P4 = new Set(["SEC", "Big Ten", "Big 12", "ACC"]);
 const W = 920;
 const H = 620;
 const PAD = { l: 64, r: 24, t: 20, b: 52 };
+// Concrete colors (not CSS variables) so the PNG export, which doesn't
+// carry the page's custom properties, looks exactly like the page.
+const VIZ = { plot: "#f7f8fb", grid: "#e1e3ec", median: "#5b5f82", label: "#5b5f82", ink: "#16172e" };
 const LOGO = 26;
 
 function fmt(m: Metric, v: number | null): string {
@@ -216,31 +219,32 @@ export default function VizBuilderPanel() {
         </p>
       )}
 
-      <div ref={exportRef} className="admin-panel" style={{ position: "relative", padding: 8, overflowX: "auto" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: "block" }} role="img" aria-label={`${ym.label} vs ${xm.label}`}>
-          <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill="var(--a-inset, transparent)" />
+      <div style={{ overflowX: "auto" }}>
+      <div ref={exportRef} className="admin-panel export-light" style={{ position: "relative", padding: 8, width: W + 16, boxSizing: "border-box", background: "#ffffff" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: "block" }} role="img" aria-label={`${ym.label} vs ${xm.label}`}>
+          <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill={VIZ.plot} />
           {niceTicks(x0, x1).map((v) => (
             <g key={`x${v}`}>
-              <line x1={sx(v)} x2={sx(v)} y1={PAD.t} y2={H - PAD.b} stroke="var(--hash)" strokeWidth={1} />
-              <text x={sx(v)} y={H - PAD.b + 16} textAnchor="middle" fontSize={11} fill="var(--chalk-dim)">
+              <line x1={sx(v)} x2={sx(v)} y1={PAD.t} y2={H - PAD.b} stroke={VIZ.grid} strokeWidth={1} />
+              <text x={sx(v)} y={H - PAD.b + 16} textAnchor="middle" fontSize={11} fill={VIZ.label}>
                 {fmt(xm, v)}
               </text>
             </g>
           ))}
           {niceTicks(y0, y1).map((v) => (
             <g key={`y${v}`}>
-              <line x1={PAD.l} x2={W - PAD.r} y1={sy(v)} y2={sy(v)} stroke="var(--hash)" strokeWidth={1} />
-              <text x={PAD.l - 8} y={sy(v) + 4} textAnchor="end" fontSize={11} fill="var(--chalk-dim)">
+              <line x1={PAD.l} x2={W - PAD.r} y1={sy(v)} y2={sy(v)} stroke={VIZ.grid} strokeWidth={1} />
+              <text x={PAD.l - 8} y={sy(v) + 4} textAnchor="end" fontSize={11} fill={VIZ.label}>
                 {fmt(ym, v)}
               </text>
             </g>
           ))}
-          {mx != null && <line x1={sx(mx)} x2={sx(mx)} y1={PAD.t} y2={H - PAD.b} stroke="var(--chalk-dim)" strokeDasharray="4 4" strokeWidth={1} />}
-          {my != null && <line x1={PAD.l} x2={W - PAD.r} y1={sy(my)} y2={sy(my)} stroke="var(--chalk-dim)" strokeDasharray="4 4" strokeWidth={1} />}
-          <text x={(PAD.l + W - PAD.r) / 2} y={H - 10} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--chalk)">
+          {mx != null && <line x1={sx(mx)} x2={sx(mx)} y1={PAD.t} y2={H - PAD.b} stroke={VIZ.median} strokeDasharray="4 4" strokeWidth={1} />}
+          {my != null && <line x1={PAD.l} x2={W - PAD.r} y1={sy(my)} y2={sy(my)} stroke={VIZ.median} strokeDasharray="4 4" strokeWidth={1} />}
+          <text x={(PAD.l + W - PAD.r) / 2} y={H - 10} textAnchor="middle" fontSize={12} fontWeight={600} fill={VIZ.ink}>
             {xm.label}
           </text>
-          <text transform={`translate(16 ${(PAD.t + H - PAD.b) / 2}) rotate(-90)`} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--chalk)">
+          <text transform={`translate(16 ${(PAD.t + H - PAD.b) / 2}) rotate(-90)`} textAnchor="middle" fontSize={12} fontWeight={600} fill={VIZ.ink}>
             {ym.label}
           </text>
           {shown.map((p) => {
@@ -252,7 +256,7 @@ export default function VizBuilderPanel() {
                 {logo ? (
                   <image href={logo} x={cx - LOGO / 2} y={cy - LOGO / 2} width={LOGO} height={LOGO} crossOrigin="anonymous" />
                 ) : (
-                  <circle cx={cx} cy={cy} r={5} fill="var(--chalk-dim)" />
+                  <circle cx={cx} cy={cy} r={5} fill={VIZ.median} />
                 )}
                 <title>{p.team}</title>
               </g>
@@ -270,6 +274,7 @@ export default function VizBuilderPanel() {
             </div>
           </div>
         )}
+      </div>
       </div>
       <p className="admin-muted" style={{ fontSize: "0.8rem" }}>
         {shown.length} teams shown. Teams missing either metric are left out.

@@ -15,7 +15,8 @@
    --c-* tokens (good/bad/warning/info status colors).
    ===================================================================== */
 
-.admin-shell {
+.admin-shell,
+.export-light {
   --a-hover-overlay: rgba(31, 32, 65, 0.045);
   /* surfaces + ink */
   --a-bg: #f4f5f9;
@@ -499,3 +500,6 @@ button.admin-nav-label { cursor: pointer; margin: 0; padding: 0 8px 3px; }
 .sb-wx { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4em; font-size: 0.8em; border-top: 1px solid var(--hash); padding-top: 0.35em; }
 .sb-wx-flag { font-size: 0.85em; font-weight: 700; color: var(--c-warn); text-transform: capitalize; }
 .sb-wx-full { display: flex; flex-direction: column; gap: 0.55rem; font-size: 0.85rem; }
+
+/* Viz Builder graphics stay light even in the dark admin theme. */
+.export-light { background: #ffffff; color: var(--chalk); }
