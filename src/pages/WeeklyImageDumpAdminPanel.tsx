@@ -280,13 +280,13 @@ const MAX_CAPTURE_DIMENSION = 6000;
 function targetGroupLabel(t: DumpTarget): string {
   if (t.isConferencePreview) return "Conference Previews";
   const k = t.key;
+  if (k.includes("progression")) return "Progression";
+  if (k.includes("poll")) return "Polls";
+  if (k.includes("bracket") || k.includes("advance") || k.includes("playoff") || k.includes("12-team") || k.includes("24-team")) return "Brackets";
   if (k.includes("power-ratings")) return "Power Ratings";
   if (k.includes("resume")) return "Resume";
   if (k.includes("sos")) return "Strength of Schedule";
   if (k.includes("win-totals")) return "Win Totals";
-  if (k.includes("bracket") || k.includes("advance") || k.includes("playoff")) return "Brackets";
-  if (k.includes("progression")) return "Progression";
-  if (k.includes("poll")) return "Polls";
   if (k.includes("matchups") || k.includes("fbs-vs-fcs")) return "Matchups";
   return "Other";
 }
