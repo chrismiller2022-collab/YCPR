@@ -129,10 +129,18 @@ export function prophetxAdapter(): VenueAdapter {
   const keysOf = (x: unknown) => (x && typeof x === "object" ? Object.keys(x as object).slice(0, 30) : typeof x);
   const ladders: unknown[] = [];
 
+  // The paper cycle and the recorder start together, so back off and retry on 429/5xx.
   async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(BASE + path, { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers ?? {}) } });
-    if (!res.ok) throw new Error(`ProphetX ${res.status} on ${path.split("?")[0]}`);
-    return (await res.json()) as T;
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(BASE + path, { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers ?? {}) } });
+      if (res.ok) return (await res.json()) as T;
+      if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+        const retry = Number(res.headers.get("retry-after"));
+        await new Promise((r) => setTimeout(r, retry > 0 ? retry * 1000 : 1000 * 2 ** attempt + Math.random() * 500));
+        continue;
+      }
+      throw new Error(`ProphetX ${res.status} on ${path.split("?")[0]}`);
+    }
   }
 
   return {
