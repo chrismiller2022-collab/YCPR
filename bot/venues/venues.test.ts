@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { impliedHomeMargin, ladderOrders, DEFAULT_LADDER_CONFIG, exposureSummary, pnlByMargin } from "../ladder/engine";
 import { marginPmf } from "../fairPrice/marginDistribution";
 import { codeScore, novigRungs, novigTeams, resolveFirstIsHome, type NovigBook, type NovigMarket } from "./novig";
-import { bestPerOutcome, oddsToProb, prophetxRungs } from "./prophetx";
+import { bestPerOutcome, isGameSpread, oddsToProb, prophetxRungs } from "./prophetx";
 
 // Real Novig snapshot (2026-10-21): Miami (OH) @ Central Michigan, 28 spread markets with books.
 const fx = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/novig-cmu.json", import.meta.url)), "utf8")) as {
@@ -78,6 +78,25 @@ describe("ProphetX parsing", () => {
     expect(rungs[0]).toMatchObject({ ticker: "PX:s1", side: "home", strike: 3.5 });
     expect(rungs[0].ask).toBeCloseTo(0.524, 3);
     expect(rungs[0].bid).toBeCloseTo(1 - 0.512, 3);
+  });
+});
+
+describe("ProphetX v4 market_strikes", () => {
+  it("reads each line from market_strikes and ignores half/quarter spreads", () => {
+    const line = (strike: number, a: number, b: number, id: string) => ({
+      id: id, strike, status: "active",
+      selections: [[{ competitor_id: 11, strike, price: a, strike_id: id }], [{ competitor_id: 22, strike: -strike, price: b }]],
+    });
+    const markets = [
+      { id: 1, type: "spread", name: "Spread", status: "active", market_strikes: [line(-3.5, -110, -110, "a"), line(-7.5, 150, -180, "b"), line(-7, 140, -170, "w")] },
+      { id: 2, type: "spread", name: "1st Half Spread", status: "active", market_strikes: [line(-1.5, -110, -110, "h")] },
+      { id: 3, type: "moneyline", name: "Moneyline", status: "active", selections: [] },
+    ];
+    const rungs = prophetxRungs(markets, "11", "22");
+    expect(rungs.map((r) => r.ticker).sort()).toEqual(["PX:a", "PX:b"]); // whole line "w" and the half skipped
+    expect(rungs.find((r) => r.ticker === "PX:b")).toMatchObject({ side: "home", strike: 7.5 });
+    expect(isGameSpread({ id: 9, type: "spread", name: "Q1 Spread" })).toBe(false);
+    expect(isGameSpread({ id: 9, type: "spread", name: "Spread", category_name: "Game Lines" })).toBe(true);
   });
 });
 
