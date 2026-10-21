@@ -126,19 +126,36 @@ async function settle(w: Watch) {
   }
 }
 
-async function main() {
+export interface CycleTotals {
+  games: number;
+  placed: number;
+  cancelled: number;
+  fills: number;
+  skipped: number;
+  noEdge: number;
+  overlapped?: boolean;
+}
+
+/**
+ * One cycle. Triggered by ycpr-bot's /api/cycle (external scheduler) and
+ * GitHub Actions as a backup, so it skips if another cycle started in the
+ * last 4 minutes and hasn't finished (two cycles at once would double-place).
+ */
+export async function runCycle(): Promise<CycleTotals> {
+  const totals: CycleTotals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0 };
+  const recent = await db.select<{ id: number }>("bot_runs", `select=id&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
+  if (recent.length) return { ...totals, overlapped: true };
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
-  const totals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0 };
   try {
     const [state] = await db.select<{ mode: string; kill_switch: boolean }>("bot_state", "select=mode,kill_switch&id=eq.1");
     if (state?.kill_switch) {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
-      return;
+      return totals;
     }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
-      return;
+      return totals;
     }
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
@@ -203,8 +220,22 @@ async function main() {
 
       // 3. Fair price: Kalshi-implied + sportsbooks + our number (fading toward kickoff).
       const hours = kickoff != null ? (kickoff - now()) / 3600 : 72;
-      const center = blendedHomeMargin({ ycpr: Number(w.my_home_margin), kalshi: impliedHomeMargin(rungs), book: await bookHomeMargin(w.game_id), hoursToKickoff: hours });
+      const kalshiCenter = impliedHomeMargin(rungs);
+      const center = blendedHomeMargin({ ycpr: Number(w.my_home_margin), kalshi: kalshiCenter, book: await bookHomeMargin(w.game_id), hoursToKickoff: hours });
       if (center == null) continue;
+      // If our blended number doesn't favor the pick versus the market, there's no edge to lean on:
+      // don't add exposure (a likely data-entry error, e.g. a sign flip).
+      const market = kalshiCenter ?? center;
+      const favorsPick = w.pick === "home" ? center > market : center < market;
+      if (!favorsPick) {
+        totals.noEdge++;
+        const stale = resting.filter((r) => r.kind === "quote");
+        if (stale.length) {
+          await db.update("bot_orders", `id=in.(${stale.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
+          totals.cancelled += stale.length;
+        }
+        continue;
+      }
       const pmf = marginPmf(center);
       await snapshot(w.game_id, rungs, (r) => kalshiSpreadYesProb(pmf, r.side, r.strike));
 
@@ -223,7 +254,7 @@ async function main() {
         tick: 0.01,
       };
       const { orders } = ladderOrders(rungs, positions, pmf, cfg, { realizedPnl: -fees });
-      const plan = diffOrders(resting, orders);
+      const plan = diffOrders(resting, orders, 0.01);
       if (plan.cancel.length) {
         await db.update("bot_orders", `id=in.(${plan.cancel.map((c) => c.id).join(",")})`, { status: "cancelled", closed_at: iso() });
         totals.cancelled += plan.cancel.length;
@@ -253,11 +284,12 @@ async function main() {
     await db.update("bot_runs", `id=eq.${run.id}`, {
       finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: totals,
     }).catch(() => {});
-    console.log(`games ${totals.games}, skipped ${totals.skipped}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}`);
+    console.log(`games ${totals.games}, skipped ${totals.skipped}, no-edge ${totals.noEdge}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}`);
   }
+  return totals;
 }
 
-if (process.argv[1]?.endsWith("paper.ts")) main().catch((err) => {
+if (process.argv[1]?.endsWith("paper.ts")) runCycle().catch((err) => {
   console.error(err instanceof Error ? err.message.split(":")[0] : "run failed");
   process.exit(1);
 });

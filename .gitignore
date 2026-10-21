@@ -6,3 +6,4 @@ vite.config.ts.timestamp-*.mjs
 .env.local
 *.log
 bot/backtest/.cache/
+hub/api/_bot.mjs

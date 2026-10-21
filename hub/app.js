@@ -8,7 +8,22 @@ const c = (x, d = 1) => (x == null ? "–" : (x * 100).toFixed(d) + "¢");
 const usd = (x) => (x == null ? "–" : (x < 0 ? "−$" : "$") + Math.abs(x).toFixed(2));
 const cls = (x) => (x == null ? "" : x > 0 ? "good" : x < 0 ? "bad" : "");
 const when = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "–");
-const line = (homeMargin) => (homeMargin == null ? "–" : (homeMargin > 0 ? "−" : "+") + Math.abs(homeMargin).toFixed(1));
+const signed = (x) => (x == null || !Number.isFinite(x) ? "–" : x === 0 ? "PK" : (x < 0 ? "−" : "+") + Math.abs(x).toFixed(1));
+// Lines are from the picked team's view: −4.3 = picked team favored by 4.3.
+const pickLine = (w) => signed(w.pick === "home" ? -Number(w.my_home_margin) : Number(w.my_home_margin));
+// Our number favors the pick only if it's better for the pick than the market's.
+function favorsPick(pick, myHomeMargin, homeSpread) {
+  if (homeSpread == null) return true;
+  const marketHomeMargin = -homeSpread;
+  return pick === "home" ? myHomeMargin > marketHomeMargin : myHomeMargin < marketHomeMargin;
+}
+function noEdgeWarning(w, upcoming) {
+  const g = upcoming.find((x) => String(x.id) === String(w.game_id));
+  if (!g || favorsPick(w.pick, Number(w.my_home_margin), g.home_spread)) return "";
+  const team = w.pick === "home" ? w.home_team : w.away_team;
+  const mkt = w.pick === "home" ? g.home_spread : -g.home_spread;
+  return `<p class="warn">Your line (${esc(team)} ${pickLine(w)}) isn't better for ${esc(team)} than the market (${signed(mkt)}), so the bot won't add exposure on this game.</p>`;
+}
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -107,9 +122,10 @@ function render() {
     el.innerHTML = `
       <div class="row"><h2 style="margin:0">${esc(w.away_team)} @ ${esc(w.home_team)}</h2>
         <span class="chip">${w.enabled ? "Active" : "Off"}</span><span class="muted">${when(w.kickoff)}</span></div>
+      ${noEdgeWarning(w, upcoming)}
       <div class="stats">
         <div class="stat"><span class="muted">Lean</span><b>${esc(pickTeam)}</b></div>
-        <div class="stat"><span class="muted">Your line (home)</span><b>${line(Number(w.my_home_margin))}</b></div>
+        <div class="stat"><span class="muted">Your line</span><b>${esc(pickTeam)} ${pickLine(w)}</b></div>
         <div class="stat"><span class="muted">Worst / best</span><b><span class="${cls(worst)}">${usd(worst)}</span> / <span class="${cls(best)}">${usd(best)}</span></b></div>
         <div class="stat"><span class="muted">Max loss cap</span><b>${usd(Number(w.max_worst_case_loss))}</b></div>
         <div class="stat"><span class="muted">Resting / fills</span><b>${gOrders.length} / ${gFills.length}</b></div>
@@ -151,6 +167,13 @@ function updatePick() {
   const cur = $("addPick").value;
   $("addPick").innerHTML = g ? `<option value="away">${esc(g.away_team)} (away)</option><option value="home">${esc(g.home_team)} (home)</option>` : "";
   if (cur) $("addPick").value = cur;
+  updateLineLabel();
+}
+
+function updateLineLabel() {
+  const g = data?.upcoming.find((x) => String(x.id) === $("addGame").value);
+  if (!g) return;
+  $("addLineTeam").textContent = $("addPick").value === "home" ? g.home_team : g.away_team;
 }
 
 async function load() {
@@ -172,6 +195,7 @@ $("gateForm").addEventListener("submit", (e) => {
   load();
 });
 $("addGame").addEventListener("change", updatePick);
+$("addPick").addEventListener("change", updateLineLabel);
 $("killBtn").addEventListener("click", async () => {
   const on = !data.state?.kill_switch;
   if (on && !confirm("Turn the kill switch on? The bot cancels all resting orders on its next run and stops quoting.")) return;
@@ -186,14 +210,22 @@ $("games").addEventListener("click", async (e) => {
 });
 $("addForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const homeLine = Number($("addLine").value);
+  const pick = $("addPick").value;
+  const pickLineVal = Number($("addLine").value); // picked team's line: −4.3 = favored by 4.3
+  const myHomeMargin = pick === "home" ? -pickLineVal : pickLineVal;
+  const g = data.upcoming.find((x) => String(x.id) === $("addGame").value);
+  if (g && !favorsPick(pick, myHomeMargin, g.home_spread)) {
+    const team = pick === "home" ? g.home_team : g.away_team;
+    const mkt = pick === "home" ? g.home_spread : -g.home_spread;
+    if (!confirm(`Your line (${team} ${signed(pickLineVal)}) isn't better for ${team} than the market (${signed(mkt)}). The bot won't add exposure unless it is. Save anyway?`)) return;
+  }
   const cents = (id) => Number($(id).value) / 100;
   try {
     await api("/api/admin", {
       action: "addWatch",
       game_id: $("addGame").value,
-      pick: $("addPick").value,
-      my_home_margin: -homeLine, // home −4.3 = home wins by 4.3
+      pick,
+      my_home_margin: myHomeMargin,
       max_worst_case_loss: Number($("addMax").value),
       per_rung_cap: Number($("addCap").value),
       profit_target: $("addTarget").value === "" ? null : Number($("addTarget").value),

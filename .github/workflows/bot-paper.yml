@@ -1,4 +1,7 @@
-# Kalshi ladder bot, PAPER mode: every ~10 minutes, reads the watchlist from
+# Kalshi ladder bot, PAPER mode. The primary trigger is ycpr-bot's /api/cycle,
+# called every ~5 min by an external scheduler (GitHub drops many scheduled
+# runs, so this workflow is only an hourly backup; the runner skips if another
+# cycle is already in progress). Each cycle reads the watchlist from
 # Supabase, reads Kalshi's public books, decides orders with the ladder
 # engine and simulates fills. Never touches an exchange account.
 #
@@ -9,7 +12,7 @@ name: Bot (paper)
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:

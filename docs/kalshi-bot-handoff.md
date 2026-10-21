@@ -331,3 +331,11 @@ Per-game parameters:
   and P&L, recent runs, and an add-game form (enter your line for the home team, e.g. −4.3).
 - **Setup Chris does once:** GitHub repo secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; ycpr-bot Vercel env vars
   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BOT_ADMIN_PASSWORD`; redeploy ycpr-bot.
+- **2026-10-21 fixes:** (1) The add-game form asked for the *home* team's line; all three first entries were the
+  *pick's* line, so the bot thought Chris's number opposed his pick (quotes sat 3–7¢ behind the touch, no fills). Rows
+  corrected; the form now asks for "your line for <picked team>" and confirms before saving a number that isn't better
+  for the pick than the market; the runner won't add exposure when the blended number doesn't favor the pick (cancels
+  its quotes, counts `noEdge`). (2) GitHub ran the */10 schedule only 3 times in 11 hours, so the primary trigger is now
+  ycpr-bot's `/api/cycle` (bundled from `bot/runner/paper.ts` at deploy, `Authorization: Bearer $CRON_SECRET`) called
+  every 5 min by cron-job.org; the GitHub workflow is an hourly backup and cycles skip if one is already running.
+  (3) Resting quotes within 1¢ on the safer side are kept instead of cancel/replace (queue priority).
