@@ -387,3 +387,77 @@ trading keys need no approval (market data and higher limits do).
   - Incremental: `bot_hypo_results` keeps each combo's state (fills, resting, pick) without books; `bot_hypo_games` keeps the shared books at the last processed step; `bot_mkt_implied` caches each venue's implied margin per step (the slow fit). Editing a lab strategy restarts its replays.
   - Updated hourly by `/api/record` (with its remaining time) and the GitHub backup (no time limit). The newest 2 minutes are left alone so a cycle's trades are complete.
   - Pick per game = the side our number favors versus the market when both are first known. Built-in methods risk $10 per game.
+
+## 19. NEXT BUILD: Live desk tab (spec, agreed 2026-10-22)
+
+Start here if you're the session building it. Mockup to match: `docs/mockups/live-desk.html` (published at https://claude.ai/artifact/X4QkP6YxXULPw2Vrj2tScd). It runs on a fake in-browser feed. Reuse its CSS and render functions, and replace only the feed.
+
+### Goal
+Add a **Live desk** tab to the ycpr-bot dashboard (`hub/`), working today on the data the 5-minute cycle, the recorder and the ProphetX tape already write. Later, the tower worker (an always-on process with venue websockets) will feed it with no screen changes.
+
+### The one architectural rule
+The screen never reads the database. It renders a **desk snapshot**, handed over by a small **feed** module:
+- `hub/live/feed.js` exports `startFeed(onSnapshot, { gameId, range })`.
+- Today it polls `GET /api/live?game=…&since=<cursor>` every 5–10 s and merges the result.
+- Later it becomes a websocket or Supabase Realtime subscription to the tower. Same snapshot shape, nothing else changes.
+
+### Snapshot shape (per focused game, plus the cross-game lists)
+```
+{ asOf, cursor,
+  game:   { game_id, away, home, kickoff, pick, ours, cap, venue_margins, book },
+  ladder: [{ venue, ticker, side, strike, bid, ask, fair }],      // latest per rung (bot_mkt_last + bot_mkt_snaps)
+  quotes: [{ venue, ticker, action, price, count, kind, strategy_id, created_at }], // resting bot_orders
+  fills:  [{ venue, ticker, side, strike, action, price, count, fee, kind, fair_at_fill, filled_at, strategy_id }],
+  tape:   [{ venue, ticker, t, yes_price, ours?: "take"|"make"|"sell" }],  // bot_mkt_trades since cursor, merged with our fills
+  lines:  [{ t, venue, margin }],                                  // bot_mkt_implied, for the chart (range-limited)
+  games:  [{ game_id, label, worst, cap, expected, fills, status }], // every watched game, for the overview and risk views
+  activity: [...]                                                   // see "Activity view"
+}
+```
+- `/api/live` returns only rows newer than `cursor`. Keep it cheap: egress matters, so never send whole tables each poll.
+- Projections (expected P&L under yours and the market's, mark-to-market, worst case) are computed in the browser with the same functions the mockup uses. Server-side `outcomeRanges` / `marginPmf` already exist in `_bot.mjs` if needed.
+- Book selector: Board (`strategy_id` null) by default, with a dropdown to view any lab strategy's book.
+
+### Views (user decisions)
+1. **Two looks, switchable: Site and Terminal.** Drop Clean. Remember the choice in localStorage. Site must follow the dashboard's light/dark theme. Terminal is a deliberate single dark look.
+2. **Risk board: redesign; the user found it confusing.** One row per game, read left to right in plain words:
+   `Game · lean · "Using $X of $Y" bar (labelled, colored by %) · "If you're right: +$A" · "If the market's right: +$B" · status pill`.
+   - Drop the venue-split mini bar from the row (move it into a hover/expanded detail).
+   - Add a header row naming each column.
+   - Status pill rules, written out: Near cap ≥ 80% used; Thin edge = |your number − market| < 1 pt; No edge; Quoting; Stopped (past the stop time); Final.
+3. **"Your number vs the market" chart: full-screen modal.**
+   - An expand button on the panel opens it full-screen. Esc or ✕ closes it.
+   - Time range control: 15m · 1h · 6h · 24h · All (since recording began), plus drag-to-zoom or a brush, and a reset.
+   - Data: `bot_mkt_implied` (per-venue implied margin per recorder step), YC (`bot_watchlist` / `bot_mkt_games`), the sportsbook line, and fills as markers (take / make / sell-back colors), with hover tooltips showing time, venue, line and price.
+   - For ranges over ~6h, downsample on the server (last value per bucket) so a 24h view stays small.
+4. **Activity view (new; the user asked for it).** One blotter of everything the bot is doing across all games:
+   - Rows: quote placed, quote cancelled or re-priced, quote filled (make), take, sell-back.
+   - Columns: time · game · venue · line · action · price · edge vs fair · book (Board or lab strategy) · status.
+   - Filters: game, venue, type, book; plus "open quotes only".
+   - A summary strip on top: open quotes, fills today (take/make/sell), fees today.
+   - Data: `bot_orders` (placed / filled / cancelled with `created_at` / `closed_at`) and `bot_fills`. Feasible today. Re-prices show as cancel + place in the same cycle, so group those into one "moved" row.
+
+### Also include (gaps found while speccing)
+- **Data freshness:** "updated Ns ago", with an amber banner past 6 minutes (the cycle missed) and a per-venue status chip (ok / rate-limited / error), from `bot_runs.summary.venueErrors`.
+- **Kill switch and per-game pause on the desk itself.** Both actions already exist in `/api/admin` (`kill`, `updateWatch` enabled). Build the confirmation into the page: `confirm()` is unavailable in some viewers.
+- **Alerts:** toasts plus an optional sound (off by default), for line moves ≥ 1 pt between steps, cap ≥ 80%, edge flipped to none, and venue errors.
+- **Per-venue position breakdown** for the focused game (contracts, cost and worst case per venue), since the cap is shared across venues.
+- **Mobile:** a single column, the ladder scrolling inside its own panel, and the chart modal usable by touch.
+- **Times in the viewer's local time zone.**
+
+### Build order and checks
+1. `/api/live` with cursors, plus `hub/live/feed.js`. Test against the in-memory PostgREST stub pattern used for the runner and recorder integration checks.
+2. Port the mockup's panels into a `hub/live.js` view and add the tab to `index.html` (both navs). Then the theme switch.
+3. Risk board redesign, then the Activity view, then the chart modal with ranges.
+4. Freshness, kill/pause, alerts.
+5. Render it in headless Chromium at desktop and phone width with no console errors and no horizontal overflow. Then PR and merge (the repo convention: merge without asking).
+
+## 20. P&L shapes: not always one cutoff
+
+The P&L-by-margin curve is the sum of every rung held, so it can have several up/down regions:
+- **Buying YES** on "Team −a" and **selling YES** on "Team −b" (b > a) wins on both whenever the margin lands between a and b. That's a **middle**: profit in a band, smaller results outside it.
+- Sell-backs (anti orders) at higher strikes after buying lower ones create exactly these middles. So do positions on both teams' rungs.
+- A "both tails win, middle loses" shape, like the user's Auburn example, needs long exposure on both extremes: YES on "Auburn −7.5" plus YES on "Opponent −6.5", partly paid for by short positions in the middle. It's reachable, but only by trading both directions.
+- The current engine leans one side (pro-pick budget first, wide sell-backs), so most curves are a step up toward the pick with occasional middles. The loss cap is enforced on the worst margin of the whole curve, whatever its shape.
+- What decides profit is the expected value under the true margin distribution, not the shape. Shape matters for variance and for key numbers: 3 and 7 carry extra probability (weights 2.7× and 2.4×).
+- A future option: a "shape target" mode that deliberately builds middles around key numbers when the venues' ladders misprice them.
