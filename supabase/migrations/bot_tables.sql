@@ -226,3 +226,6 @@ create table if not exists bot_hypo_games (
 alter table bot_hypo_results enable row level security;
 alter table bot_mkt_implied enable row level security;
 alter table bot_hypo_games enable row level security;
+
+-- 2026-10-22: which strategy filled a game's settings (a label: values are copied, later strategy edits don't follow).
+alter table bot_watchlist add column if not exists strategy_preset bigint references bot_strategies (id) on delete set null;

@@ -127,6 +127,15 @@
   .hypo-games td:first-child { width:28px; } .hypo-games td.hcell { cursor:pointer; } .hypo-games td.hcell:hover { background:var(--a-row); }
   .hypo-totals tr.best td, tr.hbest td { background:var(--c-warn-bg); }
   .best { box-shadow:inset 3px 0 0 var(--gold); }
+  /* Add games / Manage games */
+  .pk td small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .pk tr.off td { opacity:.5; } .pk tr.off td:last-child, .pk tr.off td:nth-last-child(2) { opacity:1; }
+  .pk .seg button { padding:3px 8px; font-size:.74rem; }
+  .pk-bar { position:sticky; bottom:0; z-index:5; box-shadow:0 -6px 18px rgba(15,16,40,.08); }
+  @media (max-width:900px) { .pk-bar { position:static; box-shadow:var(--a-shadow); } }
+  .linkbtn { border:0; background:none; padding:0; color:inherit; cursor:pointer; text-align:left; font:inherit; }
+  .linkbtn:hover b { text-decoration:underline; }
+  .btn[disabled] { opacity:.5; cursor:not-allowed; }
 
   /* Drawer */
   .scrim { position:fixed; inset:0; background:rgba(15,16,40,.35); z-index:40; }
@@ -182,7 +191,8 @@
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
       <button data-view="hypo">Hypotheticals</button>
-      <button data-view="add">Add game</button>
+      <button data-view="add">Add games</button>
+      <button data-view="manage">Manage games</button>
       <button data-view="lab">Strategy lab</button>
       <button data-view="settings">Settings</button>
     </nav>
@@ -204,7 +214,8 @@
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
       <button data-view="hypo">What-if</button>
-      <button data-view="add">Add game</button>
+      <button data-view="add">Add</button>
+      <button data-view="manage">Manage</button>
       <button data-view="lab">Lab</button>
       <button data-view="settings">Settings</button>
     </nav>
@@ -215,27 +226,8 @@
       <section data-pane="fills" hidden></section>
       <section data-pane="review" hidden></section>
       <section data-pane="hypo" hidden></section>
-      <section data-pane="add" hidden>
-        <form id="addForm" class="panel">
-          <h3>Add a game</h3>
-          <div class="grid2">
-            <label class="field" style="grid-column:1/-1">Game (next 8 days)<select id="addGame" required></select></label>
-            <label class="field">Lean toward<select id="addPick"></select></label>
-            <label class="field">YC line (away)<input id="addYc" readonly placeholder="pick a game"></label>
-            <label class="field">Override away spread<input id="addOverride" type="number" step="0.1" placeholder="blank = use YC"></label>
-            <label class="field">Trust in your number<select id="addTrust"><option value="">Use default</option><option value="1">100%</option><option value="0.75">75%</option><option value="0.5">50%</option><option value="0.25">25%</option></select></label>
-            <label class="field">Max loss on game ($)<input id="addMax" type="number" step="0.5" value="5"></label>
-            <label class="field">Contracts per number<input id="addCap" type="number" step="1" value="1"></label>
-            <label class="field">Profit target ($)<input id="addTarget" type="number" step="0.5" placeholder="optional"></label>
-            <label class="field">Pro-pick edge (¢)<input id="addPro" type="number" step="0.5" value="2"></label>
-            <label class="field">Sell-back edge (¢)<input id="addAnti" type="number" step="0.5" value="4"></label>
-            <label class="field">Take edge (¢)<input id="addTake" type="number" step="0.5" value="3"></label>
-            <label class="field">Extra edge per contract (¢)<input id="addStep" type="number" step="0.5" value="1"></label>
-            <label class="field">Stop quoting (min before)<input id="addStop" type="number" step="5" value="30"></label>
-          </div>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="btn primary">Add / update</button><span id="addMsg" class="muted"></span></div>
-        </form>
-      </section>
+      <section data-pane="add" hidden></section>
+      <section data-pane="manage" hidden></section>
       <section data-pane="lab" hidden></section>
       <section data-pane="settings" hidden></section>
     </main>
@@ -244,6 +236,7 @@
 <div id="drawerRoot"></div>
 <script src="app.js"></script>
 <script src="hypo.js"></script>
+<script src="games.js"></script>
 <script type="module" src="live.js"></script>
 </body>
 </html>

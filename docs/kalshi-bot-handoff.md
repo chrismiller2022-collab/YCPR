@@ -362,6 +362,14 @@ Per-game parameters:
   (`score_source = 'cfbd'`) and otherwise keeps ESPN's (`keepEspnFinals` in `api/cfbd-sync.ts`). Paused/removed games
   are graded too.
 
+- **Add games / Manage games (2026-10-22, `hub/games.js`):** Add games lists a YCPR week's FBS games (`/api/data?part=picker`:
+  YC number, Vegas by provider order, recorder venue lines, watched flag; current week = the one after the last fully final
+  week) with search, conference, day, min-edge, venue and hide-watched/started filters and sorts; tick several, set one
+  settings block (filled from a strategy: "Bot defaults" or any lab strategy), add them in one call (`addWatches`). Manage
+  games applies one change to many watched games (`updateWatches`; blank fields unchanged; never the lean). Each game keeps
+  `strategy_preset` as a label only: values are copied, later strategy edits don't follow ("Patient · edited", "Custom").
+  The game drawer's Settings has the same Strategy select.
+
 ## 16. Strategy lab (2026-10-21)
 
 `bot_strategies` (seeded: Aggressive, Default, Patient) each paper-trade every **watchlist** game against the same Kalshi
