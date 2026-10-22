@@ -18,6 +18,7 @@ import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder
 import { diffOrders, paperFills, type Trade } from "./paperFills";
 import { db } from "./io";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
+import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
 
 const MODE = "paper";
 /** Stop starting new games after this long (ycpr-bot's /api/cycle allows 300 s). */
@@ -119,6 +120,8 @@ export interface CycleTotals {
   deferred?: number;
   /** Per-venue response-shape notes (no prices or positions), for checking new adapters. */
   diag?: Partial<Record<VenueId, unknown>>;
+  /** The Board's worst/best/expected per game after this cycle, for "change since last run" on the dashboard. */
+  board?: BoardSnapshot;
 }
 
 const placedAt = (r: { created_at: string }) => Math.floor(new Date(r.created_at).getTime() / 1000);
@@ -470,6 +473,14 @@ export async function runCycle(): Promise<CycleTotals> {
       }
     }
     recordDiag();
+    // A snapshot that fails to build never fails the cycle; the dashboard just shows no change for this run.
+    try {
+      const all = await db.select<SnapWatch>("bot_watchlist", "select=game_id,my_home_margin,ycpr_home_margin,kalshi_home_margin,venue_margins");
+      const fills = all.length
+        ? await db.selectAll<SnapFill>("bot_fills", `select=game_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&strategy_id=is.null&game_id=in.(${all.map((w) => w.game_id).join(",")})&order=id`)
+        : [];
+      totals.board = boardSnapshot(all, fills);
+    } catch {}
   } catch (err) {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(err).slice(0, 2000) });
     throw err;
