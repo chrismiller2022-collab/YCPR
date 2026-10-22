@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import { SURVIVOR_WEEKS, availableConferences, DEFAULT_CONFERENCES, teamsUsedElsewhere, allUsedTeams, type SurvivorWeek } from "../lib/survivor";
-import { Board, buildBoardGames, isEligible, rowTeamsFor, type ProjectionSource, type SurvivorRules } from "../lib/survivorBoard";
+import { Board, buildBoardGames, projectChampGames, isEligible, rowTeamsFor, type ProjectionSource, type SurvivorRules } from "../lib/survivorBoard";
 import { fairMoneylineFromWinPct } from "../lib/odds";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
@@ -83,8 +83,16 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
   const weeks = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
   const { byWeek: ratingsByWeek } = useWeekAccurateRatings(SEASON, weeks, SEASON);
   const { locks } = useGameProjectionLocks(SEASON, weeks);
-  const board = useMemo(() => new Board(buildBoardGames(games, ratingsByWeek, locks)), [games, ratingsByWeek, locks]);
   const { results: mcResults } = useLatestMonteCarloRun(SEASON);
+  // Conf Championship week: real title games once scheduled, else the two likeliest finalists per conference from
+  // the latest Monte Carlo run, rated with the most recent saved ratings.
+  const board = useMemo(() => {
+    const real = buildBoardGames(games, ratingsByWeek, locks);
+    const champWeek = SURVIVOR_WEEKS.find((w) => w.key === "champ")?.dataWeek ?? 14;
+    const scheduled = new Set(real.filter((g) => g.week === champWeek).flatMap((g) => [g.home, g.away]));
+    const latestWeek = Math.max(0, ...Object.keys(ratingsByWeek).map(Number).filter((w) => Object.keys(ratingsByWeek[w] ?? {}).length > 0));
+    return new Board([...real, ...projectChampGames(mcResults, ratingsByWeek[latestWeek] ?? {}, champWeek, scheduled)]);
+  }, [games, ratingsByWeek, locks, mcResults]);
 
   // ---- Picks: load per pool, save on change (debounced) ----
   useEffect(() => {
@@ -134,7 +142,11 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
 
   // ---- Board helpers ----
   const allConfs = useMemo(() => availableConferences(), []);
-  const teams = useMemo(() => rowTeamsFor(rules, selectedConfs), [rules, selectedConfs]);
+  const champTeams = useMemo(() => {
+    const champ = SURVIVOR_WEEKS.find((w) => w.key === "champ");
+    return new Set(champ ? board.games.filter((g) => g.week === champ.dataWeek).flatMap((g) => [g.home, g.away]) : []);
+  }, [board]);
+  const teams = useMemo(() => rowTeamsFor(rules, selectedConfs, champTeams), [rules, selectedConfs, champTeams]);
   const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
   const played = useMemo(() => new Set(SURVIVOR_WEEKS.filter((w) => board.isPlayed(w)).map((w) => w.key)), [board]);
 
@@ -142,7 +154,7 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
     const team = teams.find((t) => t.team === teamName);
     const g = board.game(teamName, week);
     const opp = g ? board.opponent(g, teamName) : undefined;
-    const eligible = !!team && !!g && isEligible(rules, team, opp, selectedConfs);
+    const eligible = !!team && !!g && isEligible(rules, team, opp, selectedConfs, week);
     return { g, opp, eligible };
   }
 
@@ -163,7 +175,7 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
     for (const t of teams)
       for (const w of SURVIVOR_WEEKS) {
         const g = board.game(t.team, w);
-        if (!g || !isEligible(rules, t, board.opponent(g, t.team), selectedConfs)) continue;
+        if (!g || !isEligible(rules, t, board.opponent(g, t.team), selectedConfs, w)) continue;
         const s = board.spread(t.team, g, source);
         if (s) entries.push({ team: t.team, week: w.key, spread: s.value });
       }
@@ -240,15 +252,13 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
       teams.map((t) => t.team).filter((t) => !excludedTeams.has(t)),
       {
         winProb: (team, week) => {
-          // Conference Championship week has no games yet: each team's Monte Carlo odds to win its conference.
-          if (week.key === "champ") {
-            const mc = mcResults?.find((r) => r.team === team);
-            return mc ? mc.confTitlePct / 100 : null;
-          }
           const g = board.game(team, week);
           const t = teamByName.get(team);
-          if (!g || !t || !isEligible(rules, t, board.opponent(g, team), selectedConfs)) return null;
-          return board.winPct(team, g, source);
+          if (!g || !t || !isEligible(rules, t, board.opponent(g, team), selectedConfs, week)) return null;
+          const wp = board.winPct(team, g, source);
+          // A projected title game only counts as often as the team actually gets there.
+          if (wp != null && g.projected) return wp * ((g.home === team ? g.madeHome : g.madeAway) ?? 0);
+          return wp;
         },
         areOpponents: (a, b, week) => {
           const g = board.game(a, week);
@@ -639,6 +649,15 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
                         {opp ? opp.team : g.home === team.team ? g.away : g.home}
                         {res && <span style={{ marginLeft: 3 }}>{res === "won" ? "✓" : res === "lost" ? "✗" : "="}</span>}
                       </div>
+                      {g.projected && (
+                        <div
+                          className="cell-tip"
+                          data-tip={`Projected title game from the latest Monte Carlo run. ${team.team} makes it ${Math.round(((g.home === team.team ? g.madeHome : g.madeAway) ?? 0) * 100)}% of the time; the optimizer counts win % × that.`}
+                          style={{ fontSize: "0.6rem", opacity: 0.7 }}
+                        >
+                          proj · {Math.round(((g.home === team.team ? g.madeHome : g.madeAway) ?? 0) * 100)}% to make
+                        </div>
+                      )}
                       {view === "spread" && sp && (
                         <div style={{ fontSize: "0.68rem", opacity: 0.75 }} title={sp.source === "vegas" ? "Vegas line" : g.locked ? "Frozen pregame YC projection" : "YC projection"}>
                           {sp.value > 0 ? "+" : ""}

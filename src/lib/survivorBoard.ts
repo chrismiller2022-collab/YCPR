@@ -4,7 +4,7 @@ import { pickVegasLine } from "./linePick";
 import { billRWinPctFromSpread } from "./moneylineBetHistory";
 import { bucketFor } from "./conferenceBuckets";
 import type { GameWithLines } from "./api/gamesLines";
-import type { SurvivorWeek } from "./survivor";
+import { weekLockTime, type SurvivorWeek } from "./survivor";
 
 // The admin Survivor page's board: every synced game with a YC projection (the frozen pregame lock once a game has
 // one, else that week's saved ratings) and the Vegas line, plus the two pools' eligibility rules. Spread and win %
@@ -27,6 +27,57 @@ export interface BoardGame {
   ycAwaySpread: number | null;
   vegasAwaySpread: number | null;
   locked: boolean; // YC projection is the frozen pregame lock
+  /** Conference title game projected from the Monte Carlo run, not yet on the schedule. */
+  projected?: boolean;
+  /** Each side's Monte Carlo odds (0–1) to make this title game; projected games only. */
+  madeAway?: number;
+  madeHome?: number;
+}
+
+/**
+ * Projected conference championship games: in each conference, the two teams
+ * most likely to reach the title game in the latest Monte Carlo run, at a
+ * neutral site with the YC spread from the latest ratings. Conferences whose
+ * real title game is already on the schedule are skipped.
+ */
+export function projectChampGames(
+  mc: { team: string; conf: string; madeConfChampPct: number }[] | null | undefined,
+  ratings: Record<string, { rating: number | null }>,
+  week: number,
+  scheduledTeams: Set<string>
+): BoardGame[] {
+  if (!mc) return [];
+  const byConf = new Map<string, typeof mc>();
+  for (const r of mc) {
+    if (!r.conf || /independent/i.test(r.conf) || !(r.madeConfChampPct > 0)) continue;
+    byConf.set(r.conf, [...(byConf.get(r.conf) ?? []), r]);
+  }
+  const out: BoardGame[] = [];
+  for (const [conf, teams] of byConf) {
+    const [first, second] = [...teams].sort((a, b) => b.madeConfChampPct - a.madeConfChampPct);
+    if (!first || !second || scheduledTeams.has(first.team) || scheduledTeams.has(second.team)) continue;
+    const rate = (t: string) => ratings[t]?.rating ?? TEAMS_BY_NAME[t]?.rating ?? null;
+    const a = rate(second.team);
+    const h = rate(first.team);
+    out.push({
+      id: `proj-ccg-${conf}`,
+      week,
+      home: first.team,
+      away: second.team,
+      neutral: true,
+      startDate: null,
+      completed: false,
+      homePoints: null,
+      awayPoints: null,
+      ycAwaySpread: a != null && h != null ? a - h : null,
+      vegasAwaySpread: null,
+      locked: false,
+      projected: true,
+      madeAway: second.madeConfChampPct / 100,
+      madeHome: first.madeConfChampPct / 100,
+    });
+  }
+  return out;
 }
 
 export function buildBoardGames(
@@ -84,9 +135,13 @@ export class Board {
     return TEAMS_BY_NAME[g.home === team ? g.away : g.home];
   }
 
-  /** A week is played (read-only) once its first game has kicked off. */
-  isPlayed(week: SurvivorWeek, now = Date.now()): boolean {
-    const t = this.firstKickoff.get(week.dataWeek);
+  /**
+   * A week is played (read-only) once the pool's pick deadline has passed —
+   * not the first kickoff, since midweek games kick off before the lock.
+   * Falls back to first kickoff when the deadline label doesn't parse.
+   */
+  isPlayed(week: SurvivorWeek, now = Date.now(), season = new Date().getFullYear()): boolean {
+    const t = weekLockTime(week, season) ?? this.firstKickoff.get(week.dataWeek);
     return t != null && t <= now;
   }
 
@@ -116,12 +171,15 @@ export class Board {
 export const fbsTeams = (): Team[] => TEAMS.filter((t) => t.div === "FBS").sort((a, b) => a.team.localeCompare(b.team));
 
 /** Survivor: the row team's and the opponent's conferences must both be selected (opponent FBS). Splash: any FBS game except G6 vs G6. */
-export function isEligible(rules: SurvivorRules, team: Team, opp: Team | undefined, selectedConfs: Set<string>): boolean {
+export function isEligible(rules: SurvivorRules, team: Team, opp: Team | undefined, selectedConfs: Set<string>, week?: SurvivorWeek): boolean {
   if (!opp || opp.div !== "FBS") return false;
+  // Every conference title game is pickable, whatever the conference rules.
+  if (week?.key === "champ") return true;
   if (rules === "survivor") return selectedConfs.has(team.conf) && selectedConfs.has(opp.conf);
   return !(bucketFor(team.team, team.conf) === "G6" && bucketFor(opp.team, opp.conf) === "G6");
 }
 
-export function rowTeamsFor(rules: SurvivorRules, selectedConfs: Set<string>): Team[] {
-  return rules === "survivor" ? fbsTeams().filter((t) => selectedConfs.has(t.conf)) : fbsTeams();
+export function rowTeamsFor(rules: SurvivorRules, selectedConfs: Set<string>, champTeams: Set<string> = new Set()): Team[] {
+  // Teams outside the eligible conferences still get a row when they're in a title game: champ week is their only pick.
+  return rules === "survivor" ? fbsTeams().filter((t) => selectedConfs.has(t.conf) || champTeams.has(t.team)) : fbsTeams();
 }

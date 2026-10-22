@@ -37,6 +37,19 @@ export const SURVIVOR_WEEKS: SurvivorWeek[] = [
   { key: "champ", label: "Conf Championships", dataWeek: 14, gameCount: 11, lockLabel: "12/4 @ 7:00 PM" },
 ];
 
+/** The pool's pick deadline for a week ("10/23 @ 7:00 PM", Eastern), or null if the label doesn't parse. */
+export function weekLockTime(week: SurvivorWeek, season: number): number | null {
+  const m = /^(\d{1,2})\/(\d{1,2}) @ (\d{1,2}):(\d{2}) (AM|PM)$/i.exec(week.lockLabel.trim());
+  if (!m) return null;
+  let hour = parseInt(m[3], 10) % 12;
+  if (m[5].toUpperCase() === "PM") hour += 12;
+  const asUtc = Date.UTC(season, parseInt(m[1], 10) - 1, parseInt(m[2], 10), hour, parseInt(m[4], 10));
+  // Shift by Eastern's offset on that date (EDT or EST).
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", timeZoneName: "shortOffset" }).formatToParts(new Date(asUtc));
+  const off = /GMT([+-]\d+)/.exec(parts.find((p) => p.type === "timeZoneName")?.value ?? "")?.[1];
+  return asUtc - (off ? parseInt(off, 10) : -5) * 3600_000;
+}
+
 // ---------------------------------------------------------------------
 // Conferences available for the filter. Driven off the real team list
 // (FBS only — survivor picks are always FBS teams) rather than a fixed
