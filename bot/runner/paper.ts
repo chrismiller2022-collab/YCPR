@@ -113,6 +113,8 @@ export interface CycleTotals {
   venues: Partial<Record<VenueId, { ladders: number; fills: number; placed: number }>>;
   venueErrors?: Partial<Record<VenueId, string>>;
   overlapped?: boolean;
+  /** Per-game problems that were skipped so the rest of the cycle could run. */
+  gameErrors?: string[];
   /** Games left for the next cycle because this one hit its time budget. */
   deferred?: number;
   /** Per-venue response-shape notes (no prices or positions), for checking new adapters. */
@@ -178,10 +180,12 @@ async function settle(w: Watch) {
     const patch: Record<string, number> = {};
     if (f.result == null && margin != null) patch.result = (f.side === "home" ? margin : -margin) > Number(f.strike) ? 1 : 0;
     if (f.close_mid == null && w.kickoff) {
-      const [s] = await db.select<{ bid: number | null; ask: number | null }>(
-        "bot_snapshots",
-        `select=bid,ask&game_id=eq.${w.game_id}&venue=eq.${f.venue}&ticker=eq.${encodeURIComponent(f.ticker)}&taken_at=lte.${w.kickoff}&order=taken_at.desc&limit=1`
-      );
+      // Kickoff as a Z timestamp: a "+00:00" offset would arrive as a space in the query string.
+      const at = new Date(w.kickoff).toISOString();
+      const q = `select=bid,ask&game_id=eq.${w.game_id}&venue=eq.${f.venue}&ticker=eq.${encodeURIComponent(f.ticker)}&taken_at=lte.${at}&order=taken_at.desc&limit=1`;
+      // The Board's snapshots, else the market recorder's (covers lines only lab strategies traded).
+      let [s] = await db.select<{ bid: number | null; ask: number | null }>("bot_snapshots", q);
+      if (s?.bid == null || s?.ask == null) [s] = await db.select<{ bid: number | null; ask: number | null }>("bot_mkt_snaps", q);
       if (s?.bid != null && s?.ask != null) patch.close_mid = (Number(s.bid) + Number(s.ask)) / 2;
     }
     if (Object.keys(patch).length) await db.update("bot_fills", `id=eq.${f.id}`, patch);
@@ -252,207 +256,217 @@ export async function runCycle(): Promise<CycleTotals> {
     const deadline = started + BUDGET_MS;
     const off = run.id % watch.length;
     for (const w of [...watch.slice(off), ...watch.slice(0, off)]) {
-      if (Date.now() > deadline) {
-        totals.deferred = (totals.deferred ?? 0) + 1;
-        continue;
-      }
-      if (!w.kickoff) {
-        const [g] = await db.select<{ start_date: string }>("games", `select=start_date&id=eq.${w.game_id}`);
-        if (g) w.kickoff = g.start_date;
-      }
-      const kickoff = w.kickoff ? Math.floor(new Date(w.kickoff).getTime() / 1000) : null;
-      if (kickoff != null && now() > kickoff) {
-        await settle(w);
-        continue;
-      }
-      const hours = kickoff != null ? (kickoff - now()) / 3600 : 72;
-      const ours = num(w.my_home_margin) ?? num(w.ycpr_home_margin);
-      const sportsbook = await bookHomeMargin(w.game_id);
-
-      // 0. Each enabled venue's ladder for this game.
-      const ladders = new Map<VenueId, VenueLadder>();
-      const events = { ...(w.venue_events ?? {}) };
-      const margins: Partial<Record<VenueId, number>> = {};
-      for (const v of active.filter((x) => (w.venues ?? VENUES).includes(x))) {
-        try {
-          const L = await adapters[v].ladder({
-            home_team: w.home_team,
-            away_team: w.away_team,
-            bookHomeMargin: sportsbook,
-            eventKey: v === "kalshi" ? w.kalshi_event : events[v] ?? null,
-          });
-          if (!L || !L.rungs.length) continue;
-          ladders.set(v, L);
-          (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 }).ladders++;
-          if (v !== "kalshi") events[v] = L.eventKey;
-          const m = impliedHomeMargin(L.rungs);
-          if (m != null) margins[v] = m;
-        } catch (err) {
-          (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
+      try {
+        if (Date.now() > deadline) {
+          totals.deferred = (totals.deferred ?? 0) + 1;
+          continue;
         }
-      }
-      const kalshiEvent = ladders.get("kalshi")?.eventKey ?? w.kalshi_event;
-      await db.update("bot_watchlist", `id=eq.${w.id}`, {
-        venue_events: events,
-        venue_margins: margins,
-        kalshi_event: kalshiEvent,
-        kickoff: w.kickoff,
-        ...(margins.kalshi != null ? { kalshi_home_margin: margins.kalshi, kalshi_updated_at: iso() } : {}),
-      });
-      if (!ladders.size) {
-        totals.skipped++;
-        continue;
-      }
-      totals.games++;
-
-      // Everything below is shared by the Board and every lab strategy: one read of resting
-      // orders, fills and trades per game, then each book simulates and quotes on each venue.
-      const allResting = await db.select<RestingRow>(
-        "bot_orders",
-        `select=id,strategy_id,venue,ticker,action,price,count,kind,fair,created_at&mode=eq.${MODE}&status=eq.resting&game_id=eq.${w.game_id}`
-      );
-      const allFills = await db.select<FillRow>(
-        "bot_fills",
-        `select=strategy_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&game_id=eq.${w.game_id}`
-      );
-      const trades = new Map<VenueId, Trade[]>();
-      for (const [v] of ladders) {
-        const rv = allResting.filter((r) => r.venue === v);
-        const tickers = [...new Set(rv.map((r) => r.ticker))];
-        // A venue's tape failing (e.g. rate limit) only costs that venue's fills this cycle.
-        try {
-          const since = Math.min(...rv.map(placedAt));
-          if (!tickers.length) trades.set(v, []);
-          // Novig rate-limits its trade tape and ProphetX only broadcasts trades over a websocket, so
-          // read what the recorder (/api/record) and the ProphetX listener (/api/pxtape) saved; a trade
-          // saved after this cycle is picked up next cycle (fills go by placed time).
-          else if (v === "novig" || v === "prophetx")
-            trades.set(v, (await db.select<{ ticker: string; t: string; yes_price: number }>(
-              "bot_mkt_trades",
-              `select=ticker,t,yes_price&game_id=eq.${w.game_id}&venue=eq.${v}&t=gt.${new Date(since * 1000).toISOString()}&order=t&limit=5000`
-            )).filter((x) => tickers.includes(x.ticker)).map((x) => ({ ticker: x.ticker, t: Math.floor(new Date(x.t).getTime() / 1000), yesPrice: Number(x.yes_price) })));
-          else trades.set(v, await adapters[v].trades(tickers, since));
-        } catch (err) {
-          trades.set(v, []);
-          (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
+        if (!w.kickoff) {
+          const [g] = await db.select<{ start_date: string }>("games", `select=start_date&id=eq.${w.game_id}`);
+          if (g) w.kickoff = g.start_date;
         }
-      }
+        const kickoff = w.kickoff ? Math.floor(new Date(w.kickoff).getTime() / 1000) : null;
+        if (kickoff != null && now() > kickoff) {
+          // A grading problem on one game must never stop the others from trading.
+          try {
+            await settle(w);
+          } catch (err) {
+            (totals.gameErrors ??= []).push(`settle ${w.away_team} @ ${w.home_team}: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
+          }
+          continue;
+        }
+        const hours = kickoff != null ? (kickoff - now()) / 3600 : 72;
+        const ours = num(w.my_home_margin) ?? num(w.ycpr_home_margin);
+        const sportsbook = await bookHomeMargin(w.game_id);
 
-      const bookList: Book[] = [
-        {
-          strategyId: null,
-          weight: num(w.ycpr_weight) ?? defaultTrust, // per-game trust wins over the default
-          stopMinutes: w.stop_minutes_before,
-          cfg: {
-            pick: w.pick, maxWorstCaseLoss: Number(w.max_worst_case_loss), perRungCap: w.per_rung_cap, orderSize: w.order_size,
-            proEdge: Number(w.pro_edge), antiEdge: Number(w.anti_edge), takeEdge: Number(w.take_edge), edgeStep: Number(w.edge_step),
-            profitTarget: num(w.profit_target), tick: 0.01,
+        // 0. Each enabled venue's ladder for this game.
+        const ladders = new Map<VenueId, VenueLadder>();
+        const events = { ...(w.venue_events ?? {}) };
+        const margins: Partial<Record<VenueId, number>> = {};
+        for (const v of active.filter((x) => (w.venues ?? VENUES).includes(x))) {
+          try {
+            const L = await adapters[v].ladder({
+              home_team: w.home_team,
+              away_team: w.away_team,
+              bookHomeMargin: sportsbook,
+              eventKey: v === "kalshi" ? w.kalshi_event : events[v] ?? null,
+            });
+            if (!L || !L.rungs.length) continue;
+            ladders.set(v, L);
+            (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 }).ladders++;
+            if (v !== "kalshi") events[v] = L.eventKey;
+            const m = impliedHomeMargin(L.rungs);
+            if (m != null) margins[v] = m;
+          } catch (err) {
+            (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
+          }
+        }
+        const kalshiEvent = ladders.get("kalshi")?.eventKey ?? w.kalshi_event;
+        await db.update("bot_watchlist", `id=eq.${w.id}`, {
+          venue_events: events,
+          venue_margins: margins,
+          kalshi_event: kalshiEvent,
+          kickoff: w.kickoff,
+          ...(margins.kalshi != null ? { kalshi_home_margin: margins.kalshi, kalshi_updated_at: iso() } : {}),
+        });
+        if (!ladders.size) {
+          totals.skipped++;
+          continue;
+        }
+        totals.games++;
+
+        // Everything below is shared by the Board and every lab strategy: one read of resting
+        // orders, fills and trades per game, then each book simulates and quotes on each venue.
+        const allResting = await db.select<RestingRow>(
+          "bot_orders",
+          `select=id,strategy_id,venue,ticker,action,price,count,kind,fair,created_at&mode=eq.${MODE}&status=eq.resting&game_id=eq.${w.game_id}`
+        );
+        const allFills = await db.select<FillRow>(
+          "bot_fills",
+          `select=strategy_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&game_id=eq.${w.game_id}`
+        );
+        const trades = new Map<VenueId, Trade[]>();
+        for (const [v] of ladders) {
+          const rv = allResting.filter((r) => r.venue === v);
+          const tickers = [...new Set(rv.map((r) => r.ticker))];
+          // A venue's tape failing (e.g. rate limit) only costs that venue's fills this cycle.
+          try {
+            const since = Math.min(...rv.map(placedAt));
+            if (!tickers.length) trades.set(v, []);
+            // Novig rate-limits its trade tape and ProphetX only broadcasts trades over a websocket, so
+            // read what the recorder (/api/record) and the ProphetX listener (/api/pxtape) saved; a trade
+            // saved after this cycle is picked up next cycle (fills go by placed time).
+            else if (v === "novig" || v === "prophetx")
+              trades.set(v, (await db.select<{ ticker: string; t: string; yes_price: number }>(
+                "bot_mkt_trades",
+                `select=ticker,t,yes_price&game_id=eq.${w.game_id}&venue=eq.${v}&t=gt.${new Date(since * 1000).toISOString()}&order=t&limit=5000`
+              )).filter((x) => tickers.includes(x.ticker)).map((x) => ({ ticker: x.ticker, t: Math.floor(new Date(x.t).getTime() / 1000), yesPrice: Number(x.yes_price) })));
+            else trades.set(v, await adapters[v].trades(tickers, since));
+          } catch (err) {
+            trades.set(v, []);
+            (totals.venueErrors ??= {})[v] = String(err instanceof Error ? err.message : err).slice(0, 200);
+          }
+        }
+
+        const bookList: Book[] = [
+          {
+            strategyId: null,
+            weight: num(w.ycpr_weight) ?? defaultTrust, // per-game trust wins over the default
+            stopMinutes: w.stop_minutes_before,
+            cfg: {
+              pick: w.pick, maxWorstCaseLoss: Number(w.max_worst_case_loss), perRungCap: w.per_rung_cap, orderSize: w.order_size,
+              proEdge: Number(w.pro_edge), antiEdge: Number(w.anti_edge), takeEdge: Number(w.take_edge), edgeStep: Number(w.edge_step),
+              profitTarget: num(w.profit_target), tick: 0.01,
+            },
           },
-        },
-        ...strategies.map((st) => ({
-          strategyId: st.id,
-          weight: num(st.ycpr_weight) ?? defaultTrust,
-          stopMinutes: st.stop_minutes_before,
-          cfg: {
-            pick: w.pick, maxWorstCaseLoss: Number(st.max_worst_case_loss), perRungCap: st.per_rung_cap, orderSize: 1,
-            proEdge: Number(st.pro_edge), antiEdge: Number(st.anti_edge), takeEdge: Number(st.take_edge), edgeStep: Number(st.edge_step),
-            profitTarget: null, tick: 0.01,
-          } as LadderConfig,
-        })),
-      ];
+          ...strategies.map((st) => ({
+            strategyId: st.id,
+            weight: num(st.ycpr_weight) ?? defaultTrust,
+            stopMinutes: st.stop_minutes_before,
+            cfg: {
+              pick: w.pick, maxWorstCaseLoss: Number(st.max_worst_case_loss), perRungCap: st.per_rung_cap, orderSize: 1,
+              proEdge: Number(st.pro_edge), antiEdge: Number(st.anti_edge), takeEdge: Number(st.take_edge), edgeStep: Number(st.edge_step),
+              profitTarget: null, tick: 0.01,
+            } as LadderConfig,
+          })),
+        ];
 
-      for (const bk of bookList) {
-        const sid = bk.strategyId;
-        const bookFills = allFills.filter((f) => (f.strategy_id ?? null) === sid);
-        const count = (v: VenueId, kind: "fills" | "placed") => {
-          if (sid != null) {
-            if (kind === "fills") totals.labFills++;
-            return;
-          }
-          totals[kind]++;
-          (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 })[kind]++;
-        };
+        for (const bk of bookList) {
+          const sid = bk.strategyId;
+          const bookFills = allFills.filter((f) => (f.strategy_id ?? null) === sid);
+          const count = (v: VenueId, kind: "fills" | "placed") => {
+            if (sid != null) {
+              if (kind === "fills") totals.labFills++;
+              return;
+            }
+            totals[kind]++;
+            (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 })[kind]++;
+          };
 
-        for (const [v, L] of ladders) {
-          const adapter: VenueAdapter = adapters[v];
-          const fee = adapter.fee(hours);
-          const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
-          let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
-          const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
-            const r = L.rungs.find((x) => x.ticker === o.ticker);
-            const row: FillRow & Record<string, unknown> = {
-              mode: MODE, venue: v, strategy_id: sid, order_id: orderId, game_id: w.game_id, ticker: o.ticker, side: r?.side ?? "home", strike: r?.strike ?? 0,
-              action: o.action, price: o.price, count: o.count, fee: fee(o.price, { count: o.count, maker }), fair_at_fill: fair,
-              mid_at_fill: r?.bid != null && r?.ask != null ? (r.bid + r.ask) / 2 : null,
+          for (const [v, L] of ladders) {
+            const adapter: VenueAdapter = adapters[v];
+            const fee = adapter.fee(hours);
+            const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
+            let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
+            const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
+              const r = L.rungs.find((x) => x.ticker === o.ticker);
+              const row: FillRow & Record<string, unknown> = {
+                mode: MODE, venue: v, strategy_id: sid, order_id: orderId, game_id: w.game_id, ticker: o.ticker, side: r?.side ?? "home", strike: r?.strike ?? 0,
+                action: o.action, price: o.price, count: o.count, fee: fee(o.price, { count: o.count, maker }), fair_at_fill: fair,
+                mid_at_fill: r?.bid != null && r?.ask != null ? (r.bid + r.ask) / 2 : null,
+              };
+              bookFills.push(row);
+              count(v, "fills");
+              return row;
             };
-            bookFills.push(row);
-            count(v, "fills");
-            return row;
-          };
 
-          // 1. Simulate fills on what was resting since the last cycle.
-          const filled = paperFills(
-            resting.map((r) => ({ id: r.id, ticker: r.ticker, action: r.action, price: Number(r.price), count: r.count, placedAt: placedAt(r) })),
-            trades.get(v) ?? [],
-            books
-          );
-          if (filled.length) {
-            await db.update("bot_orders", `id=in.(${filled.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
-            await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
-          }
-          resting = resting.filter((r) => !filled.some((f) => f.id === r.id));
-          const cancel = async (rows: RestingRow[]) => {
-            if (!rows.length) return;
-            await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
-            if (sid == null) totals.cancelled += rows.length;
-          };
-
-          // 2. Stop quoting before kickoff (inventory is held to settlement).
-          if (kickoff != null && now() >= kickoff - bk.stopMinutes * 60) {
-            await cancel(resting);
-            continue;
-          }
-          if (ours == null) {
-            if (sid == null && v === "kalshi") totals.skipped++;
-            continue;
-          }
-
-          // 3. Fair price: our number blended with the market (this venue's implied margin, else Kalshi's) by trust.
-          const market = margins[v] ?? margins.kalshi ?? null;
-          const center = blendedHomeMargin({ ycpr: ours, kalshi: market, book: sportsbook, hoursToKickoff: hours }, { ycprWeight: bk.weight, fade: false });
-          if (center == null) continue;
-          // No edge to lean on if our blended number doesn't favor the pick versus this venue's market.
-          const ref = market ?? center;
-          if (!(w.pick === "home" ? center > ref : center < ref)) {
-            if (sid == null) totals.noEdge++;
-            await cancel(resting.filter((r) => r.kind === "quote"));
-            continue;
-          }
-          const pmf = marginPmf(center);
-          if (sid == null) await snapshot(w.game_id, v, L.rungs, (r) => kalshiSpreadYesProb(pmf, r.side, r.strike));
-
-          // 4. Decide orders; the loss cap counts this book's positions on the other venues too.
-          const here = positionsFrom(bookFills.filter((f) => f.venue === v));
-          const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
-          const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
-          const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl });
-          const plan = diffOrders(resting, orders, adapter.tick);
-          await cancel(plan.cancel);
-          // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.
-          if (plan.place.length) {
-            const fulls = plan.place.map((o) => orders.find((x) => x.ticker === o.ticker && x.action === o.action && x.price === o.price && x.kind === o.kind)!);
-            const rows = await db.insert<{ id: number }>(
-              "bot_orders",
-              plan.place.map((o, i) => ({
-                mode: MODE, venue: v, strategy_id: sid, game_id: w.game_id, ticker: o.ticker, action: o.action, price: o.price, count: o.count, kind: o.kind,
-                direction: fulls[i].direction, fair: fulls[i].fair, reason: fulls[i].reason, status: o.kind === "take" ? "filled" : "resting", closed_at: o.kind === "take" ? iso() : null,
-              }))
+            // 1. Simulate fills on what was resting since the last cycle.
+            const filled = paperFills(
+              resting.map((r) => ({ id: r.id, ticker: r.ticker, action: r.action, price: Number(r.price), count: r.count, placedAt: placedAt(r) })),
+              trades.get(v) ?? [],
+              books
             );
-            plan.place.forEach(() => count(v, "placed"));
-            const takes = plan.place.map((o, i) => (o.kind === "take" ? fillRow(rows[i].id, o, false, fulls[i].fair) : null)).filter((x) => x != null);
-            if (takes.length) await db.insert("bot_fills", takes);
+            if (filled.length) {
+              await db.update("bot_orders", `id=in.(${filled.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
+            }
+            resting = resting.filter((r) => !filled.some((f) => f.id === r.id));
+            const cancel = async (rows: RestingRow[]) => {
+              if (!rows.length) return;
+              await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
+              if (sid == null) totals.cancelled += rows.length;
+            };
+
+            // 2. Stop quoting before kickoff (inventory is held to settlement).
+            if (kickoff != null && now() >= kickoff - bk.stopMinutes * 60) {
+              await cancel(resting);
+              continue;
+            }
+            if (ours == null) {
+              if (sid == null && v === "kalshi") totals.skipped++;
+              continue;
+            }
+
+            // 3. Fair price: our number blended with the market (this venue's implied margin, else Kalshi's) by trust.
+            const market = margins[v] ?? margins.kalshi ?? null;
+            const center = blendedHomeMargin({ ycpr: ours, kalshi: market, book: sportsbook, hoursToKickoff: hours }, { ycprWeight: bk.weight, fade: false });
+            if (center == null) continue;
+            // No edge to lean on if our blended number doesn't favor the pick versus this venue's market.
+            const ref = market ?? center;
+            if (!(w.pick === "home" ? center > ref : center < ref)) {
+              if (sid == null) totals.noEdge++;
+              await cancel(resting.filter((r) => r.kind === "quote"));
+              continue;
+            }
+            const pmf = marginPmf(center);
+            if (sid == null) await snapshot(w.game_id, v, L.rungs, (r) => kalshiSpreadYesProb(pmf, r.side, r.strike));
+
+            // 4. Decide orders; the loss cap counts this book's positions on the other venues too.
+            const here = positionsFrom(bookFills.filter((f) => f.venue === v));
+            const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
+            const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
+            const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl });
+            const plan = diffOrders(resting, orders, adapter.tick);
+            await cancel(plan.cancel);
+            // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.
+            if (plan.place.length) {
+              const fulls = plan.place.map((o) => orders.find((x) => x.ticker === o.ticker && x.action === o.action && x.price === o.price && x.kind === o.kind)!);
+              const rows = await db.insert<{ id: number }>(
+                "bot_orders",
+                plan.place.map((o, i) => ({
+                  mode: MODE, venue: v, strategy_id: sid, game_id: w.game_id, ticker: o.ticker, action: o.action, price: o.price, count: o.count, kind: o.kind,
+                  direction: fulls[i].direction, fair: fulls[i].fair, reason: fulls[i].reason, status: o.kind === "take" ? "filled" : "resting", closed_at: o.kind === "take" ? iso() : null,
+                }))
+              );
+              plan.place.forEach(() => count(v, "placed"));
+              const takes = plan.place.map((o, i) => (o.kind === "take" ? fillRow(rows[i].id, o, false, fulls[i].fair) : null)).filter((x) => x != null);
+              if (takes.length) await db.insert("bot_fills", takes);
+            }
           }
         }
+      } catch (err) {
+        // One game failing (bad data, a venue hiccup) skips that game this cycle, not the whole cycle.
+        (totals.gameErrors ??= []).push(`${w.away_team} @ ${w.home_team}: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
       }
     }
     recordDiag();
