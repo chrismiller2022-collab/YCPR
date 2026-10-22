@@ -216,7 +216,7 @@ function renderBoard() {
     <label class="chk" style="margin:0 0 10px;color:var(--a-ink-2)"><input type="checkbox" id="boardDeltas" ${showDeltas ? "checked" : ""}> Show change since last run on each game${data.changes ? "" : ' <span class="muted">(available after two cycles have run)</span>'}</label>
     <div class="board">
       <div class="brow head"><div>Game</div><div>Lean</div><div>Lines (away)</div><div>P&amp;L by margin</div><div class="r">Worst / best</div><div class="r">Expected</div><div class="r">Status</div></div>
-      ${rows || '<div class="empty">No games yet. Add one from <b>Add game</b>.</div>'}
+      ${rows || '<div class="empty">No games yet. Add some from <b>Add games</b>.</div>'}
     </div>`;
   $("navCount").textContent = watchlist.filter((w) => w.enabled).length;
 }
@@ -600,8 +600,11 @@ function settingsForm(w) {
   const own = num(w.ycpr_weight);
   const t = Math.round((own ?? def) * 100);
   const v = (x, mult = 100) => (x == null ? "" : Math.round(Number(x) * mult * 100) / 100);
+  const preset = String(w.strategy_preset ?? (presetLabel(w) === "Bot defaults" ? "" : "custom"));
   return `<form id="gameForm" class="panel" data-id="${w.id}">
     <div class="grid2">
+      <label class="field" style="grid-column:1/-1">Strategy<select id="gPreset">${presets().map((p) => `<option value="${esc(p.id)}" ${String(p.id) === preset ? "selected" : ""}>${esc(p.name)}</option>`).join("")}<option value="custom" ${preset === "custom" ? "selected" : ""}>Custom</option></select>
+        <span class="muted" style="font-weight:400;font-size:.76rem">Fills the fields below; ${esc(presetLabel(w))} now.</span></label>
       <div class="field" style="grid-column:1/-1">Lean toward
         <div class="seg" id="gPick"><button type="button" data-pick="away" class="${w.pick === "away" ? "on" : ""}">${esc(w.away_team)}</button><button type="button" data-pick="home" class="${w.pick === "home" ? "on" : ""}">${esc(w.home_team)}</button></div></div>
       <div class="field" style="grid-column:1/-1">Trust in your number
@@ -628,27 +631,6 @@ function settingsForm(w) {
   </form>`;
 }
 
-// ---------- Add-game form
-
-function renderAddOptions() {
-  const sel = $("addGame");
-  const keep = sel.value;
-  sel.innerHTML = data.upcoming.map((g) => `<option value="${esc(g.id)}">${esc(g.away_team)} @ ${esc(g.home_team)} · ${when(g.start_date)} · YC ${signed(g.yc_away_spread)} · Mkt ${signed(marketAway(g))}</option>`).join("");
-  if (keep) sel.value = keep;
-  updatePick(!keep);
-}
-
-function updatePick(gameChanged = false) {
-  const g = data?.upcoming.find((x) => String(x.id) === $("addGame").value);
-  const cur = $("addPick").value;
-  $("addPick").innerHTML = g ? `<option value="away">${esc(g.away_team)} (away)</option><option value="home">${esc(g.home_team)} (home)</option>` : "";
-  if (!g) return;
-  $("addYc").value = g.yc_away_spread == null ? "no rating" : `${g.away_team} ${signed(g.yc_away_spread)}`;
-  const ours = num($("addOverride").value) ?? g.yc_away_spread;
-  const mkt = marketAway(g);
-  $("addPick").value = gameChanged || !cur ? (ours != null && mkt != null && ours > mkt ? "home" : "away") : cur;
-}
-
 // ---------- Render + routing
 
 function render() {
@@ -662,7 +644,7 @@ function render() {
   renderBoard();
   renderFills();
   renderSettings();
-  renderAddOptions();
+  if (view === "manage") renderManage();
   if (openStrat == null && openReview == null && openHypo == null) renderDrawer();
 }
 
@@ -670,7 +652,7 @@ function setView(v) {
   view = v;
   for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === v);
   for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== v;
-  $("title").textContent = { board: "Board", live: "Live desk", fills: "Fills", review: "Review", hypo: "Hypotheticals", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
+  $("title").textContent = { board: "Board", live: "Live desk", fills: "Fills", review: "Review", hypo: "Hypotheticals", add: "Add games", manage: "Manage games", lab: "Strategy lab", settings: "Settings" }[v];
   openGame = null;
   openStrat = null;
   openReview = null;
@@ -679,6 +661,8 @@ function setView(v) {
   if (v === "lab") { renderLab(); loadLab(); }
   if (v === "review") { renderReview(); loadReview(); }
   if (v === "hypo") { renderHypo(); loadHypo(); }
+  if (v === "add") { renderAdd(); loadPicker(); }
+  if (v === "manage") renderManage();
   window.liveDesk?.show(v === "live"); // hub/live.js: starts/pauses the desk feed
 }
 
@@ -758,6 +742,19 @@ $("drawerRoot").addEventListener("input", (e) => {
 });
 $("drawerRoot").addEventListener("change", (e) => {
   if (e.target.id === "gTrustDef") $("gTrust").disabled = e.target.checked;
+  // A strategy fills the game's settings (games.js presets); editing a field afterwards makes it Custom.
+  if (e.target.id === "gPreset" && e.target.value !== "custom") {
+    const p = presetById(e.target.value);
+    const set = (id, v) => ($(id).value = v);
+    set("gMax", p.max_worst_case_loss); set("gCap", p.per_rung_cap); set("gStop", p.stop_minutes_before);
+    for (const [id, k] of [["gPro", "pro_edge"], ["gAnti", "anti_edge"], ["gTake", "take_edge"], ["gStep", "edge_step"]]) set(id, Math.round(Number(p[k]) * 10000) / 100);
+    $("gTrustDef").checked = p.ycpr_weight == null;
+    $("gTrust").disabled = p.ycpr_weight == null;
+    if (p.ycpr_weight != null) { $("gTrust").value = Math.round(p.ycpr_weight * 100); $("gTrustVal").textContent = $("gTrust").value + "%"; }
+  }
+});
+$("drawerRoot").addEventListener("input", (e) => {
+  if (e.target.closest?.("#gameForm") && ["gMax", "gCap", "gStop", "gPro", "gAnti", "gTake", "gStep", "gTrust"].includes(e.target.id) && $("gPreset")) $("gPreset").value = "custom";
 });
 $("drawerRoot").addEventListener("submit", async (e) => {
   if (e.target.id !== "gameForm") return;
@@ -776,6 +773,7 @@ $("drawerRoot").addEventListener("submit", async (e) => {
     pro_edge: cents("gPro"), anti_edge: cents("gAnti"), take_edge: cents("gTake"), edge_step: cents("gStep"),
     stop_minutes_before: Number($("gStop").value),
     venues: [...document.querySelectorAll(".gVenue:checked")].map((x) => x.value),
+    strategy_preset: ["", "custom"].includes($("gPreset").value) ? null : Number($("gPreset").value),
   };
   try {
     await api("/api/admin", body);
@@ -860,44 +858,6 @@ document.querySelector('[data-pane="settings"]').addEventListener("change", asyn
   await api("/api/admin", { action: "defaultTrust", value: Number(e.target.value) / 100 }).catch((err) => alert(err.message));
   e.target.blur();
   load();
-});
-
-// Add game
-$("addGame").addEventListener("change", () => updatePick(true));
-$("addOverride").addEventListener("change", () => updatePick(true));
-$("addForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const pick = $("addPick").value;
-  const override = num($("addOverride").value);
-  const g = data.upcoming.find((x) => String(x.id) === $("addGame").value);
-  const ours = override ?? g?.yc_away_spread ?? null;
-  if (ours == null) return alert("No YC number for this game; enter an override away spread.");
-  const mkt = marketAway(g);
-  if (g && mkt != null && !(pick === "home" ? ours > mkt : ours < mkt)) {
-    const team = pick === "home" ? g.home_team : g.away_team;
-    if (!confirm(`Your number (${g.away_team} ${signed(ours)}) isn't better for ${team} than the market (${g.away_team} ${signed(mkt)}). The bot won't add exposure unless it is. Save anyway?`)) return;
-  }
-  const cents = (id) => Number($(id).value) / 100;
-  try {
-    await api("/api/admin", {
-      action: "addWatch",
-      game_id: $("addGame").value,
-      pick,
-      my_home_margin: override,
-      ycpr_weight: $("addTrust").value === "" ? null : Number($("addTrust").value),
-      max_worst_case_loss: Number($("addMax").value),
-      per_rung_cap: Number($("addCap").value),
-      profit_target: $("addTarget").value === "" ? null : Number($("addTarget").value),
-      pro_edge: cents("addPro"), anti_edge: cents("addAnti"), take_edge: cents("addTake"), edge_step: cents("addStep"),
-      stop_minutes_before: Number($("addStop").value),
-      enabled: true,
-    });
-    $("addMsg").textContent = "Saved. The bot picks it up on its next run.";
-    await load();
-    setView("board");
-  } catch (err) {
-    $("addMsg").textContent = err.message;
-  }
 });
 
 applyTheme();
