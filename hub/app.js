@@ -653,7 +653,7 @@ function setView(v) {
   view = v;
   for (const b of document.querySelectorAll("[data-view]")) b.classList.toggle("on", b.dataset.view === v);
   for (const p of document.querySelectorAll("[data-pane]")) p.hidden = p.dataset.pane !== v;
-  $("title").textContent = { board: "Board", fills: "Fills", review: "Review", hypo: "Hypotheticals", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
+  $("title").textContent = { board: "Board", live: "Live desk", fills: "Fills", review: "Review", hypo: "Hypotheticals", add: "Add game", lab: "Strategy lab", settings: "Settings" }[v];
   openGame = null;
   openStrat = null;
   openReview = null;
@@ -662,6 +662,7 @@ function setView(v) {
   if (v === "lab") { renderLab(); loadLab(); }
   if (v === "review") { renderReview(); loadReview(); }
   if (v === "hypo") { renderHypo(); loadHypo(); }
+  window.liveDesk?.show(v === "live"); // hub/live.js: starts/pauses the desk feed
 }
 
 async function load() {
