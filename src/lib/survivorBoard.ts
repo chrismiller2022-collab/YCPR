@@ -171,12 +171,15 @@ export class Board {
 export const fbsTeams = (): Team[] => TEAMS.filter((t) => t.div === "FBS").sort((a, b) => a.team.localeCompare(b.team));
 
 /** Survivor: the row team's and the opponent's conferences must both be selected (opponent FBS). Splash: any FBS game except G6 vs G6. */
-export function isEligible(rules: SurvivorRules, team: Team, opp: Team | undefined, selectedConfs: Set<string>): boolean {
+export function isEligible(rules: SurvivorRules, team: Team, opp: Team | undefined, selectedConfs: Set<string>, week?: SurvivorWeek): boolean {
   if (!opp || opp.div !== "FBS") return false;
+  // Every conference title game is pickable, whatever the conference rules.
+  if (week?.key === "champ") return true;
   if (rules === "survivor") return selectedConfs.has(team.conf) && selectedConfs.has(opp.conf);
   return !(bucketFor(team.team, team.conf) === "G6" && bucketFor(opp.team, opp.conf) === "G6");
 }
 
-export function rowTeamsFor(rules: SurvivorRules, selectedConfs: Set<string>): Team[] {
-  return rules === "survivor" ? fbsTeams().filter((t) => selectedConfs.has(t.conf)) : fbsTeams();
+export function rowTeamsFor(rules: SurvivorRules, selectedConfs: Set<string>, champTeams: Set<string> = new Set()): Team[] {
+  // Teams outside the eligible conferences still get a row when they're in a title game: champ week is their only pick.
+  return rules === "survivor" ? fbsTeams().filter((t) => selectedConfs.has(t.conf) || champTeams.has(t.team)) : fbsTeams();
 }

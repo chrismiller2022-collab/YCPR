@@ -142,7 +142,11 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
 
   // ---- Board helpers ----
   const allConfs = useMemo(() => availableConferences(), []);
-  const teams = useMemo(() => rowTeamsFor(rules, selectedConfs), [rules, selectedConfs]);
+  const champTeams = useMemo(() => {
+    const champ = SURVIVOR_WEEKS.find((w) => w.key === "champ");
+    return new Set(champ ? board.games.filter((g) => g.week === champ.dataWeek).flatMap((g) => [g.home, g.away]) : []);
+  }, [board]);
+  const teams = useMemo(() => rowTeamsFor(rules, selectedConfs, champTeams), [rules, selectedConfs, champTeams]);
   const usedTeams = useMemo(() => allUsedTeams(picks), [picks]);
   const played = useMemo(() => new Set(SURVIVOR_WEEKS.filter((w) => board.isPlayed(w)).map((w) => w.key)), [board]);
 
@@ -150,7 +154,7 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
     const team = teams.find((t) => t.team === teamName);
     const g = board.game(teamName, week);
     const opp = g ? board.opponent(g, teamName) : undefined;
-    const eligible = !!team && !!g && isEligible(rules, team, opp, selectedConfs);
+    const eligible = !!team && !!g && isEligible(rules, team, opp, selectedConfs, week);
     return { g, opp, eligible };
   }
 
@@ -171,7 +175,7 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
     for (const t of teams)
       for (const w of SURVIVOR_WEEKS) {
         const g = board.game(t.team, w);
-        if (!g || !isEligible(rules, t, board.opponent(g, t.team), selectedConfs)) continue;
+        if (!g || !isEligible(rules, t, board.opponent(g, t.team), selectedConfs, w)) continue;
         const s = board.spread(t.team, g, source);
         if (s) entries.push({ team: t.team, week: w.key, spread: s.value });
       }
@@ -250,7 +254,7 @@ export default function SurvivorBoardPanel({ initialRules = "survivor" }: { init
         winProb: (team, week) => {
           const g = board.game(team, week);
           const t = teamByName.get(team);
-          if (!g || !t || !isEligible(rules, t, board.opponent(g, team), selectedConfs)) return null;
+          if (!g || !t || !isEligible(rules, t, board.opponent(g, team), selectedConfs, week)) return null;
           const wp = board.winPct(team, g, source);
           // A projected title game only counts as often as the team actually gets there.
           if (wp != null && g.projected) return wp * ((g.home === team ? g.madeHome : g.madeAway) ?? 0);
