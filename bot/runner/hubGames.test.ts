@@ -8,10 +8,10 @@ vi.mock("../../hub/api/_bot.mjs", () => ({
   outcomeRanges: () => ({ ranges: [], expected: 0 }),
   marginPmf: () => ({ maxMargin: 0, probs: [1] }),
   boardChanges: () => ({}),
+  espnScoreGame: (e: Row) => ({ id: String(e.id), state: e.state }),
+  espnDate: () => "20261024",
 }));
-// @ts-expect-error plain JS API files
 import data from "../../hub/api/data.js";
-// @ts-expect-error plain JS API files
 import admin from "../../hub/api/admin.js";
 
 const game = (id: string, week: number, completed: boolean, extra: Row = {}) => ({
@@ -77,5 +77,36 @@ describe("Add games / Manage games API", () => {
     await call(admin, "/api/admin", { action: "updateWatches", ids: [2], patch: { enabled: false } });
     expect(db.bot_watchlist.map((w) => w.enabled)).toEqual([true, false]);
     await expect(call(admin, "/api/admin", { action: "updateWatches", ids: [1], patch: {} })).rejects.toThrow(/nothing to change/);
+  });
+
+  it("week: the watched games of the next week to finish, every book's fills, finals and Vegas", async () => {
+    const soon = new Date(Date.now() + 3600e3).toISOString(), old = new Date(Date.now() - 9 * 86400e3).toISOString();
+    db.bot_watchlist = [
+      { id: 1, game_id: "1", week: 8, kickoff: old, pick: "away", enabled: true },
+      { id: 2, game_id: "2", week: 9, kickoff: soon, pick: "home", enabled: true },
+    ];
+    db.bot_fills = [{ id: 1, mode: "paper", strategy_id: null, game_id: "2", venue: "kalshi", ticker: "t", side: "home", strike: 1.5, action: "buy", price: 0.5, count: 1, fee: 0 }, { id: 2, mode: "paper", strategy_id: 7, game_id: "1" }];
+    const d = await call(data, "/api/data?part=week");
+    expect([d.weeks, d.week]).toEqual([[8, 9], 9]);
+    expect(d.games.map((g: Row) => [g.game_id, g.home_spread])).toEqual([["2", 3.5]]);
+    expect(d.fills.map((f: Row) => f.id)).toEqual([1]);
+    expect(d.finals.map((f: Row) => f.id)).toEqual(["2"]);
+    expect((await call(data, "/api/data?part=week&week=8")).fills.map((f: Row) => f.id)).toEqual([2]);
+  });
+
+  it("scores: ESPN games for the asked ids only, one fetch per day and division, cached", async () => {
+    const espn: string[] = [];
+    const db2 = pgStub(db).fetchStub;
+    vi.stubGlobal("fetch", async (url: string, init?: Row) => {
+      if (!url.includes("espn.com")) return db2(url, init);
+      espn.push(url);
+      return { ok: true, json: async () => ({ events: [{ id: "2", state: "in" }, { id: "99", state: "in" }] }) };
+    });
+    const q = `/api/data?part=scores&ids=2,b%20ad&kickoffs=${encodeURIComponent("2026-10-24T23:00:00Z")}`;
+    const d = await call(data, q);
+    expect(d.scores).toEqual({ "2": { id: "2", state: "in" } });
+    expect(espn).toHaveLength(2);
+    await call(data, q);
+    expect(espn).toHaveLength(2); // served from the 10 s cache
   });
 });

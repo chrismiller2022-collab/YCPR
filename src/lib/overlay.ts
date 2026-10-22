@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import type { BettingLineRow } from "./api/gamesLines";
 import type { PlacedBetRow } from "./api/placedBets";
+import { SD_MARGIN, SD_TEAM, SD_TOTAL, minutesPlayed, probAbove } from "./liveScore";
 
 // ---------------------------------------------------------------------
 // TV score bug (/overlay) + its remote (/overlay/control).
@@ -366,26 +367,7 @@ export interface BetLine {
 }
 
 // --- Live cover / over probability -------------------------------------
-// ESPN publishes win probability but nothing against the spread, so this
-// estimates it: final = current score + the pregame expectation for the
-// time that's left, with the spread of outcomes shrinking as the clock runs
-// down (sd × √fraction left). Full-game SDs are typical college values.
-const SD_MARGIN = 16;
-const SD_TOTAL = 15;
-const SD_TEAM = 10;
-
-function normCdf(z: number): number {
-  // Abramowitz–Stegun 7.1.26 erf approximation (|error| < 1.5e-7).
-  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
-  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(z * z) / 2);
-  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
-}
-
-/** P(final > line) for a normal final with this mean and sd (sd 0 = already decided). */
-function probAbove(mean: number, sd: number, line: number): number {
-  if (sd < 0.01) return mean > line ? 1 : mean < line ? 0 : 0.5;
-  return 1 - normCdf((line - mean) / sd);
-}
+// The clock math and SDs live in liveScore.ts, shared with the bot dashboard's Scores tab.
 
 interface LiveModel {
   left: number; // fraction of regulation left, 0–1
@@ -424,15 +406,6 @@ function coverProb(m: LiveModel, side: "home" | "away", line: number): number {
 function totalProb(m: LiveModel, over: boolean, line: number): number {
   const p = probAbove(m.total, SD_TOTAL * Math.sqrt(m.left), line);
   return over ? p : 1 - p;
-}
-
-/** Minutes of regulation played, or null before kickoff. OT counts as 60. */
-function minutesPlayed(g: ScoreGame): number | null {
-  if (g.state === "pre") return null;
-  if (g.state === "post" || g.period > 4) return 60;
-  const [m, s] = (g.clock ?? "15:00").split(":").map(Number);
-  const left = (m || 0) + (s || 0) / 60;
-  return (g.period - 1) * 15 + (15 - left);
 }
 
 function cmp(diff: number): BetStatus {
