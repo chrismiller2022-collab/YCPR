@@ -1,6 +1,6 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
 import { authorized, sb, send } from "./_lib.js";
-import { ycprAwaySpreads, outcomeRanges, marginPmf } from "./_bot.mjs";
+import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges } from "./_bot.mjs";
 
 export default async function handler(req, res) {
   if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
@@ -68,7 +68,11 @@ export default async function handler(req, res) {
       if (byVenue.all) outcomes[w.game_id] = byVenue;
     }
 
-    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes });
+    // Change since the last run: the Board's numbers saved by the latest two cycles (bot_runs.summary.board).
+    const snaps2 = await sb("bot_runs?select=started_at,board:summary->board&mode=eq.paper&finished_at=not.is.null&summary->board=not.is.null&order=started_at.desc&limit=2");
+    const changes = snaps2.length === 2 ? { at: snaps2[0].started_at, since: snaps2[1].started_at, games: boardChanges(snaps2[0].board, snaps2[1].board) } : null;
+
+    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes });
   } catch (err) {
     send(res, 500, { error: String(err.message || err) });
   }

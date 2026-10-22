@@ -16,6 +16,8 @@ let openReview = null; // game_id shown in the Review drawer
 let openHypo = null; // { gameId, methodKey } shown in the Hypotheticals drawer (hypo.js)
 let venue = "all"; // venue filter: all | kalshi | novig | prophetx
 try { venue = localStorage.getItem("botvenue") || "all"; } catch {}
+let showDeltas = false; // Board: change since the last run on each game row
+try { showDeltas = localStorage.getItem("botdeltas") === "1"; } catch {}
 const VENUES = ["kalshi", "novig", "prophetx"];
 const VNAME = { all: "All", kalshi: "Kalshi", novig: "Novig", prophetx: "ProphetX" };
 const VSHORT = { kalshi: "K", novig: "NV", prophetx: "PX" };
@@ -161,12 +163,21 @@ function curveSvg(w, pts) {
     <p class="muted" style="margin:2px 0 12px;font-size:.76rem">A7 = ${esc(w.away_team)} by 7 · H7 = ${esc(w.home_team)} by 7 · after fees, held to settlement</p>`;
 }
 
+// Change since the last run (data.changes, from the snapshots the last two cycles saved).
+const changeOf = (w) => data.changes?.games?.[w.game_id]?.[venue] ?? null;
+function deltaHtml(x, tag = "span") {
+  if (x == null) return "";
+  if (Math.abs(x) < 0.005) return `<${tag} class="muted">±$0.00</${tag}>`;
+  return `<${tag} class="${x > 0 ? "ok" : "bad"}">${x > 0 ? "+" : "−"}$${Math.abs(x).toFixed(2)}</${tag}>`;
+}
+
 // ---------- Views
 
 function renderBoard() {
   const { watchlist } = data;
   const fills = vf(data.fills);
   let worst = 0, best = 0, evY = 0, evK = 0, anyK = false;
+  let dWorst = 0, dBest = 0, dEvY = 0, dEvK = 0;
   const rows = watchlist.map((w) => {
     const g = gameOf(w);
     const gFills = fills.filter((f) => f.game_id === w.game_id);
@@ -176,27 +187,33 @@ function renderBoard() {
     const o = outcomeOf(w);
     if (w.enabled) { worst += wv; best += bv; }
     if (o) { evY += o.expected; if (o.marketExpected != null) { evK += o.marketExpected; anyK = true; } }
+    const ch = changeOf(w);
+    if (ch) { if (w.enabled) { dWorst += ch[0]; dBest += ch[1]; } dEvY += ch[2] ?? 0; dEvK += ch[3] ?? 0; }
+    const rowDelta = (x) => (showDeltas && ch ? `<small title="Change since the last run">Δ ${deltaHtml(x)}</small>` : "");
     const [st, stCls] = statusOf(w, g);
     return `<div class="brow ${w.enabled ? "" : "off"}" data-game="${esc(w.game_id)}" tabindex="0" role="button" aria-label="Open ${esc(w.away_team)} at ${esc(w.home_team)}">
       <div class="game"><b>${esc(w.away_team)} @ ${esc(w.home_team)}</b><span>${when(w.kickoff)}</span></div>
       <div class="lean"><span class="pill">${esc(w.pick === "home" ? w.home_team : w.away_team)}</span></div>
       <div class="lines">${linesHtml(w, g)}</div>
       <div class="spark">${sparkSvg(pts)}</div>
-      <div class="r risk"><span class="${cls(wv)}">${usd(wv)}</span> / <span class="${cls(bv)}">${usd(bv)}</span><small>worst / best</small></div>
-      <div class="r ev"><span class="${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</span><small>${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "EV (yours)"}</small></div>
+      <div class="r risk"><span class="${cls(wv)}">${usd(wv)}</span> / <span class="${cls(bv)}">${usd(bv)}</span><small>worst / best</small>${showDeltas && ch ? `<small title="Change since the last run">Δ ${deltaHtml(ch[0])} / ${deltaHtml(ch[1])}</small>` : ""}</div>
+      <div class="r ev"><span class="${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</span><small>${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "EV (yours)"}</small>${rowDelta(ch?.[2])}</div>
       <div class="r st"><span class="pill ${stCls}">${esc(st)}</span><small>${gFills.length} fills</small></div>
     </div>`;
   }).join("");
   const last = data.runs?.[0];
   const resting = vf(data.orders).length;
+  const since = data.changes ? `since the ${new Date(data.changes.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} run` : "";
+  const tileDelta = (x) => (data.changes ? `<div class="d">${deltaHtml(x)} ${since}</div>` : "");
   document.querySelector('[data-pane="board"]').innerHTML = `
     <div class="stats">
-      <div class="stat"><div class="l">Worst case (all games)</div><div class="v ${cls(worst)}">${usd(worst)}</div><div class="d">if every game lands badly</div></div>
-      <div class="stat"><div class="l">Best case</div><div class="v ${cls(best)}">${usd(best)}</div><div class="d">if every game lands well</div></div>
-      <div class="stat"><div class="l">Expected · your number</div><div class="v ${cls(evY)}">${usd(evY)}</div><div class="d">${anyK ? `market's number: ${usd(evK)}` : "after fees"}</div></div>
+      <div class="stat"><div class="l">Worst case (all games)</div><div class="v ${cls(worst)}">${usd(worst)}</div><div class="d">if every game lands badly</div>${tileDelta(dWorst)}</div>
+      <div class="stat"><div class="l">Best case</div><div class="v ${cls(best)}">${usd(best)}</div><div class="d">if every game lands well</div>${tileDelta(dBest)}</div>
+      <div class="stat"><div class="l">Expected · your number</div><div class="v ${cls(evY)}">${usd(evY)}</div><div class="d">${anyK ? `market's number: ${usd(evK)}` : "after fees"}</div>${data.changes ? `<div class="d">${deltaHtml(dEvY)} · market ${deltaHtml(dEvK)} ${since}</div>` : ""}</div>
       <div class="stat"><div class="l">Fills / resting</div><div class="v">${fills.length} / ${resting}</div><div class="d">paper · ${VNAME[venue]}</div></div>
       <div class="stat"><div class="l">Last run</div><div class="v" style="font-size:1.05rem">${last ? ago(last.started_at) : "–"}</div><div class="d ${last?.error ? "bad" : ""}">${last ? (last.error ? "error" : `${last.games ?? 0} games · ${last.fills ?? 0} fills`) : "not yet"}</div></div>
     </div>
+    <label class="chk" style="margin:0 0 10px;color:var(--a-ink-2)"><input type="checkbox" id="boardDeltas" ${showDeltas ? "checked" : ""}> Show change since last run on each game${data.changes ? "" : ' <span class="muted">(available after two cycles have run)</span>'}</label>
     <div class="board">
       <div class="brow head"><div>Game</div><div>Lean</div><div>Lines (away)</div><div>P&amp;L by margin</div><div class="r">Worst / best</div><div class="r">Expected</div><div class="r">Status</div></div>
       ${rows || '<div class="empty">No games yet. Add one from <b>Add game</b>.</div>'}
@@ -819,6 +836,14 @@ $("drawerRoot").addEventListener("submit", async (e) => {
   } catch (err) {
     $("sMsg").textContent = err.message;
   }
+});
+
+// Board: per-game change toggle
+document.querySelector('[data-pane="board"]').addEventListener("change", (e) => {
+  if (e.target.id !== "boardDeltas") return;
+  showDeltas = e.target.checked;
+  try { localStorage.setItem("botdeltas", showDeltas ? "1" : "0"); } catch {}
+  renderBoard();
 });
 
 // Fills filter

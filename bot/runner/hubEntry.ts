@@ -8,3 +8,4 @@ export { runHypo, customReplay, methodsNow } from "../hypo/run";
 export { strategyMethod, builtinMethods, VENUE_SETS } from "../hypo/replay";
 export { db } from "./io";
 export { runPxTape } from "./pxtape";
+export { boardChanges } from "./boardSnapshot";

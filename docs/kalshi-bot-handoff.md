@@ -353,6 +353,12 @@ Per-game parameters:
   (`bot/ladder/outcomes.ts`: ranges with equal P&L after fees, chance under our number, expected value). At the loss
   cap the bot stops adding risk but still places orders that don't worsen the worst case (sell-backs, middles, hedges).
 
+- **Change since last run (2026-10-22):** each paper cycle saves the Board's worst/best/expected per game and venue in
+  `bot_runs.summary.board` (`bot/runner/boardSnapshot.ts`); `/api/data` returns `changes` = latest − previous snapshot, shown
+  on the Board tiles and, with "Show change since last run on each game", on every row.
+- **Grading:** `settle()` grades fills from the site's `games` table (`completed`, `home_points`, `away_points`), which only
+  updates when a CFBD sync runs (`/api/cfbd-sync`, the Sync buttons in Admin). It only visits enabled watchlist games.
+
 ## 16. Strategy lab (2026-10-21)
 
 `bot_strategies` (seeded: Aggressive, Default, Patient) each paper-trade every **watchlist** game against the same Kalshi
