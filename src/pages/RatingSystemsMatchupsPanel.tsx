@@ -244,8 +244,39 @@ function GamesTable({
 // game to game — one tick header, stacked rows underneath, left identity
 // column pinned while the chart scrolls.
 // ---------------------------------------------------------------------
-function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
+const HIDDEN_SYSTEMS_KEY = "spread_chart_hidden_systems";
+
+function SpreadChartTab({ rows: rawRows }: { rows: MultiSystemGameRow[] }) {
   const [linesOnly, setLinesOnly] = useState(false);
+  // Hidden systems drop off the chart and out of every sort; remembered in this browser.
+  const [hidden, setHidden] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(HIDDEN_SYSTEMS_KEY) ?? "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+  const [systemsOpen, setSystemsOpen] = useState(false);
+  function toggleSystem(key: string) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        localStorage.setItem(HIDDEN_SYSTEMS_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        /* private mode: just not remembered */
+      }
+      return next;
+    });
+  }
+  const allRows = useMemo(
+    () =>
+      hidden.size === 0
+        ? rawRows
+        : rawRows.map((r) => ({ ...r, systems: Object.fromEntries(Object.entries(r.systems).filter(([k]) => !hidden.has(k))) as typeof r.systems })),
+    [rawRows, hidden]
+  );
   const [highlightMcillece, setHighlightMcillece] = useState(false);
   const [chartSort, setChartSort] = useState<SpreadChartSortKey | "">("");
   const [chartSortDir, setChartSortDir] = useState<"desc" | "asc">("desc");
@@ -281,6 +312,9 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
           <input type="checkbox" checked={highlightMcillece} onChange={(e) => setHighlightMcillece(e.target.checked)} />
           Highlight McIllece
         </label>
+        <button className="mode-btn" onClick={() => setSystemsOpen((v) => !v)}>
+          Systems{hidden.size > 0 ? ` (${hidden.size} hidden)` : ""} {systemsOpen ? "▲" : "▼"}
+        </button>
         <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
           Sort by
           <select value={chartSort} onChange={(e) => setChartSort(e.target.value as SpreadChartSortKey | "")}>
@@ -304,6 +338,19 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
           <span style={{ color: "#3ecf5e" }}>│ Result</span>
         </span>
       </div>
+      {systemsOpen && (
+        <div className="admin-panel" style={{ marginBottom: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.3rem 1rem", fontSize: "0.8rem" }}>
+          {RATING_SYSTEMS.map((s) => (
+            <label key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+              <input type="checkbox" checked={!hidden.has(s.key)} onChange={() => toggleSystem(s.key)} />
+              {s.label}
+            </label>
+          ))}
+          <button className="mode-btn" onClick={() => RATING_SYSTEMS.forEach((s) => hidden.has(s.key) && toggleSystem(s.key))} disabled={hidden.size === 0}>
+            Show all
+          </button>
+        </div>
+      )}
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <div style={{ display: "flex", minWidth: 340 + CHART_WIDTH }}>
           <div style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--turf-panel)", minWidth: 340 }}>
