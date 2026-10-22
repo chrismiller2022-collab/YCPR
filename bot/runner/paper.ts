@@ -18,6 +18,7 @@ import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder
 import { diffOrders, paperFills, type Trade } from "./paperFills";
 import { db } from "./io";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
+import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
 
 const MODE = "paper";
@@ -122,6 +123,8 @@ export interface CycleTotals {
   diag?: Partial<Record<VenueId, unknown>>;
   /** The Board's worst/best/expected per game after this cycle, for "change since last run" on the dashboard. */
   board?: BoardSnapshot;
+  /** Final scores saved from ESPN this cycle. */
+  espnFinals?: number;
 }
 
 const placedAt = (r: { created_at: string }) => Math.floor(new Date(r.created_at).getTime() / 1000);
@@ -210,6 +213,13 @@ export async function runCycle(): Promise<CycleTotals> {
   try {
     const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number }>("bot_state", "select=mode,kill_switch,default_ycpr_weight&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
+    // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
+    try {
+      const f = await syncEspnFinals();
+      if (f.saved) totals.espnFinals = f.saved;
+    } catch (err) {
+      (totals.gameErrors ??= []).push(`ESPN finals: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
+    }
     if (state?.kill_switch) {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
@@ -222,6 +232,14 @@ export async function runCycle(): Promise<CycleTotals> {
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
     const strategies = await db.select<Strategy>("bot_strategies", "select=*&enabled=is.true&order=id");
+    // Paused or removed games aren't traded, but still get graded once they've kicked off.
+    for (const w of await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`)) {
+      try {
+        await settle(w);
+      } catch (err) {
+        (totals.gameErrors ??= []).push(`settle ${w.away_team} @ ${w.home_team}: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
+      }
+    }
     if (!watch.length) return totals;
 
     // Venues: skip any without credentials, or whose catalog can't be read this cycle.
