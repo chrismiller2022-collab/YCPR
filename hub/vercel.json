@@ -2,12 +2,20 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "cd .. && npm ci --no-audit --no-fund",
-  "buildCommand": "cd .. && npx esbuild bot/runner/hubEntry.ts --bundle --platform=node --format=esm --target=node20 --outfile=hub/api/_bot.mjs",
+  "buildCommand": "cd .. && npx esbuild bot/runner/hubEntry.ts --bundle --platform=node --format=esm --target=node20 --outfile=hub/api/_bot.mjs && npx esbuild src/lib/liveScore.ts --bundle --format=esm --target=es2020 --outfile=hub/live/score.js",
   "outputDirectory": ".",
   "functions": {
-    "api/cycle.js": { "maxDuration": 300 },
-    "api/record.js": { "maxDuration": 300 },
-    "api/hypo.js": { "maxDuration": 300 },
-    "api/pxtape.js": { "maxDuration": 300 }
+    "api/cycle.js": {
+      "maxDuration": 300
+    },
+    "api/record.js": {
+      "maxDuration": 300
+    },
+    "api/hypo.js": {
+      "maxDuration": 300
+    },
+    "api/pxtape.js": {
+      "maxDuration": 300
+    }
   }
 }

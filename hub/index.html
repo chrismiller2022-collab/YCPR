@@ -136,6 +136,33 @@
   .linkbtn { border:0; background:none; padding:0; color:inherit; cursor:pointer; text-align:left; font:inherit; }
   .linkbtn:hover b { text-decoration:underline; }
   .btn[disabled] { opacity:.5; cursor:not-allowed; }
+  /* Scores (the header's venue filter doesn't apply: positions are all venues combined) */
+  :root[data-view="scores"] #venueSeg { display:none; }
+  .sc-bar { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; }
+  .sc-bar .field { min-width:150px; }
+  .sc-h { margin:18px 0 8px; font-size:.82rem; text-transform:uppercase; letter-spacing:.08em; color:var(--a-muted); }
+  .sc-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap:12px; }
+  .sc-card { background:var(--a-surface); border:1px solid var(--a-line); border-radius:12px; padding:12px 14px; box-shadow:var(--a-shadow); display:grid; gap:6px; min-width:0; }
+  .sc-card.live { border-color:color-mix(in srgb, var(--c-err) 45%, var(--a-line)); }
+  .sc-head { display:flex; gap:8px; align-items:center; font-size:.76rem; }
+  .sc-live::before { animation:scpulse 1.4s infinite; }
+  @keyframes scpulse { 50% { opacity:.2; } }
+  @media (prefers-reduced-motion: reduce) { .sc-live::before { animation:none; } }
+  .sc-team { display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:8px; align-items:center; font-size:.95rem; }
+  .sc-team .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sc-team .nm small { color:var(--a-muted); font-size:.72rem; }
+  .sc-team b { font-size:1.3rem; font-variant-numeric:tabular-nums; }
+  .sc-team.lead { font-weight:700; }
+  .sc-dot { width:22px; height:22px; border-radius:50%; background:var(--a-row); }
+  .sc-ball { color:var(--c-warn); font-size:.7rem; }
+  .sc-dd { font-size:.78rem; color:var(--a-ink-2); }
+  .sc-pnl { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px,1fr)); gap:8px; border-top:1px solid var(--a-row); padding-top:8px; }
+  .sc-pnl small { display:block; color:var(--a-muted); font-size:.72rem; }
+  .sc-pnl b { font-size:1.2rem; font-variant-numeric:tabular-nums; }
+  .sc-card svg { width:100%; height:auto; display:block; }
+  .sc-axis { display:flex; justify-content:space-between; font-size:.66rem; color:var(--a-muted); margin-top:-2px; }
+  .sc-lines { font-size:.78rem; } .sc-lines td, .sc-lines th { padding:3px 4px; }
+  .sc-foot { margin:0; font-size:.72rem; color:var(--a-muted); }
 
   /* Drawer */
   .scrim { position:fixed; inset:0; background:rgba(15,16,40,.35); z-index:40; }
@@ -188,6 +215,7 @@
     <nav class="nav" id="nav">
       <button data-view="board" class="on">Board <span class="count" id="navCount">0</span></button>
       <button data-view="live">Live desk</button>
+      <button data-view="scores">Scores</button>
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
       <button data-view="hypo">Hypotheticals</button>
@@ -211,6 +239,7 @@
     <nav class="mobile-tabs" id="mtabs">
       <button data-view="board" class="on">Board</button>
       <button data-view="live">Live</button>
+      <button data-view="scores">Scores</button>
       <button data-view="fills">Fills</button>
       <button data-view="review">Review</button>
       <button data-view="hypo">What-if</button>
@@ -223,6 +252,7 @@
       <p id="err" class="err"></p>
       <section data-pane="board"></section>
       <section data-pane="live" hidden></section>
+      <section data-pane="scores" hidden></section>
       <section data-pane="fills" hidden></section>
       <section data-pane="review" hidden></section>
       <section data-pane="hypo" hidden></section>
@@ -238,5 +268,6 @@
 <script src="hypo.js"></script>
 <script src="games.js"></script>
 <script type="module" src="live.js"></script>
+<script type="module" src="scores.js"></script>
 </body>
 </html>

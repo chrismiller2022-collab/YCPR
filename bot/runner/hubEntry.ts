@@ -9,3 +9,5 @@ export { strategyMethod, builtinMethods, VENUE_SETS } from "../hypo/replay";
 export { db } from "./io";
 export { runPxTape } from "./pxtape";
 export { boardChanges } from "./boardSnapshot";
+export { espnScoreGame } from "../../src/lib/liveScore";
+export { espnDate } from "./espnFinals";

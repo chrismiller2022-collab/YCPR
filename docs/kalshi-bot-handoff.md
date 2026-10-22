@@ -370,6 +370,13 @@ Per-game parameters:
   `strategy_preset` as a label only: values are copied, later strategy edits don't follow ("Patient · edited", "Custom").
   The game drawer's Settings has the same Strategy select.
 
+- **Scores tab (2026-10-22, `hub/scores.js`):** ESPN live scores for the watched games of a week with P&L per game and
+  book. "Now playing" = games in progress; "This week" = settled + live (if it ended now / projected) + upcoming expected,
+  with a week projection. Live projections reuse the TV score bug's model, now shared in `src/lib/liveScore.ts`
+  (score so far + pregame line × time left, SD 16 × √time left), starting from the market line (or YC). Data:
+  `/api/data?part=week` (~1/min) and `?part=scores` (every 15 s while games are on; ESPN cached 10 s per instance).
+  `liveScore.ts` is bundled to `hub/live/score.js` at deploy (gitignored, like `_bot.mjs`).
+
 ## 16. Strategy lab (2026-10-21)
 
 `bot_strategies` (seeded: Aggressive, Default, Patient) each paper-trade every **watchlist** game against the same Kalshi
