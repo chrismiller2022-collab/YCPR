@@ -388,7 +388,18 @@ trading keys need no approval (market data and higher limits do).
   - Updated hourly by `/api/record` (with its remaining time) and the GitHub backup (no time limit). The newest 2 minutes are left alone so a cycle's trades are complete.
   - Pick per game = the side our number favors versus the market when both are first known. Built-in methods risk $10 per game.
 
-## 19. NEXT BUILD: Live desk tab (spec, agreed 2026-10-22)
+## 19. Live desk tab (spec agreed 2026-10-22; ✅ built 2026-10-22)
+
+**Built:** `hub/api/live.js` (cursor `v1.<ms>.<order>.<fill>.<mktSnap>.<botSnap>.<trade>.<impliedMs>.<watchlistMs>`; `g=1` reloads the
+focused game, `lines=1` a new chart range, `wl=1` the watchlist, which otherwise goes out once a minute), `hub/live/feed.js`
+(`startFeed`, polls every 7 s, pauses while the tab is hidden or another view is open), `hub/live/model.js` (browser port of
+`marginPmf` with the fitted key weights, positions, worst/best, expected P&L, status rules), `hub/live.js` + `hub/live/live.css`
+(the view). Fill kinds come from the order: anti = sell-back, take = take, else make. Ladder rows are shown from the pick's side
+(the other team's rung is its NO). Checks: `bot/runner/liveDesk.test.ts` (in-memory PostgREST stub: full load, empty poll,
+incremental cycle, feed merge, book switch, game switch; the browser pmf equals the bot's), plus headless Chromium at 1440 and
+390 px in Site (light and dark) and Terminal: no console errors, no horizontal overflow, modal zoom/hover/Esc, Activity
+filters, kill switch and per-game pause through the in-page confirm.
+
 
 Start here if you're the session building it. Mockup to match: `docs/mockups/live-desk.html` (published at https://claude.ai/artifact/X4QkP6YxXULPw2Vrj2tScd). It runs on a fake in-browser feed. Reuse its CSS and render functions, and replace only the feed.
 
