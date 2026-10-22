@@ -356,8 +356,11 @@ Per-game parameters:
 - **Change since last run (2026-10-22):** each paper cycle saves the Board's worst/best/expected per game and venue in
   `bot_runs.summary.board` (`bot/runner/boardSnapshot.ts`); `/api/data` returns `changes` = latest − previous snapshot, shown
   on the Board tiles and, with "Show change since last run on each game", on every row.
-- **Grading:** `settle()` grades fills from the site's `games` table (`completed`, `home_points`, `away_points`), which only
-  updates when a CFBD sync runs (`/api/cfbd-sync`, the Sync buttons in Admin). It only visits enabled watchlist games.
+- **Grading:** `settle()` grades fills from the site's `games` table (`completed`, `home_points`, `away_points`). Since
+  2026-10-22 each paper cycle first saves ESPN finals there (`bot/runner/espnFinals.ts`: games that started 2+ h ago in
+  the last 4 days and aren't final; `score_source = 'espn'`). CFBD sync overwrites them once CFBD has its own final
+  (`score_source = 'cfbd'`) and otherwise keeps ESPN's (`keepEspnFinals` in `api/cfbd-sync.ts`). Paused/removed games
+  are graded too.
 
 ## 16. Strategy lab (2026-10-21)
 

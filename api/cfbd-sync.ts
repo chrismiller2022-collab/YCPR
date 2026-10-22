@@ -412,6 +412,26 @@ const DEFAULT_HFA = 2.4;
 // self-contained (Vercel bundles this directory in isolation from the
 // Vite client build), so this follows the same convention instead of
 // introducing a cross-directory import.
+// Final scores: the bot's cycle saves ESPN finals (score_source 'espn') before CFBD has them. A CFBD row that's
+// final overwrites them (score_source 'cfbd'); one that isn't final yet keeps the ESPN score instead of blanking it.
+async function keepEspnFinals<T extends { id: string; completed: boolean; home_points: number | null; away_points: number | null }>(rows: T[]): Promise<(T & { score_source: string | null })[]> {
+  const open = rows.filter((r) => !r.completed).map((r) => r.id);
+  const espn = new Map<string, { home_points: number; away_points: number }>();
+  if (open.length) {
+    const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+    for (let i = 0; i < open.length; i += 300) {
+      const { data, error } = await supabaseAdmin.from("games").select("id,home_points,away_points").in("id", open.slice(i, i + 300)).eq("score_source", "espn").eq("completed", true);
+      if (error) throw new Error(`Reading ESPN finals failed: ${error.message}`);
+      for (const g of data ?? []) espn.set(String(g.id), { home_points: g.home_points, away_points: g.away_points });
+    }
+  }
+  return rows.map((r) => {
+    if (r.completed) return { ...r, score_source: r.home_points != null ? "cfbd" : null };
+    const e = espn.get(r.id);
+    return e ? { ...r, completed: true, home_points: e.home_points, away_points: e.away_points, score_source: "espn" } : { ...r, score_source: null };
+  });
+}
+
 async function syncPredictions(res: any) {
   const supabaseAdmin = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
 
@@ -541,7 +561,7 @@ async function syncTeamInfo(year: number, week: number | null, parts: string[]) 
       updated_at: now,
     }));
     if (rows.length > 0) {
-      const { error } = await supabaseAdmin.from("games").upsert(rows, { onConflict: "id" });
+      const { error } = await supabaseAdmin.from("games").upsert(await keepEspnFinals(rows), { onConflict: "id" });
       if (error) throw new Error(`Saving PGWE failed: ${error.message}`);
     }
     out.pgwe = {
@@ -1048,7 +1068,7 @@ async function syncGamesAndLines(year: number, week: number | null, stype: strin
     if (gameRows.length > 0) {
       const { error: gamesError, count } = await supabaseAdmin
         .from("games")
-        .upsert(gameRows, { onConflict: "id", count: "exact" });
+        .upsert(await keepEspnFinals(gameRows), { onConflict: "id", count: "exact" });
       if (gamesError) {
         throw new Error(`Saving games failed: ${gamesError.message}`);
       }
