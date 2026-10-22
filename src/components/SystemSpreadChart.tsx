@@ -84,8 +84,11 @@ export function SpreadChartRow({
   minWidth = CHART_WIDTH,
   height = CHART_ROW_HEIGHT,
   jitterStep = 4,
+  highlightKeys = [],
 }: {
   row: MultiSystemGameRow;
+  /** Extra systems drawn as a teal diamond (YC always keeps its star). */
+  highlightKeys?: string[];
   domain: ChartDomain;
   minWidth?: number;
   height?: number;
@@ -151,6 +154,7 @@ export function SpreadChartRow({
         const v = row.systems[s.key]?.projAwaySpread;
         if (v == null) return null;
         const isYc = s.key === "yc";
+        const isHighlight = !isYc && highlightKeys.includes(s.key);
         const jitter = ((i % 5) - 2) * jitterStep;
         return (
           <div
@@ -162,7 +166,7 @@ export function SpreadChartRow({
               left: `${xPct(v, domain)}%`,
               top: `calc(50% + ${jitter}px)`,
               transform: "translate(-50%, -50%)",
-              zIndex: isYc ? 5 : 1,
+              zIndex: isYc ? 5 : isHighlight ? 4 : 1,
             }}
           >
             {isYc ? (
@@ -183,6 +187,16 @@ export function SpreadChartRow({
               >
                 ★
               </div>
+            ) : isHighlight ? (
+              <div
+                style={{
+                  width: 11,
+                  height: 11,
+                  background: "#2ec4b6",
+                  border: "1px solid #14152b",
+                  transform: "rotate(45deg)",
+                }}
+              />
             ) : (
               <div
                 style={{

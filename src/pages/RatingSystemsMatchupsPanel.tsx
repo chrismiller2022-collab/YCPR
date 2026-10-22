@@ -16,6 +16,7 @@ import {
 import { ATS_BREAKEVEN_PCT, computeRow, type MatchupComputed } from "../lib/matchupsCompute";
 import { DEFAULT_CUSTOM_PARAMS } from "../lib/betHistory";
 import { CHART_WIDTH, CHART_ROW_HEIGHT, computeDomain, SpreadChartHeader, SpreadChartRow } from "../components/SystemSpreadChart";
+import { SPREAD_CHART_SORTS, spreadChartSort, type SpreadChartSortKey } from "../lib/spreadChartSorts";
 import { MatchupsRow, MatchupsHeaderRow, BettingStatsBlock, sortValue as matchupSortValue, compareValues } from "./AdminMatchupsPanel";
 
 const CP: React.CSSProperties = {
@@ -245,19 +246,63 @@ function GamesTable({
 // ---------------------------------------------------------------------
 function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
   const [linesOnly, setLinesOnly] = useState(false);
-  const rows = useMemo(
-    () => (linesOnly ? allRows.filter((r) => r.vegasAwaySpread != null) : allRows),
-    [allRows, linesOnly]
-  );
+  const [highlightMcillece, setHighlightMcillece] = useState(false);
+  const [chartSort, setChartSort] = useState<SpreadChartSortKey | "">("");
+  const [chartSortDir, setChartSortDir] = useState<"desc" | "asc">("desc");
+  const sortInfo = useMemo(() => {
+    const map = new Map<string, { score: number | null; label: string }>();
+    if (chartSort) for (const r of allRows) map.set(String(r.game.id), spreadChartSort(r, chartSort));
+    return map;
+  }, [allRows, chartSort]);
+  const rows = useMemo(() => {
+    const filtered = linesOnly ? allRows.filter((r) => r.vegasAwaySpread != null) : allRows;
+    if (!chartSort) return filtered;
+    // Games a sort can't score (too few systems, not one-sided enough) sink to the bottom either way.
+    return [...filtered].sort((a, b) => {
+      const av = sortInfo.get(String(a.game.id))?.score ?? null;
+      const bv = sortInfo.get(String(b.game.id))?.score ?? null;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return chartSortDir === "desc" ? bv - av : av - bv;
+    });
+  }, [allRows, linesOnly, chartSort, chartSortDir, sortInfo]);
+  const highlightKeys = useMemo(() => (highlightMcillece ? ["mcillece"] : []), [highlightMcillece]);
   const domain = useMemo(() => computeDomain(rows), [rows]);
 
   return (
     <div>
-      <div style={{ marginBottom: "0.75rem" }}>
+      <div style={{ marginBottom: "0.75rem", display: "flex", flexWrap: "wrap", gap: "0.6rem 1.2rem", alignItems: "center" }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
           <input type="checkbox" checked={linesOnly} onChange={(e) => setLinesOnly(e.target.checked)} />
           Vegas lines only (hide games with no line)
         </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
+          <input type="checkbox" checked={highlightMcillece} onChange={(e) => setHighlightMcillece(e.target.checked)} />
+          Highlight McIllece
+        </label>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem" }}>
+          Sort by
+          <select value={chartSort} onChange={(e) => setChartSort(e.target.value as SpreadChartSortKey | "")}>
+            <option value="">Kickoff (default)</option>
+            {SPREAD_CHART_SORTS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {chartSort && (
+            <button className="mode-btn" onClick={() => setChartSortDir((d) => (d === "desc" ? "asc" : "desc"))}>
+              {chartSortDir === "desc" ? "▼ Highest first" : "▲ Lowest first"}
+            </button>
+          )}
+        </label>
+        <span style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", display: "inline-flex", gap: "0.8rem" }}>
+          <span>★ YC</span>
+          {highlightMcillece && <span style={{ color: "#2ec4b6" }}>◆ McIllece</span>}
+          <span>│ Vegas</span>
+          <span style={{ color: "#3ecf5e" }}>│ Result</span>
+        </span>
       </div>
       <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
         <div style={{ display: "flex", minWidth: 340 + CHART_WIDTH }}>
@@ -283,6 +328,9 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
                 <span style={{ color: "var(--chalk-dim)" }}>@</span>
                 <span><TeamLink team={r.game.home_team} /></span>
                 <span style={{ color: "var(--chalk-dim)" }}>Vegas {fmtSpread(r.vegasAwaySpread)}</span>
+                {chartSort && (
+                  <span style={{ color: "var(--gold)", fontWeight: 600 }}>{sortInfo.get(String(r.game.id))?.label}</span>
+                )}
               </div>
             ))}
             {rows.length === 0 && <div style={{ padding: "0.5rem", fontSize: "0.8rem" }}>No games match these filters.</div>}
@@ -290,7 +338,7 @@ function SpreadChartTab({ rows: allRows }: { rows: MultiSystemGameRow[] }) {
           <div>
             <SpreadChartHeader domain={domain} />
             {rows.map((r) => (
-              <SpreadChartRow key={r.game.id} row={r} domain={domain} />
+              <SpreadChartRow key={r.game.id} row={r} domain={domain} highlightKeys={highlightKeys} />
             ))}
           </div>
         </div>
