@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PoolPasteBox, PublicPickCell, LineGapCell, myCoverProb, myWinProb, byPasteOrder } from "../components/PoolPaste";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import TeamLogo from "../components/TeamLogo";
@@ -367,12 +368,14 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Home</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas ML (Home)</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My ML (Home)</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>ESPN ML</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Public % · Leverage</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
           </thead>
           <tbody>
-            {picks.map((p) => {
+            {byPasteOrder(picks).map((p) => {
               const g = p.game;
               if (!g) return null;
               const d = draft[p.id] ?? {};
@@ -433,6 +436,12 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     }}
                   >
                     {fmtMl(p.myProjHomeMoneyline)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {p.espn_away_ml != null ? `${fmtMl(p.espn_away_ml)} / ${fmtMl(p.espn_home_ml ?? null)}` : "–"}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <PublicPickCell awayPct={p.public_away_pct} homePct={p.public_home_pct} side={d.picked_side ?? null} myProb={myWinProb(p.myProjAwaySpread, d.picked_side ?? null)} />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>
@@ -533,6 +542,7 @@ export default function EspnMoneylinePanel({ onBack }: { onBack: () => void }) {
         </label>
       </div>
 
+      <PoolPasteBox format="espnml" pools={["espnml", "espnconfidence"]} season={season} week={week} onApplied={() => setRefreshKey((k) => k + 1)} hint="Copy ESPN's Moneyline page (Standard view) through the tiebreaker question. The same games go to ESPN Confidence." />
       <GameSelectionStep season={season} week={week} refreshToken={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
       <PickingStep season={season} week={week} refreshToken={refreshKey} />
     </div>

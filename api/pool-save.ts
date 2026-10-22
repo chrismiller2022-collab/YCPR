@@ -294,6 +294,47 @@ export default async function handler(req: any, res: any) {
     // confidence pool), so it doesn't fit the shared selectGames/
     // savePicks pattern below (which always writes a special-game
     // boolean) — its own small dedicated branch instead. ---
+    // --- Paste import (CBS Pickem, ESPN Spreads/ML/Confidence, Reddit
+    // Confidence): replaces the week's games with the pasted ones and
+    // stores what the pool page showed — its line, moneylines and public
+    // pick %. Picks for the week are cleared so the page re-picks from the
+    // model. ---
+    if (action === "applyPaste") {
+      const pasteTables: Record<string, string> = { ...POOL_TABLES, redditconfidence: "reddit_confidence_picks" };
+      const table = pasteTables[pool];
+      const { season, week, games } = req.body;
+      if (!table || pool === "brit") {
+        res.status(400).json({ error: `Paste import not supported for ${pool}` });
+        return;
+      }
+      if (!season || !week || !Array.isArray(games) || games.length === 0) {
+        res.status(400).json({ error: "Missing season, week, or games" });
+        return;
+      }
+      const { error: delError } = await supabaseAdmin.from(table).delete().eq("season", season).eq("week", week);
+      if (delError) throw delError;
+      const now = new Date().toISOString();
+      const rows = games.map((g: any, i: number) => {
+        const row: any = { season, week, game_id: String(g.gameId), paste_order: g.order ?? i + 1, updated_at: now };
+        if (pool !== "redditconfidence") {
+          row.is_key_game = !!g.isKey;
+          row.public_away_pct = g.publicAwayPct ?? null;
+          row.public_home_pct = g.publicHomePct ?? null;
+        }
+        if (pool === "cbspickem") row.cbs_line = g.line ?? null;
+        if (pool === "espnspread") row.espn_line = g.line ?? null;
+        if (pool === "espnml" || pool === "espnconfidence") {
+          row.espn_away_ml = g.awayMl ?? null;
+          row.espn_home_ml = g.homeMl ?? null;
+        }
+        return row;
+      });
+      const { error: insError } = await supabaseAdmin.from(table).insert(rows);
+      if (insError) throw insError;
+      res.status(200).json({ ok: true, saved: rows.length });
+      return;
+    }
+
     if (pool === "redditconfidence") {
       if (action === "selectGames") {
         const { season, week, gameIds } = req.body;
