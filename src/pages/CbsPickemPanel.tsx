@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PoolPasteBox, PublicPickCell, LineGapCell, myCoverProb, myWinProb, byPasteOrder } from "../components/PoolPaste";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
 import TeamLogo from "../components/TeamLogo";
@@ -415,12 +416,15 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>My Projection</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS Line</th>
               <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Vegas Spread</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS − Vegas</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>CBS − Mine</th>
+              <th style={{ textAlign: "right", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Public % · Leverage</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Pick</th>
               <th style={{ textAlign: "left", padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Result</th>
             </tr>
           </thead>
           <tbody>
-            {picks.map((p) => {
+            {byPasteOrder(picks).map((p) => {
               const g = p.game;
               if (!g) return null;
               const d = draft[p.id] ?? {};
@@ -493,6 +497,15 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                     {fmt(p.vegasAwaySpread)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <LineGapCell poolLine={(d.cbs_line ?? p.cbsAwaySpread ?? null)} otherLine={p.vegasAwaySpread} away={g.away_team} home={g.home_team} />
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <LineGapCell poolLine={(d.cbs_line ?? p.cbsAwaySpread ?? null)} otherLine={p.myProjAwaySpread} away={g.away_team} home={g.home_team} />
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <PublicPickCell awayPct={p.public_away_pct} homePct={p.public_home_pct} side={d.picked_side ?? null} myProb={myCoverProb(p.myProjAwaySpread, (d.cbs_line ?? p.cbsAwaySpread ?? null), d.picked_side ?? null)} />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>
@@ -582,6 +595,7 @@ export default function CbsPickemPanel({ onBack }: { onBack: () => void }) {
         </label>
       </div>
 
+      <PoolPasteBox format="cbs" pools={["cbspickem"]} season={season} week={week} onApplied={() => setRefreshKey((k) => k + 1)} hint="Copy the CBS Pick'em page from the first game card through the tiebreaker block at the bottom." />
       <GameSelectionStep season={season} week={week} refreshToken={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
       <PickingStep season={season} week={week} refreshToken={refreshKey} />
     </div>

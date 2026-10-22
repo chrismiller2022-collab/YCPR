@@ -1,4 +1,5 @@
 import { autoConfidencePoints, projectedWinner } from "../lib/confidenceRank";
+import { PoolPasteBox, PublicPickCell, LineGapCell, myCoverProb, myWinProb, byPasteOrder } from "../components/PoolPaste";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -287,6 +288,11 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
         }
         setDraft(d);
         setRankSnapshot(Object.fromEntries(Object.entries(d).map(([id, v]: any) => [id, v.confidence_points])));
+        // A pasted slate opens in the pool's own order; "Confidence order" switches to points.
+        if (data.some((p) => p.paste_order != null)) {
+          setSortKey("paste_order");
+          setSortDir("asc");
+        }
       })
       .catch((err) => {
         if (isCurrent(token)) setError(err.message);
@@ -378,6 +384,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
         return p.vegasAwayMoneyline;
       case "confidence_points":
         return rankSnapshot[p.id] ?? null;
+      case "paste_order":
+        return p.paste_order ?? null;
       default:
         return null;
     }
@@ -413,7 +421,23 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
           </span>
         </div>
         <span style={{ display: "inline-flex", gap: "0.5rem" }}>
-          <button className="menu-btn" onClick={handleAutoRank} disabled={saving} title="Number every picked game N..1 by your projected margin for the picked side">
+          {picks.some((p) => p.paste_order != null) && (
+            <button
+              className="menu-btn"
+              onClick={() => {
+                if (sortKey === "paste_order") {
+                  setSortKey("confidence_points");
+                  setSortDir("desc");
+                } else {
+                  setSortKey("paste_order");
+                  setSortDir("asc");
+                }
+              }}
+            >
+              {sortKey === "paste_order" ? "Confidence order" : "Pool order"}
+            </button>
+          )}
+          <button className="menu-btn" onClick={handleAutoRank} disabled={saving} title="Number every picked game N..1 by your win % for the picked side">
             Auto-rank
           </button>
           <button className="menu-btn" onClick={handleResetPicks} disabled={saving}>
@@ -445,6 +469,8 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
               <SortHeader label="Home" sortKey="home_team" active={sortKey === "home_team"} dir={sortDir} onClick={handleSort} />
               <th className="th th-right">Vegas ML (Home)</th>
               <th className="th th-right">My ML (Home)</th>
+              <th className="th th-right">ESPN ML</th>
+              <th className="th th-right">Public % · Leverage</th>
               <th className="th">Pick</th>
               <SortHeader
                 label="Points"
@@ -520,6 +546,12 @@ function PickingStep({ season, week, refreshToken }: { season: number; week: num
                     }}
                   >
                     {fmtMl(p.myProjHomeMoneyline)}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {p.espn_away_ml != null ? `${fmtMl(p.espn_away_ml)} / ${fmtMl(p.espn_home_ml ?? null)}` : "–"}
+                  </td>
+                  <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
+                    <PublicPickCell awayPct={p.public_away_pct} homePct={p.public_home_pct} side={d.picked_side ?? null} myProb={myWinProb(p.myProjAwaySpread, d.picked_side ?? null)} />
                   </td>
                   <td style={{ padding: "0.5rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>
                     <div style={{ display: "flex", gap: "0.3rem" }}>
@@ -642,6 +674,7 @@ export default function EspnConfidencePanel({ onBack }: { onBack: () => void }) 
         </label>
       </div>
 
+      <PoolPasteBox format="espnml" pools={["espnml", "espnconfidence"]} season={season} week={week} onApplied={() => setRefreshKey((k) => k + 1)} hint="Paste ESPN's Moneyline page (Standard view): Confidence uses the same games, so both pools are set." />
       <GameSelectionStep season={season} week={week} refreshToken={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
       <PickingStep season={season} week={week} refreshToken={refreshKey} />
     </div>

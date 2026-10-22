@@ -1,4 +1,5 @@
 import { autoConfidencePoints } from "../lib/confidenceRank";
+import { PoolPasteBox, PublicPickCell, LineGapCell, myCoverProb, myWinProb, byPasteOrder } from "../components/PoolPaste";
 import { useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import { useLoadToken } from "../lib/staleGuard";
@@ -508,6 +509,7 @@ export default function RedditConfidencePanel({ onBack }: { onBack: () => void }
         </label>
       </div>
 
+      <PoolPasteBox format="reddit" pools={["redditconfidence"]} season={season} week={week} onApplied={() => setRefreshKey((k) => k + 1)} hint="Copy the Reddit sheet from the Pts / Away - Home header through the last team." />
       <GameSelectionStep season={season} week={week} refreshToken={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
       <PickingStep season={season} week={week} refreshToken={refreshKey} />
     </div>

@@ -12,6 +12,11 @@ import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 // here rather than re-entering picks manually on their site.
 
 export interface RedditConfidencePickRow {
+  public_away_pct?: number | null;
+  public_home_pct?: number | null;
+  paste_order?: number | null;
+  espn_away_ml?: number | null;
+  espn_home_ml?: number | null;
   id: number;
   season: number;
   week: number;

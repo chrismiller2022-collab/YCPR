@@ -5,6 +5,11 @@ import { fetchGameProjectionLocks } from "./gameProjectionLocks";
 import { DEFAULT_CUSTOM_PARAMS } from "../betHistory";
 
 export interface EspnMlPickRow {
+  public_away_pct?: number | null;
+  public_home_pct?: number | null;
+  paste_order?: number | null;
+  espn_away_ml?: number | null;
+  espn_home_ml?: number | null;
   id: number;
   season: number;
   week: number;
