@@ -496,3 +496,56 @@ The P&L-by-margin curve is the sum of every rung held, so it can have several up
 - The current engine leans one side (pro-pick budget first, wide sell-backs), so most curves are a step up toward the pick with occasional middles. The loss cap is enforced on the worst margin of the whole curve, whatever its shape.
 - What decides profit is the expected value under the true margin distribution, not the shape. Shape matters for variance and for key numbers: 3 and 7 carry extra probability (weights 2.7× and 2.4×).
 - A future option: a "shape target" mode that deliberately builds middles around key numbers when the venues' ladders misprice them.
+
+## 21. NEXT BUILD: shaped positions (spec, agreed 2026-10-23)
+
+### The problem the user found
+The engine buys every rung whose fair price (by our number) beats the market price, one contract each, so with our number far from the market it builds a staircase across the whole ladder. Real example, Board, Air Force @ Wyoming (pick Air Force; ours −11, market −6.3):
+
+| AF final margin | −14 | −3 | +3 | **+6 (market)** | +7 | **+11 (ours)** | +21 |
+|---|---|---|---|---|---|---|---|
+| P&L | −19.96 | −10.96 | −6.96 | **−1.96** | +0.04 | **+7.04** | +19.04 |
+
+Every rung was "good value" by our number, but together they only pay past the market line. The user is right: this is worse than simply betting the market line.
+
+### The user's goal, and what's achievable
+Wanted: make money if it lands on the market line, more at our line, more again in the long tail our way, and break even on everything against.
+- A payoff that never loses, bought at market prices, is a free lunch. By the market's own distribution, any position at its prices has EV ≈ −(spread + fees). So it must lose somewhere.
+- The user chose (2026-10-23): **lose only in a blowout against.** Near breakeven when the pick loses or falls short by a little; the real loss, capped, only if the opponent wins by more than a set margin.
+
+### Target payoff (pick-oriented margin m = pick's final margin; M = market's implied margin; Y = our blended number)
+1. **Market floor:** P&L(m) ≥ `market_floor` for every m ≥ ⌈M⌉ (default $0: make money from the market line up).
+2. **Against band:** P&L(m) ≥ −`against_limit` for −`blowout_margin` < m < ⌈M⌉ (default 10% of the game cap).
+3. **Blowout:** P&L(m) ≥ −`max_worst_case_loss` for m ≤ −`blowout_margin` (default 10 pts). This is the existing cap.
+4. **Objective:** maximize expected P&L under the trust-blended distribution (the same `marginPmf(center)` the engine uses). This naturally puts more profit at Y and in the tail toward the pick.
+
+### Engine change
+- New `bot/ladder/shape.ts` exporting `targetPositions(rungs, positions, pmfFair, M, cfg) → Map<ticker, targetNetYes>`, used by `ladderOrders` when `cfg.shape` is on.
+- **It's a small linear program.** Variables: buy `b_r ≥ 0` at ask and sell `s_r ≥ 0` at bid for every rung on every selected venue (about 180). Constraints: the three payoff rules above evaluated at m = −60…60 (no 0), plus per-rung caps.
+  - P&L(m) = Σ_r (held_r + b_r − s_r)·[m covers r] − (held cost + Σ b_r·ask_r − Σ s_r·bid_r) − fees.
+  - Rung r "covers" when (side = pick ? m : −m) > strike.
+  - Positions on other venues enter as fixed terms (the cross-venue cap, like today's `otherPnl`).
+- **Solver:** `javascript-lp-solver` (pure JS, MIT; esbuild bundles it). Solve continuous, floor to integers, then greedily repair any constraint the rounding broke.
+- **Prices:** solve with take prices (buy at ask, sell at bid), the conservative case. Then quote the difference between target and held as post-only maker orders at better prices, taking only when `take_edge` is met. Any fill at a better price raises P&L everywhere, so the constraints still hold.
+- **Infeasible** (for example, an existing staircase already breaks the against band): relax `market_floor` stepwise down to −`against_limit`. If still infeasible, allow only orders that improve the worst violated constraint (sell-backs on the tail rungs). Never add risk.
+- **What the user should see on the Air Force example:** more contracts on AF −1.5…−5.5 (they pay at the market outcome), few or none on far-tail rungs priced under 20¢, and sell-backs keeping m < M flat.
+
+### Settings and data
+- New columns on `bot_watchlist` and `bot_strategies`, all nullable, with defaults in code:
+  - `shape boolean`;
+  - `market_floor numeric`;
+  - `against_limit numeric`;
+  - `blowout_margin numeric`.
+- Game Settings form and lab strategy form: "Shape: on/off", "Minimum P&L at the market line ($)", "Max loss when it goes moderately against you ($)", "Blowout margin (pts)".
+- Hypotheticals: add built-in methods "Shaped" (defaults) and "Shaped · floor $2" next to the existing ladder.
+- The Outcomes chart (game drawer) marks M and Y and shades the against band and the blowout zone, so the shape is visible.
+
+### Rollout and checks
+1. Unit tests in `bot/ladder/shape.test.ts`, using the Air Force ladder (`kalshiRungs`-style fixture plus the Novig fixture):
+   - every constraint holds on the resulting curve;
+   - EV under ours is positive;
+   - P&L at M ≥ floor;
+   - the worst case outside the blowout zone ≥ −against_limit;
+   - an infeasible start (the staircase above) only produces risk-reducing orders.
+2. Add a lab strategy "Shaped" (defaults) so it paper-trades beside the Board for a weekend. Compare in Review and Hypotheticals.
+3. Switch the Board default to shaped once it settles at least as well with lower variance. Keep the old behavior available as `shape = false`.
