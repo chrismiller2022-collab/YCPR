@@ -19,16 +19,18 @@ let mgMsg = "";
 // ---------- Strategies as presets
 
 /** The settings a strategy fills in. "Bot defaults" = the watchlist's column defaults. */
-const BOT_DEFAULTS = { id: "", name: "Bot defaults", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 5, per_rung_cap: 1, ycpr_weight: null, stop_minutes_before: 30 };
-const PRESET_KEYS = ["pro_edge", "anti_edge", "take_edge", "edge_step", "max_worst_case_loss", "per_rung_cap", "ycpr_weight", "stop_minutes_before"];
+const BOT_DEFAULTS = { id: "", name: "Bot defaults", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 5, per_rung_cap: 1, ycpr_weight: null, stop_minutes_before: 30, shape: false, market_floor: null, against_limit: null, blowout_margin: null };
+const PRESET_KEYS = ["pro_edge", "anti_edge", "take_edge", "edge_step", "max_worst_case_loss", "per_rung_cap", "ycpr_weight", "stop_minutes_before", "shape", "market_floor", "against_limit", "blowout_margin"];
 const presets = () => [BOT_DEFAULTS, ...((picker?.strategies ?? data?.strategies) || [])];
 const presetById = (id) => presets().find((p) => String(p.id) === String(id ?? "")) ?? null;
 const same = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(Number(a) - Number(b)) < 1e-9);
+/** A preset key's value for comparing: shape off and unset are the same. */
+const pv = (x, k) => (k === "shape" ? !!x[k] : x[k]);
 /** "Patient", "Patient · edited", "Bot defaults" or "Custom" for a watched game. */
 function presetLabel(w) {
   const p = w.strategy_preset != null ? presetById(w.strategy_preset) : null;
-  if (p) return PRESET_KEYS.every((k) => same(w[k], p[k])) ? p.name : `${p.name} · edited`;
-  return PRESET_KEYS.every((k) => same(w[k], BOT_DEFAULTS[k])) ? "Bot defaults" : "Custom";
+  if (p) return PRESET_KEYS.every((k) => same(pv(w, k), pv(p, k))) ? p.name : `${p.name} · edited`;
+  return PRESET_KEYS.every((k) => same(pv(w, k), pv(BOT_DEFAULTS, k))) ? "Bot defaults" : "Custom";
 }
 
 /** One settings block (Add games bar, Manage games bar): a strategy select plus the fields it fills. Blank = unchanged when `keepBlank`. */
@@ -45,9 +47,14 @@ function settingsBlock(prefix, keepBlank) {
     <label class="field">Take edge (¢)<input id="${prefix}Take" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
     <label class="field">Extra / contract (¢)<input id="${prefix}Step" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
     <label class="field">Stop (min before)<input id="${prefix}Stop" type="number" step="5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
+    <label class="field">Shape<select id="${prefix}Shape">${keepBlank ? opt("keep", "Keep") : ""}${opt("", "Off")}${opt("1", "On")}</select></label>
+    <label class="field">Min P&amp;L at market ($)<input id="${prefix}Floor" type="number" step="0.5" placeholder="${keepBlank ? "keep" : "0"}"></label>
+    <label class="field">Max loss moderately against ($)<input id="${prefix}Against" type="number" step="0.5" placeholder="${keepBlank ? "keep" : "10% of max loss"}"></label>
+    <label class="field">Blowout margin (pts)<input id="${prefix}Blowout" type="number" step="1" placeholder="${keepBlank ? "keep" : "10"}"></label>
   </div>`;
 }
-const FIELD_MAP = [["Max", "max_worst_case_loss", 1], ["Cap", "per_rung_cap", 1], ["Pro", "pro_edge", 100], ["Anti", "anti_edge", 100], ["Take", "take_edge", 100], ["Step", "edge_step", 100], ["Stop", "stop_minutes_before", 1]];
+const FIELD_MAP = [["Max", "max_worst_case_loss", 1], ["Cap", "per_rung_cap", 1], ["Pro", "pro_edge", 100], ["Anti", "anti_edge", 100], ["Take", "take_edge", 100], ["Step", "edge_step", 100], ["Stop", "stop_minutes_before", 1],
+  ["Floor", "market_floor", 1], ["Against", "against_limit", 1], ["Blowout", "blowout_margin", 1]];
 
 /** Fill a settings block from a strategy (or blank it for "keep"). */
 function fillBlock(prefix, presetId) {
@@ -56,7 +63,8 @@ function fillBlock(prefix, presetId) {
   sel.value = presetId;
   if (presetId === "custom") return; // keep whatever is typed
   const p = presetById(presetId);
-  for (const [f, k, mult] of FIELD_MAP) $(`${prefix}${f}`).value = p ? Math.round(Number(p[k]) * mult * 100) / 100 : "";
+  for (const [f, k, mult] of FIELD_MAP) $(`${prefix}${f}`).value = p && p[k] != null ? Math.round(Number(p[k]) * mult * 100) / 100 : "";
+  $(`${prefix}Shape`).value = p ? (p.shape ? "1" : "") : presetId === "keep" ? "keep" : $(`${prefix}Shape`).value;
   $(`${prefix}Trust`).value = p ? (p.ycpr_weight == null ? "" : String(Number(p.ycpr_weight))) : presetId === "keep" ? "keep" : $(`${prefix}Trust`).value;
 }
 
@@ -69,8 +77,12 @@ function readBlock(prefix) {
   }
   const t = $(`${prefix}Trust`).value;
   if (t !== "keep") out.ycpr_weight = t === "" ? null : Number(t);
+  const sh = $(`${prefix}Shape`).value;
+  if (sh !== "keep") out.shape = sh === "1";
   const p = $(`${prefix}Preset`).value;
   if (p !== "keep") out.strategy_preset = p === "custom" || p === "" ? null : Number(p);
+  // A strategy's unset shape limits mean "use the default", so they're copied as unset rather than kept.
+  if (presetById(p) && p !== "keep") for (const k of ["market_floor", "against_limit", "blowout_margin"]) if (!(k in out)) out[k] = null;
   return out;
 }
 
@@ -272,7 +284,7 @@ function renderManage() {
         <td><input type="checkbox" class="mgPick" ${mgSel.has(w.id) ? "checked" : ""} aria-label="Select ${esc(w.away_team)} at ${esc(w.home_team)}"></td>
         <td style="text-align:left"><button type="button" class="linkbtn" data-open="${esc(w.game_id)}"><b>${esc(w.away_team)} @ ${esc(w.home_team)}</b></button><small>lean ${esc(w.pick === "home" ? w.home_team : w.away_team)}</small></td>
         <td>${when(w.kickoff)}</td>
-        <td style="text-align:left">${esc(presetLabel(w))}</td>
+        <td style="text-align:left">${esc(presetLabel(w))}${w.shape ? "<small>shaped</small>" : ""}</td>
         <td>${usd(Number(w.max_worst_case_loss))}</td>
         <td>${[w.pro_edge, w.anti_edge, w.take_edge, w.edge_step].map(cents2).join(" / ")}</td>
         <td>${w.per_rung_cap}</td>

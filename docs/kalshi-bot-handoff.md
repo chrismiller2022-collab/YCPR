@@ -497,7 +497,26 @@ The P&L-by-margin curve is the sum of every rung held, so it can have several up
 - What decides profit is the expected value under the true margin distribution, not the shape. Shape matters for variance and for key numbers: 3 and 7 carry extra probability (weights 2.7× and 2.4×).
 - A future option: a "shape target" mode that deliberately builds middles around key numbers when the venues' ladders misprice them.
 
-## 21. NEXT BUILD: shaped positions (spec, agreed 2026-10-23)
+## 21. Shaped positions (spec agreed 2026-10-23; ✅ built 2026-10-23)
+
+**Built:** `bot/ladder/shape.ts` (`solveShape` / `targetPositions` / `shapedOrders`), used by `ladderOrders` when `cfg.shape`
+(the runner and Hypotheticals pass the venue's implied margin as `marketHomeMargin`). Solver: `javascript-lp-solver`; one row
+per distinct coverage pattern (P&L only changes at strikes), so a ladder solves in a few ms. Integerize = floor, greedy repair
+with the venue's real fee, then add back rounded-off contracts that still fit. Relaxation: market floor in 4 steps down to
+−against_limit, then unwind-only (max-min slack LP over buy-backs/sell-backs, no orders if it can't improve the worst rule).
+Orders: the target − held per rung; takes when `take_edge` is met, else post-only at our usual edge from fair but never behind
+the top of book and never at or through the take price; pro-pick orders still pass the game-cap check as if they all fill.
+Columns `shape`, `market_floor`, `against_limit`, `blowout_margin` on `bot_watchlist` and `bot_strategies` (migration appended
+to `bot_tables.sql`); the game Settings form, lab strategy form, Add/Manage games settings block and the Hypotheticals custom
+what-if have the four fields; built-in methods "Shaped" and "Shaped · floor $2"; lab strategy **Shaped** (Default's edges,
+$10 cap, 1 per number, shape on at the defaults). The game drawer's Outcomes chart marks M (market) and Y (yours) and, when the
+game is shaped, shades the against band and the blowout zone. Tests: `bot/ladder/shape.test.ts`.
+
+**What the LP actually does on the Air Force fixture** (differs from the expectation below): with the against band at 10% of
+the cap, it buys AF −6.5 (pays from ⌈M⌉ = 7 up) and AF −16.5/−17.5, funded by selling Wyoming +9.5/+13.5 (pays unless AF
+loses by 10+), not AF −1.5…−5.5: those rungs only pay inside the against band (AF by 2–6) and cost ~50–65¢ there, so they
+break the band before they help. Curve at cap $10, 1 per number: −$2.74 blowout, −$0.74 in the band, +$0.26 from the market
+line, +$2.26 from AF by 18. Raising the against limit (or the market floor) moves it toward the middle rungs.
 
 ### The problem the user found
 The engine buys every rung whose fair price (by our number) beats the market price, one contract each, so with our number far from the market it builds a staircase across the whole ladder. Real example, Board, Air Force @ Wyoming (pick Air Force; ours −11, market −6.3):

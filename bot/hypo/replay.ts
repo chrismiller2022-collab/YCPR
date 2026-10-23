@@ -269,7 +269,7 @@ export function advance(state: HypoState, steps: Step[], game: HypoGame, method:
       const here = positionsOf(s.fills.filter((f) => f.venue === v));
       const there = positionsOf(s.fills.filter((f) => f.venue !== v));
       const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
-      const { orders } = ladderOrders(rungs, here.positions, pmf, { ...method.cfg, pick: s.pick, tick: rules[v].tick, fee }, { otherPnl });
+      const { orders } = ladderOrders(rungs, here.positions, pmf, { ...method.cfg, pick: s.pick, tick: rules[v].tick, fee }, { otherPnl, marketHomeMargin: market ?? game.book ?? center });
       const withIds = resting.map((r, i) => ({ ...r, id: i }));
       const plan = diffOrders(withIds, orders, rules[v].tick);
       const cancel = new Set(plan.cancel.map((r) => r.id));
@@ -358,6 +358,9 @@ export function builtinMethods(defaultTrust: number): Method[] {
     ladder("ladder", `Ladder (trust ${Math.round(defaultTrust * 100)}%)`),
     // Trust variations (the default level is already the plain ladder).
     ...[0.25, 0.5, 0.75, 1].filter((w) => Math.abs(w - defaultTrust) > 1e-9).map((w) => ladder(`trust${Math.round(w * 100)}`, `Ladder · trust ${Math.round(w * 100)}%`, {}, w)),
+    // Shaped positions (§21): the same cap, solved as one position with the default payoff rules.
+    ladder("shaped", "Shaped", { shape: true }),
+    ladder("shaped2", "Shaped · floor $2", { shape: true, marketFloor: 2 }),
     ladder("maker", "Maker only (never take)", { takeEdge: 9 }),
     ladder("taker", "Take only (no resting quotes)", { proEdge: 9, antiEdge: 9 }),
     { key: "early", label: "Straight bet · early", kind: "early", cfg: base, weight: defaultTrust, stopMinutes: 30 },
@@ -369,7 +372,9 @@ export function builtinMethods(defaultTrust: number): Method[] {
 export function strategyMethod(st: {
   id: number; name: string; pro_edge: number; anti_edge: number; take_edge: number; edge_step: number;
   max_worst_case_loss: number; per_rung_cap: number; ycpr_weight: number | null; stop_minutes_before: number;
+  shape?: boolean | null; market_floor?: number | null; against_limit?: number | null; blowout_margin?: number | null;
 }, defaultTrust: number): Method {
+  const n = (v: unknown) => (v == null ? null : Number(v));
   return {
     key: `lab${st.id}`,
     label: `Lab · ${st.name}`,
@@ -377,6 +382,8 @@ export function strategyMethod(st: {
     cfg: {
       maxWorstCaseLoss: Number(st.max_worst_case_loss), perRungCap: st.per_rung_cap, orderSize: 1,
       proEdge: Number(st.pro_edge), antiEdge: Number(st.anti_edge), takeEdge: Number(st.take_edge), edgeStep: Number(st.edge_step), profitTarget: null,
+      // Only shaped strategies carry the shape keys, so other strategies' hashes (and saved replays) don't change.
+      ...(st.shape ? { shape: true, marketFloor: n(st.market_floor), againstLimit: n(st.against_limit), blowoutMargin: n(st.blowout_margin) } : {}),
     },
     weight: st.ycpr_weight == null ? defaultTrust : Number(st.ycpr_weight),
     stopMinutes: st.stop_minutes_before,

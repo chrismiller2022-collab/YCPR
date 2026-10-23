@@ -145,11 +145,44 @@ function sparkSvg(pts, w = 104, h = 30) {
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${bars}</svg>`;
 }
 
-function curveSvg(w, pts) {
+/**
+ * P&L by final margin. `marks` (the game drawer) adds the market line M and our number Y (home margins),
+ * and with `shape` on shades the shaped-position zones (§21): the against band and the blowout zone.
+ */
+function curveSvg(w, pts, marks = null) {
   if (!pts.length || pts.every((p) => Math.abs(p.v) < 1e-9)) return '<p class="muted">No position yet.</p>';
   const W = 600, H = 130, pad = 12;
   const max = Math.max(...pts.map((p) => Math.abs(p.v)), 0.01);
   const bw = (W - 2 * pad) / pts.length, y0 = H / 2 - 6;
+  const xAt = (m) => {
+    // A fractional home margin sits between its neighbors' bars (there's no bar at 0).
+    const i = pts.findIndex((p) => p.m >= m);
+    if (i < 0) return null;
+    const prev = i > 0 ? pts[i - 1].m : pts[i].m - 1;
+    const frac = pts[i].m === prev ? 0 : (m - prev) / (pts[i].m - prev);
+    return pad + (i - 1) * bw + bw / 2 + frac * bw;
+  };
+  let zones = "", lines = "", legend = "";
+  if (marks) {
+    const pickX = (m) => (w.pick === "home" ? m : -m); // pick-oriented margin
+    const M = marks.market;
+    const blow = num(w.blowout_margin) ?? 10;
+    if (w.shape && M != null) {
+      const cut = Math.ceil(pickX(M) - 1e-9);
+      const zoneOf = (m) => (pickX(m) >= cut ? null : pickX(m) <= -blow ? "blow" : "band");
+      zones = pts.map((p, i) => {
+        const z = zoneOf(p.m);
+        return z ? `<rect x="${pad + i * bw}" y="${pad - 4}" width="${bw}" height="${H - pad - 10}" fill="${z === "blow" ? "var(--c-err)" : "var(--c-warn)"}" opacity="${z === "blow" ? 0.12 : 0.1}"/>` : "";
+      }).join("");
+      legend += ` · <span style="color:var(--c-warn)">■</span> against band (loss ≤ ${usd(num(w.against_limit) ?? 0.1 * Number(w.max_worst_case_loss))}) · <span style="color:var(--c-err)">■</span> blowout (${blow}+ pts against)`;
+    }
+    const mark = (m, label, color, dash) => {
+      const x = m == null ? null : xAt(m);
+      return x == null ? "" : `<line x1="${x}" x2="${x}" y1="${pad - 4}" y2="${H - 14}" stroke="${color}" stroke-width="1.5" ${dash ? 'stroke-dasharray="4 3"' : ""}/><text x="${x + 3}" y="${pad + 4}" font-size="10" fill="${color}">${label}</text>`;
+    };
+    lines = mark(M, "M", "var(--c-info)", true) + mark(marks.ours, "Y", "var(--c-ok)", false);
+    if (M != null || marks.ours != null) legend = ` · M = market ${signed(M)}, Y = yours ${signed(marks.ours)} (${esc(w.away_team)})` + legend;
+  }
   const bars = pts.map((p, i) => {
     const bh = (Math.abs(p.v) / max) * (y0 - pad);
     const team = p.m < 0 ? w.away_team : w.home_team;
@@ -159,8 +192,8 @@ function curveSvg(w, pts) {
     const i = pts.findIndex((p) => p.m === m);
     return i < 0 ? "" : `<text x="${pad + i * bw + bw / 2}" y="${H - 2}" text-anchor="middle">${m < 0 ? "A" : "H"}${Math.abs(m)}</text>`;
   }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Profit or loss by final margin"><line x1="${pad}" x2="${W - pad}" y1="${y0}" y2="${y0}" stroke="var(--a-line)"/>${bars}${ticks}</svg>
-    <p class="muted" style="margin:2px 0 12px;font-size:.76rem">A7 = ${esc(w.away_team)} by 7 · H7 = ${esc(w.home_team)} by 7 · after fees, held to settlement</p>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Profit or loss by final margin">${zones}<line x1="${pad}" x2="${W - pad}" y1="${y0}" y2="${y0}" stroke="var(--a-line)"/>${bars}${lines}${ticks}</svg>
+    <p class="muted" style="margin:2px 0 12px;font-size:.76rem">A7 = ${esc(w.away_team)} by 7 · H7 = ${esc(w.home_team)} by 7 · after fees, held to settlement${legend}</p>`;
 }
 
 // Change since the last run (data.changes, from the snapshots the last two cycles saved).
@@ -462,7 +495,7 @@ function renderLab() {
       ${list.map((x) => {
         const t = x.stats;
         return `<tr data-strat="${x.id}" class="${x.id === bestId ? "best" : ""}">
-          <td><b>${esc(x.name)}</b> ${x.enabled ? "" : '<span class="pill">Off</span>'}<small>trust ${trust(x)} · cap ${usd(Number(x.max_worst_case_loss))} · ${x.per_rung_cap}/number</small></td>
+          <td><b>${esc(x.name)}</b> ${x.enabled ? "" : '<span class="pill">Off</span>'}<small>trust ${trust(x)} · cap ${usd(Number(x.max_worst_case_loss))} · ${x.per_rung_cap}/number${x.shape ? " · shaped" : ""}</small></td>
           <td>${[x.pro_edge, x.anti_edge, x.take_edge, x.edge_step].map((e) => +(Number(e) * 100).toFixed(1)).join(" / ")}<small>pro / sell / take / step</small></td>
           <td>${t.fills}<small>${t.resting} resting · ${t.games} games</small></td>
           <td class="${cls(t.avgEdgeAtFill)}">${c(t.avgEdgeAtFill)}</td>
@@ -483,7 +516,7 @@ function renderLabDrawer() {
   const x = openStrat === "new" ? null : lab.strategies.find((s) => s.id === openStrat);
   if (openStrat !== "new" && !x) { root.innerHTML = ""; return; }
   const v = (val, mult = 100) => (val == null ? "" : Math.round(Number(val) * mult * 100) / 100);
-  const st = x || { name: "", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, ycpr_weight: null, stop_minutes_before: 30, enabled: true, notes: "" };
+  const st = x || { name: "", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, ycpr_weight: null, stop_minutes_before: 30, enabled: true, notes: "", shape: false, market_floor: null, against_limit: null, blowout_margin: null };
   const def = num(data?.state?.default_ycpr_weight) ?? 1;
   const t = Math.round((num(st.ycpr_weight) ?? def) * 100);
   const games = x ? x.perGame : [];
@@ -501,6 +534,7 @@ function renderLabDrawer() {
             <label class="field">Max loss per game ($)<input id="sMax" type="number" step="0.5" value="${st.max_worst_case_loss}"></label>
             <label class="field">Contracts per number<input id="sCap" type="number" step="1" value="${st.per_rung_cap}"></label>
             <label class="field">Stop quoting (min before)<input id="sStop" type="number" step="5" value="${st.stop_minutes_before}"></label>
+            ${shapeFields("s", st)}
             <div class="field" style="grid-column:1/-1">Trust in your number
               <div style="display:flex;gap:10px;align-items:center"><input id="sTrust" type="range" min="0" max="100" step="5" value="${t}" ${st.ycpr_weight == null ? "disabled" : ""}><b id="sTrustVal" class="num" style="min-width:44px;text-align:right">${t}%</b></div>
               <label style="display:flex;gap:6px;align-items:center;font-weight:500"><input id="sTrustDef" type="checkbox" ${st.ycpr_weight == null ? "checked" : ""}> Use default (${Math.round(def * 100)}%)</label></div>
@@ -536,7 +570,7 @@ function renderDrawer() {
   const best = pts.length ? Math.max(...pts.map((p) => p.v)) : 0;
   const tabs = ["outcomes", "ladder", "settings"].map((t) => `<button data-dtab="${t}" class="${drawerTab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
-  if (drawerTab === "outcomes") body = curveSvg(w, pts) + outcomeTable(w, o);
+  if (drawerTab === "outcomes") body = curveSvg(w, pts, { market: mktOf(w), ours: ourAway(w) }) + outcomeTable(w, o);
   if (drawerTab === "ladder") body = ladderTable(w, gFills);
   if (drawerTab === "settings") body = settingsForm(w);
   root.innerHTML = `<div class="scrim" data-close="1"></div>
@@ -595,6 +629,21 @@ function ladderTable(w, gFills) {
     }).join("")}</table></div></div>`;
 }
 
+/** Shape fields (§21) for the game Settings and lab strategy forms; `p` = id prefix ("g" or "s"). */
+function shapeFields(p, x) {
+  const v = (k) => (x[k] == null ? "" : Number(x[k]));
+  return `<label class="field">Shape<select id="${p}Shape"><option value="" ${x.shape ? "" : "selected"}>Off</option><option value="1" ${x.shape ? "selected" : ""}>On</option></select>
+      <span class="muted" style="font-weight:400;font-size:.76rem">Solve the whole position for a P&amp;L shape instead of rung by rung.</span></label>
+    <label class="field">Minimum P&amp;L at the market line ($)<input id="${p}Floor" type="number" step="0.5" value="${v("market_floor")}" placeholder="0"></label>
+    <label class="field">Max loss when it goes moderately against you ($)<input id="${p}Against" type="number" step="0.5" value="${v("against_limit")}" placeholder="10% of max loss"></label>
+    <label class="field">Blowout margin (pts)<input id="${p}Blowout" type="number" step="1" value="${v("blowout_margin")}" placeholder="10"></label>`;
+}
+/** The shape fields' values for the admin API (blank = the default in code). */
+function readShape(p) {
+  const n = (id) => ($(id).value === "" ? null : Number($(id).value));
+  return { shape: $(`${p}Shape`).value === "1", market_floor: n(`${p}Floor`), against_limit: n(`${p}Against`), blowout_margin: n(`${p}Blowout`) };
+}
+
 function settingsForm(w) {
   const def = num(data.state?.default_ycpr_weight) ?? 1;
   const own = num(w.ycpr_weight);
@@ -622,6 +671,7 @@ function settingsForm(w) {
       <label class="field">Take edge (¢)<input id="gTake" type="number" step="0.5" value="${v(w.take_edge)}"></label>
       <label class="field">Extra edge per contract (¢)<input id="gStep" type="number" step="0.5" value="${v(w.edge_step)}"></label>
       <label class="field">Stop quoting (min before)<input id="gStop" type="number" step="5" value="${w.stop_minutes_before}"></label>
+      ${shapeFields("g", w)}
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
       <button class="btn primary">Save</button>
@@ -750,13 +800,15 @@ $("drawerRoot").addEventListener("change", (e) => {
     const set = (id, v) => ($(id).value = v);
     set("gMax", p.max_worst_case_loss); set("gCap", p.per_rung_cap); set("gStop", p.stop_minutes_before);
     for (const [id, k] of [["gPro", "pro_edge"], ["gAnti", "anti_edge"], ["gTake", "take_edge"], ["gStep", "edge_step"]]) set(id, Math.round(Number(p[k]) * 10000) / 100);
+    set("gShape", p.shape ? "1" : "");
+    for (const [id, k] of [["gFloor", "market_floor"], ["gAgainst", "against_limit"], ["gBlowout", "blowout_margin"]]) set(id, p[k] == null ? "" : Number(p[k]));
     $("gTrustDef").checked = p.ycpr_weight == null;
     $("gTrust").disabled = p.ycpr_weight == null;
     if (p.ycpr_weight != null) { $("gTrust").value = Math.round(p.ycpr_weight * 100); $("gTrustVal").textContent = $("gTrust").value + "%"; }
   }
 });
 $("drawerRoot").addEventListener("input", (e) => {
-  if (e.target.closest?.("#gameForm") && ["gMax", "gCap", "gStop", "gPro", "gAnti", "gTake", "gStep", "gTrust"].includes(e.target.id) && $("gPreset")) $("gPreset").value = "custom";
+  if (e.target.closest?.("#gameForm") && ["gMax", "gCap", "gStop", "gPro", "gAnti", "gTake", "gStep", "gTrust", "gShape", "gFloor", "gAgainst", "gBlowout"].includes(e.target.id) && $("gPreset")) $("gPreset").value = "custom";
 });
 $("drawerRoot").addEventListener("submit", async (e) => {
   if (e.target.id !== "gameForm") return;
@@ -775,6 +827,7 @@ $("drawerRoot").addEventListener("submit", async (e) => {
     pro_edge: cents("gPro"), anti_edge: cents("gAnti"), take_edge: cents("gTake"), edge_step: cents("gStep"),
     stop_minutes_before: Number($("gStop").value),
     venues: [...document.querySelectorAll(".gVenue:checked")].map((x) => x.value),
+    ...readShape("g"),
     strategy_preset: ["", "custom"].includes($("gPreset").value) ? null : Number($("gPreset").value),
   };
   try {
@@ -827,6 +880,7 @@ $("drawerRoot").addEventListener("submit", async (e) => {
       pro_edge: cents("sPro"), anti_edge: cents("sAnti"), take_edge: cents("sTake"), edge_step: cents("sStep"),
       max_worst_case_loss: Number($("sMax").value), per_rung_cap: Number($("sCap").value), stop_minutes_before: Number($("sStop").value),
       ycpr_weight: $("sTrustDef").checked ? null : Number($("sTrust").value) / 100,
+      ...readShape("s"),
       ...(id ? {} : { enabled: true }),
     });
     openStrat = res.strategy?.id ?? openStrat;

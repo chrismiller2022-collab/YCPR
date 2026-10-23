@@ -229,3 +229,18 @@ alter table bot_hypo_games enable row level security;
 
 -- 2026-10-22: which strategy filled a game's settings (a label: values are copied, later strategy edits don't follow).
 alter table bot_watchlist add column if not exists strategy_preset bigint references bot_strategies (id) on delete set null;
+
+-- 2026-10-23: Shaped positions (docs/kalshi-bot-handoff.md §21). All nullable; defaults live in code
+-- (bot/ladder/shape.ts): shape off, market floor $0, against limit 10% of the game cap, blowout 10 pts.
+alter table bot_watchlist add column if not exists shape boolean;
+alter table bot_watchlist add column if not exists market_floor numeric;
+alter table bot_watchlist add column if not exists against_limit numeric;
+alter table bot_watchlist add column if not exists blowout_margin numeric;
+alter table bot_strategies add column if not exists shape boolean;
+alter table bot_strategies add column if not exists market_floor numeric;
+alter table bot_strategies add column if not exists against_limit numeric;
+alter table bot_strategies add column if not exists blowout_margin numeric;
+-- Lab strategy "Shaped": the Default strategy's edges and caps with the shape on at its defaults.
+insert into bot_strategies (name, pro_edge, anti_edge, take_edge, edge_step, shape, notes) values
+  ('Shaped', 0.02, 0.04, 0.03, 0.01, true, 'Shaped positions (§21) with the defaults: $0 at the market line, 10% of the cap moderately against, blowout at 10 pts')
+on conflict (name) do nothing;
