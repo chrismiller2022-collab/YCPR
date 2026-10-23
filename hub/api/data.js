@@ -2,7 +2,7 @@
 import { authorized, sb, send } from "./_lib.js";
 import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate } from "./_bot.mjs";
 
-const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before";
+const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before,shape,market_floor,against_limit,blowout_margin";
 const lineRank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);
 
 /** The college season a date falls in (Jan–Jul belongs to the previous fall). */

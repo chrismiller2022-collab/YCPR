@@ -16,10 +16,13 @@ const HDEF = {
   sort: "edge",
   excluded: [],
   search: "",
-  custom: { pro_edge: 2, anti_edge: 4, take_edge: 3, edge_step: 1, max_worst_case_loss: 10, per_rung_cap: 1, ycpr_weight: 100, stop_minutes_before: 30 },
+  custom: { pro_edge: 2, anti_edge: 4, take_edge: 3, edge_step: 1, max_worst_case_loss: 10, per_rung_cap: 1, ycpr_weight: 100, stop_minutes_before: 30, shape: 0, market_floor: 0, against_limit: "", blowout_margin: 10 },
 };
 let H = (() => {
-  try { return { ...HDEF, ...JSON.parse(localStorage.getItem("bothypo") || "{}") }; } catch { return { ...HDEF }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem("bothypo") || "{}");
+    return { ...HDEF, ...saved, custom: { ...HDEF.custom, ...(saved.custom || {}) } };
+  } catch { return { ...HDEF }; }
 })();
 let customRes = null; // { label, byGame: { [game_id]: summary-like } }
 const saveH = () => { try { localStorage.setItem("bothypo", JSON.stringify(H)); } catch {} };
@@ -157,6 +160,9 @@ function renderHypo() {
         <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:8px">
           ${[["pro_edge", "Pro-pick edge ¢", 0.5], ["anti_edge", "Sell-back edge ¢", 0.5], ["take_edge", "Take edge ¢", 0.5], ["edge_step", "Extra per contract ¢", 0.5], ["max_worst_case_loss", "Max loss $", 1], ["per_rung_cap", "Contracts per number", 1], ["ycpr_weight", "Trust %", 5], ["stop_minutes_before", "Stop (min before)", 5]]
             .map(([k, l, st]) => `<label class="field">${l}<input type="number" step="${st}" data-hc="${k}" value="${H.custom[k]}"></label>`).join("")}
+          <label class="field">Shape<select data-hc="shape"><option value="0" ${H.custom.shape ? "" : "selected"}>Off</option><option value="1" ${H.custom.shape ? "selected" : ""}>On</option></select></label>
+          ${[["market_floor", "Min P&L at market line $", 0.5, "0"], ["against_limit", "Max loss moderately against $", 0.5, "10% of max loss"], ["blowout_margin", "Blowout margin (pts)", 1, "10"]]
+            .map(([k, l, st, ph]) => `<label class="field">${l}<input type="number" step="${st}" data-hc="${k}" value="${H.custom[k] ?? ""}" placeholder="${ph}" ${H.custom.shape ? "" : "disabled"}></label>`).join("")}
         </div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap"><button class="btn primary" id="hRun" type="button" ${hypoBusy ? "disabled" : ""}>Run on ${included.length} game${included.length === 1 ? "" : "s"}</button><span class="muted" id="hMsg">${esc(hypoBusy)}</span>${customRes ? '<button class="btn" id="hClear" type="button">Clear custom</button>' : ""}</div>
       </details>
@@ -249,6 +255,8 @@ async function runCustom() {
   const custom = {
     pro_edge: p.pro_edge / 100, anti_edge: p.anti_edge / 100, take_edge: p.take_edge / 100, edge_step: p.edge_step / 100,
     max_worst_case_loss: p.max_worst_case_loss, per_rung_cap: p.per_rung_cap, ycpr_weight: p.ycpr_weight / 100, stop_minutes_before: p.stop_minutes_before,
+    shape: !!p.shape, market_floor: p.market_floor === "" ? null : p.market_floor, against_limit: p.against_limit === "" ? null : p.against_limit,
+    blowout_margin: p.blowout_margin === "" ? null : p.blowout_margin,
   };
   const sets = hypoSets();
   const per = {};
@@ -290,7 +298,8 @@ async function runCustom() {
     else if (t.id === "hStatus") H.status = t.value;
     else if (t.id === "hSort") H.sort = t.value;
     else if (t.id === "hMinEdge") H.minEdge = Number(t.value) || 0;
-    else if (t.dataset.hc) { H.custom[t.dataset.hc] = Number(t.value); saveH(); return; }
+    else if (t.dataset.hc === "shape") H.custom.shape = Number(t.value);
+    else if (t.dataset.hc) { H.custom[t.dataset.hc] = t.value === "" ? "" : Number(t.value); saveH(); return; }
     else return;
     saveH();
     renderHypo();

@@ -16,6 +16,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "@vercel/analytics": "^2.0.1",
     "html-to-image": "^1.11.13",
+    "javascript-lp-solver": "^0.4.24",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "jszip": "^3.10.1",

@@ -54,7 +54,17 @@ interface Watch {
   venues: VenueId[] | null;
   venue_events: Partial<Record<VenueId, string>> | null;
   venue_margins: Partial<Record<VenueId, number>> | null;
+  /** Shaped positions (§21); null = off. The three limits default in code (bot/ladder/shape.ts). */
+  shape: boolean | null;
+  market_floor: number | null;
+  against_limit: number | null;
+  blowout_margin: number | null;
 }
+
+/** The shape settings of a watch or strategy row, as ladder config. */
+const shapeCfg = (x: { shape: boolean | null; market_floor: number | null; against_limit: number | null; blowout_margin: number | null }) => ({
+  shape: !!x.shape, marketFloor: num(x.market_floor), againstLimit: num(x.against_limit), blowoutMargin: num(x.blowout_margin),
+});
 
 interface Strategy {
   id: number;
@@ -67,6 +77,10 @@ interface Strategy {
   per_rung_cap: number;
   ycpr_weight: number | null;
   stop_minutes_before: number;
+  shape: boolean | null;
+  market_floor: number | null;
+  against_limit: number | null;
+  blowout_margin: number | null;
 }
 
 interface RestingRow {
@@ -377,7 +391,7 @@ export async function runCycle(): Promise<CycleTotals> {
             cfg: {
               pick: w.pick, maxWorstCaseLoss: Number(w.max_worst_case_loss), perRungCap: w.per_rung_cap, orderSize: w.order_size,
               proEdge: Number(w.pro_edge), antiEdge: Number(w.anti_edge), takeEdge: Number(w.take_edge), edgeStep: Number(w.edge_step),
-              profitTarget: num(w.profit_target), tick: 0.01,
+              profitTarget: num(w.profit_target), tick: 0.01, ...shapeCfg(w),
             },
           },
           ...strategies.map((st) => ({
@@ -387,7 +401,7 @@ export async function runCycle(): Promise<CycleTotals> {
             cfg: {
               pick: w.pick, maxWorstCaseLoss: Number(st.max_worst_case_loss), perRungCap: st.per_rung_cap, orderSize: 1,
               proEdge: Number(st.pro_edge), antiEdge: Number(st.anti_edge), takeEdge: Number(st.take_edge), edgeStep: Number(st.edge_step),
-              profitTarget: null, tick: 0.01,
+              profitTarget: null, tick: 0.01, ...shapeCfg(st),
             } as LadderConfig,
           })),
         ];
@@ -466,7 +480,7 @@ export async function runCycle(): Promise<CycleTotals> {
             const here = positionsFrom(bookFills.filter((f) => f.venue === v));
             const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
             const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
-            const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl });
+            const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl, marketHomeMargin: market ?? sportsbook ?? center });
             const plan = diffOrders(resting, orders, adapter.tick);
             await cancel(plan.cancel);
             // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.

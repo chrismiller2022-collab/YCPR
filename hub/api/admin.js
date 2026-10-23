@@ -3,6 +3,18 @@ import { authorized, sb, send } from "./_lib.js";
 
 const NUMERIC = ["ycpr_weight", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
 const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
+const SHAPE_NUMERIC = ["market_floor", "against_limit", "blowout_margin"];
+
+/** Shaped positions (§21): on/off plus three limits; blank = the default in code. */
+function cleanShape(body, out) {
+  if (body.shape !== undefined) out.shape = body.shape == null ? null : !!body.shape;
+  for (const k of SHAPE_NUMERIC) if (body[k] !== undefined) out[k] = body[k] === "" || body[k] === null ? null : Number(body[k]);
+  for (const k of SHAPE_NUMERIC) if (out[k] != null && !Number.isFinite(out[k])) throw new Error(`${k} must be a number`);
+  if (out.against_limit != null && (out.against_limit < 0 || out.against_limit > 1000)) throw new Error("max loss moderately against must be between 0 and 1000");
+  if (out.market_floor != null && (out.market_floor < -1000 || out.market_floor > 1000)) throw new Error("minimum P&L at the market line must be between -1000 and 1000");
+  if (out.blowout_margin != null && (out.blowout_margin < 1 || out.blowout_margin > 60)) throw new Error("blowout margin must be between 1 and 60 points");
+  return out;
+}
 
 function cleanWatch(body) {
   const w = {};
@@ -15,6 +27,7 @@ function cleanWatch(body) {
   for (const [k, v] of Object.entries(w)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
   if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
   if (w.ycpr_weight != null && (w.ycpr_weight < 0 || w.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
+  cleanShape(body, w);
   if (body.enabled !== undefined) w.enabled = !!body.enabled;
   if (body.venues !== undefined) {
     if (!Array.isArray(body.venues) || body.venues.some((v) => !["kalshi", "novig", "prophetx"].includes(v))) throw new Error("venues must be kalshi, novig and/or prophetx");
@@ -52,6 +65,7 @@ export default async function handler(req, res) {
         if (body.ycpr_weight !== undefined) st.ycpr_weight = body.ycpr_weight === null || body.ycpr_weight === "" ? null : Number(body.ycpr_weight);
         if (body.enabled !== undefined) st.enabled = !!body.enabled;
         if (body.notes !== undefined) st.notes = String(body.notes).slice(0, 300);
+        cleanShape(body, st);
         for (const [k, v] of Object.entries(st)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
         if (st.ycpr_weight != null && (st.ycpr_weight < 0 || st.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
         if (st.max_worst_case_loss != null && (st.max_worst_case_loss <= 0 || st.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");

@@ -15,6 +15,7 @@
 import { kalshiFee } from "../fairPrice/kalshi";
 import { kalshiSpreadYesProb, type Side } from "../fairPrice/lines";
 import { DEFAULT_MARGIN_MODEL, marginPmf, type MarginModel, type MarginPmf } from "../fairPrice/marginDistribution";
+import { shapedOrders } from "./shape";
 
 export interface Rung {
   ticker: string;
@@ -53,6 +54,14 @@ export interface LadderConfig {
   tick: number;
   /** Fee per fill for this venue; defaults to Kalshi's schedule. */
   fee?: FeeFn;
+  /** Shaped positions (§21, bot/ladder/shape.ts) instead of the rung-by-rung ladder. */
+  shape?: boolean;
+  /** Shape: minimum P&L from the market line up, dollars (default 0). */
+  marketFloor?: number | null;
+  /** Shape: max loss when the pick falls short by less than a blowout, dollars (default 10% of maxWorstCaseLoss). */
+  againstLimit?: number | null;
+  /** Shape: pick losing by this many points or more is a blowout, where only maxWorstCaseLoss applies (default 10). */
+  blowoutMargin?: number | null;
 }
 
 /** Venue fee for a fill at `price`; `maker` = a resting quote that got filled. */
@@ -206,13 +215,19 @@ export function ladderOrders(
     /** P&L by final margin from this book's positions on OTHER venues for the same game (same index as pnlByMargin),
      *  so the loss cap covers the whole game across venues. */
     otherPnl?: number[];
+    /** The market's implied home margin (the shape's market line); defaults to the pmf's mean. */
+    marketHomeMargin?: number | null;
   } = {}
 ): { orders: Order[]; notes: string[] } {
+  const pnl = gamePnl(rungs, positions, pmf, state.realizedPnl ?? 0);
+  const targetHit = cfg.profitTarget != null && pnl >= cfg.profitTarget;
+  if (cfg.shape) {
+    const { orders, notes } = shapedOrders(rungs, positions, pmf, cfg, { ...state, profitTargetHit: targetHit });
+    return { orders, notes };
+  }
   const notes: string[] = [];
   const orders: Order[] = [];
   const pos = new Map(positions.map((p) => [p.ticker, p]));
-  const pnl = gamePnl(rungs, positions, pmf, state.realizedPnl ?? 0);
-  const targetHit = cfg.profitTarget != null && pnl >= cfg.profitTarget;
   if (targetHit) notes.push(`profit target hit (${pnl.toFixed(2)} ≥ ${cfg.profitTarget}): exits only`);
   const pro = proExposure(rungs, positions, cfg.pick);
   const proEdgeNow = cfg.proEdge + cfg.edgeStep * Math.max(0, pro);
