@@ -16,6 +16,9 @@
     },
     "api/pxtape.js": {
       "maxDuration": 300
+    },
+    "api/espn.js": {
+      "maxDuration": 300
     }
   }
 }

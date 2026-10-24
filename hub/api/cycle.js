@@ -1,4 +1,5 @@
-// Runs one paper-trading cycle. Called every ~5 min by an external scheduler
+// Runs one paper-trading cycle on demand (the tower runs the cycle itself now; /api/espn calls runCycle as a failover).
+// Can still be called by an external scheduler
 // (e.g. cron-job.org) with header "Authorization: Bearer <CRON_SECRET>".
 // _bot.mjs is bot/runner/paper.ts bundled at deploy time (see hub/vercel.json).
 import { timingSafeEqual } from "node:crypto";

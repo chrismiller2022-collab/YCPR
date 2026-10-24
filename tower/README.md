@@ -85,6 +85,14 @@ Also keep Windows awake: Settings → System → Power → Sleep when plugged in
 
 In **cron-job.org**, pause or disable the job that calls `https://ycpr-bot.vercel.app/api/cycle`. Vercel then only serves the dashboard.
 
+### ESPN backup + failover (recommended)
+
+Point a cron-job.org job at `https://ycpr-bot.vercel.app/api/espn` (header `Authorization: Bearer <CRON_SECRET>`, the same
+secret as `/api/cycle`), every 10 minutes. Saturday noon to Sunday 2 am Eastern is enough; running it all week is fine too.
+While the tower is cycling it only saves ESPN finals (the tower does that as well, so it's a cheap double check). If no
+paper cycle has finished for 10 minutes, it runs a full cycle on Vercel instead and starts the recorder, so trading and
+grading carry on until the tower is back. Each run shows up in Run history as "ESPN backup".
+
 ## 6. Confirm
 
 Dashboard → **Settings → Run history → Everything**. Within a few minutes you should see paper runs about every 90 s, recorder runs every ~5 min, ProphetX listener runs back to back, and no errors.
@@ -93,6 +101,11 @@ Dashboard → **Settings → Run history → Everything**. Within a few minutes 
 
 - Update the code: `cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot`
 - Stop the bot: `sudo systemctl stop ycpr-bot` (the dashboard's kill switch also works)
-- If the tower is down, re-enable the cron-job.org job to put Vercel back in charge.
+- The status pill at the top of the dashboard says whether the bot is running: **Live** (a cycle finished in the last 3 min),
+  **Slow** (3–6 min), **Down** (6+ min, with the likely cause: "Tower offline" when every job stopped at once, or the paper
+  cycle's own error). An amber ⚠ names a venue or job with a problem. Click it for every job in Settings → Health.
+- If the tower is down, `/api/espn` (above) takes over trading every 10 minutes; re-enable the `/api/cycle` job for 5-minute cycles.
+- Tower stopped overnight? In Windows check restarts and sleep: `Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6006,6008,42,107} -MaxEvents 10`.
+  Set Windows Update active hours to cover the night, turn sleep off, and make the WSL keep-alive task run at startup.
 
 The always-on worker (handoff doc) will later replace `run-loops.sh` with one process that reacts within seconds; this service setup stays the same.

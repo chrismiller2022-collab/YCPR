@@ -377,6 +377,14 @@ Per-game parameters:
   `/api/data?part=week` (~1/min) and `?part=scores` (every 15 s while games are on; ESPN cached 10 s per instance).
   `liveScore.ts` is bundled to `hub/live/score.js` at deploy (gitignored, like `_bot.mjs`).
 
+- **Health + failover (2026-10-24):** `bot/runner/health.ts` reads the newest runs of every job (paper, record, pxtape, hypo,
+  espn) into one status, returned as `health` by `/api/data` (also `?part=health`). Header pill on every tab: Live / Slow / Down
+  with the cause (tower offline = every tower job went quiet within 10 min of each other; paper failing; venue error) and
+  Settings → Health lists every job. Unfinished runs past their job's time limit show as "cut off". `/api/espn`
+  (`bot/runner/espnJob.ts`, cron-job.org every 10 min) saves ESPN finals, or runs a full cycle when no paper cycle finished
+  for 10 min. Found 2026-10-24: the tower stopped at 08:58 UTC with every job at once (machine/WSL, not code), and the
+  GitHub "hourly" backup actually runs every 3–5 h.
+
 ## 16. Strategy lab (2026-10-21)
 
 `bot_strategies` (seeded: Aggressive, Default, Patient) each paper-trade every **watchlist** game against the same Kalshi

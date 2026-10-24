@@ -11,3 +11,5 @@ export { runPxTape } from "./pxtape";
 export { boardChanges } from "./boardSnapshot";
 export { espnScoreGame } from "../../src/lib/liveScore";
 export { espnDate } from "./espnFinals";
+export { botHealth, cutOff } from "./health";
+export { runEspnJob } from "./espnJob";

@@ -66,6 +66,15 @@
   .pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.75; }
   .pill.ok { background:var(--c-ok-bg); color:var(--c-ok); } .pill.bad { background:var(--c-err-bg); color:var(--c-err); }
   .pill.warn { background:var(--c-warn-bg); color:var(--c-warn); } .pill.info { background:var(--c-info-bg); color:var(--c-info); }
+  .pill.health { border:0; cursor:pointer; font:inherit; font-size:.72rem; font-weight:600; max-width:min(46vw, 360px); overflow:hidden; text-overflow:ellipsis; }
+  .pill.health.bad::before { animation:hpulse 1.2s ease-in-out infinite; opacity:1; }
+  @keyframes hpulse { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce) { .pill.health.bad::before { animation:none; } }
+  .jobs td:first-child { white-space:nowrap; }
+  .jobs small { display:block; color:var(--a-muted); font-size:.72rem; }
+  /* Phones: the header is tight, so the pill shows just "Live" / "Slow" / "Down"; tap it for the details. */
+  .pill.health .hs { display:none; }
+  @media (max-width: 640px) { .pill.health { flex-shrink:0; } .pill.health .hl { display:none; } .pill.health .hs { display:inline; } #modePill { display:none; } }
   .panel { background:var(--a-surface); border:1px solid var(--a-line); border-radius:12px; padding:16px 18px; box-shadow:var(--a-shadow); min-width:0; }
   .panel h3 { margin:0 0 10px; font-size:.98rem; }
   .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
@@ -251,6 +260,7 @@
       <h1 id="title">Board</h1>
       <div class="seg" id="venueSeg" role="group" aria-label="Venue"></div>
       <span id="modePill" class="pill info">Paper</span>
+      <button id="healthPill" class="pill health" type="button" title="Bot status">Checking…</button>
       <button id="killBtn" class="btn" type="button">Kill switch</button>
     </header>
     <nav class="mobile-tabs" id="mtabs">

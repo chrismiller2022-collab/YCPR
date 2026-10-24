@@ -11,7 +11,7 @@ const VCOL = { kalshi: "var(--k)", novig: "var(--nv)", prophetx: "var(--px)" };
 const RANGES = ["15m", "1h", "6h", "24h", "all"];
 const RANGE_MS = { "15m": 15 * 60e3, "1h": 3600e3, "6h": 6 * 3600e3, "24h": 86400e3, all: null };
 const RANGE_LABEL = { "15m": "15m", "1h": "1h", "6h": "6h", "24h": "24h", all: "All" };
-const STALE_MS = 6 * 60e3;
+const STALE_MS = 3 * 60e3; // the tower cycles about every 90 s
 const KIND_LABEL = { take: "take", make: "make", sell: "sell-back", mkt: "market", placed: "placed", moved: "moved", cancelled: "cancelled" };
 
 const ls = {
@@ -110,7 +110,7 @@ pane.innerHTML = `<div class="desk" id="dk" data-look="${look}">
     </section>
   </section>
   <section id="dkAct" hidden style="display:grid;gap:var(--gap)"></section>
-  <p class="dk-note" id="dkFoot">Paper trading. Updates every few seconds from the bot's 5-minute cycle, the market recorder and the ProphetX tape. Times are in your time zone.</p>
+  <p class="dk-note" id="dkFoot">Paper trading. Updates every few seconds from the bot's ~90-second cycle, the market recorder and the ProphetX tape. Times are in your time zone.</p>
 </div>`;
 const overlay = document.createElement("div");
 overlay.className = "desk";
@@ -289,7 +289,7 @@ function renderBar() {
   const age = run ? Date.now() - ms(run.finished_at) : null;
   const b = [];
   if (s.error) b.push(`<div class="dk-banner bad">Can't reach the desk feed: ${esc2(s.error)}. Retrying.</div>`);
-  if (age != null && age > STALE_MS) b.push(`<div class="dk-banner">The last paper cycle finished ${agoStr(ms(run.finished_at))}. It runs every 5 minutes, so a cycle was missed: prices and orders here may be stale.</div>`);
+  if (age != null && age > STALE_MS) b.push(`<div class="dk-banner">The last paper cycle finished ${agoStr(ms(run.finished_at))}. It normally runs about every 90 seconds, so cycles were missed: prices and orders here may be stale. The status pill at the top says why.</div>`);
   if (!run && s.asOf) b.push('<div class="dk-banner">No paper cycle has finished yet.</div>');
   if (run?.error) b.push(`<div class="dk-banner bad">The last cycle ended with an error: ${esc2(String(run.error).slice(0, 160))}</div>`);
   if (kill) b.push('<div class="dk-banner bad"><b>Kill switch is ON.</b> The bot cancels every resting order on its next run and stops quoting.</div>');
