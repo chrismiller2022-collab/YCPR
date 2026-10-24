@@ -1,6 +1,13 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
 import { authorized, sb, send } from "./_lib.js";
-import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate } from "./_bot.mjs";
+import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate, botHealth } from "./_bot.mjs";
+
+/** Is the bot actually running: the newest few runs of every job, read into one status (bot/runner/health.ts). */
+async function health() {
+  const modes = ["paper", "record", "pxtape", "hypo", "espn"];
+  const lists = await Promise.all(modes.map((m) => sb(`bot_runs?select=mode,started_at,finished_at,error,venueErrors:summary->venueErrors&mode=eq.${m}&order=started_at.desc&limit=6`)));
+  return botHealth(lists.flat());
+}
 
 const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before,shape,market_floor,against_limit,blowout_margin";
 const lineRank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);
@@ -104,17 +111,19 @@ export default async function handler(req, res) {
     if (q.get("part") === "picker") return await picker(q, res);
     if (q.get("part") === "week") return await week(q, res);
     if (q.get("part") === "scores") return await scores(q, res);
+    if (q.get("part") === "health") return send(res, 200, { health: await health() });
     const mode = "paper";
     const [state] = await sb("bot_state?select=*&id=eq.1");
     const watchlist = await sb("bot_watchlist?select=*&order=kickoff.asc.nullslast");
     const ids = watchlist.map((w) => w.game_id);
     const inIds = ids.length ? `&game_id=in.(${ids.map(encodeURIComponent).join(",")})` : "&game_id=eq.__none__";
-    const [orders, fills, runs, strategies] = await Promise.all([
+    const [orders, fills, runs, strategies, botStatus] = await Promise.all([
       // The Board is strategy_id null; lab strategies live in /api/lab.
       sb(`bot_orders?select=id,venue,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
       sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
       sb("bot_runs?mode=eq.paper&select=id,mode,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills&order=started_at.desc&limit=25"),
       sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
+      health().catch(() => null), // a health read failing never blanks the dashboard
     ]);
     // Latest snapshot per rung for watched games.
     const snaps = ids.length ? await sb(`bot_snapshots?select=game_id,venue,ticker,side,strike,bid,ask,fair,taken_at${inIds}&order=taken_at.desc&limit=3000`) : [];
@@ -172,7 +181,7 @@ export default async function handler(req, res) {
     const snaps2 = await sb("bot_runs?select=started_at,board:summary->board&mode=eq.paper&finished_at=not.is.null&summary->board=not.is.null&order=started_at.desc&limit=2");
     const changes = snaps2.length === 2 ? { at: snaps2[0].started_at, since: snaps2[1].started_at, games: boardChanges(snaps2[0].board, snaps2[1].board) } : null;
 
-    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies });
+    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies, health: botStatus });
   } catch (err) {
     send(res, 500, { error: String(err.message || err) });
   }

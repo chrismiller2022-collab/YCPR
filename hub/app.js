@@ -299,9 +299,13 @@ function renderSettings() {
       </div>
       <div class="panel">
         <h3>Bot</h3>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="pill info">Mode: ${esc(state?.mode || "paper")}</span><span class="pill ${state?.kill_switch ? "bad" : "ok"}">${state?.kill_switch ? "Kill switch ON" : "Running"}</span></div>
-        <p class="muted" style="font-size:.82rem;margin:8px 0 0">Runs every 5 minutes (cron-job.org → /api/cycle), with an hourly GitHub backup. The kill switch cancels every resting order on the next run.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="pill info">Mode: ${esc(state?.mode || "paper")}</span><span class="pill ${state?.kill_switch ? "bad" : "ok"}">${state?.kill_switch ? "Kill switch ON" : "Kill switch off"}</span></div>
+        <p class="muted" style="font-size:.82rem;margin:8px 0 0">The tower runs the paper cycle about every 90 seconds, the market recorder every 5 minutes, the ProphetX listener continuously and Hypotheticals hourly. Backups: GitHub Actions (a cycle every few hours) and /api/espn (cron-job.org), which saves ESPN finals and trades in the tower's place if no cycle has finished for 10 minutes. The kill switch cancels every resting order on the next cycle.</p>
       </div>
+    </div>
+    <div class="panel" id="healthPanel" style="margin-top:16px">
+      <h3>Health</h3>
+      ${healthPanel()}
     </div>
     <div class="panel" style="margin-top:16px">
       <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px">
@@ -321,7 +325,9 @@ function renderSettings() {
 
 // ---------- Run history (Settings)
 
-const RUN_MODES = { paper: "Paper trading cycles", record: "Market recorder", hypo: "Hypotheticals replays", pxtape: "ProphetX trade listener", all: "Everything" };
+const RUN_MODES = { paper: "Paper trading cycles", record: "Market recorder", hypo: "Hypotheticals replays", pxtape: "ProphetX trade listener", espn: "ESPN backup", all: "Everything" };
+/** Minutes a run may take before an unfinished one counts as cut off (bot/runner/health.ts JOBS.runMs). */
+const RUN_LIMIT_MIN = { paper: 6, record: 8, pxtape: 8, hypo: 25, espn: 6 };
 let runsMode = "paper";
 let runsList = null; // null = the latest paper runs from /api/data
 let runsMore = true;
@@ -343,7 +349,10 @@ function runRows(list) {
   if (!list.length) return '<tr><td colspan="9" class="muted">No runs yet.</td></tr>';
   return list.map((r) => {
     const took = r.finished_at ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) : null;
-    return `<tr><td>${when(r.started_at)}</td>${runsMode === "paper" ? "" : `<td>${esc(RUN_MODES[r.mode] || r.mode || "")}</td>`}<td>${took == null ? "–" : took < 90 ? `${took}s` : `${Math.round(took / 60)}m`}</td><td>${r.games ?? "–"}</td><td>${r.orders_placed ?? "–"}</td><td>${r.orders_cancelled ?? "–"}</td><td>${r.fills ?? "–"}</td><td class="runs-detail">${runDetails(r)}</td><td class="${r.error ? "bad" : ""}">${r.error ? esc(r.error.slice(0, 80)) : r.finished_at ? "ok" : "running"}</td></tr>`;
+    // A run with no finish past its job's time limit died mid-run (the process or machine stopped).
+    const cut = !r.finished_at && Date.now() - new Date(r.started_at).getTime() > (RUN_LIMIT_MIN[r.mode] ?? 10) * 60e3;
+    const status = r.error ? esc(r.error.slice(0, 80)) : r.finished_at ? "ok" : cut ? "cut off" : "running";
+    return `<tr><td>${when(r.started_at)}</td>${runsMode === "paper" ? "" : `<td>${esc(RUN_MODES[r.mode] || r.mode || "")}</td>`}<td>${took == null ? "–" : took < 90 ? `${took}s` : `${Math.round(took / 60)}m`}</td><td>${r.games ?? "–"}</td><td>${r.orders_placed ?? "–"}</td><td>${r.orders_cancelled ?? "–"}</td><td>${r.fills ?? "–"}</td><td class="runs-detail">${runDetails(r)}</td><td class="${r.error || cut ? "bad" : ""}">${status}</td></tr>`;
   }).join("");
 }
 
@@ -683,8 +692,41 @@ function settingsForm(w) {
 
 // ---------- Render + routing
 
+// ---------- Bot health (header pill, Settings panel): from /api/data's `health` (bot/runner/health.ts)
+
+let dashErr = ""; // the dashboard itself can't reach /api/data
+const LEVEL_CLS = { ok: "ok", warn: "warn", bad: "bad", off: "" };
+const clock = (iso) => (Date.now() - new Date(iso).getTime() < 12 * 3600e3 ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : when(iso));
+function healthLabel(h) {
+  if (dashErr) return "Dashboard can't load data";
+  if (!h) return "Status unknown";
+  const age = h.lastCycle ? ago(h.lastCycle) : null;
+  if (h.level === "bad") return h.since ? `${h.label} since ${clock(h.since)}` : h.label;
+  if (h.source === "venue") return `Live · ⚠ ${h.detail.replace(/^Venue error in the last cycle: /, "").split(":")[0]}`;
+  if (h.level === "warn" && h.source === "job") return `Live · ⚠ ${h.jobs.filter((j) => j.mode !== "paper" && (j.level === "warn" || j.level === "bad")).map((j) => j.name).join(", ")}`;
+  return age ? `${h.label} · ${age}` : h.label;
+}
+function renderHealth() {
+  const h = data?.health;
+  const b = $("healthPill");
+  b.className = `pill health ${dashErr ? "bad" : LEVEL_CLS[h?.level] ?? ""}`;
+  const full = healthLabel(h);
+  const short = dashErr ? "Offline" : h ? (h.level === "warn" && h.label === "Live" ? "Live ⚠" : h.label) : "?";
+  b.innerHTML = `<span class="hl">${esc(full)}</span><span class="hs">${esc(short)}</span>`;
+  b.title = dashErr ? `Couldn't reach /api/data: ${dashErr}` : h ? `${h.detail} (click for every job)` : "";
+}
+function healthPanel() {
+  const h = data.health;
+  if (!h) return '<p class="muted" style="margin:0">Status unavailable.</p>';
+  return `<p style="margin:0 0 8px"><span class="pill ${LEVEL_CLS[h.level]}">${esc(healthLabel(h))}</span> <span style="font-size:.84rem">${esc(h.detail)}</span></p>
+    <div class="scroll"><table class="jobs"><tr><th>Job</th><th>Status</th><th>Last sign of life</th><th>Note</th></tr>
+    ${h.jobs.map((j) => `<tr><td>${esc(j.name)}</td><td><span class="pill ${LEVEL_CLS[j.level]}">${{ ok: "OK", warn: "Warning", bad: "Stopped", off: "Idle" }[j.level]}</span></td><td>${j.last ? `${when(j.last)}<small>${ago(j.last)}</small>` : "–"}</td><td style="font-size:.78rem">${esc(j.note)}</td></tr>`).join("")}
+    </table></div>`;
+}
+
 function render() {
   const { state } = data;
+  renderHealth();
   $("modePill").textContent = state?.mode === "paper" || !state?.mode ? "Paper" : state.mode;
   $("killBtn").textContent = state?.kill_switch ? "Kill switch ON — resume" : "Kill switch";
   $("killBtn").className = state?.kill_switch ? "btn danger" : "btn";
@@ -724,12 +766,17 @@ async function load() {
   if (a?.matches?.('input[type="range"]') || (a?.closest?.("#gameForm") && a.matches("input"))) return;
   try {
     data = await api("/api/data");
+    dashErr = "";
     $("err").textContent = "";
     $("gate").hidden = true;
     $("app").hidden = false;
     render();
   } catch (e) {
-    if (e.message !== "unauthorized") $("err").textContent = "Couldn't load: " + e.message;
+    if (e.message !== "unauthorized") {
+      $("err").textContent = "Couldn't load: " + e.message;
+      dashErr = e.message;
+      if (data) renderHealth();
+    }
   }
 }
 
@@ -754,6 +801,13 @@ $("venueSeg").addEventListener("click", (e) => {
   try { localStorage.setItem("botvenue", venue); } catch {}
   render();
 });
+$("healthPill").addEventListener("click", () => {
+  setView("settings");
+  $("healthPanel")?.scrollIntoView({ block: "start", behavior: "smooth" });
+});
+// The pill's "40s ago" keeps counting between loads; coming back to the tab refreshes at once.
+setInterval(() => { if (data && !document.hidden) renderHealth(); }, 10e3);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && PW) load(); });
 $("killBtn").addEventListener("click", async () => {
   const on = !data.state?.kill_switch;
   if (on && !confirm("Turn the kill switch on? The bot cancels all resting orders on its next run and stops quoting.")) return;
@@ -832,7 +886,7 @@ $("drawerRoot").addEventListener("submit", async (e) => {
   };
   try {
     await api("/api/admin", body);
-    $("gMsg").textContent = "Saved. Applies on the next run (within 5 min).";
+    $("gMsg").textContent = "Saved. Applies on the next cycle (about 90 s).";
     document.activeElement?.blur?.();
     load();
   } catch (err) {

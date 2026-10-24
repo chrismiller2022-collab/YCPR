@@ -1,7 +1,7 @@
-// GET ?mode=paper|record|hypo|pxtape|all&before=<iso>&limit=50 → run history, newest first, for Settings.
+// GET ?mode=paper|record|hypo|pxtape|espn|all&before=<iso>&limit=50 → run history, newest first, for Settings.
 import { authorized, sb, send } from "./_lib.js";
 
-const MODES = ["paper", "record", "hypo", "pxtape"];
+const MODES = ["paper", "record", "hypo", "pxtape", "espn"];
 
 export default async function handler(req, res) {
   if (!authorized(req)) return send(res, 401, { error: "Wrong or missing password" });
