@@ -116,6 +116,10 @@ export default async function handler(req, res) {
     const [state] = await sb("bot_state?select=*&id=eq.1");
     const watchlist = await sb("bot_watchlist?select=*&order=kickoff.asc.nullslast");
     const ids = watchlist.map((w) => w.game_id);
+    // Finished games leave the Board (they're in Review); `completed` comes from the site's games table.
+    const done = ids.length ? await sb(`games?select=id&completed=is.true&id=in.(${ids.map(encodeURIComponent).join(",")})`) : [];
+    const doneIds = new Set(done.map((g) => String(g.id)));
+    for (const w of watchlist) w.completed = doneIds.has(String(w.game_id));
     const inIds = ids.length ? `&game_id=in.(${ids.map(encodeURIComponent).join(",")})` : "&game_id=eq.__none__";
     const [orders, fills, runs, strategies, botStatus] = await Promise.all([
       // The Board is strategy_id null; lab strategies live in /api/lab.
