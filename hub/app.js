@@ -206,9 +206,14 @@ function deltaHtml(x, tag = "span") {
 
 // ---------- Views
 
+/** On the Board until the game is final (then it's only in Review). */
+const onBoard = (w) => !w.completed;
+
 function renderBoard() {
-  const { watchlist } = data;
-  const fills = vf(data.fills);
+  const watchlist = data.watchlist.filter(onBoard);
+  const finished = data.watchlist.length - watchlist.length;
+  const shown = new Set(watchlist.map((w) => w.game_id));
+  const fills = vf(data.fills).filter((f) => shown.has(f.game_id));
   let worst = 0, best = 0, evY = 0, evK = 0, anyK = false;
   let dWorst = 0, dBest = 0, dEvY = 0, dEvK = 0;
   const rows = watchlist.map((w) => {
@@ -235,7 +240,7 @@ function renderBoard() {
     </div>`;
   }).join("");
   const last = data.runs?.[0];
-  const resting = vf(data.orders).length;
+  const resting = vf(data.orders).filter((o) => shown.has(o.game_id)).length;
   const since = data.changes ? `since the ${new Date(data.changes.since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} run` : "";
   const tileDelta = (x) => (data.changes ? `<div class="d">${deltaHtml(x)} ${since}</div>` : "");
   document.querySelector('[data-pane="board"]').innerHTML = `
@@ -249,8 +254,9 @@ function renderBoard() {
     <label class="chk" style="margin:0 0 10px;color:var(--a-ink-2)"><input type="checkbox" id="boardDeltas" ${showDeltas ? "checked" : ""}> Show change since last run on each game${data.changes ? "" : ' <span class="muted">(available after two cycles have run)</span>'}</label>
     <div class="board">
       <div class="brow head"><div>Game</div><div>Lean</div><div>Lines (away)</div><div>P&amp;L by margin</div><div class="r">Worst / best</div><div class="r">Expected</div><div class="r">Status</div></div>
-      ${rows || '<div class="empty">No games yet. Add some from <b>Add games</b>.</div>'}
-    </div>`;
+      ${rows || `<div class="empty">${finished ? "No games in play." : "No games yet."} Add some from <b>Add games</b>.</div>`}
+    </div>
+    ${finished ? `<p class="muted" style="font-size:.8rem;margin:10px 0 0">${finished} finished game${finished === 1 ? " is" : "s are"} in <button type="button" class="linkbtn" data-goto="review" style="text-decoration:underline">Review</button>.</p>` : ""}`;
   $("navCount").textContent = watchlist.filter((w) => w.enabled).length;
 }
 
@@ -794,6 +800,10 @@ $("themeBtn").addEventListener("click", () => {
   applyTheme();
 });
 for (const b of document.querySelectorAll("[data-view]")) b.addEventListener("click", () => setView(b.dataset.view));
+document.querySelector('[data-pane="board"]').addEventListener("click", (e) => {
+  const go = e.target.closest("[data-goto]");
+  if (go) setView(go.dataset.goto);
+});
 $("venueSeg").addEventListener("click", (e) => {
   const b = e.target.closest("[data-venue]");
   if (!b) return;
