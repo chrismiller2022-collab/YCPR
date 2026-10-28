@@ -3,7 +3,9 @@
 //
 // The tower runs the paper cycle (~every 90 s), the market recorder (~5 min), the ProphetX
 // listener (back to back) and Hypotheticals (hourly). When all of the tower's jobs go quiet at
-// about the same moment, the machine (or WSL) stopped, not the code.
+// about the same moment, the machine (or WSL) stopped, not the code. Each run also records where it
+// ran (`host`: tower, github, vercel), so cycles from the backups (GitHub Actions, /api/espn,
+// /api/cycle) don't make a downed tower look healthy.
 
 export type Level = "ok" | "warn" | "bad" | "off";
 export type JobMode = "paper" | "record" | "pxtape" | "hypo" | "espn";
@@ -14,6 +16,8 @@ export interface RunRow {
   finished_at: string | null;
   error: string | null;
   venueErrors?: Record<string, string> | null;
+  /** Where the run ran: "tower", "github", "vercel", "local"; null on runs from before hosts were saved. */
+  host?: string | null;
 }
 
 export interface JobHealth {
@@ -32,6 +36,8 @@ export interface Health {
   /** One line on what's wrong and where. */
   detail: string;
   source: "tower" | "paper" | "venue" | "job" | null;
+  /** Where the last finished paper cycle ran (null = not recorded). */
+  lastCycleHost: string | null;
   /** When the problem started (last good sign), if known. */
   since: string | null;
   /** Last finished paper cycle (the pill counts its age live). */
@@ -62,11 +68,17 @@ export function cutOff(r: Pick<RunRow, "mode" | "started_at" | "finished_at" | "
   return !r.finished_at && !!job && now - t(r.started_at) > job.runMs;
 }
 
-const agoText = (ms: number) => (ms < 90e3 ? `${Math.round(ms / 1000)}s` : ms < 90 * MIN ? `${Math.round(ms / MIN)} min` : `${(ms / 3600e3).toFixed(1)} h`);
+const agoText = (ms: number) =>
+  ms < 90e3 ? `${Math.round(ms / 1000)}s` : ms < 90 * MIN ? `${Math.round(ms / MIN)} min` : ms < 48 * 3600e3 ? `${(ms / 3600e3).toFixed(1)} h` : `${(ms / 86400e3).toFixed(1)} days`;
+export const HOST_NAME: Record<string, string> = { tower: "the tower", github: "GitHub", vercel: "Vercel", local: "a manual run" };
+const hostText = (h: string | null | undefined) => (h ? HOST_NAME[h] ?? h : null);
 const venueText = (e: Record<string, string>) => Object.entries(e).map(([v, m]) => `${v[0].toUpperCase()}${v.slice(1)}: ${String(m).slice(0, 80)}`).join("; ");
 
-/** `runs` = the newest few runs of each mode, newest first within a mode. */
-export function botHealth(runs: RunRow[], now = Date.now()): Health {
+/**
+ * `runs` = the newest few runs of each mode, newest first within a mode. `towerLast` = the newest start or finish
+ * of any run the tower made (it may be older than every run in `runs` when only backups have run since).
+ */
+export function botHealth(runs: RunRow[], now = Date.now(), opts: { towerLast?: string | null } = {}): Health {
   const byMode = new Map<string, RunRow[]>();
   for (const r of runs) (byMode.get(r.mode) ?? byMode.set(r.mode, []).get(r.mode)!).push(r);
   for (const list of byMode.values()) list.sort((a, b) => t(b.started_at) - t(a.started_at));
@@ -80,9 +92,10 @@ export function botHealth(runs: RunRow[], now = Date.now()): Health {
     const newest = list[0];
     const done = list.find((r) => r.finished_at && !cutOff(r, now));
     let level: Level = "ok";
-    let note = `last ran ${agoText(age)} ago`;
+    const where = newest.host && newest.host !== "tower" ? ` on ${hostText(newest.host)}` : "";
+    let note = `last ran ${agoText(age)} ago${where}`;
     // The ESPN backup only runs on its own schedule (e.g. Saturdays), so a quiet one is idle, not broken.
-    if (age > job.staleMs) [level, note] = job.tower ? ["bad", `stopped: nothing for ${agoText(age)}`] : ["off", `idle: last ran ${agoText(age)} ago`];
+    if (age > job.staleMs) [level, note] = job.tower ? ["bad", `stopped: nothing for ${agoText(age)}${where && ` (last run${where})`}`] : ["off", `idle: last ran ${agoText(age)} ago`];
     else if (done?.error) [level, note] = ["bad", `error: ${done.error.slice(0, 120)}`];
     else if (list.slice(0, 3).some((r) => cutOff(r, now))) [level, note] = ["warn", `a recent run was cut off · ${note}`];
     else if (done?.venueErrors && Object.keys(done.venueErrors).length) [level, note] = ["warn", `${venueText(done.venueErrors)} · ${note}`];
@@ -93,13 +106,29 @@ export function botHealth(runs: RunRow[], now = Date.now()): Health {
   const paperRuns = byMode.get("paper") ?? [];
   const lastCycleRun = paperRuns.find((r) => r.finished_at && !cutOff(r, now)) ?? null;
   const lastCycle = lastCycleRun?.finished_at ?? null;
-  const base = { jobs, lastCycle, asOf: new Date(now).toISOString() };
+  const lastCycleHost = lastCycleRun?.host ?? null;
+  const base = { jobs, lastCycle, lastCycleHost, asOf: new Date(now).toISOString() };
   const job = (m: JobMode) => jobs.find((j) => j.mode === m)!;
   const others = jobs.filter((j) => j.mode !== "paper" && (j.level === "bad" || j.level === "warn"));
   // (an ESPN backup error still shows: it only runs when asked to)
   const otherNote = others.length ? ` · also: ${others.map((j) => `${j.name} ${j.level === "bad" ? "stopped" : "warning"}`).join(", ")}` : "";
 
   const paperAge = lastCycle ? now - t(lastCycle) : Infinity;
+
+  // Hosts known (the newest paper run says where it ran): judge the tower by its own runs, not the backups'.
+  if (paperRuns[0]?.host) {
+    const towerLast = t(opts.towerLast);
+    const towerAge = Number.isNaN(towerLast) ? Infinity : now - towerLast;
+    if (towerAge > JOBS.paper.staleMs) {
+      const since = Number.isNaN(towerLast) ? null : new Date(towerLast).toISOString();
+      const down = since ? `Tower offline for ${agoText(towerAge)}` : "Tower offline (no tower run recorded yet)";
+      const lastBackup = lastCycle ? `the last cycle ran on ${hostText(lastCycleHost) ?? "a backup"} ${agoText(paperAge)} ago` : "no cycle has finished";
+      if (paperAge <= JOBS.paper.staleMs)
+        return { ...base, level: "warn", label: "Backup", source: "tower", since, detail: `${down}. Trading on backups only: ${lastBackup}.${otherNote}` };
+      return { ...base, level: "bad", label: "Down", source: "tower", since, detail: `${down}; ${lastBackup}. Check the PC, WSL and the ycpr-bot service; /api/espn every 10 min keeps trading meanwhile.` };
+    }
+  }
+
   if (paperAge > JOBS.paper.staleMs) {
     // Every tower job quiet, and their last signs of life within ~10 min of each other: the machine stopped.
     const tower = (["paper", "record", "pxtape"] as JobMode[]).map(job);

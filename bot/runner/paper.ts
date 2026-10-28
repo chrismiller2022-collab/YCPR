@@ -16,7 +16,7 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
 import { diffOrders, paperFills, type Trade } from "./paperFills";
-import { db } from "./io";
+import { db, RUN_HOST } from "./io";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -223,7 +223,7 @@ export async function runCycle(): Promise<CycleTotals> {
   if (recent.length) return { ...totals, overlapped: true };
   // Runs the platform killed at its time limit never reach `finally`; close them out.
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
-  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
+  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
     const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number }>("bot_state", "select=mode,kill_switch,default_ycpr_weight&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;

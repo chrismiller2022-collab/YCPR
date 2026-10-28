@@ -5,8 +5,13 @@ import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame,
 /** Is the bot actually running: the newest few runs of every job, read into one status (bot/runner/health.ts). */
 async function health() {
   const modes = ["paper", "record", "pxtape", "hypo", "espn"];
-  const lists = await Promise.all(modes.map((m) => sb(`bot_runs?select=mode,started_at,finished_at,error,venueErrors:summary->venueErrors&mode=eq.${m}&order=started_at.desc&limit=6`)));
-  return botHealth(lists.flat());
+  const [tower, ...lists] = await Promise.all([
+    // The tower's newest run of any kind: only backups may have run since.
+    sb("bot_runs?select=started_at,finished_at&host=eq.tower&order=started_at.desc&limit=1"),
+    ...modes.map((m) => sb(`bot_runs?select=mode,host,started_at,finished_at,error,venueErrors:summary->venueErrors&mode=eq.${m}&order=started_at.desc&limit=6`)),
+  ]);
+  const towerLast = tower[0] ? [tower[0].started_at, tower[0].finished_at].filter(Boolean).sort().pop() : null;
+  return botHealth(lists.flat(), Date.now(), { towerLast });
 }
 
 const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before,shape,market_floor,against_limit,blowout_margin";
@@ -125,7 +130,7 @@ export default async function handler(req, res) {
       // The Board is strategy_id null; lab strategies live in /api/lab.
       sb(`bot_orders?select=id,venue,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
       sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
-      sb("bot_runs?mode=eq.paper&select=id,mode,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills&order=started_at.desc&limit=25"),
+      sb("bot_runs?mode=eq.paper&select=id,mode,host,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills&order=started_at.desc&limit=25"),
       sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
       health().catch(() => null), // a health read failing never blanks the dashboard
     ]);

@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     const limit = Math.min(200, Math.max(1, Number(q.get("limit")) || 50));
     if (before && Number.isNaN(Date.parse(before))) return send(res, 400, { error: "bad before" });
     const rows = await sb(
-      `bot_runs?select=id,mode,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,snaps:summary->snaps,trades:summary->trades,combos:summary->combos,labFills:summary->labFills` +
+      `bot_runs?select=id,mode,host,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,snaps:summary->snaps,trades:summary->trades,combos:summary->combos,labFills:summary->labFills` +
         `${mode ? `&mode=eq.${mode}` : ""}${before ? `&started_at=lt.${encodeURIComponent(before)}` : ""}&order=started_at.desc&limit=${limit}`
     );
     send(res, 200, { runs: rows, more: rows.length === limit });

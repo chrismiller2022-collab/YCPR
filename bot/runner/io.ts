@@ -15,6 +15,9 @@ async function sb(path: string, init: RequestInit = {}): Promise<any> {
   return text ? JSON.parse(text) : null;
 }
 
+/** Where this process runs, saved on every bot_runs row so the dashboard can tell the tower from the backups. */
+export const RUN_HOST = process.env.BOT_HOST || (process.env.GITHUB_ACTIONS ? "github" : process.env.VERCEL ? "vercel" : "local");
+
 export const db = {
   select: <T = any>(table: string, query = ""): Promise<T[]> => sb(`${table}?${query}`),
   /** Every matching row, paging past PostgREST's 1,000-row cap (query must include an order). */

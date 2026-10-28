@@ -103,7 +103,9 @@ Dashboard → **Settings → Run history → Everything**. Within a few minutes 
 - Stop the bot: `sudo systemctl stop ycpr-bot` (the dashboard's kill switch also works)
 - The status pill at the top of the dashboard says whether the bot is running: **Live** (a cycle finished in the last 3 min),
   **Slow** (3–6 min), **Down** (6+ min, with the likely cause: "Tower offline" when every job stopped at once, or the paper
-  cycle's own error). An amber ⚠ names a venue or job with a problem. Click it for every job in Settings → Health.
+  cycle's own error), and **Backup** when cycles are only coming from the backups (GitHub Actions, `/api/espn`, `/api/cycle`)
+  while the tower is down. Every run records where it ran (`run-loops.sh` sets `BOT_HOST=tower`), so after updating the code
+  restart the service to pick that up. An amber ⚠ names a venue or job with a problem. Click it for every job in Settings → Health.
 - If the tower is down, `/api/espn` (above) takes over trading every 10 minutes; re-enable the `/api/cycle` job for 5-minute cycles.
 - Tower stopped overnight? In Windows check restarts and sleep: `Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6006,6008,42,107} -MaxEvents 10`.
   Set Windows Update active hours to cover the night, turn sleep off, and make the WSL keep-alive task run at startup.

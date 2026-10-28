@@ -383,7 +383,10 @@ Per-game parameters:
   Settings → Health lists every job. Unfinished runs past their job's time limit show as "cut off". `/api/espn`
   (`bot/runner/espnJob.ts`, cron-job.org every 10 min) saves ESPN finals, or runs a full cycle when no paper cycle finished
   for 10 min. Found 2026-10-24: the tower stopped at 08:58 UTC with every job at once (machine/WSL, not code), and the
-  GitHub "hourly" backup actually runs every 3–5 h.
+  GitHub "hourly" backup actually runs every 3–5 h. Since 2026-10-28 every `bot_runs` row has `host` (tower via `BOT_HOST`
+  in `run-loops.sh`, github, vercel, local; `RUN_HOST` in `bot/runner/io.ts`) and the pill judges the tower by its own runs:
+  "Backup" (amber) while only backups trade, "Down since <tower's last run>" otherwise. The tower was off 2026-10-24 08:58 UTC
+  to at least 2026-10-28 (rows backfilled).
 
 ## 16. Strategy lab (2026-10-21)
 

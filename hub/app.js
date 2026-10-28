@@ -332,6 +332,7 @@ function renderSettings() {
 // ---------- Run history (Settings)
 
 const RUN_MODES = { paper: "Paper trading cycles", record: "Market recorder", hypo: "Hypotheticals replays", pxtape: "ProphetX trade listener", espn: "ESPN backup", all: "Everything" };
+const HOST_LABEL = { github: "GitHub backup", vercel: "Vercel", local: "a manual run" };
 /** Minutes a run may take before an unfinished one counts as cut off (bot/runner/health.ts JOBS.runMs). */
 const RUN_LIMIT_MIN = { paper: 6, record: 8, pxtape: 8, hypo: 25, espn: 6 };
 let runsMode = "paper";
@@ -341,6 +342,7 @@ let runsMore = true;
 function runDetails(r) {
   const v = r.venues ? Object.entries(r.venues).map(([k, x]) => `${VSHORT[k] || k} ${x.fills}/${x.placed}`).join(" · ") : "";
   const bits = [
+    r.host && r.host !== "tower" ? `on ${HOST_LABEL[r.host] ?? r.host}` : "",
     v && `fills/placed ${v}`,
     r.labFills ? `lab fills ${r.labFills}` : "",
     r.snaps != null ? `${r.snaps} price changes` : "",
@@ -708,6 +710,7 @@ function healthLabel(h) {
   if (!h) return "Status unknown";
   const age = h.lastCycle ? ago(h.lastCycle) : null;
   if (h.level === "bad") return h.since ? `${h.label} since ${clock(h.since)}` : h.label;
+  if (h.label === "Backup") return h.since ? `Backup only · tower down since ${clock(h.since)}` : "Backup only · tower down";
   if (h.source === "venue") return `Live · ⚠ ${h.detail.replace(/^Venue error in the last cycle: /, "").split(":")[0]}`;
   if (h.level === "warn" && h.source === "job") return `Live · ⚠ ${h.jobs.filter((j) => j.mode !== "paper" && (j.level === "warn" || j.level === "bad")).map((j) => j.name).join(", ")}`;
   return age ? `${h.label} · ${age}` : h.label;

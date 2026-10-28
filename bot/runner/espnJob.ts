@@ -5,7 +5,7 @@
 // - otherwise → run a full paper cycle here instead (it saves finals too, and keeps trading).
 // Logged in bot_runs as mode 'espn' so the dashboard's health panel shows the backup ran.
 
-import { db } from "./io";
+import { db, RUN_HOST } from "./io";
 import { syncEspnFinals } from "./espnFinals";
 import { runCycle } from "./paper";
 
@@ -26,7 +26,7 @@ export async function runEspnJob(opts: { onFailover?: () => void; now?: () => nu
   const now = opts.now ?? Date.now;
   const recent = await db.select("bot_runs", `select=id&mode=eq.espn&finished_at=is.null&started_at=gte.${new Date(now() - 5 * 60e3).toISOString()}`);
   if (recent.length) return { failover: false, saved: 0, overlapped: true };
-  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: "espn" });
+  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: "espn", host: RUN_HOST });
   let result: EspnJobResult = { failover: false, saved: 0 };
   let error: string | null = null;
   try {

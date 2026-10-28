@@ -244,3 +244,13 @@ alter table bot_strategies add column if not exists blowout_margin numeric;
 insert into bot_strategies (name, pro_edge, anti_edge, take_edge, edge_step, shape, notes) values
   ('Shaped', 0.02, 0.04, 0.03, 0.01, true, 'Shaped positions (§21) with the defaults: $0 at the market line, 10% of the cap moderately against, blowout at 10 pts')
 on conflict (name) do nothing;
+
+-- 2026-10-28: where each run ran (tower, github, vercel, local), so the dashboard can tell the tower from the backups.
+alter table bot_runs add column if not exists host text;
+create index if not exists bot_runs_host on bot_runs (host, started_at desc);
+-- Backfill: overnight 2026-10-24 the ProphetX listener ran on the tower except when /api/cycle (cron-job.org, 04:00/16:00 UTC) started it;
+-- since the tower stopped (2026-10-24 08:58 UTC) the other runs came from that cron job (Vercel) or GitHub Actions.
+update bot_runs set host = 'tower' where host is null and mode = 'pxtape' and started_at between '2026-10-24 00:00+00' and '2026-10-24 09:00+00'
+  and not (extract(hour from started_at at time zone 'utc') in (4, 16) and extract(minute from started_at at time zone 'utc') < 6);
+update bot_runs set host = case when extract(hour from started_at at time zone 'utc') in (4, 16) and extract(minute from started_at at time zone 'utc') < 6 then 'vercel' else 'github' end
+  where host is null and started_at > '2026-10-24 09:00+00';

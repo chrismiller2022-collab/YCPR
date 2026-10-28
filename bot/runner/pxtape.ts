@@ -6,7 +6,7 @@
 // Read-only market data; never places orders. Logs counts only.
 
 import { oddsToProb, prophetxAdapter, prophetxClient } from "../venues/prophetx";
-import { db } from "./io";
+import { db, RUN_HOST } from "./io";
 
 const MODE = "pxtape";
 const iso = () => new Date().toISOString();
@@ -72,7 +72,7 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
   const recent = await db.select("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
-  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
+  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   const started = Date.now();
   let ws: WebSocket | null = null;
   try {
