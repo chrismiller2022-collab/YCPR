@@ -63,3 +63,35 @@ describe("bot health", () => {
     expect(cutOff({ mode: "hypo", started_at: at(70), finished_at: at(1), error: "timed out" }, NOW)).toBe(true);
   });
 });
+
+describe("bot health with hosts", () => {
+  const tagged = (mode: string, minAgo: number, host: string, took = 60): RunRow => ({ ...run(mode, minAgo, took), host });
+
+  it("is Live when the tower made the last cycle", () => {
+    const h = botHealth([tagged("paper", 1, "tower"), tagged("record", 2, "tower", 45), tagged("pxtape", 1, "tower", 200), tagged("hypo", 20, "tower")], NOW, { towerLast: at(0.5) });
+    expect(h.level).toBe("ok");
+    expect(h.lastCycleHost).toBe("tower");
+  });
+
+  it("says Backup, not Live, right after a GitHub cycle while the tower is down", () => {
+    const runs = [tagged("paper", 1, "github"), tagged("record", 0.5, "github", 20), tagged("hypo", 0.2, "github", 10)];
+    const h = botHealth(runs, NOW, { towerLast: at(5300) });
+    expect(h.level).toBe("warn");
+    expect(h.label).toBe("Backup");
+    expect(h.source).toBe("tower");
+    expect(h.since).toBe(at(5300));
+    expect(h.detail).toMatch(/Tower offline for 3\.7 days\. Trading on backups only: the last cycle ran on GitHub/);
+  });
+
+  it("is Down since the tower's last run once the backup cycle is old too", () => {
+    const h = botHealth([tagged("paper", 90, "vercel"), tagged("record", 89, "vercel")], NOW, { towerLast: at(5300) });
+    expect(h.level).toBe("bad");
+    expect(h.since).toBe(at(5300));
+    expect(h.detail).toMatch(/last cycle ran on Vercel 89 min ago/);
+    expect(h.jobs.find((j) => j.mode === "paper")!.note).toMatch(/last run on Vercel/);
+  });
+
+  it("falls back to the old rules for runs from before hosts were saved", () => {
+    expect(botHealth(healthy(), NOW, { towerLast: null }).level).toBe("ok");
+  });
+});

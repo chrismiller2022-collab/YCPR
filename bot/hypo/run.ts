@@ -4,7 +4,7 @@
 // Runs after the market recorder (/api/record) and in the hourly GitHub backup.
 // Logs counts only (the repo's Actions logs are public).
 
-import { db } from "../runner/io";
+import { db, RUN_HOST } from "../runner/io";
 import { makeAdapters, type VenueId } from "../venues";
 import {
   advance, annotateSteps, builtinMethods, emptyState, methodHash, strategyMethod, summarize, VENUE_SETS,
@@ -108,7 +108,7 @@ export async function runHypo(budgetMs = 200e3): Promise<HypoTotals> {
   const recent = await db.select("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 25 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 25 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
-  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE });
+  const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
     const { methods } = await methodsNow();
     const rules = venueRules();

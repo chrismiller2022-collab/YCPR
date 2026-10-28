@@ -8,6 +8,8 @@ set -u
 cd "$(dirname "$0")/.."
 if [ ! -f .env ]; then echo "tower: missing $(pwd)/.env (see tower/env.example)"; exit 1; fi
 set -a; . ./.env; set +a
+# Every run is tagged with where it ran, so the dashboard can tell the tower from the backups.
+export BOT_HOST=tower
 
 # loop <seconds between starts> <script>
 loop() {
