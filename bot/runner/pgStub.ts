@@ -34,10 +34,10 @@ export function pgStub(db: Record<string, Row[]>) {
     const method = init.method ?? "GET";
     if (method === "POST") {
       const items: Row[] = [].concat(JSON.parse(init.body));
-      const key = u.searchParams.get("on_conflict");
+      const keys = u.searchParams.get("on_conflict")?.split(",") ?? [];
       const tbl = (db[table] ??= []);
       const out = items.map((it) => {
-        const hit = key ? tbl.find((r) => String(r[key]) === String(it[key])) : null;
+        const hit = keys.length ? tbl.find((r) => keys.every((k) => String(r[k]) === String(it[k]))) : null;
         if (hit) return Object.assign(hit, it);
         const row = { id: tbl.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1, ...it };
         tbl.push(row);

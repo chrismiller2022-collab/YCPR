@@ -19,6 +19,8 @@ import {
   type Rung,
 } from "../ladder/engine";
 import { diffOrders, paperFills } from "../runner/paperFills";
+import { heldFrom } from "../runner/targetBook";
+import { DEFAULT_TARGET, targetOrders } from "../ladder/target";
 import type { VenueId } from "../venues/types";
 
 export type VenueSet = VenueId | "all";
@@ -81,7 +83,7 @@ export interface HypoGame {
 export interface Method {
   key: string;
   label: string;
-  kind: "ladder" | "early" | "late";
+  kind: "ladder" | "early" | "late" | "target";
   /** Ladder settings (pick and tick are filled in per game/venue). */
   cfg: Omit<LadderConfig, "pick" | "tick" | "fee">;
   /** Trust in our number (0–1). */
@@ -90,6 +92,8 @@ export interface Method {
   /** "shrunk" = PM median + beta · capped gap (bot/fairPrice/shrink.ts) instead of the trust blend. */
   fairMode?: "blend" | "shrunk";
   shrink?: ShrinkSettings;
+  /** Target-position settings (kind "target"); the game cap is cfg.maxWorstCaseLoss and the per-strike cap cfg.perRungCap. */
+  target?: { bankroll: number; kellyFrac: number; takeEdge: number };
 }
 
 export interface VenueRules {
@@ -238,6 +242,27 @@ export function advance(state: HypoState, steps: Step[], game: HypoGame, method:
       s.t = step.t;
       continue;
     }
+    if (method.kind === "target") {
+      // Target-position rebalancing across the selected venues: one decision per step, takes only (bot/ladder/target.ts).
+      const sk = method.shrink ?? DEFAULT_SHRINK;
+      const shr = shrunkFromMargins(game.ycpr, Object.fromEntries(venues.map((x) => [x, s.implied?.[x]])), sk);
+      const books = venues.map((x) => ({ venue: x as string, rungs: rungsOf(s, x), fee: rules[x].fee(hours) })).filter((b) => b.rungs.length);
+      if (shr.fair != null && shr.edgePts != null && books.length) {
+        const held = heldFrom(s.fills.map((f) => ({ venue: f.venue, ticker: f.ticker, side: f.side, strike: f.strike, action: f.action, price: f.price, count: f.count, fee: f.fee })));
+        const t = method.target ?? { bankroll: DEFAULT_TARGET.bankroll, kellyFrac: DEFAULT_TARGET.kellyFrac, takeEdge: DEFAULT_TARGET.takeEdge };
+        const { orders } = targetOrders(books, held, marginPmf(shr.fair, modelWith(sk.sigma)), shr.edgePts, {
+          ...DEFAULT_TARGET, bankroll: t.bankroll, kellyFrac: t.kellyFrac, sigma: sk.sigma, takeEdge: t.takeEdge,
+          maxPerStrike: Math.max(1, method.cfg.perRungCap), gameCap: method.cfg.maxWorstCaseLoss,
+        });
+        for (const o of orders) {
+          const rung = s.books[`${o.venue}|${o.ticker}`];
+          if (!rung) continue;
+          s.fills.push({ venue: o.venue as VenueId, ticker: o.ticker, side: rung.side, strike: Number(rung.strike), action: o.action, price: o.price, count: o.count, fee: rules[o.venue as VenueId].fee(hours)(o.price, { count: o.count, maker: false }), t: step.t, fair: o.fair });
+        }
+      }
+      s.t = step.t;
+      continue;
+    }
 
     for (const v of venues) {
       const rungs = rungsOf(s, v);
@@ -379,13 +404,13 @@ export function strategyMethod(st: {
   id: number; name: string; pro_edge: number; anti_edge: number; take_edge: number; edge_step: number;
   max_worst_case_loss: number; per_rung_cap: number; ycpr_weight: number | null; stop_minutes_before: number;
   shape?: boolean | null; market_floor?: number | null; against_limit?: number | null; blowout_margin?: number | null;
-  fair_mode?: string | null;
-}, defaultTrust: number, shrink: ShrinkSettings = DEFAULT_SHRINK): Method {
+  fair_mode?: string | null; method?: string | null;
+}, defaultTrust: number, shrink: ShrinkSettings = DEFAULT_SHRINK, target: { bankroll: number; kellyFrac: number } = { bankroll: DEFAULT_TARGET.bankroll, kellyFrac: DEFAULT_TARGET.kellyFrac }): Method {
   const n = (v: unknown) => (v == null ? null : Number(v));
   return {
     key: `lab${st.id}`,
     label: `Lab · ${st.name}`,
-    kind: "ladder",
+    kind: st.method === "target" ? "target" : "ladder",
     cfg: {
       maxWorstCaseLoss: Number(st.max_worst_case_loss), perRungCap: st.per_rung_cap, orderSize: 1,
       proEdge: Number(st.pro_edge), antiEdge: Number(st.anti_edge), takeEdge: Number(st.take_edge), edgeStep: Number(st.edge_step), profitTarget: null,
@@ -395,11 +420,12 @@ export function strategyMethod(st: {
     weight: st.ycpr_weight == null ? defaultTrust : Number(st.ycpr_weight),
     stopMinutes: st.stop_minutes_before,
     // Only shrunk strategies carry these, so other strategies' hashes (and saved replays) don't change.
-    ...(st.fair_mode === "shrunk" ? { fairMode: "shrunk" as const, shrink } : {}),
+    ...(st.fair_mode === "shrunk" || st.method === "target" ? { fairMode: "shrunk" as const, shrink } : {}),
+    ...(st.method === "target" ? { target: { bankroll: target.bankroll, kellyFrac: target.kellyFrac, takeEdge: Number(st.take_edge) } } : {}),
   };
 }
 
 /** Stable hash of what affects a method's replay, so edits restart it from scratch. */
 export function methodHash(m: Method): string {
-  return JSON.stringify([m.kind, m.cfg, m.weight, m.stopMinutes, ...(m.fairMode === "shrunk" ? [m.fairMode, m.shrink] : [])]);
+  return JSON.stringify([m.kind, m.cfg, m.weight, m.stopMinutes, ...(m.fairMode === "shrunk" ? [m.fairMode, m.shrink] : []), ...(m.target ? [m.target] : [])]);
 }

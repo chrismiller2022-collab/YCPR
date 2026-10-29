@@ -58,7 +58,11 @@ export default async function handler(req, res) {
       case "shrinkSettings": {
         // The shrunk fair value (bot/fairPrice/shrink.ts): fair = PM median + beta · capped gap. Blank fields stay as they are.
         const patch = { updated_at: new Date().toISOString() };
-        const rules = { beta: [0, 1], hump_cap: [0.5, 60], hump_fall: [0, 60], sigma: [5, 40] };
+        const rules = {
+          beta: [0, 1], hump_cap: [0.5, 60], hump_fall: [0, 60], sigma: [5, 40],
+          // Target-position books: paper bankroll, fraction of Kelly, and the loss caps shared between games (dollars).
+          bankroll: [10, 1e7], kelly_frac: [0.01, 1], team_cap: [0, 1e5], conf_cap: [0, 1e5], portfolio_cap: [0, 1e6],
+        };
         for (const [k, [lo, hi]] of Object.entries(rules)) {
           if (body[k] === undefined || body[k] === "" || body[k] === null) continue;
           const v = Number(body[k]);
