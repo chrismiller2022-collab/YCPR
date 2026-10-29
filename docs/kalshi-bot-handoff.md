@@ -579,3 +579,7 @@ Wanted: make money if it lands on the market line, more at our line, more again 
    - an infeasible start (the staircase above) only produces risk-reducing orders.
 2. Add a lab strategy "Shaped" (defaults) so it paper-trades beside the Board for a weekend. Compare in Review and Hypotheticals.
 3. Switch the Board default to shaped once it settles at least as well with lower variance. Keep the old behavior available as `shape = false`.
+
+## 22. Trading rebuild (2026-10-29)
+
+Shrunk fair value from the PM median, target-position books, markouts and the shadow report, the weekly workflow and Polymarket US were added after this doc was written. What exists, the decisions, the measured results and what the user must do next (update the tower) are in `BOT_REBUILD_HANDOFF.md` §13. The Board and the four strategies described above still work as before.

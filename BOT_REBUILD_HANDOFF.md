@@ -161,3 +161,49 @@ Add Polymarket as another venue in the same adapter pattern as Kalshi/Novig/Prop
 - Schema changes go through Supabase migrations; list them to the user before applying. Do not drop or rewrite existing `bot_*` data (it is the evidence base for markouts).
 - Validate against history before trusting: replay the new fair value/targets on the fills and snapshots already logged (shadow mode vs the current four strategies) and report CLV/markout and P&L-by-margin shape, not just "it runs".
 - Typecheck with `npx tsc --noEmit -p .` (the repo's convention; two known pre-existing errors: `oddsHistorical.ts(170)` and `BetHistoryPage.tsx(460)`); do not commit `bun.lock` in the YCPR repo.
+
+## 13. Status and build log (2026-10-29): what was built, and what to do next
+
+All five stages are merged to main (PRs #72-#76), paper mode only. The kill switch, `bot_state.mode` and live trading were not touched. The Board and the original four strategies are unchanged.
+
+### Decisions made while building (change any of them in Settings → Rebuild unless noted)
+- **Market anchor = the PM median**: the median of the margins each prediction-market venue's ladder implies (Kalshi, Novig, ProphetX; Polymarket once in paper mode). The sportsbook line is shown as "Book" for reference and is never used for pricing or as a fallback. The old "Mkt" label on the Board was a stale `betting_lines` row (`market_median`, else consensus, else any provider) and is gone.
+- **Fair value** (`bot/fairPrice/shrink.ts`): `fair = PM median + beta · gapEff(YC − PM median)`, beta 0.1, hump cap 5.5 points (flat past the cap; optional fall-off), sigma 15. It follows the market every cycle. YC's original line is stored once in `bot_watchlist.ycpr_original` and never overwritten.
+- **Target positions** (`bot/ladder/target.ts`): all venues' rungs on one canonical ladder `C(x) = home margin > x`; target = Kelly ramp `kelly_frac · bankroll · |edge| / sigma²` contracts per strike (bankroll $1000, quarter Kelly); open only where the edge after the venue's fee is at least `take_edge` (0.5¢); reduce when the exit is within 1¢ of fair (the automatic take-profit) or a cap forces it; never push missing size onto other strikes; takes only, no resting quotes. Caps in dollars of worst case after fees: per game (strategy's `max_worst_case_loss`, 10), per backed team (10), per backed conference (30), portfolio (100).
+- **Games added by the weekly workflow** have `legacy = false`: only the rebuilt books (Shrunk, Target) trade them. The Board and the original strategies trade only games added by hand.
+- **Polymarket** starts `read` (recorded and shown, out of the median, never traded); `paper` makes it a venue like the others. Whether the user's account can trade it is the user's call.
+
+### Where things are
+- Fair value, fees: `bot/fairPrice/shrink.ts`, `bot/venues/fees.ts` (Kalshi fee type and multiplier read live from its API; sources and what is unconfirmed are in the file header).
+- Books: `bot/ladder/target.ts`, `bot/runner/targetBook.ts`, `bot/runner/paper.ts` (method `target`, fair mode `shrunk`, `legacy`, `polymarket_mode`); the plan behind every order is saved to `bot_plans`.
+- Measurement: `bot/analysis/markouts.ts` (`bot_fills.mid_1m/15m/60m`), `bot/analysis/report.ts` (the shadow report in `bot_reports`, shown at the top of the Hypotheticals tab; refreshed every 6 h by the hourly replay job, or run Actions → Bot shadow report). New fills also store `ycpr_at_fill`, `market_at_fill` (PM median), `shrunk_at_fill`, `hours_to_kickoff`, `is_maker`.
+- Hypotheticals replays the rebuild as the built-in methods "Shrunk ladder" and "Target positions" (defined in code so older runners never replay them as plain ladders), with the global beta / bankroll / Kelly settings.
+- Dashboard (existing pages only): Add games → Weekly workflow (adds every game not yet watched, syncs YC lines keeping the original, turns on the rebuilt books); Board rows and the game drawer show original YC, trading line, PM median, each venue's line and the book; the drawer's Outcomes tab shows the Target book's plan (why this size, P&L by margin now and after the orders, the orders and reasons); Settings → Rebuild.
+- Migrations: appended to `supabase/migrations/bot_tables.sql` (all additive; applied to the project).
+
+### What the user must do (the tower does not auto-update)
+1. On the tower: `cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot`. Until then the tower runs the old runner (`bot_runs.summary.codeVersion` missing). The hourly GitHub backup already runs the new code.
+2. Dashboard → Settings → Rebuild → "Turn on the Shrunk and Target books" (refuses until the tower's newest run is version 3, so an old runner can never trade them as plain ladders). One row in `bot_strategies` named `Shrunk` already exists, disabled; the delete was refused by the database's confirmation prompt, which is harmless: the new code skips rebuilt-logic rows in Hypotheticals.
+3. Each week: Add games → Weekly workflow → Run.
+
+### Measured on 2026-10-29 (shadow report, 57 recorded games from weeks 8-9; treat as a snapshot, it refreshes)
+- **Live paper fills, takes:** claimed edge 7.6¢ (Board) to 11.6¢ (Patient); the mid then moved 0.5-1.3¢ toward the fill by the close, against 1.2¢ of half-spread paid at the fill, so the claimed edge was roughly zero after costs; realized -20¢ to -28¢ per contract (Patient -22¢, Shaped -20¢). +1/15/60-minute markouts are about equal to the mid at the fill because the recorder runs every ~5 minutes: the +1 minute figure is not real resolution.
+- **Calibration against the PM-median entry line (24 h before kickoff), n = 57:** beta **-1.76 ± 0.65** (YC's side went 18-39 against that line); CLV is slightly positive (+0.13 pts, 61-67% of games moved toward YC at gaps of 2-6 points). Independently recomputed in SQL (same numbers). This short window disagrees with the 560-game 2026 read in §4b (beta about +0.10) and the 1,504-game 2024-25 read (+0.19): the honest reading is still "no demonstrated edge", not "negative edge". Keep beta at 0.1 or lower until more weeks accumulate.
+- **Shadow replay, same games, same fill rules, all venues, settled P&L:** Ladder (current default) -$148 on 945 contracts (-15.7¢); Shaped -$63 (-6.7¢); trust 25% -$41; **Shrunk ladder (rebuild) -$17 on 127 contracts**; **Target positions (rebuild) -$15 on 217 contracts (-6.7¢), trading only 8 of 57 games** (the fee dead zone at beta 0.1 leaves most games with nothing to open). The rebuild loses roughly an order of magnitude less because it stays small when the edge is thin; it did not make money on this sample, because YC's side lost. Positive CLV for both (+1.1¢, +0.6¢).
+- **P&L by how the game landed against the close:** the original ladder loses $4-7 per game in every bin below the market line and wins $1-7 above it (the symptom in §2); the shrunk ladder has the same shape at about a fifth of the size; Target has too few games to read.
+
+### Fees: what is verified
+- Kalshi: taker 0.07·M·p(1-p) with M read from the series API (1.0 now, no event overrides); the 0.25 maker share is inferred (the fee-schedule PDF was rate-limited).
+- Novig: pre-game free, live CFB taker 0.06, makers free: from secondary sources only (Dimers, Action Network); Novig's own page redirects to a landing page.
+- ProphetX: 2% of net winnings from review sites; account-configurable (`PROPHETX_COMMISSION`); unconfirmed.
+- Polymarket US: official docs, taker 0.0695·p(1-p), makers free (rebate ignored), per market `feeCoefficient`.
+
+### Polymarket US facts (docs.polymarket.us and the live gateway, 2026-10-29)
+Public, no key: `GET https://gateway.polymarket.us/v2/leagues/cfb/events` (about 1 MB per 100 events) and `GET /v1/markets?slug=..`. A game's full-game spread ladder has one market per half point; market slug = `asc-<event slug>-neg|pos-<n>pt5`; each market has a long side (team + signed line, e.g. Troy -1.5 = Troy wins by over 1.5, so strike = -line) with `bestBidQuote` / `bestAskQuote`, `orderPriceMinTickSize` 0.005, overtime included, half points only. Titles are unreliable for positive lines; use the market sides' team and `ordering`. 25 requests/s per IP. Order books: `GET /v1/markets/{slug}/book`. Trading and WebSocket need an Ed25519-signed key (not used). Eligibility and jurisdiction for trading are not stated in the docs reachable here.
+
+### Not verified / known gaps
+- Nothing was run on the tower (it is the user's machine and was on older code); the new runner was exercised in tests against an in-memory database and by the GitHub backup, not yet by the tower.
+- The weekly workflow and the plan panel were tested against mocked APIs and in headless Chromium, not against the live dashboard with real data.
+- Cross-game caps use the sum of per-game worst cases (conservative); correlation between games is not modeled. Conference caps need `games.home_conference` / `away_conference`.
+- Target sizes are whole contracts and paper fills are at the displayed price with no depth check, so anything larger than a few contracts per strike would need depth data.
+- `hub/api/_bot.mjs` is generated at deploy; `bot/runner/hubGames.test.ts` fails on a fresh checkout until `npx esbuild bot/runner/hubEntry.ts --bundle --platform=node --format=esm --target=node20 --outfile=hub/api/_bot.mjs` has run (as before this work).
