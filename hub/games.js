@@ -142,7 +142,7 @@ function pickerRows() {
     if (pk.conf && g.home_conference !== pk.conf && g.away_conference !== pk.conf) return false;
     if (pk.day && dayOf(g) !== pk.day) return false;
     if (min != null && !(edgeOf(g) >= min)) return false;
-    if (pk.venues.length && !pk.venues.every((v) => g.venue_margins?.[v] != null)) return false;
+    if (pk.venues.length && !pk.venues.every((v) => (g.venue_margins?.[v] ?? g.ro_margins?.[v]) != null)) return false;
     return true;
   });
   const by = {
@@ -203,7 +203,7 @@ function renderAdd() {
           <td>${signed(g.lines?.pm)}</td>
           <td class="muted">${signed(awayMkt(g))}</td>
           <td class="${e >= 3 ? "ok" : ""}">${e == null ? "–" : e.toFixed(1)}</td>
-          <td>${VENUES.filter((v) => g.venue_margins?.[v] != null).map((v) => `<span class="pill" title="${VNAME[v]} implies ${esc(g.away_team)} ${signed(Number(g.venue_margins[v]))}">${VSHORT[v]}</span>`).join(" ") || '<span class="muted">–</span>'}</td>
+          <td>${VENUES.filter((v) => (g.venue_margins?.[v] ?? g.ro_margins?.[v]) != null).map((v) => `<span class="pill" title="${VNAME[v]} implies ${esc(g.away_team)} ${signed(Number(g.venue_margins?.[v] ?? g.ro_margins?.[v]))}${g.venue_margins?.[v] == null ? " (read-only)" : ""}">${VSHORT[v]}</span>`).join(" ") || '<span class="muted">–</span>'}</td>
           <td style="text-align:left">${g.watch ? `<span class="pill ${g.watch.enabled ? "ok" : ""}">${g.watch.enabled ? "Trading" : "Paused"}</span> <button type="button" class="btn" data-manage="${g.watch.id}" style="padding:2px 8px">Edit</button>`
             : started(g) ? '<span class="muted">Started</span>'
             : s ? `<div class="seg"><button type="button" data-lean="away" class="${lean === "away" ? "on" : ""}">${esc(g.away_team)}</button><button type="button" data-lean="home" class="${lean === "home" ? "on" : ""}">${esc(g.home_team)}</button></div>`

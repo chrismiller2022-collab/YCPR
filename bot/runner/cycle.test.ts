@@ -13,7 +13,7 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { kalshiFeeWith } from "../venues/fees";
 import { pgStub, type Row } from "./pgStub";
 
-const mids = { kalshi: 0, novig: 1.2, withNovig: false };
+const mids = { kalshi: 0, novig: 1.2, poly: 6, withNovig: false, withPoly: false };
 const ladder = (mid: number, tag: string) => {
   const pmf = marginPmf(mid);
   const rungs = [];
@@ -30,11 +30,12 @@ vi.mock("../venues", () => {
   const off = { available: () => false, prepare: async () => {}, ladder: async () => null, trades: async () => [], tick: 0.01, fee: () => () => 0, id: "x", label: "x" };
   const novig = { ...off, id: "novig", label: "Novig", tick: 0.005, available: () => mids.withNovig, ladder: async () => ladder(mids.novig, "NV"), fee: () => () => 0 }; // pre-game: free
   return {
-    VENUES: ["kalshi", "novig", "prophetx"],
+    VENUES: ["kalshi", "novig", "prophetx", "polymarket"],
     makeAdapters: () => ({
       kalshi: { id: "kalshi", label: "Kalshi", tick: 0.01, available: () => true, prepare: async () => {}, ladder: async () => ladder(mids.kalshi, "K"), trades: async () => [], fee: () => kalshiFeeWith("quadratic_with_maker_fees", 1) },
       novig,
       prophetx: off,
+      polymarket: { ...off, id: "polymarket", label: "Polymarket", tick: 0.005, available: () => mids.withPoly, ladder: async () => ladder(mids.poly, "PM"), fee: () => (p: number, o: { count?: number; maker?: boolean } = {}) => (o.maker ? 0 : 0.0695 * (o.count ?? 1) * p * (1 - p)) },
     }),
   };
 });
@@ -60,6 +61,8 @@ beforeEach(() => {
   mids.kalshi = 0;
   mids.novig = 1.2;
   mids.withNovig = false;
+  mids.withPoly = false;
+  mids.poly = 6;
   db = {
     bot_state: [{ id: 1, mode: "paper", kill_switch: false, default_ycpr_weight: 1, beta: 0.1, hump_cap: 5.5, hump_fall: 0, sigma: 15, bankroll: 1000, kelly_frac: 0.25, team_cap: 10, conf_cap: 30, portfolio_cap: 100 }],
     bot_watchlist: [watch()],
@@ -199,5 +202,48 @@ describe("games added by the weekly workflow (legacy = false)", () => {
     await runCycle();
     expect(db.bot_fills.filter((f) => f.strategy_id == null).length).toBeGreaterThan(0);
     expect(db.bot_fills.filter((f) => f.strategy_id === 1).length).toBeGreaterThan(0);
+  });
+});
+
+describe("Polymarket modes", () => {
+  const target = (): Row => ({ ...strat(6, "Target", "shrunk"), method: "target", per_rung_cap: 3, take_edge: 0.005 });
+  const setup = (mode: string) => {
+    db.bot_strategies = [target()];
+    db.bot_state[0].polymarket_mode = mode;
+    db.bot_watchlist[0].venues = ["kalshi", "novig", "prophetx", "polymarket"];
+    mids.withNovig = true;
+    mids.withPoly = true; // Kalshi 0, Novig +1.2, Polymarket priced a stale +6
+  };
+
+  it("read-only (the default): recorded and shown, but out of the PM median and never traded", async () => {
+    setup("read");
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    const w = db.bot_watchlist[0];
+    expect(w.ro_margins.polymarket).toBeGreaterThan(4);
+    expect(Object.keys(w.venue_margins).sort()).toEqual(["kalshi", "novig"]);
+    expect(db.bot_fills.some((f) => String(f.ticker).startsWith("PM-"))).toBe(false);
+    const plan = db.bot_plans.find((p) => p.strategy_id === 6)!;
+    expect(plan.plan.pmMedian).toBeLessThan(1); // the median of Kalshi 0 and Novig 1.2, not dragged up by the +6
+  });
+
+  it("paper: part of the PM median and paper-traded like the other venues", async () => {
+    setup("paper");
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    const w = db.bot_watchlist[0];
+    expect(Object.keys(w.venue_margins).sort()).toEqual(["kalshi", "novig", "polymarket"]);
+    expect(w.ro_margins).toEqual({});
+    const plan = db.bot_plans.find((p) => p.strategy_id === 6)!;
+    expect(plan.plan.pmMedian).toBeGreaterThan(1); // the median of 0, 1.2 and 6
+    expect(db.bot_fills.some((f) => f.strategy_id === 6 && String(f.ticker).startsWith("PM-"))).toBe(true);
+  });
+
+  it("off: not touched at all", async () => {
+    setup("off");
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    expect(db.bot_watchlist[0].ro_margins).toEqual({});
+    expect(Object.keys(db.bot_watchlist[0].venue_margins)).not.toContain("polymarket");
   });
 });

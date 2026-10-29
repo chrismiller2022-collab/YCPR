@@ -6,6 +6,7 @@
 let hypo = null; // /api/hypo payload
 let hypoGame = null; // { game_id, results } for the drawer
 let hypoBusy = "";
+const HYPO_VENUES = ["kalshi", "novig", "prophetx"]; // the venues Hypotheticals replays (Polymarket joins once it is in paper mode and recorded for a while)
 let hypoReport = null; // { title, body, updated_at } from /api/data?part=report (bot/analysis/report.ts)
 const HDEF = {
   venues: { kalshi: true, novig: true, prophetx: true },
@@ -40,7 +41,7 @@ async function loadHypo() {
 
 /** Which saved venue sets the current venue choice reads: the joint "all" (one shared cap) or each single venue (separate caps). */
 function hypoSets() {
-  const on = VENUES.filter((v) => H.venues[v]);
+  const on = HYPO_VENUES.filter((v) => H.venues[v]);
   if (on.length === 3 && H.shared) return ["all"];
   return on;
 }
@@ -180,8 +181,8 @@ function renderHypo() {
       <div class="hc-row">
         <div class="field">Venues
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;min-height:32px">
-            ${VENUES.map((v) => `<label class="chk"><input type="checkbox" data-hv="${v}" ${H.venues[v] ? "checked" : ""}> ${VNAME[v]}</label>`).join("")}
-            <label class="chk" title="With all three, one loss cap covers the game across venues"><input type="checkbox" id="hShared" ${H.shared ? "checked" : ""} ${VENUES.every((v) => H.venues[v]) ? "" : "disabled"}> One shared cap</label>
+            ${HYPO_VENUES.map((v) => `<label class="chk"><input type="checkbox" data-hv="${v}" ${H.venues[v] ? "checked" : ""}> ${VNAME[v]}</label>`).join("")}
+            <label class="chk" title="With all three, one loss cap covers the game across venues"><input type="checkbox" id="hShared" ${H.shared ? "checked" : ""} ${HYPO_VENUES.every((v) => H.venues[v]) ? "" : "disabled"}> One shared cap</label>
           </div></div>
         <label class="field">Show<select id="hMetric">${Object.entries(METRICS).map(([k, l]) => `<option value="${k}" ${H.metric === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
         <label class="field">Games<select id="hStatus"><option value="all" ${H.status === "all" ? "selected" : ""}>All</option><option value="upcoming" ${H.status === "upcoming" ? "selected" : ""}>Not played yet</option><option value="settled" ${H.status === "settled" ? "selected" : ""}>Final only</option></select></label>

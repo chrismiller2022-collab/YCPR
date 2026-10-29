@@ -18,9 +18,11 @@ let venue = "all"; // venue filter: all | kalshi | novig | prophetx
 try { venue = localStorage.getItem("botvenue") || "all"; } catch {}
 let showDeltas = false; // Board: change since the last run on each game row
 try { showDeltas = localStorage.getItem("botdeltas") === "1"; } catch {}
-const VENUES = ["kalshi", "novig", "prophetx"];
-const VNAME = { all: "All", kalshi: "Kalshi", novig: "Novig", prophetx: "ProphetX" };
-const VSHORT = { kalshi: "K", novig: "NV", prophetx: "PX" };
+const VENUES = ["kalshi", "novig", "prophetx", "polymarket"];
+const VNAME = { all: "All", kalshi: "Kalshi", novig: "Novig", prophetx: "ProphetX", polymarket: "Polymarket" };
+const VSHORT = { kalshi: "K", novig: "NV", prophetx: "PX", polymarket: "PL" };
+/** Polymarket in read-only mode is shown next to the venues but is not part of the PM median and is never traded. */
+const isReadOnly = (w, v) => v === "polymarket" && w.venue_margins?.polymarket == null && w.ro_margins?.polymarket != null;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -40,7 +42,7 @@ const ourAway = (w) => num(w.my_home_margin) ?? num(w.ycpr_home_margin);
 const marketAway = (g) => (g?.home_spread == null ? null : -g.home_spread);
 const vOf = (r) => r.venue || "kalshi";
 const vf = (rows) => (venue === "all" ? rows : rows.filter((r) => vOf(r) === venue));
-const vMargin = (w, v) => num(w.venue_margins?.[v]) ?? (v === "kalshi" ? num(w.kalshi_home_margin) : null);
+const vMargin = (w, v) => num(w.venue_margins?.[v]) ?? num(w.ro_margins?.[v]) ?? (v === "kalshi" ? num(w.kalshi_home_margin) : null);
 // The market line the current view compares against: the venue's own, or Kalshi's (else any) in the combined view.
 // The combined view compares against the PM median (the median of the venues' implied margins).
 const mktOf = (w) => (venue === "all" ? w.lines?.pm ?? vMargin(w, "kalshi") ?? vMargin(w, "novig") ?? vMargin(w, "prophetx") : vMargin(w, venue));
@@ -131,7 +133,7 @@ function linesHtml(w, g) {
     + (changed ? cell("Now", L.yc, w.my_home_margin != null ? "Your typed override" : "YC's line after rating updates") : "")
     + cell("Trade", L.shrunk, `Trading line: PM median + beta (${L.beta ?? "–"}) x the capped gap`, true)
     + cell("PM", L.pm, "Median of the prediction-market venues' implied margins")
-    + v.map((x) => cell(VSHORT[x], vMargin(w, x), `${VNAME[x]} ladder-implied margin`)).join("")
+    + v.map((x) => cell(VSHORT[x], vMargin(w, x), `${VNAME[x]} ladder-implied margin${isReadOnly(w, x) ? " (read-only: not in the PM median, not traded)" : ""}`)).join("")
     + cell("Book", marketAway(g), "Sportsbook reference line (shown for reference; not used for pricing)");
 }
 
@@ -315,6 +317,8 @@ function renderSettings() {
       <div class="panel">
         <h3>Bot</h3>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="pill info">Mode: ${esc(state?.mode || "paper")}</span><span class="pill ${state?.kill_switch ? "bad" : "ok"}">${state?.kill_switch ? "Kill switch ON" : "Kill switch off"}</span></div>
+        <label class="field" style="margin-top:10px;max-width:340px">Polymarket<select id="pmMode"><option value="off" ${(state?.polymarket_mode || "read") === "off" ? "selected" : ""}>Off</option><option value="read" ${(state?.polymarket_mode || "read") === "read" ? "selected" : ""}>Read-only: record and show prices</option><option value="paper" ${state?.polymarket_mode === "paper" ? "selected" : ""}>Paper: part of the PM median, paper-traded</option></select>
+          <span class="muted" style="font-weight:400;font-size:.72rem">Public Polymarket US market data only. Paper fills are simulated; nothing touches an account.</span></label>
         <p class="muted" style="font-size:.82rem;margin:8px 0 0">The tower runs the paper cycle about every 90 seconds, the market recorder every 5 minutes, the ProphetX listener continuously and Hypotheticals hourly. Backups: GitHub Actions (a cycle every few hours) and /api/espn (cron-job.org), which saves ESPN finals and trades in the tower's place if no cycle has finished for 10 minutes. The kill switch cancels every resting order on the next cycle.</p>
       </div>
     </div>
@@ -1114,4 +1118,12 @@ document.querySelector('[data-pane="settings"]').addEventListener("click", async
     $("rbBooksMsg").textContent = err.message;
     e.target.disabled = false;
   }
+});
+
+// Settings → Polymarket mode
+document.querySelector('[data-pane="settings"]').addEventListener("change", async (e) => {
+  if (e.target.id !== "pmMode") return;
+  await api("/api/admin", { action: "polymarketMode", mode: e.target.value }).catch((err) => alert(err.message));
+  e.target.blur();
+  load();
 });

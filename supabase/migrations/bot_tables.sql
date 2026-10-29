@@ -320,3 +320,10 @@ alter table bot_reports enable row level security;
 -- legacy = true: the Board and the original strategies (trust blend) trade this game, as before. Games added by the weekly workflow set it
 -- to false, so only the rebuilt books (shrunk fair value / target positions) trade them.
 alter table bot_watchlist add column if not exists legacy boolean not null default true;
+
+-- 2026-10-29: trading rebuild, stage E (Polymarket US). Additive.
+-- off = not touched; read = prices are recorded and shown (bot_watchlist / bot_mkt_games.ro_margins, bot_mkt_snaps) but kept out of the PM median
+-- and never traded; paper = part of the PM median and paper-traded like the other venues. Nothing here ever places a real order.
+alter table bot_state add column if not exists polymarket_mode text not null default 'read' check (polymarket_mode in ('off', 'read', 'paper'));
+alter table bot_watchlist add column if not exists ro_margins jsonb not null default '{}'::jsonb;
+alter table bot_mkt_games add column if not exists ro_margins jsonb not null default '{}'::jsonb;

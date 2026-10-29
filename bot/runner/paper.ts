@@ -242,7 +242,7 @@ export async function runCycle(): Promise<CycleTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
     try {
@@ -273,10 +273,13 @@ export async function runCycle(): Promise<CycleTotals> {
     }
     if (!watch.length) return totals;
 
+    // Polymarket: off = untouched; read = prices recorded and shown but kept out of the PM median and never traded; paper = a venue like the others.
+    const pmMode = state?.polymarket_mode === "off" || state?.polymarket_mode === "paper" ? state.polymarket_mode : "read";
     // Venues: skip any without credentials, or whose catalog can't be read this cycle.
     const adapters = makeAdapters();
     const active: VenueId[] = [];
     for (const v of VENUES) {
+      if (v === "polymarket" && pmMode === "off") continue;
       if (!adapters[v].available()) continue;
       try {
         await adapters[v].prepare();
@@ -357,7 +360,8 @@ export async function runCycle(): Promise<CycleTotals> {
         const ladders = new Map<VenueId, VenueLadder>();
         const events = { ...(w.venue_events ?? {}) };
         const margins: Partial<Record<VenueId, number>> = {};
-        for (const v of active.filter((x) => (w.venues ?? VENUES).includes(x))) {
+        const ro: Partial<Record<VenueId, number>> = {}; // read-only venues: shown next to the others, not in the PM median, never traded
+        for (const v of active.filter((x) => (w.venues ?? VENUES).includes(x) || (x === "polymarket" && pmMode === "read"))) {
           try {
             const L = await adapters[v].ladder({
               home_team: w.home_team,
@@ -366,6 +370,12 @@ export async function runCycle(): Promise<CycleTotals> {
               eventKey: v === "kalshi" ? w.kalshi_event : events[v] ?? null,
             });
             if (!L || !L.rungs.length) continue;
+            if (v === "polymarket" && pmMode !== "paper") {
+              events[v] = L.eventKey;
+              const rm = impliedHomeMargin(L.rungs);
+              if (rm != null) ro[v] = rm;
+              continue;
+            }
             ladders.set(v, L);
             (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 }).ladders++;
             if (v !== "kalshi") events[v] = L.eventKey;
@@ -379,6 +389,7 @@ export async function runCycle(): Promise<CycleTotals> {
         await db.update("bot_watchlist", `id=eq.${w.id}`, {
           venue_events: events,
           venue_margins: margins,
+          ro_margins: ro,
           kalshi_event: kalshiEvent,
           kickoff: w.kickoff,
           ...(margins.kalshi != null ? { kalshi_home_margin: margins.kalshi, kalshi_updated_at: iso() } : {}),

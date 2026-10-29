@@ -15,6 +15,7 @@ const rules: Record<VenueId, VenueRules> = {
   kalshi: { tick: 0.01, fee: () => kalshiFee },
   novig: { tick: 0.005, fee: (h) => (p, o = {}) => (h > 0 || o.maker ? 0 : 0.06 * (o.count ?? 1) * p * (1 - p)) },
   prophetx: { tick: 0.01, fee: () => (p, o = {}) => 0.02 * (o.count ?? 1) * (1 - p) },
+  polymarket: { tick: 0.005, fee: () => (p, o = {}) => (o.maker ? 0 : 0.0695 * (o.count ?? 1) * p * (1 - p)) },
 };
 
 const T0 = 1_800_000_000;
