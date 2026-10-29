@@ -254,3 +254,30 @@ update bot_runs set host = 'tower' where host is null and mode = 'pxtape' and st
   and not (extract(hour from started_at at time zone 'utc') in (4, 16) and extract(minute from started_at at time zone 'utc') < 6);
 update bot_runs set host = case when extract(hour from started_at at time zone 'utc') in (4, 16) and extract(minute from started_at at time zone 'utc') < 6 then 'vercel' else 'github' end
   where host is null and started_at > '2026-10-24 09:00+00';
+
+-- 2026-10-29: trading rebuild, stage A (BOT_REBUILD_HANDOFF.md). All additive; nothing dropped or rewritten.
+-- Shrunk fair value settings: fair = PM median + beta · capped gap (bot/fairPrice/shrink.ts).
+alter table bot_state add column if not exists beta numeric not null default 0.1 check (beta >= 0 and beta <= 1);
+alter table bot_state add column if not exists hump_cap numeric not null default 5.5 check (hump_cap > 0 and hump_cap <= 60);
+alter table bot_state add column if not exists hump_fall numeric not null default 0 check (hump_fall >= 0 and hump_fall <= 60);
+alter table bot_state add column if not exists sigma numeric not null default 15 check (sigma >= 5 and sigma <= 40);
+-- Per-game beta (null = follow bot_state.beta) and the untouched YC line as first synced (ycpr_home_margin is refreshed every cycle).
+alter table bot_watchlist add column if not exists beta numeric check (beta is null or (beta >= 0 and beta <= 1));
+alter table bot_watchlist add column if not exists ycpr_original numeric;
+alter table bot_watchlist add column if not exists ycpr_original_at timestamptz;
+update bot_watchlist w set ycpr_original = l.my_away_spread, ycpr_original_at = l.locked_at
+  from game_projection_locks l where l.game_id = w.game_id and w.ycpr_original is null and l.my_away_spread is not null;
+update bot_watchlist set ycpr_original = ycpr_home_margin, ycpr_original_at = coalesce(ycpr_updated_at, created_at) where ycpr_original is null and ycpr_home_margin is not null;
+-- Strategy variants: fair_mode 'blend' = the original trust blend, 'shrunk' = the new fair value; method 'ladder' = the original engine, 'target' = target-position rebalancing.
+alter table bot_strategies add column if not exists fair_mode text not null default 'blend' check (fair_mode in ('blend', 'shrunk'));
+alter table bot_strategies add column if not exists method text not null default 'ladder' check (method in ('ladder', 'target'));
+-- Context stored with every fill, for markouts and entry-line beta (null on fills before this date).
+alter table bot_fills add column if not exists ycpr_at_fill numeric;
+alter table bot_fills add column if not exists market_at_fill numeric;
+alter table bot_fills add column if not exists shrunk_at_fill numeric;
+alter table bot_fills add column if not exists hours_to_kickoff numeric;
+alter table bot_fills add column if not exists is_maker boolean;
+-- Starts disabled so it only trades once the code that understands fair_mode is deployed; enabled right after.
+insert into bot_strategies (name, enabled, pro_edge, anti_edge, take_edge, edge_step, fair_mode, notes) values
+  ('Shrunk', false, 0.02, 0.04, 0.03, 0.01, 'shrunk', 'Original ladder engine priced from the shrunk fair value (PM median + beta · capped gap), for comparison with the other strategies')
+on conflict (name) do nothing;

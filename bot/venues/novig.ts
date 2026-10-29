@@ -11,6 +11,7 @@
 
 import { matchTeamName } from "../../src/lib/teamNameMatch";
 import { impliedHomeMargin, type Rung } from "../ladder/engine";
+import { novigFee } from "./fees";
 import type { VenueAdapter, VenueGame, VenueTrade } from "./types";
 
 const BASE = "https://api.novig.com/v3/public";
@@ -219,7 +220,7 @@ export function novigAdapter(): VenueAdapter {
       }
       return out;
     },
-    // Pre-game game lines are fee-free on Novig; live fills pay the taker fee.
-    fee: (hoursToKickoff) => (price, opts = {}) => (hoursToKickoff > 0 || opts.maker ? 0 : 0.06 * (opts.count ?? 1) * price * (1 - price)),
+    // Pre-game game lines are fee-free on Novig; live fills pay the taker fee (bot/venues/fees.ts has the sources).
+    fee: (hoursToKickoff) => novigFee(hoursToKickoff),
   };
 }

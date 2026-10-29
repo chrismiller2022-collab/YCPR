@@ -12,6 +12,7 @@
 // only, never prices, positions or picks.
 
 import { marginPmf } from "../fairPrice/marginDistribution";
+import { modelWith, pmMedian, shrinkFrom, shrunkHomeMargin } from "../fairPrice/shrink";
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
@@ -38,9 +39,13 @@ interface Watch {
   /** Optional typed override (home margin = away spread); null = use YCPR. */
   my_home_margin: number | null;
   ycpr_home_margin: number | null;
+  /** The YC line as first synced; never overwritten (ycpr_home_margin is refreshed every cycle). */
+  ycpr_original: number | null;
   kalshi_home_margin: number | null;
   /** Per-game trust in our number; null = use bot_state.default_ycpr_weight. */
   ycpr_weight: number | null;
+  /** Per-game beta for the shrunk fair value; null = the global setting in bot_state. */
+  beta: number | null;
   max_worst_case_loss: number;
   per_rung_cap: number;
   order_size: number;
@@ -81,6 +86,8 @@ interface Strategy {
   market_floor: number | null;
   against_limit: number | null;
   blowout_margin: number | null;
+  /** "blend" (default) = the original fair value; "shrunk" = market + beta · capped gap (bot/fairPrice/shrink.ts). */
+  fair_mode: "blend" | "shrunk" | null;
 }
 
 interface RestingRow {
@@ -111,6 +118,7 @@ interface FillRow {
 /** One independent paper book on a game: the Board (strategyId null) or a lab strategy. */
 interface Book {
   strategyId: number | null;
+  fairMode: "blend" | "shrunk";
   weight: number;
   stopMinutes: number;
   cfg: LadderConfig;
@@ -225,7 +233,7 @@ export async function runCycle(): Promise<CycleTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number }>("bot_state", "select=mode,kill_switch,default_ycpr_weight&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
     try {
@@ -280,9 +288,11 @@ export async function runCycle(): Promise<CycleTotals> {
     const ycpr = await ycprAwaySpreads(games);
     for (const w of watch) {
       const yc = ycpr.get(String(w.game_id)) ?? null;
-      if (yc != null && num(w.ycpr_home_margin) !== yc) {
-        await db.update("bot_watchlist", `id=eq.${w.id}`, { ycpr_home_margin: yc, ycpr_updated_at: iso() });
+      const first = yc != null && num(w.ycpr_original) == null;
+      if (yc != null && (num(w.ycpr_home_margin) !== yc || first)) {
+        await db.update("bot_watchlist", `id=eq.${w.id}`, { ycpr_home_margin: yc, ycpr_updated_at: iso(), ...(first ? { ycpr_original: yc, ycpr_original_at: iso() } : {}) });
         w.ycpr_home_margin = yc;
+        if (first) w.ycpr_original = yc;
       }
     }
 
@@ -383,9 +393,15 @@ export async function runCycle(): Promise<CycleTotals> {
           }
         }
 
+        // The shrunk fair value and the PM median it hangs from, for the books that use it and for every fill's context columns.
+        const shrinkCfg = shrinkFrom(state, w.beta);
+        const pm = pmMedian(margins);
+        const sh = shrunkHomeMargin(ours, pm, shrinkCfg);
+
         const bookList: Book[] = [
           {
             strategyId: null,
+            fairMode: "blend",
             weight: num(w.ycpr_weight) ?? defaultTrust, // per-game trust wins over the default
             stopMinutes: w.stop_minutes_before,
             cfg: {
@@ -396,6 +412,7 @@ export async function runCycle(): Promise<CycleTotals> {
           },
           ...strategies.map((st) => ({
             strategyId: st.id,
+            fairMode: st.fair_mode === "shrunk" ? ("shrunk" as const) : ("blend" as const),
             weight: num(st.ycpr_weight) ?? defaultTrust,
             stopMinutes: st.stop_minutes_before,
             cfg: {
@@ -420,7 +437,7 @@ export async function runCycle(): Promise<CycleTotals> {
 
           for (const [v, L] of ladders) {
             const adapter: VenueAdapter = adapters[v];
-            const fee = adapter.fee(hours);
+            const fee = adapter.fee(hours, L.eventKey);
             const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
             let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
             const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
@@ -429,6 +446,8 @@ export async function runCycle(): Promise<CycleTotals> {
                 mode: MODE, venue: v, strategy_id: sid, order_id: orderId, game_id: w.game_id, ticker: o.ticker, side: r?.side ?? "home", strike: r?.strike ?? 0,
                 action: o.action, price: o.price, count: o.count, fee: fee(o.price, { count: o.count, maker }), fair_at_fill: fair,
                 mid_at_fill: r?.bid != null && r?.ask != null ? (r.bid + r.ask) / 2 : null,
+                // Context for markouts and entry-line beta: the model line, the PM median and the shrunk fair at this moment.
+                ycpr_at_fill: ours, market_at_fill: pm, shrunk_at_fill: sh.fair, hours_to_kickoff: Math.round(hours * 1000) / 1000, is_maker: maker,
               };
               bookFills.push(row);
               count(v, "fills");
@@ -462,25 +481,30 @@ export async function runCycle(): Promise<CycleTotals> {
               continue;
             }
 
-            // 3. Fair price: our number blended with the market (this venue's implied margin, else Kalshi's) by trust.
-            const market = margins[v] ?? margins.kalshi ?? null;
-            const center = blendedHomeMargin({ ycpr: ours, kalshi: market, book: sportsbook, hoursToKickoff: hours }, { ycprWeight: bk.weight, fade: false });
-            if (center == null) continue;
-            // No edge to lean on if our blended number doesn't favor the pick versus this venue's market.
+            // 3. Fair price. Original books: our number blended with the market (this venue's implied margin, else Kalshi's) and
+            //    the sportsbook by trust. Shrunk books: PM median + beta · capped gap, the same for every venue.
+            const shrunk = bk.fairMode === "shrunk";
+            const market = shrunk ? pm : margins[v] ?? margins.kalshi ?? null;
+            const center = shrunk ? sh.fair : blendedHomeMargin({ ycpr: ours, kalshi: market, book: sportsbook, hoursToKickoff: hours }, { ycprWeight: bk.weight, fade: false });
+            if (center == null) {
+              if (shrunk) await cancel(resting.filter((r) => r.kind === "quote"));
+              continue;
+            }
+            // No edge to lean on if our fair number doesn't favor the pick versus this market.
             const ref = market ?? center;
             if (!(w.pick === "home" ? center > ref : center < ref)) {
               if (sid == null) totals.noEdge++;
               await cancel(resting.filter((r) => r.kind === "quote"));
               continue;
             }
-            const pmf = marginPmf(center);
+            const pmf = shrunk ? marginPmf(center, modelWith(shrinkCfg.sigma)) : marginPmf(center);
             if (sid == null) await snapshot(w.game_id, v, L.rungs, (r) => kalshiSpreadYesProb(pmf, r.side, r.strike));
 
             // 4. Decide orders; the loss cap counts this book's positions on the other venues too.
             const here = positionsFrom(bookFills.filter((f) => f.venue === v));
             const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
             const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
-            const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl, marketHomeMargin: market ?? sportsbook ?? center });
+            const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl, marketHomeMargin: shrunk ? market : market ?? sportsbook ?? center });
             const plan = diffOrders(resting, orders, adapter.tick);
             await cancel(plan.cancel);
             // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.

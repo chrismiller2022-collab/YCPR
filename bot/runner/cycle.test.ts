@@ -1,0 +1,104 @@
+// One full paper cycle against the in-memory PostgREST stub and a fake Kalshi ladder: the original book
+// (our number only) piles in when we are 7.6 points off a pick'em market; the shrunk book, priced from the
+// PM median + beta · capped gap, takes nothing there. Fills carry the context columns used for markouts.
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  process.env.SUPABASE_URL = "http://sb.test";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test";
+});
+
+import { marginPmf } from "../fairPrice/marginDistribution";
+import { kalshiSpreadYesProb } from "../fairPrice/lines";
+import { kalshiFeeWith } from "../venues/fees";
+import { pgStub, type Row } from "./pgStub";
+
+const ladder = () => {
+  const pmf = marginPmf(0); // a pick'em market
+  const rungs = [];
+  for (let k = 0.5; k <= 24.5; k += 1)
+    for (const side of ["home", "away"] as const) {
+      const p = kalshiSpreadYesProb(pmf, side, k);
+      if (p < 0.03 || p > 0.97) continue;
+      rungs.push({ ticker: `K-${side[0].toUpperCase()}${k}`, side, strike: k, bid: Math.round((p - 0.01) * 100) / 100, ask: Math.round((p + 0.01) * 100) / 100 });
+    }
+  return { eventKey: "EV1", rungs };
+};
+
+vi.mock("../venues", () => {
+  const off = { available: () => false, prepare: async () => {}, ladder: async () => null, trades: async () => [], tick: 0.01, fee: () => () => 0, id: "x", label: "x" };
+  return {
+    VENUES: ["kalshi", "novig", "prophetx"],
+    makeAdapters: () => ({
+      kalshi: { id: "kalshi", label: "Kalshi", tick: 0.01, available: () => true, prepare: async () => {}, ladder: async () => ladder(), trades: async () => [], fee: () => kalshiFeeWith("quadratic_with_maker_fees", 1) },
+      novig: off,
+      prophetx: off,
+    }),
+  };
+});
+vi.mock("./ycpr", () => ({ ycprAwaySpreads: async () => new Map([["G1", -7.6]]) }));
+vi.mock("./espnFinals", () => ({ syncEspnFinals: async () => ({ saved: 0 }) }));
+
+const kickoff = new Date(Date.now() + 48 * 3600e3).toISOString();
+let db: Record<string, Row[]>;
+
+const watch = (): Row => ({
+  id: 1, game_id: "G1", season: 2026, week: 9, home_team: "Colorado", away_team: "Kansas State", kickoff, pick: "away",
+  my_home_margin: null, ycpr_home_margin: null, ycpr_original: null, kalshi_home_margin: null, ycpr_weight: null, beta: null,
+  max_worst_case_loss: 10, per_rung_cap: 1, order_size: 1, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01,
+  profit_target: null, stop_minutes_before: 30, kalshi_event: null, venues: ["kalshi"], venue_events: {}, venue_margins: {},
+  shape: null, market_floor: null, against_limit: null, blowout_margin: null, enabled: true,
+});
+const strat = (id: number, name: string, fair_mode: string): Row => ({
+  id, name, enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1,
+  ycpr_weight: null, stop_minutes_before: 30, shape: null, market_floor: null, against_limit: null, blowout_margin: null, fair_mode, method: "ladder",
+});
+
+beforeEach(() => {
+  db = {
+    bot_state: [{ id: 1, mode: "paper", kill_switch: false, default_ycpr_weight: 1, beta: 0.1, hump_cap: 5.5, hump_fall: 0, sigma: 15 }],
+    bot_watchlist: [watch()],
+    bot_strategies: [strat(1, "Default", "blend"), strat(5, "Shrunk", "shrunk")],
+    games: [{ id: "G1", season: 2026, week: 9, home_team: "Colorado", away_team: "Kansas State", neutral_site: false, start_date: kickoff }],
+    bot_runs: [], bot_orders: [], bot_fills: [], bot_snapshots: [], betting_lines: [],
+  };
+  vi.stubGlobal("fetch", pgStub(db).fetchStub);
+});
+
+describe("paper cycle", () => {
+  it("the original book piles in when far from the market; the shrunk book does not; fills carry their context", async () => {
+    const { runCycle } = await import("./paper");
+    const t = await runCycle();
+    expect(t.gameErrors).toBeUndefined();
+    expect(t.games).toBe(1);
+
+    const orig = db.bot_fills.filter((f) => f.strategy_id === 1);
+    const shrunk = db.bot_fills.filter((f) => f.strategy_id === 5);
+    expect(orig.length).toBeGreaterThan(5);
+    expect(shrunk.length).toBe(0);
+
+    // The shrunk strategy only rests quotes (its edge is too small to take).
+    const sq = db.bot_orders.filter((o) => o.strategy_id === 5);
+    expect(sq.length).toBeGreaterThan(0);
+    expect(sq.every((o) => o.kind === "quote" && o.status === "resting")).toBe(true);
+
+    const f = orig[0];
+    expect(f.ycpr_at_fill).toBeCloseTo(-7.6, 6);
+    expect(Math.abs(f.market_at_fill)).toBeLessThan(0.6); // the PM median of the one fake venue
+    expect(f.shrunk_at_fill).toBeCloseTo(f.market_at_fill - 0.55, 1); // market + 0.1 · min(7.6, 5.5)
+    expect(f.hours_to_kickoff).toBeGreaterThan(47);
+    expect(f.is_maker).toBe(false);
+
+    // The first sync stamps the original YC line and it is not touched again.
+    expect(db.bot_watchlist[0].ycpr_original).toBe(-7.6);
+    expect(db.bot_watchlist[0].ycpr_home_margin).toBe(-7.6);
+  });
+
+  it("a game's own beta changes the shrunk fair value", async () => {
+    db.bot_watchlist[0].beta = 1; // trust the capped gap fully: fair = market − 5.5
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    expect(db.bot_fills.filter((f) => f.strategy_id === 5).length).toBeGreaterThan(5);
+    expect(db.bot_fills.find((f) => f.strategy_id === 5)!.shrunk_at_fill).toBeLessThan(-4);
+  });
+});

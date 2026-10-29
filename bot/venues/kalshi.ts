@@ -1,7 +1,7 @@
 // Kalshi: KXNCAAFSPREAD events, public books and trades (no key needed for paper).
 
 import { matchTeamName } from "../../src/lib/teamNameMatch";
-import { kalshiFee } from "../fairPrice/kalshi";
+import { KALSHI_FALLBACK, kalshiFeeFor, loadKalshiSchedule, type KalshiFeeSchedule } from "./fees";
 import type { Rung } from "../ladder/engine";
 import { openSpreadEvents, tradesSince, type LiveEvent } from "../runner/io";
 import type { VenueAdapter, VenueGame } from "./types";
@@ -32,6 +32,7 @@ export function findKalshiEvent(game: Pick<VenueGame, "home_team" | "away_team">
 export function kalshiAdapter(): VenueAdapter {
   let events: LiveEvent[] = [];
   const volume = new Map<string, number>();
+  let schedule: KalshiFeeSchedule = KALSHI_FALLBACK;
   return {
     id: "kalshi",
     label: "Kalshi",
@@ -39,6 +40,7 @@ export function kalshiAdapter(): VenueAdapter {
     available: () => true,
     async prepare() {
       events = await openSpreadEvents();
+      schedule = await loadKalshiSchedule();
       for (const e of events) for (const m of e.markets) volume.set(m.ticker, Number(m.volume_fp ?? 0));
     },
     volume: (ticker) => volume.get(ticker),
@@ -51,6 +53,7 @@ export function kalshiAdapter(): VenueAdapter {
       for (const ticker of tickers) for (const t of await tradesSince(ticker, sinceTs)) out.push({ ticker, ...t });
       return out;
     },
-    fee: () => kalshiFee,
+    diag: () => ({ feeType: schedule.feeType, feeMultiplier: schedule.multiplier, feeSource: schedule.source, feeOverrides: Object.keys(schedule.overrides).length }),
+    fee: (_hours, eventKey) => kalshiFeeFor(schedule, eventKey),
   };
 }

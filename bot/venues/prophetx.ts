@@ -10,6 +10,7 @@
 
 import { canon as novigCanon } from "./novig";
 import type { Rung } from "../ladder/engine";
+import { prophetxFee } from "./fees";
 import type { VenueAdapter, VenueGame } from "./types";
 
 const BASE = process.env.PROPHETX_BASE || "https://cash.api.prophetx.co/partner";
@@ -240,6 +241,6 @@ export function prophetxAdapter(): VenueAdapter & { strikes: Map<string, { ticke
       return { eventKey: String(ev.event_id), rungs: prophetxRungs(markets, String(sides.home.id), String(sides.away.id)) };
     },
     trades: async () => [],
-    fee: () => (price, opts = {}) => 0.02 * (opts.count ?? 1) * (1 - price),
+    fee: () => prophetxFee(),
   };
 }
