@@ -1,9 +1,10 @@
 // Shrinkage calibration for the trading bot: regress (final margin - closing line) on (YC line - closing line).
-// Convention here: home-team relation, negative = home favored; X = away - home. 2025 wk10+ rows are sign-flipped in the file and un-flipped below.
+// Convention here: home-team relation, negative = home favored; X = away - home.
+// betHistory.data.ts is already sign-corrected (main commit "Fix Bet History: 296 sign-flipped 2025 rows"); do NOT un-flip anything here.
 // Run: bun scripts/bot/calibrate-beta.ts
 import { BET_HISTORY } from "../../src/data/betHistory.data.ts";
 type R={s:number;w:number;L:number;P:number;X:number;e:number;y:number};
-const rows:R[]=BET_HISTORY.map((r:any)=>{const f=(r.season===2025&&r.week>=10)?-1:1;const L=f*r.spread,P=f*r.prediction,X=r.awayScore-r.homeScore;return{s:r.season,w:r.week,L,P,X,e:P-L,y:X-L}});
+const rows:R[]=BET_HISTORY.map((r:any)=>{const L=r.spread,P=r.prediction,X=r.awayScore-r.homeScore;return{s:r.season,w:r.week,L,P,X,e:P-L,y:X-L}});
 const mean=(a:number[])=>a.reduce((x,y)=>x+y,0)/a.length, sd=(a:number[])=>{const m=mean(a);return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/(a.length-1))};
 function ols(g:R[],icpt=true){const n=g.length;const xs=g.map(r=>r.e),ys=g.map(r=>r.y);const mx=icpt?mean(xs):0,my=icpt?mean(ys):0;let sxy=0,sxx=0;for(let i=0;i<n;i++){sxy+=(xs[i]-mx)*(ys[i]-my);sxx+=(xs[i]-mx)**2}const b=sxy/sxx,a=my-b*mx;let sse=0;for(let i=0;i<n;i++)sse+=(ys[i]-a-b*xs[i])**2;const s=Math.sqrt(sse/(n-(icpt?2:1)));return{n,b,se:s/Math.sqrt(sxx),a,resid:s}}
 const f=(o:any)=>`n=${o.n} beta=${o.b.toFixed(2)} ±${o.se.toFixed(2)} icpt=${o.a.toFixed(2)} residSD=${o.resid.toFixed(1)}`;

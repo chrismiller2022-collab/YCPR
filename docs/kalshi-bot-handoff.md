@@ -260,7 +260,7 @@ read-only snapshot logger so Kalshi opening prices vs live YCPR are captured goi
 
 ### 13b. Bucket bets and early-week entry (added 2026-10-20)
 
-- **Bet History data bug:** 300 of the 770 graded 2025 rows in `src/data/betHistory.data.ts` store the spread *and* the
+- **(Fixed on main in "Fix Bet History: 296 sign-flipped 2025 rows"; `betHistory.data.ts` is now corrected, so use it as-is. Any analysis or script that un-flips 2025 rows itself must drop that step. Corrected calibration: `BOT_REBUILD_HANDOFF.md` §4.)** **Bet History data bug:** 300 of the 770 graded 2025 rows in `src/data/betHistory.data.ts` store the spread *and* the
   projection with the wrong sign (checked against `betting_lines` and final scores; 2024 is clean). That flips the
   recorded pick and the favorite/underdog label on those games. Corrected 2024–2026 ATS (closing line): every pick
   52.2%, underdog picks 53.3%, favorite picks 50.9%, underdogs +10 and up 55.1% (57 / 53 / 56% by season),

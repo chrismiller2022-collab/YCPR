@@ -23,16 +23,18 @@ Rebuild the **trading methodology** of an autonomous bot that trades college foo
 
 ## 4. Measured (YCPR data, 1,504 games, 2024-25, vs the CLOSING line)
 
-Script: `scripts/bot/calibrate-beta.ts` in the YCPR repo (run with `bun`). Source: `src/data/betHistory.data.ts`, which has closing spread, YC projection and final score for every game, not just bets placed.
+> **Corrected data (updated 2026-10-29).** The first version of this section was computed on `betHistory.data.ts` BEFORE main commit "Fix Bet History: 296 sign-flipped 2025 rows", with the script un-flipping 2025 wk10+ itself. The file is now sign-corrected and the script no longer un-flips anything (running the old script on the new file double-flips and gives garbage: beta 0.34, sigma 19). All numbers below are re-run on the corrected file. Always use these, never the pre-fix figures (beta 0.17, CI [-0.06, 0.39], 2025 0.21, favorite-lean 0.59 / dog-lean 0.09).
 
-- **beta (shrinkage) = 0.17, SE 0.11, bootstrap 95% CI [-0.06, 0.39].** 2024: 0.14 ±0.15; 2025: 0.21 ±0.18. Regression: (final margin - closing line) on (YC line - closing line), no intercept.
-- **Residual sigma around the closing line = 15.2** (use ~15; not the SD of raw margins). YC MAE vs final margin 12.16 vs closing-line MAE 11.98.
+Script: `scripts/bot/calibrate-beta.ts` in the YCPR repo (run with `bun scripts/bot/calibrate-beta.ts`). Source: `src/data/betHistory.data.ts` (already sign-corrected), which has closing spread, YC projection and final score for every game, not just bets placed.
+
+- **beta (shrinkage) = 0.19, SE 0.11, bootstrap 95% CI about [-0.04, 0.42].** 2024: 0.14 ±0.15; 2025: 0.28 ±0.18. Regression: (final margin - closing line) on (YC line - closing line), no intercept.
+- **Residual sigma around the closing line = 15.3** (use ~15; not the SD of raw margins). YC MAE vs final margin 12.20 vs closing-line MAE 12.04.
 - Mean |YC - close| = 2.65, SD 3.46.
-- **Cumulative by gap size (ATS vs close, n):** >=3: 52.0% (525) · >=4: 53.8% (338) · >=5: 54.4% (211) · >=6: 58.5% (121) · >=8: 59.5% (43). Points captured per game at >=6: about 1.6 of a 7.8 average gap, i.e. beta about 0.2. Captured points do NOT clearly grow with gap size; too noisy to call.
-- **Leads only (many cells examined; expect false positives):** beta about 0.59 when YC is MORE bullish on the favorite than the market (n=711) vs about 0.09 when more bullish on the dog (n=674). By closing-line size: |line| 7-14 beta 0.53 ±0.23 (n=414), but |line| 14-21 and 21+ are about -0.1 (n=444). **No demonstrated edge on big favorites**, which partly dissolves the "not enough alt strikes" problem: size there should be small anyway.
-- Caveats: (a) closing line is the hardest benchmark. The bot enters earlier, so beta against its ACTUAL ENTRY lines (and CLV) should be higher; that must be measured from the bot's own fill logs, which this chat did not have. (b) 2025 weeks 10+ in the file have `spread` and `prediction` sign-flipped; the script un-flips both (verified by correlation with final margin). (c) Home side outperformed the close by about 0.7 pts on average (not significant, 1.7 SE).
+- **Cumulative by gap size (ATS vs close, n):** >=3: 52.5% (525) · >=4: 54.7% (338) · >=5: 54.4% (211) · >=6: 58.5% (121) · >=8: 59.5% (43). Points captured per game at >=6: about 1.6 of a 7.8 average gap, i.e. beta about 0.2. Captured points do NOT clearly grow with gap size; too noisy to call.
+- **Leads only (many cells examined; expect false positives):** beta about 0.54 when YC is MORE bullish on the favorite than the market (n=711) vs about 0.17 when more bullish on the dog (n=674). By closing-line size: |line| 7-14 beta 0.54 ±0.23 (n=414), but |line| 14-21 and 21+ are both about -0.08 (n=444). **No demonstrated edge on big favorites**, which partly dissolves the "not enough alt strikes" problem: size there should be small anyway.
+- Caveats: (a) closing line is the hardest benchmark. The bot enters earlier, so beta against its ACTUAL ENTRY lines (and CLV) should be higher; that must be measured from the bot's own fill logs, which this chat did not have. (b) The 2025 sign flips in the file were fixed in the data itself (main commit "Fix Bet History: 296 sign-flipped 2025 rows"); the script does not un-flip anything. (c) Home side outperformed the close by about 0.7 pts on average (not significant, 1.7 SE).
 
-Implication: at beta about 0.17-0.2 a 6-point gap is a ~1.0-1.2 point real edge. With sigma 15, the probability density at the market line is about 0.0266 per point, so a 1.2-pt shrunk edge is worth about +3.2% cover probability at the market strike. That is thin against a -110 breakeven of 52.4% or Kalshi fees. Fees and execution costs decide whether this trades at all, which is why they must be exact per venue.
+Implication: at beta about 0.2 a 6-point gap is a ~1.0-1.2 point real edge. With sigma 15, the probability density at the market line is about 0.0266 per point, so a 1.2-pt shrunk edge is worth about +3.2% cover probability at the market strike. That is thin against a -110 breakeven of 52.4% or Kalshi fees. Fees and execution costs decide whether this trades at all, which is why they must be exact per venue.
 
 ### 4b. Measured 2026 (Supabase: `bot_fills`, `game_projection_locks`, `betting_lines`, `games`), added 2026-10-28
 
@@ -53,9 +55,9 @@ The bot's own logs ARE in the YCPR Supabase project (`bot_orders`, `bot_fills`, 
   | 4-6 | 83 | +0.61 | 3.6 | 73% | 13% |
   | 6+ | 100 | -0.19 | -1.2 | 40% | -2% |
   By week: weeks 1-2 negative (week 1 locks were post-kickoff), weeks 3-8 mostly positive (week 6 +0.65, week 8 +0.43, week 7 flat, week 5 -0.09). CLV peaks at 4-6 point gaps and is gone or reversed beyond 6, so the edge looks hump-shaped, not linear: design implication is a ramp that rises to about a 5-point raw gap and then flattens or falls (treat 6+ as stale info or model error: skip or shrink hard). n=100 in the 6+ bucket, so confirm as weeks accumulate. Not yet run: CLV vs the FanDuel open.
-- Caveat on section 4: the 2024-25 spreadsheet predictions (beta 0.17) may not have been strictly frozen pre-game. The 2026 lock table is the cleaner out-of-sample record, and it says beta is between 0 and 0.15. Start at **beta = 0.1**, not 0.2, until more weeks accumulate.
+- Caveat on section 4: the 2024-25 spreadsheet predictions (beta 0.19) may not have been strictly frozen pre-game. The 2026 lock table is the cleaner out-of-sample record, and it says beta is between 0 and 0.15. Start at **beta = 0.1**, not 0.2, until more weeks accumulate.
 
-Three independent reads (2024-25 regression 0.17, 2026 regression ~0.10, market moving 4-7% toward YC) all say the bot's fair value overstates the edge by roughly 10x.
+Three independent reads (2024-25 regression 0.19, 2026 regression ~0.10, market moving 4-7% toward YC) all say the bot's fair value overstates the edge by roughly 10x.
 
 ## 5. Design (agreed direction)
 
@@ -121,7 +123,7 @@ For every fill, log: fill_id, timestamp, venue, game, strike, side, qty, price, 
 
 ## 8. Pointers into the YCPR repo (model/data side, not the bot)
 
-- YC projections: `game_projection_locks` table (2026 weeks 1-5 complete; week 1 locked after kickoff in the old auto-lock era; week 6 mostly unfrozen) and `src/data/betHistory.data.ts` (2024-25 static; 2025 wk10+ sign-flipped for spread and prediction). Join logic with the un-flip: `src/lib/drogba/agreement.ts` (`ycSpreadByGame`).
+- YC projections: `game_projection_locks` table (2026 weeks 1-5 complete; week 1 locked after kickoff in the old auto-lock era; week 6 mostly unfrozen) and `src/data/betHistory.data.ts` (2024-25 static; sign-corrected on main, no un-flip needed). Join logic with the un-flip: `src/lib/drogba/agreement.ts` (`ycSpreadByGame`).
 - Closing line convention in this data: Bovada's close (CFBD) is the site's default close; FanDuel opens are on file for about 62% of 2024-25 games.
 - Past research findings relevant to trust in the model: independent DROGBA model beats the open only in power-vs-power games; agreement between DROGBA and YC helps only there. Details in the DROGBA notes in project memory, not required here.
 - Placed-bet exports in the repo root (`placed-bets-*.csv`) have book, side, line, price, stake, result per bet, useful for entry-line analysis; they are bet-level, not fill-level.
@@ -158,4 +160,4 @@ Add Polymarket as another venue in the same adapter pattern as Kalshi/Novig/Prop
 - **Ask before adding any new page or nav item**; put new controls on existing pages. Suggest placements first.
 - Schema changes go through Supabase migrations; list them to the user before applying. Do not drop or rewrite existing `bot_*` data (it is the evidence base for markouts).
 - Validate against history before trusting: replay the new fair value/targets on the fills and snapshots already logged (shadow mode vs the current four strategies) and report CLV/markout and P&L-by-margin shape, not just "it runs".
-- Typecheck with `bunx tsc --noEmit` where the repo supports it; do not commit `bun.lock` in the YCPR repo.
+- Typecheck with `npx tsc --noEmit -p .` (the repo's convention; two known pre-existing errors: `oddsHistorical.ts(170)` and `BetHistoryPage.tsx(460)`); do not commit `bun.lock` in the YCPR repo.
