@@ -177,3 +177,27 @@ describe("target-position book", () => {
     expect(mine().length).toBe(0);
   });
 });
+
+describe("games added by the weekly workflow (legacy = false)", () => {
+  it("are traded only by the rebuilt books; the Board and the original strategies skip them", async () => {
+    db.bot_watchlist[0].legacy = false;
+    db.bot_strategies = [strat(1, "Default", "blend"), strat(5, "Shrunk", "shrunk"), { ...strat(6, "Target", "shrunk"), method: "target", per_rung_cap: 3, take_edge: 0.005 }];
+    mids.withNovig = true;
+    mids.kalshi = 0;
+    mids.novig = 1.2;
+    mids.kalshi = 0;
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    expect(db.bot_fills.filter((f) => f.strategy_id == null || f.strategy_id === 1)).toEqual([]);
+    expect(db.bot_orders.filter((o) => o.strategy_id == null || o.strategy_id === 1)).toEqual([]);
+    expect(db.bot_fills.filter((f) => f.strategy_id === 6).length).toBeGreaterThan(0);
+  });
+
+  it("keep trading on the original books when legacy is left on", async () => {
+    db.bot_strategies = [strat(1, "Default", "blend")];
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    expect(db.bot_fills.filter((f) => f.strategy_id == null).length).toBeGreaterThan(0);
+    expect(db.bot_fills.filter((f) => f.strategy_id === 1).length).toBeGreaterThan(0);
+  });
+});

@@ -1,5 +1,23 @@
 // POST { action, ... }: kill switch and watchlist edits. Requires x-bot-password.
 import { authorized, sb, send } from "./_lib.js";
+import { pmMedian, ycprAwaySpreads } from "./_bot.mjs";
+
+/** The rebuilt books are only safe to trade once the tower's runner knows them (see enableRebuildBooks). */
+async function requireNewRunner() {
+  const runs = await sb("bot_runs?select=host,started_at,v:summary->codeVersion&mode=eq.paper&order=started_at.desc&limit=40");
+  const tower = runs.find((r) => r.host === "tower" && Date.now() - new Date(r.started_at).getTime() < 20 * 60e3);
+  if (tower && !(Number(tower.v) >= 3))
+    throw new Error("The tower is still running older code. On the tower run: cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot, wait for a cycle, then try again.");
+}
+
+/** Adds (or re-enables) the paper books for the rebuilt logic: "Shrunk" (the original ladder engine priced from the shrunk fair value) and "Target" (target-position rebalancing). */
+async function enableBooks() {
+  const rows = [
+    { name: "Shrunk", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, fair_mode: "shrunk", method: "ladder", notes: "Original ladder engine priced from the shrunk fair value (PM median + beta · capped gap), for comparison" },
+    { name: "Target", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.005, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 3, fair_mode: "shrunk", method: "target", notes: "Target-position rebalancing across venues: Kelly ramp from the shrunk edge, takes only, caps per game / team / conference / portfolio" },
+  ];
+  return sb("bot_strategies?on_conflict=name", { method: "POST", headers: { Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(rows) });
+}
 
 const NUMERIC = ["ycpr_weight", "beta", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
 const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
@@ -73,19 +91,70 @@ export default async function handler(req, res) {
         return send(res, 200, { state: row });
       }
       case "enableRebuildBooks": {
-        // Adds (or re-enables) the paper books for the rebuilt logic: "Shrunk" (the original ladder engine priced from the shrunk
-        // fair value) and "Target" (target-position rebalancing). A runner that predates them would trade them as plain ladders,
-        // so this refuses while the newest tower run isn't from a runner that knows about them.
-        const runs = await sb("bot_runs?select=host,started_at,v:summary->codeVersion&mode=eq.paper&order=started_at.desc&limit=40");
-        const tower = runs.find((r) => r.host === "tower" && Date.now() - new Date(r.started_at).getTime() < 20 * 60e3);
-        if (tower && !(Number(tower.v) >= 2))
-          throw new Error("The tower is still running older code. On the tower run: cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot, wait for a cycle, then try again.");
-        const rows = [
-          { name: "Shrunk", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, fair_mode: "shrunk", method: "ladder", notes: "Original ladder engine priced from the shrunk fair value (PM median + beta · capped gap), for comparison" },
-          { name: "Target", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.005, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 3, fair_mode: "shrunk", method: "target", notes: "Target-position rebalancing across venues: Kelly ramp from the shrunk edge, takes only, caps per game / team / conference / portfolio" },
-        ];
-        const saved = await sb("bot_strategies?on_conflict=name", { method: "POST", headers: { Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(rows) });
-        return send(res, 200, { strategies: saved });
+        // A runner that predates the rebuilt books would trade them as plain ladders, so this refuses until the tower runs the new code.
+        await requireNewRunner();
+        return send(res, 200, { strategies: await enableBooks() });
+      }
+      case "weeklyWorkflow": {
+        // One button for the week: add every game, sync YC's lines (keeping the original), switch the rebuilt books on. The shrunk trading
+        // line follows the market every cycle on its own, and each game's plan is rebuilt from its edge by the Target book.
+        const season = Math.round(Number(body.season));
+        const week = Math.round(Number(body.week));
+        if (!Number.isFinite(season) || !Number.isFinite(week)) throw new Error("season and week are required");
+        await requireNewRunner();
+        const games = await sb(
+          `games?select=id,season,week,start_date,home_team,away_team,neutral_site&season=eq.${season}&week=eq.${week}&season_type=eq.regular&or=(home_classification.eq.fbs,away_classification.eq.fbs)&order=start_date.asc&limit=400`
+        );
+        const nowMs = Date.now();
+        const open = games.filter((g) => !g.start_date || new Date(g.start_date).getTime() > nowMs);
+        if (!open.length) throw new Error(`No games left to add in week ${week}`);
+        const inIds = `in.(${open.map((g) => encodeURIComponent(g.id)).join(",")})`;
+        const [mkt, existing] = await Promise.all([
+          sb(`bot_mkt_games?select=game_id,venue_margins&game_id=${inIds}`),
+          sb(`bot_watchlist?select=id,game_id,ycpr_home_margin,ycpr_original&game_id=${inIds}`),
+        ]);
+        let yc = new Map();
+        try {
+          yc = await ycprAwaySpreads(open);
+        } catch {}
+        const vm = new Map(mkt.map((m) => [String(m.game_id), m.venue_margins || {}]));
+        const have = new Map(existing.map((w) => [String(w.game_id), w]));
+        const label = (g) => `${g.away_team} @ ${g.home_team}`;
+        const stamp = new Date().toISOString();
+        // 1. Add every game that isn't watched yet (never touching the ones that are).
+        const fresh = open.filter((g) => !have.has(String(g.id)));
+        const rows = fresh.map((g) => {
+          const y = yc.get(String(g.id));
+          const pm = pmMedian(vm.get(String(g.id)));
+          return {
+            game_id: String(g.id), season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team, kickoff: g.start_date,
+            pick: y != null && pm != null && y > pm ? "home" : "away", enabled: true, legacy: false, my_home_margin: null,
+            ycpr_home_margin: y ?? null, ycpr_updated_at: y != null ? stamp : null, ycpr_original: y ?? null, ycpr_original_at: y != null ? stamp : null,
+          };
+        });
+        let added = [];
+        if (rows.length) added = await sb("bot_watchlist?on_conflict=game_id", { method: "POST", headers: { Prefer: "return=representation,resolution=ignore-duplicates" }, body: JSON.stringify(rows) });
+        // 2. Sync YC's line for the games that were already watched: refresh the current number, stamp the original once.
+        let synced = 0;
+        for (const w of existing) {
+          const y = yc.get(String(w.game_id));
+          if (y == null) continue;
+          const patch = {};
+          if (w.ycpr_home_margin == null || Math.abs(Number(w.ycpr_home_margin) - y) > 1e-9) Object.assign(patch, { ycpr_home_margin: y, ycpr_updated_at: stamp });
+          if (w.ycpr_original == null) Object.assign(patch, { ycpr_original: y, ycpr_original_at: stamp });
+          if (Object.keys(patch).length) {
+            await sb(`bot_watchlist?id=eq.${w.id}`, { method: "PATCH", body: JSON.stringify(patch) });
+            synced++;
+          }
+        }
+        // 3. The rebuilt books on.
+        const books = await enableBooks();
+        const noYc = open.filter((g) => yc.get(String(g.id)) == null).map(label);
+        const noVenue = open.filter((g) => pmMedian(vm.get(String(g.id))) == null).map(label);
+        return send(res, 200, {
+          season, week, games: open.length, added: added.length, alreadyWatched: existing.length, synced, noYc, noVenue, books: books.map((b) => b.name),
+          note: "The trading line (PM median + beta · capped gap) updates every cycle; each game's plan appears in its drawer within a cycle or two.",
+        });
       }
       case "saveStrategy": {
         const st = {};

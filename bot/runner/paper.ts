@@ -47,6 +47,8 @@ interface Watch {
   ycpr_weight: number | null;
   /** Per-game beta for the shrunk fair value; null = the global setting in bot_state. */
   beta: number | null;
+  /** false = only the rebuilt books (shrunk fair value / target positions) trade this game; the Board and the original strategies skip it. */
+  legacy: boolean | null;
   max_worst_case_loss: number;
   per_rung_cap: number;
   order_size: number;
@@ -130,7 +132,7 @@ interface Book {
 }
 
 export interface CycleTotals {
-  /** Which generation of the runner wrote this run: 2 = shrunk fair value + target-position books (the dashboard checks this before enabling those strategies). */
+  /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
   placed: number;
@@ -232,7 +234,7 @@ async function settle(w: Watch) {
  * backup, so it skips if another cycle started in the last 4 minutes and hasn't finished.
  */
 export async function runCycle(): Promise<CycleTotals> {
-  const totals: CycleTotals = { codeVersion: 2, games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
+  const totals: CycleTotals = { codeVersion: 3, games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
   const started = Date.now();
   const recent = await db.select<{ id: number }>("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
@@ -455,6 +457,8 @@ export async function runCycle(): Promise<CycleTotals> {
 
         for (const bk of bookList) {
           const sid = bk.strategyId;
+          // Games the weekly workflow added are for the rebuilt books only.
+          if (w.legacy === false && bk.method === "ladder" && bk.fairMode === "blend") continue;
           const bookFills = allFills.filter((f) => (f.strategy_id ?? null) === sid);
           const count = (v: VenueId, kind: "fills" | "placed") => {
             if (sid != null) {

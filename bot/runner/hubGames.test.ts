@@ -3,15 +3,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pgStub, type Row } from "./pgStub";
 
-vi.mock("../../hub/api/_bot.mjs", () => ({
-  ycprAwaySpreads: async (games: Row[]) => new Map(games.map((g) => [String(g.id), g.id === "3" ? null : -7])),
-  outcomeRanges: () => ({ ranges: [], expected: 0 }),
-  marginPmf: () => ({ maxMargin: 0, probs: [1] }),
-  boardChanges: () => ({}),
-  espnScoreGame: (e: Row) => ({ id: String(e.id), state: e.state }),
-  espnDate: () => "20261024",
-}));
-import data from "../../hub/api/data.js";
+vi.mock("../../hub/api/_bot.mjs", async () => {
+  const shrink = await import("../fairPrice/shrink");
+  return {
+    ycprAwaySpreads: async (games: Row[]) => new Map(games.map((g) => [String(g.id), g.id === "3" ? null : -7])),
+    outcomeRanges: () => ({ ranges: [], expected: 0 }),
+    marginPmf: () => ({ maxMargin: 0, probs: [1] }),
+    boardChanges: () => ({}),
+    espnScoreGame: (e: Row) => ({ id: String(e.id), state: e.state }),
+    espnDate: () => "20261024",
+    pmMedian: shrink.pmMedian,
+    shrinkFrom: shrink.shrinkFrom,
+    shrunkHomeMargin: shrink.shrunkHomeMargin,
+  };
+});
+import data, { lineSummary } from "../../hub/api/data.js";
 import admin from "../../hub/api/admin.js";
 
 const game = (id: string, week: number, completed: boolean, extra: Row = {}) => ({
@@ -50,6 +56,9 @@ describe("Add games / Manage games API", () => {
     expect(d.games.map((g: Row) => g.id)).toEqual(["2", "3"]); // FCS-only game left out
     const g2 = d.games.find((g: Row) => g.id === "2");
     expect(g2).toMatchObject({ home_spread: 3.5, yc_away_spread: -7, venue_margins: { kalshi: -3.6 }, watch: null });
+    // The trading line: PM median −3.6 plus 0.1 of the −3.4 gap.
+    expect(g2.lines.pm).toBe(-3.6);
+    expect(g2.lines.shrunk).toBeCloseTo(-3.94, 10);
     expect(d.games.find((g: Row) => g.id === "3").watch).toMatchObject({ id: 1, enabled: true });
     expect(d.strategies[0].name).toBe("Patient");
     const w8 = await call(data, "/api/data?part=picker&season=2026&week=8");
@@ -108,5 +117,64 @@ describe("Add games / Manage games API", () => {
     expect(espn).toHaveLength(2);
     await call(data, q);
     expect(espn).toHaveLength(2); // served from the 10 s cache
+  });
+
+  it("line summary: original YC, the line in use, PM median and the shrunk trading line", () => {
+    const w = { ycpr_original: -6, ycpr_home_margin: -7, my_home_margin: null, venue_margins: { kalshi: -1, novig: -2, prophetx: -3 }, beta: null };
+    const L = lineSummary(w, { beta: 0.2, hump_cap: 5.5, sigma: 15 });
+    expect(L).toMatchObject({ ycOriginal: -6, yc: -7, pm: -2, beta: 0.2 });
+    expect(L.gap).toBe(-5);
+    expect(L.shrunk).toBeCloseTo(-3, 10);
+    // A typed override is what the bot prices from; a per-game beta beats the global one; the gap is capped at the hump.
+    const o = lineSummary({ ...w, my_home_margin: -20, beta: 0.5 }, { beta: 0.2, hump_cap: 5.5 });
+    expect(o.yc).toBe(-20);
+    expect(o.ycOriginal).toBe(-6);
+    expect(o.shrunk).toBeCloseTo(-2 - 0.5 * 5.5, 10);
+    expect(lineSummary({ ycpr_home_margin: -7, venue_margins: {} }, {}).shrunk).toBeNull(); // no venue, no trading line (the book is never a fallback)
+  });
+
+  describe("weekly workflow", () => {
+    const future = (d: number) => new Date(Date.now() + d * 86400e3).toISOString();
+    beforeEach(() => {
+      db.games = [game("2", 9, false, { start_date: future(2) }), game("3", 9, false, { start_date: future(2) }), game("5", 9, false, { start_date: future(3) }), game("6", 9, false, { start_date: new Date(Date.now() - 3600e3).toISOString() })];
+      db.bot_mkt_games = [{ game_id: "2", venue_margins: { kalshi: -3.6, novig: -3.4 }, venue_events: {}, updated_at: "x" }];
+      db.bot_watchlist = [{ id: 1, game_id: "3", enabled: true, pick: "away", ycpr_home_margin: null, ycpr_original: null }];
+      db.bot_strategies = [];
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), summary: { codeVersion: 3 } }];
+    });
+
+    it("adds the games that aren't watched (for the rebuilt books only), syncs YC, reports the gaps, turns the books on", async () => {
+      const r = await call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 });
+      expect(r).toMatchObject({ games: 3, added: 2, alreadyWatched: 1, books: ["Shrunk", "Target"] }); // game 6 already kicked off
+      const w2 = db.bot_watchlist.find((w) => w.game_id === "2")!;
+      expect(w2).toMatchObject({ legacy: false, enabled: true, pick: "away", ycpr_home_margin: -7, ycpr_original: -7 });
+      expect(r.noVenue).toEqual(expect.arrayContaining(["Away3 @ Home3", "Away5 @ Home5"]));
+      expect(r.noVenue).not.toContain("Away2 @ Home2");
+      expect(r.noYc).toEqual(["Away3 @ Home3"]);
+      expect(db.bot_strategies.map((s) => [s.name, s.method, s.fair_mode, s.enabled])).toEqual([["Shrunk", "ladder", "shrunk", true], ["Target", "target", "shrunk", true]]);
+      // Run again: nothing is added twice, the original YC line is not touched, YC is not "synced" when it hasn't changed.
+      const again = await call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 });
+      expect(again).toMatchObject({ added: 0, alreadyWatched: 3, synced: 0 });
+      expect(db.bot_watchlist.filter((w) => w.game_id === "2")).toHaveLength(1);
+    });
+
+    it("keeps the original YC line when YC's number changes, and refreshes the current one", async () => {
+      await call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 });
+      db.bot_watchlist.find((w) => w.game_id === "2")!.ycpr_home_margin = -5; // as if ratings had moved before the next sync
+      const again = await call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 });
+      expect(again.synced).toBe(1);
+      expect(db.bot_watchlist.find((w) => w.game_id === "2")).toMatchObject({ ycpr_home_margin: -7, ycpr_original: -7 });
+    });
+
+    it("refuses while the tower is still running an older runner", async () => {
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), summary: { codeVersion: 2 } }];
+      await expect(call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 })).rejects.toThrow(/tower is still running older code/);
+      await expect(call(admin, "/api/admin", { action: "enableRebuildBooks" })).rejects.toThrow(/tower is still running older code/);
+      expect(db.bot_watchlist).toHaveLength(1);
+      expect(db.bot_strategies).toHaveLength(0);
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date(Date.now() - 3 * 3600e3).toISOString(), summary: {} }]; // a tower that has gone quiet doesn't block
+      await call(admin, "/api/admin", { action: "enableRebuildBooks" });
+      expect(db.bot_strategies).toHaveLength(2);
+    });
   });
 });

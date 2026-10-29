@@ -42,8 +42,9 @@ const vOf = (r) => r.venue || "kalshi";
 const vf = (rows) => (venue === "all" ? rows : rows.filter((r) => vOf(r) === venue));
 const vMargin = (w, v) => num(w.venue_margins?.[v]) ?? (v === "kalshi" ? num(w.kalshi_home_margin) : null);
 // The market line the current view compares against: the venue's own, or Kalshi's (else any) in the combined view.
-const mktOf = (w) => (venue === "all" ? vMargin(w, "kalshi") ?? vMargin(w, "novig") ?? vMargin(w, "prophetx") : vMargin(w, venue));
-const mktName = (w) => (venue !== "all" ? VNAME[venue] : vMargin(w, "kalshi") != null ? "Kalshi" : vMargin(w, "novig") != null ? "Novig" : "ProphetX");
+// The combined view compares against the PM median (the median of the venues' implied margins).
+const mktOf = (w) => (venue === "all" ? w.lines?.pm ?? vMargin(w, "kalshi") ?? vMargin(w, "novig") ?? vMargin(w, "prophetx") : vMargin(w, venue));
+const mktName = (w) => (venue !== "all" ? VNAME[venue] : "PM median");
 const outcomeOf = (w) => data.outcomes?.[w.game_id]?.[venue];
 const gameOf = (w) => data.upcoming.find((x) => String(x.id) === String(w.game_id));
 
@@ -122,8 +123,16 @@ function numLabel(r, w) {
 }
 
 function linesHtml(w, g) {
+  const L = w.lines || {};
   const v = VENUES.filter((x) => vMargin(w, x) != null && (venue === "all" || venue === x));
-  return `<div><em>YC</em>${signed(ourAway(w))}</div>${v.map((x) => `<div><em>${VSHORT[x]}</em>${signed(vMargin(w, x))}</div>`).join("")}<div><em>Mkt</em>${signed(marketAway(g))}</div>`;
+  const cell = (k, val, tip, hi) => `<div${hi ? ' class="hi"' : ""} title="${esc(tip)}"><em>${k}</em>${signed(val)}</div>`;
+  const changed = L.yc != null && L.ycOriginal != null && Math.abs(L.yc - L.ycOriginal) >= 0.05;
+  return cell("YC", L.ycOriginal ?? ourAway(w), "Your YC line as first synced (never overwritten)")
+    + (changed ? cell("Now", L.yc, w.my_home_margin != null ? "Your typed override" : "YC's line after rating updates") : "")
+    + cell("Trade", L.shrunk, `Trading line: PM median + beta (${L.beta ?? "–"}) x the capped gap`, true)
+    + cell("PM", L.pm, "Median of the prediction-market venues' implied margins")
+    + v.map((x) => cell(VSHORT[x], vMargin(w, x), `${VNAME[x]} ladder-implied margin`)).join("")
+    + cell("Book", marketAway(g), "Sportsbook reference line (shown for reference; not used for pricing)");
 }
 
 function rungLabel(ticker) {
@@ -181,7 +190,7 @@ function curveSvg(w, pts, marks = null) {
       return x == null ? "" : `<line x1="${x}" x2="${x}" y1="${pad - 4}" y2="${H - 14}" stroke="${color}" stroke-width="1.5" ${dash ? 'stroke-dasharray="4 3"' : ""}/><text x="${x + 3}" y="${pad + 4}" font-size="10" fill="${color}">${label}</text>`;
     };
     lines = mark(M, "M", "var(--c-info)", true) + mark(marks.ours, "Y", "var(--c-ok)", false);
-    if (M != null || marks.ours != null) legend = ` · M = market ${signed(M)}, Y = yours ${signed(marks.ours)} (${esc(w.away_team)})` + legend;
+    if (M != null || marks.ours != null) legend = ` · M = market ${signed(M)}, Y = ${marks.oursName ?? "yours"} ${signed(marks.ours)} (${esc(w.away_team)})` + legend;
   }
   const bars = pts.map((p, i) => {
     const bh = (Math.abs(p.v) / max) * (y0 - pad);
@@ -309,6 +318,7 @@ function renderSettings() {
         <p class="muted" style="font-size:.82rem;margin:8px 0 0">The tower runs the paper cycle about every 90 seconds, the market recorder every 5 minutes, the ProphetX listener continuously and Hypotheticals hourly. Backups: GitHub Actions (a cycle every few hours) and /api/espn (cron-job.org), which saves ESPN finals and trades in the tower's place if no cycle has finished for 10 minutes. The kill switch cancels every resting order on the next cycle.</p>
       </div>
     </div>
+    ${rebuildPanel()}
     <div class="panel" id="healthPanel" style="margin-top:16px">
       <h3>Health</h3>
       ${healthPanel()}
@@ -327,6 +337,38 @@ function renderSettings() {
       </div>
     </div>`;
   if (runsList == null && runsMode !== "paper") loadRuns(true);
+}
+
+// ---------- Settings → Rebuild (shrunk fair value, target books, caps)
+
+function rebuildPanel() {
+  const st = data.state || {};
+  const f = (k, d) => (st[k] == null ? d : Number(st[k]));
+  const books = (data.strategies || []).filter((s) => s.fair_mode === "shrunk" || s.method === "target");
+  const tower = (data.runs || []).find((r) => r.host === "tower");
+  const ver = tower ? (tower.codeVersion == null ? "older than the rebuild" : `version ${tower.codeVersion}`) : "no tower run in the latest cycles";
+  const field = (id, label, val, step, hint) => `<label class="field">${label}<input id="${id}" type="number" step="${step}" value="${val}" required>${hint ? `<span class="muted" style="font-weight:400;font-size:.72rem">${hint}</span>` : ""}</label>`;
+  return `<div class="panel" id="rebuildPanel" style="margin-top:16px">
+    <h3>Rebuild · shrunk fair value and target books</h3>
+    <p class="muted" style="font-size:.82rem;margin:0 0 10px">Trading line = PM median + beta × the gap between your YC line and the PM median, with the gap counted only up to the hump cap. It follows the market every cycle. Target books size from that edge with fractional Kelly and stay inside the loss caps. Paper only.</p>
+    <form id="rebuildForm">
+      <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        ${field("rbBeta", "Beta (share of the gap trusted)", f("beta", 0.1), 0.01, "0.1 until more weeks accumulate")}
+        ${field("rbHump", "Hump cap (pts of raw gap)", f("hump_cap", 5.5), 0.5, "CLV peaks near 5, gone past 6")}
+        ${field("rbFall", "Fall-off past the cap (pts)", f("hump_fall", 0), 0.5, "0 = stays flat")}
+        ${field("rbSigma", "Sigma (pts)", f("sigma", 15), 0.5, "spread of the final margin")}
+        ${field("rbBank", "Paper bankroll ($)", f("bankroll", 1000), 50, "sizes the target books")}
+        ${field("rbKelly", "Kelly fraction", f("kelly_frac", 0.25), 0.05, "0.25 = quarter Kelly")}
+        ${field("rbTeam", "Team loss cap ($)", f("team_cap", 10), 1, "all games backing one team")}
+        ${field("rbConf", "Conference loss cap ($)", f("conf_cap", 30), 1, "all games backing one conference")}
+        ${field("rbPort", "Portfolio loss cap ($)", f("portfolio_cap", 100), 5, "all games together")}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap"><button class="btn primary">Save</button><span id="rbMsg" class="muted"></span></div>
+    </form>
+    <h3 style="margin-top:16px">Books</h3>
+    <p style="margin:0 0 6px;font-size:.86rem">${books.length ? books.map((b) => `<span class="pill ${b.enabled ? "ok" : ""}">${esc(b.name)} · ${b.method === "target" ? "target positions" : "shrunk ladder"}${b.enabled ? "" : " (off)"}</span>`).join(" ") : "No rebuilt book exists yet."}</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="rbEnable">Turn on the Shrunk and Target books</button><span id="rbBooksMsg" class="muted" style="font-size:.8rem">Tower runner: ${esc(ver)}. They only turn on once the tower runs the new code.</span></div>
+  </div>`;
 }
 
 // ---------- Run history (Settings)
@@ -587,7 +629,8 @@ function renderDrawer() {
   const best = pts.length ? Math.max(...pts.map((p) => p.v)) : 0;
   const tabs = ["outcomes", "ladder", "settings"].map((t) => `<button data-dtab="${t}" class="${drawerTab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
-  if (drawerTab === "outcomes") body = curveSvg(w, pts, { market: mktOf(w), ours: ourAway(w) }) + outcomeTable(w, o);
+  if (drawerTab === "outcomes") body = planHtml(w) + curveSvg(w, pts, { market: mktOf(w), ours: ourAway(w) }) + outcomeTable(w, o);
+  if (drawerTab === "outcomes" && !planCache[w.game_id]) loadPlan(w.game_id);
   if (drawerTab === "ladder") body = ladderTable(w, gFills);
   if (drawerTab === "settings") body = settingsForm(w);
   root.innerHTML = `<div class="scrim" data-close="1"></div>
@@ -599,7 +642,8 @@ function renderDrawer() {
       </div>
       <div class="drawer-body">
         <div class="mini-stats">
-          <div class="stat"><div class="l">${w.my_home_margin != null ? "Your line" : "YC"} · ${esc(w.away_team)}</div><div class="v num">${signed(ourAway(w))}</div></div>
+          <div class="stat"><div class="l">YC original · ${esc(w.away_team)}</div><div class="v num">${signed(w.lines?.ycOriginal ?? ourAway(w))}</div><div class="d">${w.lines?.yc != null && w.lines?.ycOriginal != null && Math.abs(w.lines.yc - w.lines.ycOriginal) >= 0.05 ? `${w.my_home_margin != null ? "your override" : "now"} ${signed(w.lines.yc)}` : "unchanged since first sync"}</div></div>
+          <div class="stat"><div class="l">Trading line · ${esc(w.away_team)}</div><div class="v num">${signed(w.lines?.shrunk)}</div><div class="d">${w.lines?.gap != null ? `raw gap ${signed(w.lines.gap)} · beta ${w.lines.beta} · hump ${w.lines.humpCap}` : "needs a market and a YC line"}</div></div>
           <div class="stat"><div class="l">${mktName(w)} · ${esc(w.away_team)}</div><div class="v num">${signed(mktOf(w))}</div><div class="d">${VENUES.filter((x) => vMargin(w, x) != null).map((x) => `${VSHORT[x]} ${signed(vMargin(w, x))}`).join(" · ") || "no venue ladder"} · book ${signed(marketAway(g))}</div></div>
           <div class="stat"><div class="l">Worst / best</div><div class="v num"><span class="${cls(worst)}">${usd(worst)}</span></div><div class="d">best ${usd(best)}</div></div>
           <div class="stat"><div class="l">Expected</div><div class="v num ${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</div><div class="d">${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "your number"}</div></div>
@@ -609,6 +653,47 @@ function renderDrawer() {
         ${body}
       </div>
     </aside>`;
+}
+
+// ---------- The target book's plan for a game (bot_plans, via /api/data?part=plan)
+
+const planCache = {}; // game_id → { loading } | { plans }
+async function loadPlan(gameId) {
+  planCache[gameId] = { loading: true };
+  try {
+    planCache[gameId] = await api(`/api/data?part=plan&game=${encodeURIComponent(gameId)}`);
+  } catch (e) {
+    planCache[gameId] = { plans: [], error: e.message };
+  }
+  setTimeout(() => { delete planCache[gameId]; }, 60e3); // refreshed whenever the drawer is next drawn after a minute
+  if (openGame === gameId) renderDrawer();
+}
+
+function planHtml(w) {
+  const pc = planCache[w.game_id];
+  if (!pc || pc.loading) return '<p class="muted" style="margin:0 0 10px">Loading the plan…</p>';
+  const target = (data.strategies || []).some((s) => s.method === "target" && s.enabled);
+  if (!pc.plans?.length)
+    return `<div class="callout" style="border-color:var(--c-info);background:var(--c-info-bg)">${target ? "The Target book has no plan for this game yet; it appears after the next cycle (a game is skipped until it has a model line and a market)." : "No target-position book is running. Turn it on from Settings → Rebuild."}</div>`;
+  return pc.plans.map(({ name, updated_at, plan: p }) => {
+    const pts = (a) => (a || []).map((v, i) => ({ m: i - 40, v })).filter((q) => q.m !== 0 && Math.abs(q.m) <= 35);
+    const team = p.lean ? (p.lean === "home" ? w.home_team : w.away_team) : null;
+    const orders = (p.orders || []).slice(0, 14);
+    return `<div class="panel" style="margin-bottom:12px">
+      <h3 style="margin:0 0 6px">${esc(name)} · plan <span class="muted" style="font-weight:400;font-size:.78rem">updated ${ago(updated_at)}</span></h3>
+      <p style="margin:0 0 8px;font-size:.86rem">${team ? `Edge points to <b>${esc(team)}</b> by <b>${Math.abs(p.edgePts).toFixed(2)}</b> pts: trading line ${signed(p.shrunkFair)} against the PM median ${signed(p.pmMedian)} (raw gap ${signed(p.rawGap)}, beta ${p.beta}). Kelly asks for about <b>${p.slope.toFixed(2)}</b> contract per strike; ${p.openable} strikes clear the fee dead zone at today's prices.` : "No edge: the trading line is the PM median, so there is nothing to open and any position held is reduced when the exit is near fair value."}</p>
+      <div class="mini-stats" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+        <div class="stat"><div class="l">Loss room</div><div class="v num">${usd(p.room)}</div><div class="d">game, team, conference, portfolio</div></div>
+        <div class="stat"><div class="l">Worst case</div><div class="v num"><span class="${cls(p.worstBefore)}">${usd(p.worstBefore)}</span> → <span class="${cls(p.worstAfter)}">${usd(p.worstAfter)}</span></div><div class="d">now → after these orders</div></div>
+        <div class="stat"><div class="l">Expected</div><div class="v num ${cls(p.expectedAfter)}">${usd(p.expectedAfter)}</div><div class="d">by the trading line, after fees</div></div>
+        <div class="stat"><div class="l">Orders</div><div class="v num">${(p.orders || []).length}</div><div class="d">${(p.orders || []).reduce((s, o) => s + o.count, 0)} contracts, takes only</div></div>
+      </div>
+      ${p.notes?.length ? `<p class="muted" style="font-size:.78rem;margin:0 0 6px">${esc(p.notes.join(" · "))}</p>` : ""}
+      <h4 style="margin:6px 0 2px;font-size:.84rem">P&amp;L by final margin now</h4>${curveSvg(w, pts(p.curveBefore), { market: p.pmMedian, ours: p.shrunkFair, oursName: "trading line" })}
+      <h4 style="margin:6px 0 2px;font-size:.84rem">After these orders</h4>${curveSvg(w, pts(p.curveAfter), { market: p.pmMedian, ours: p.shrunkFair, oursName: "trading line" })}
+      ${orders.length ? `<div class="scroll"><table><tr><th>Venue</th><th>Order</th><th>Price</th><th>Why</th></tr>${orders.map((o) => `<tr><td>${VSHORT[o.venue] || esc(o.venue)}</td><td>${o.action === "buy" ? "Buy" : "Sell"} ${o.count}${o.forced ? " (forced)" : ""}</td><td>${c(Number(o.price), 0)}</td><td style="text-align:left;white-space:normal">${esc(o.reason)}</td></tr>`).join("")}</table></div>` : '<p class="muted" style="font-size:.8rem;margin:4px 0 0">No orders this cycle.</p>'}
+    </div>`;
+  }).join("");
 }
 
 function statusNote(w, g) {
@@ -772,7 +857,7 @@ function setView(v) {
 async function load() {
   // Don't redraw under someone mid-drag or mid-edit.
   const a = document.activeElement;
-  if (a?.matches?.('input[type="range"]') || (a?.closest?.("#gameForm") && a.matches("input"))) return;
+  if (a?.matches?.('input[type="range"]') || ((a?.closest?.("#gameForm") || a?.closest?.("#rebuildForm")) && a.matches("input"))) return;
   try {
     data = await api("/api/data");
     dashErr = "";
@@ -1002,4 +1087,31 @@ document.querySelector('[data-pane="settings"]').addEventListener("change", (e) 
 });
 document.querySelector('[data-pane="settings"]').addEventListener("click", (e) => {
   if (e.target.id === "runsMore") { e.target.disabled = true; e.target.textContent = "Loading…"; loadRuns(); }
+});
+
+// Settings → Rebuild
+document.querySelector('[data-pane="settings"]').addEventListener("submit", async (e) => {
+  if (e.target.id !== "rebuildForm") return;
+  e.preventDefault();
+  const n = (id) => Number($(id).value);
+  try {
+    await api("/api/admin", { action: "shrinkSettings", beta: n("rbBeta"), hump_cap: n("rbHump"), hump_fall: n("rbFall"), sigma: n("rbSigma"), bankroll: n("rbBank"), kelly_frac: n("rbKelly"), team_cap: n("rbTeam"), conf_cap: n("rbConf"), portfolio_cap: n("rbPort") });
+    document.activeElement?.blur?.();
+    await load();
+    $("rbMsg") && ($("rbMsg").textContent = "Saved. Applies from the next cycle.");
+  } catch (err) {
+    $("rbMsg").textContent = err.message;
+  }
+});
+document.querySelector('[data-pane="settings"]').addEventListener("click", async (e) => {
+  if (e.target.id !== "rbEnable") return;
+  e.target.disabled = true;
+  try {
+    await api("/api/admin", { action: "enableRebuildBooks" });
+    await load();
+    $("rbBooksMsg") && ($("rbBooksMsg").textContent = "Turned on. They start trading (paper) on the next cycle.");
+  } catch (err) {
+    $("rbBooksMsg").textContent = err.message;
+    e.target.disabled = false;
+  }
 });

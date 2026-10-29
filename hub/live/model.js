@@ -108,11 +108,14 @@ export function pickRung(r, pick) {
 /** Pick-oriented home margin: positive = the pick team wins by that much. */
 export const pickMargin = (pick, homeMargin) => (homeMargin == null ? null : pick === "home" ? homeMargin : -homeMargin);
 
-/** The market line a game is compared against: Kalshi's implied margin, else Novig's, else ProphetX's. */
+/** The market line a game is compared against: the median of the prediction-market venues' implied margins (Kalshi, Novig, ProphetX, ...). */
 export function marketMargin(w) {
   const vm = w?.venue_margins || {};
   const n = (x) => (x == null || x === "" ? null : Number(x));
-  return n(vm.kalshi) ?? n(w?.kalshi_home_margin) ?? n(vm.novig) ?? n(vm.prophetx);
+  const xs = Object.values(vm).map(n).filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!xs.length) return n(w?.kalshi_home_margin);
+  const mid = xs.length >> 1;
+  return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
 }
 export const oursOf = (w) => (w?.my_home_margin != null ? Number(w.my_home_margin) : w?.ycpr_home_margin != null ? Number(w.ycpr_home_margin) : null);
 

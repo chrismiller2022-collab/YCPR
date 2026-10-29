@@ -125,7 +125,7 @@ describe("live desk", () => {
     const feed = startFeed((s: any) => snaps.push(s), { gameId: "g1", range: "6h", get: (p: string) => call(p), pollMs: 1e9 });
     await vi.waitFor(() => expect(snaps.length).toBe(1));
     const s = snaps[0];
-    expect(s.game).toMatchObject({ game_id: "g1", away: "Air Force", ours: -10.96, market: -5.4, cap: 20, book: -5.5 });
+    expect(s.game).toMatchObject({ game_id: "g1", away: "Air Force", ours: -10.96, market: -5.5 /* the PM median of Kalshi -5.4 and Novig -5.6 */, cap: 20, book: -5.5 });
     expect(s.quotes.map((q: Row) => [q.id, q.strike])).toEqual([[11, 5.5]]);
     expect(s.fills).toHaveLength(1);
     expect(s.tape.map((t: Row) => t.ours ?? "mkt")).toEqual(["take", "mkt"]);

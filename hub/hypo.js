@@ -6,6 +6,7 @@
 let hypo = null; // /api/hypo payload
 let hypoGame = null; // { game_id, results } for the drawer
 let hypoBusy = "";
+let hypoReport = null; // { title, body, updated_at } from /api/data?part=report (bot/analysis/report.ts)
 const HDEF = {
   venues: { kalshi: true, novig: true, prophetx: true },
   shared: true,
@@ -31,6 +32,7 @@ async function loadHypo() {
   try {
     hypo = await api("/api/hypo");
     renderHypo();
+    api("/api/data?part=report").then((r) => { hypoReport = r.report; renderHypo(); }).catch(() => {});
   } catch (e) {
     if (e.message !== "unauthorized") document.querySelector('[data-pane="hypo"]').innerHTML = `<p class="err">Couldn't load Hypotheticals: ${esc(e.message)}</p>`;
   }
@@ -101,6 +103,40 @@ function filteredGames() {
   return list;
 }
 
+/** The few markdown constructs the report uses (headings, bullets, tables, **bold**), as HTML. */
+function mdLite(md) {
+  const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  const lines = String(md).split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length; ) {
+    const l = lines[i];
+    if (l.startsWith("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].startsWith("|")) rows.push(lines[i++]);
+      const cells = (r) => r.slice(1, -1).split("|").map((x) => x.trim());
+      const [head, , ...body] = rows;
+      out.push(`<div class="scroll"><table><tr>${cells(head).map((x) => `<th>${inline(x)}</th>`).join("")}</tr>${body.map((r) => `<tr>${cells(r).map((x) => `<td>${inline(x)}</td>`).join("")}</tr>`).join("")}</table></div>`);
+      continue;
+    }
+    if (l.startsWith("- ")) {
+      const items = [];
+      while (i < lines.length && lines[i].startsWith("- ")) items.push(lines[i++].slice(2));
+      out.push(`<ul style="margin:4px 0 4px 18px;padding:0;font-size:.84rem">${items.map((x) => `<li>${inline(x)}</li>`).join("")}</ul>`);
+      continue;
+    }
+    if (l.startsWith("## ")) out.push(`<h3 style="margin:16px 0 6px">${inline(l.slice(3))}</h3>`);
+    else if (l.startsWith("# ")) out.push(`<h2 style="margin:0 0 6px;font-size:1.02rem">${inline(l.slice(2))}</h2>`);
+    else if (l.trim()) out.push(`<p style="margin:4px 0;font-size:.84rem">${inline(l)}</p>`);
+    i++;
+  }
+  return out.join("");
+}
+
+function reportPanel() {
+  if (!hypoReport) return '<details class="panel" style="margin-bottom:14px"><summary style="cursor:pointer;font-weight:600">Shadow report: rebuilt methods vs the current strategies</summary><p class="muted" style="margin:8px 0 0;font-size:.84rem">Not generated yet. It is built by the hourly replay job (or Actions → Bot shadow report → Run workflow).</p></details>';
+  return `<details class="panel" style="margin-bottom:14px" open><summary style="cursor:pointer;font-weight:600">Shadow report: rebuilt methods vs the current strategies <span class="muted" style="font-weight:400;font-size:.78rem">· updated ${ago(hypoReport.updated_at)}</span></summary><div style="margin-top:8px">${mdLite(hypoReport.body)}</div></details>`;
+}
+
 function renderHypo() {
   const pane = document.querySelector('[data-pane="hypo"]');
   if (!hypo) { pane.innerHTML = '<p class="muted">Loading…</p>'; return; }
@@ -138,6 +174,7 @@ function renderHypo() {
   const venueNote = sets[0] === "all" ? "all venues, one shared loss cap per game" : sets.length > 1 ? `${sets.map((s) => VNAME[s]).join(" + ")}, separate caps (worst cases add up)` : `${VNAME[sets[0]] || "no venue"} only`;
 
   pane.innerHTML = `
+    ${reportPanel()}
     <div class="callout" style="border-color:var(--c-info);background:var(--c-info-bg)">Every recorded game, replayed with each method over the prices and trades the recorder saved — same engine and fill rules as paper, nothing traded and nothing here touches the Board, Fills or lab. Recording began Oct 21; results update hourly${asOf ? ` (last ${ago(asOf)})` : ""}. Each method risks up to its own cap per game (built-ins $10).</div>
     <div class="panel hypo-controls" style="margin-bottom:14px">
       <div class="hc-row">
