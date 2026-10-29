@@ -4,6 +4,7 @@
 // Runs after the market recorder (/api/record) and in the hourly GitHub backup.
 // Logs counts only (the repo's Actions logs are public).
 
+import { shrinkFrom } from "../fairPrice/shrink";
 import { db, RUN_HOST } from "../runner/io";
 import { makeAdapters, type VenueId } from "../venues";
 import {
@@ -32,10 +33,11 @@ interface GameRow {
 }
 
 export async function methodsNow(): Promise<{ methods: Method[]; defaultTrust: number }> {
-  const [state] = await db.select<{ default_ycpr_weight: number }>("bot_state", "select=default_ycpr_weight&id=eq.1");
+  const [state] = await db.select<{ default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null }>("bot_state", "select=default_ycpr_weight,beta,hump_cap,hump_fall,sigma&id=eq.1");
+  const shrink = shrinkFrom(state);
   const defaultTrust = state?.default_ycpr_weight == null ? 1 : Number(state.default_ycpr_weight);
   const strategies = await db.select<Parameters<typeof strategyMethod>[0]>("bot_strategies", "select=*&order=id");
-  return { methods: [...builtinMethods(defaultTrust), ...strategies.map((st) => strategyMethod(st, defaultTrust))], defaultTrust };
+  return { methods: [...builtinMethods(defaultTrust), ...strategies.map((st) => strategyMethod(st, defaultTrust, shrink))], defaultTrust };
 }
 
 export async function finals(ids: string[]): Promise<Map<string, number>> {

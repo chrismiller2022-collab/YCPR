@@ -1,7 +1,7 @@
 // POST { action, ... }: kill switch and watchlist edits. Requires x-bot-password.
 import { authorized, sb, send } from "./_lib.js";
 
-const NUMERIC = ["ycpr_weight", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
+const NUMERIC = ["ycpr_weight", "beta", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
 const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
 const SHAPE_NUMERIC = ["market_floor", "against_limit", "blowout_margin"];
 
@@ -27,6 +27,7 @@ function cleanWatch(body) {
   for (const [k, v] of Object.entries(w)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
   if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
   if (w.ycpr_weight != null && (w.ycpr_weight < 0 || w.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
+  if (w.beta != null && (w.beta < 0 || w.beta > 1)) throw new Error("beta must be between 0 and 1");
   cleanShape(body, w);
   if (body.enabled !== undefined) w.enabled = !!body.enabled;
   if (body.venues !== undefined) {
@@ -54,6 +55,19 @@ export default async function handler(req, res) {
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ default_ycpr_weight: v, updated_at: new Date().toISOString() }) });
         return send(res, 200, { state: row });
       }
+      case "shrinkSettings": {
+        // The shrunk fair value (bot/fairPrice/shrink.ts): fair = PM median + beta · capped gap. Blank fields stay as they are.
+        const patch = { updated_at: new Date().toISOString() };
+        const rules = { beta: [0, 1], hump_cap: [0.5, 60], hump_fall: [0, 60], sigma: [5, 40] };
+        for (const [k, [lo, hi]] of Object.entries(rules)) {
+          if (body[k] === undefined || body[k] === "" || body[k] === null) continue;
+          const v = Number(body[k]);
+          if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${k} must be between ${lo} and ${hi}`);
+          patch[k] = v;
+        }
+        const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify(patch) });
+        return send(res, 200, { state: row });
+      }
       case "saveStrategy": {
         const st = {};
         if (body.name !== undefined) {
@@ -64,6 +78,14 @@ export default async function handler(req, res) {
         for (const k of ["per_rung_cap", "stop_minutes_before"]) if (body[k] !== undefined) st[k] = Math.round(Number(body[k]));
         if (body.ycpr_weight !== undefined) st.ycpr_weight = body.ycpr_weight === null || body.ycpr_weight === "" ? null : Number(body.ycpr_weight);
         if (body.enabled !== undefined) st.enabled = !!body.enabled;
+        if (body.fair_mode !== undefined) {
+          if (!["blend", "shrunk"].includes(body.fair_mode)) throw new Error("fair_mode must be blend or shrunk");
+          st.fair_mode = body.fair_mode;
+        }
+        if (body.method !== undefined) {
+          if (!["ladder", "target"].includes(body.method)) throw new Error("method must be ladder or target");
+          st.method = body.method;
+        }
         if (body.notes !== undefined) st.notes = String(body.notes).slice(0, 300);
         cleanShape(body, st);
         for (const [k, v] of Object.entries(st)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);

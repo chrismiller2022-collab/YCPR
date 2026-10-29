@@ -5,6 +5,7 @@
 // game × method × venue set current cheaply as new data is recorded.
 
 import { marginPmf } from "../fairPrice/marginDistribution";
+import { DEFAULT_SHRINK, modelWith, shrunkFromMargins, type ShrinkSettings } from "../fairPrice/shrink";
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import {
   blendedHomeMargin,
@@ -86,6 +87,9 @@ export interface Method {
   /** Trust in our number (0–1). */
   weight: number;
   stopMinutes: number;
+  /** "shrunk" = PM median + beta · capped gap (bot/fairPrice/shrink.ts) instead of the trust blend. */
+  fairMode?: "blend" | "shrunk";
+  shrink?: ShrinkSettings;
 }
 
 export interface VenueRules {
@@ -258,18 +262,20 @@ export function advance(state: HypoState, steps: Step[], game: HypoGame, method:
       if (game.ycpr == null || !s.pick) continue;
 
       // 2. Fair price and the no-edge rule, as in the runner.
-      const market = marketMargin(s, v, set);
-      const center = blendedHomeMargin({ ycpr: game.ycpr, kalshi: market, book: game.book, hoursToKickoff: hours }, { ycprWeight: method.weight, fade: false });
+      const shrunk = method.fairMode === "shrunk";
+      const shr = shrunk ? shrunkFromMargins(game.ycpr, Object.fromEntries(venues.map((x) => [x, s.implied?.[x]])), method.shrink ?? DEFAULT_SHRINK) : null;
+      const market = shr ? shr.market : marketMargin(s, v, set);
+      const center = shr ? shr.fair : blendedHomeMargin({ ycpr: game.ycpr, kalshi: market, book: game.book, hoursToKickoff: hours }, { ycprWeight: method.weight, fade: false });
       if (center == null) continue;
       const ref = market ?? center;
       if (!(s.pick === "home" ? center > ref : center < ref)) continue; // quotes pulled
-      const pmf = marginPmf(center);
+      const pmf = shr ? marginPmf(center, modelWith((method.shrink ?? DEFAULT_SHRINK).sigma)) : marginPmf(center);
 
       // 3. Orders, with the cap covering this method's positions on the other selected venues.
       const here = positionsOf(s.fills.filter((f) => f.venue === v));
       const there = positionsOf(s.fills.filter((f) => f.venue !== v));
       const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
-      const { orders } = ladderOrders(rungs, here.positions, pmf, { ...method.cfg, pick: s.pick, tick: rules[v].tick, fee }, { otherPnl, marketHomeMargin: market ?? game.book ?? center });
+      const { orders } = ladderOrders(rungs, here.positions, pmf, { ...method.cfg, pick: s.pick, tick: rules[v].tick, fee }, { otherPnl, marketHomeMargin: shr ? market : market ?? game.book ?? center });
       const withIds = resting.map((r, i) => ({ ...r, id: i }));
       const plan = diffOrders(withIds, orders, rules[v].tick);
       const cancel = new Set(plan.cancel.map((r) => r.id));
@@ -373,7 +379,8 @@ export function strategyMethod(st: {
   id: number; name: string; pro_edge: number; anti_edge: number; take_edge: number; edge_step: number;
   max_worst_case_loss: number; per_rung_cap: number; ycpr_weight: number | null; stop_minutes_before: number;
   shape?: boolean | null; market_floor?: number | null; against_limit?: number | null; blowout_margin?: number | null;
-}, defaultTrust: number): Method {
+  fair_mode?: string | null;
+}, defaultTrust: number, shrink: ShrinkSettings = DEFAULT_SHRINK): Method {
   const n = (v: unknown) => (v == null ? null : Number(v));
   return {
     key: `lab${st.id}`,
@@ -387,10 +394,12 @@ export function strategyMethod(st: {
     },
     weight: st.ycpr_weight == null ? defaultTrust : Number(st.ycpr_weight),
     stopMinutes: st.stop_minutes_before,
+    // Only shrunk strategies carry these, so other strategies' hashes (and saved replays) don't change.
+    ...(st.fair_mode === "shrunk" ? { fairMode: "shrunk" as const, shrink } : {}),
   };
 }
 
 /** Stable hash of what affects a method's replay, so edits restart it from scratch. */
 export function methodHash(m: Method): string {
-  return JSON.stringify([m.kind, m.cfg, m.weight, m.stopMinutes]);
+  return JSON.stringify([m.kind, m.cfg, m.weight, m.stopMinutes, ...(m.fairMode === "shrunk" ? [m.fairMode, m.shrink] : [])]);
 }

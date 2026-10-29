@@ -14,7 +14,7 @@ async function health() {
   return botHealth(lists.flat(), Date.now(), { towerLast });
 }
 
-const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before,shape,market_floor,against_limit,blowout_margin";
+const STRAT_COLS = "id,name,enabled,pro_edge,anti_edge,take_edge,edge_step,max_worst_case_loss,per_rung_cap,ycpr_weight,stop_minutes_before,shape,market_floor,against_limit,blowout_margin,fair_mode,method";
 const lineRank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);
 
 /** The college season a date falls in (Jan–Jul belongs to the previous fall). */
