@@ -140,7 +140,7 @@ describe("Add games / Manage games API", () => {
       db.bot_mkt_games = [{ game_id: "2", venue_margins: { kalshi: -3.6, novig: -3.4 }, venue_events: {}, updated_at: "x" }];
       db.bot_watchlist = [{ id: 1, game_id: "3", enabled: true, pick: "away", ycpr_home_margin: null, ycpr_original: null }];
       db.bot_strategies = [];
-      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), summary: { codeVersion: 3 } }];
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), summary: { codeVersion: 3 } }];
     });
 
     it("adds the games that aren't watched (for the rebuilt books only), syncs YC, reports the gaps, turns the books on", async () => {
@@ -166,13 +166,22 @@ describe("Add games / Manage games API", () => {
       expect(db.bot_watchlist.find((w) => w.game_id === "2")).toMatchObject({ ycpr_home_margin: -7, ycpr_original: -7 });
     });
 
+    it("a cycle still in progress (no summary yet) does not make the tower look old", async () => {
+      db.bot_runs = [
+        { id: 2, mode: "paper", host: "tower", started_at: new Date().toISOString(), finished_at: null, summary: null },
+        { id: 1, mode: "paper", host: "tower", started_at: new Date(Date.now() - 90e3).toISOString(), finished_at: new Date(Date.now() - 5e3).toISOString(), summary: { codeVersion: 3 } },
+      ];
+      await call(admin, "/api/admin", { action: "enableRebuildBooks" });
+      expect(db.bot_strategies).toHaveLength(2);
+    });
+
     it("refuses while the tower is still running an older runner", async () => {
-      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), summary: { codeVersion: 2 } }];
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), summary: { codeVersion: 2 } }];
       await expect(call(admin, "/api/admin", { action: "weeklyWorkflow", season: 2026, week: 9 })).rejects.toThrow(/tower is still running older code/);
       await expect(call(admin, "/api/admin", { action: "enableRebuildBooks" })).rejects.toThrow(/tower is still running older code/);
       expect(db.bot_watchlist).toHaveLength(1);
       expect(db.bot_strategies).toHaveLength(0);
-      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date(Date.now() - 3 * 3600e3).toISOString(), summary: {} }]; // a tower that has gone quiet doesn't block
+      db.bot_runs = [{ id: 1, mode: "paper", host: "tower", started_at: new Date(Date.now() - 3 * 3600e3).toISOString(), finished_at: new Date(Date.now() - 3 * 3600e3).toISOString(), summary: {} }]; // a tower that has gone quiet doesn't block
       await call(admin, "/api/admin", { action: "enableRebuildBooks" });
       expect(db.bot_strategies).toHaveLength(2);
     });

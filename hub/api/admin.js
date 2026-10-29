@@ -4,7 +4,8 @@ import { pmMedian, ycprAwaySpreads } from "./_bot.mjs";
 
 /** The rebuilt books are only safe to trade once the tower's runner knows them (see enableRebuildBooks). */
 async function requireNewRunner() {
-  const runs = await sb("bot_runs?select=host,started_at,v:summary->codeVersion&mode=eq.paper&order=started_at.desc&limit=40");
+  // Finished runs only: a cycle still in progress has not written its summary (and its codeVersion) yet.
+  const runs = await sb("bot_runs?select=host,started_at,v:summary->codeVersion&mode=eq.paper&finished_at=not.is.null&order=started_at.desc&limit=40");
   const tower = runs.find((r) => r.host === "tower" && Date.now() - new Date(r.started_at).getTime() < 20 * 60e3);
   if (tower && !(Number(tower.v) >= 3))
     throw new Error("The tower is still running older code. On the tower run: cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot, wait for a cycle, then try again.");
