@@ -31,10 +31,10 @@ export const POOL_REPORT_WEIGHTS = {
 };
 export type FactorKey = keyof typeof POOL_REPORT_WEIGHTS;
 
-export const NAMED_SYSTEMS: { key: string; label: string }[] = [
-  { key: "mcillece", label: "McIllece" },
-  { key: "jpplus", label: "JP+" },
-  { key: "consensus", label: "Consensus" },
+export const NAMED_SYSTEMS: { key: string; label: string; short: string }[] = [
+  { key: "mcillece", label: "McIllece", short: "McI" },
+  { key: "jpplus", label: "JP+", short: "JP+" },
+  { key: "consensus", label: "Consensus", short: "Con" },
 ];
 // Excluded from the all-systems count: YC is my own line (already factor 1)
 // and Consensus is an average of the others (already in the named factor).
@@ -283,7 +283,7 @@ export function scoreGame(input: ReportGameInput, stats: SeasonStats, weights = 
     key: "role",
     label: "My record: role",
     score: roleScores.length ? roleScores.reduce((a, b) => a + b, 0) / roleScores.length : null,
-    short: fd ? `${ROLE_LABEL[`${side}-${fd}`]} ${fmtTally(stats.byRole[`${side}-${fd}`] ?? emptyTally())}` : `${ROLE_LABEL[side]} ${fmtTally(stats.byRole[side] ?? emptyTally())}`,
+    short: fd ? `${ROLE_LABEL[`${side}-${fd}`]}\n${fmtTally(stats.byRole[`${side}-${fd}`] ?? emptyTally())}` : `${ROLE_LABEL[side]}\n${fmtTally(stats.byRole[side] ?? emptyTally())}`,
     detail:
       `${sideTeam} is the ${roleKeys.map((k) => ROLE_LABEL[k]).pop()}. My ATS record this season projecting: ` +
       roleKeys.map((k) => `${ROLE_LABEL[k]} ${fmtTally(stats.byRole[k] ?? emptyTally())}`).join(" · ") +
@@ -298,7 +298,7 @@ export function scoreGame(input: ReportGameInput, stats: SeasonStats, weights = 
     key: "team",
     label: "My record: team",
     score: teamScores.length ? teamScores.reduce((a, b) => a + b, 0) / teamScores.length : null,
-    short: `${fmtTally(proj)} · ${fmtTally(acc)}`,
+    short: `${fmtTally(proj)} proj\n${fmtTally(acc)} calls`,
     detail: `When I project ${sideTeam} to cover: ${fmtTally(proj)} ATS. My cover calls in ${sideTeam} games: ${fmtTally(acc)}.`,
   });
 
@@ -312,21 +312,21 @@ export function scoreGame(input: ReportGameInput, stats: SeasonStats, weights = 
     const sysSide = line != null ? sideOf(line, poolLine) : null;
     if (line == null) {
       namedParts.push(`${s.label} n/a`);
-      namedShort.push(`${s.label}–`);
+      namedShort.push(`${s.short} –`);
       continue;
     }
     namedAny = true;
     const agree = sysSide === side;
     if (sysSide != null) namedScore += agree ? 1 / NAMED_SYSTEMS.length : -1 / NAMED_SYSTEMS.length;
     const mark = sysSide == null ? "=" : agree ? "✓" : "✗";
-    namedShort.push(`${s.label}${mark}`);
+    namedShort.push(`${s.short} ${mark}`);
     namedParts.push(`${s.label} ${fmtLine(Math.round(forSide(line, side) * 10) / 10)} (${sysSide == null ? "on the number" : agree ? "with me" : "against me"})`);
   }
   factors.push({
     key: "named",
     label: "McIllece / JP+ / Consensus",
     score: namedAny ? namedScore : null,
-    short: namedShort.join(" "),
+    short: namedShort.join("\n"),
     detail: `${sideTeam}'s line by system, vs pool ${fmtLine(poolS)}: ${namedParts.join(", ")}.`,
   });
 
@@ -339,7 +339,7 @@ export function scoreGame(input: ReportGameInput, stats: SeasonStats, weights = 
       key: "totals",
       label: "Totals",
       score: recordScore(t),
-      short: `${totalCall === "Over" ? "O" : "U"} · ${ROLE_LABEL[fd]} ${fmtTally(t)}`,
+      short: `${totalCall} · ${ROLE_LABEL[fd]}\n${fmtTally(t)}`,
       detail: `I project ${totalCall} (${Math.round(input.myTotal! * 10) / 10} vs ${input.vegasTotal}). My ATS record on the ${fd === "fav" ? "favorite" : "underdog"} in games I project ${totalCall}: ${fmtTally(t)}.`,
     });
   } else {

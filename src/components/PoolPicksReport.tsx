@@ -29,6 +29,22 @@ function factorColor(f: Factor): string | undefined {
   return f.score > 0 ? "#8fd39a" : "#c45c52";
 }
 
+// Compact column headers for the ranked table — the cards below keep the full factor labels.
+const FACTOR_HEADER: Record<string, string> = {
+  edge: "Pool vs mine",
+  vegas: "Pool vs Vegas",
+  keysMine: "Keys mine ↔ pool",
+  keysVegas: "Keys Vegas ↔ pool",
+  role: "Role record",
+  team: "Team record",
+  named: "McI / JP+ / Con",
+  totals: "Totals",
+  systems: "All sys",
+};
+
+// Non-breaking hyphens so a record like 75-66-3 never splits across lines.
+const noBreak = (s: string) => s.replace(/(\d)-(\d)/g, "$1\u2011$2");
+
 const TIER_COLOR: Record<string, string> = { A: "#8fd39a", B: "#c9d38f", C: "var(--chalk-dim)", D: "#c45c52" };
 
 export default function PoolPicksReport({
@@ -58,14 +74,15 @@ export default function PoolPicksReport({
   const pickById = useMemo(() => new Map(picks.map((p) => [p.gameId, p])), [picks]);
   const ranked = report.filter((g) => g.rank != null);
   const unranked = report.length - ranked.length;
-  const factorLabels = ranked[0]?.factors.map((f) => f.label) ?? [];
+  const factorKeys = ranked[0]?.factors.map((f) => f.key) ?? [];
 
   function apply() {
     onApply({ poolKey: pool.key, mode, picks, order: report.map((g) => g.input.gameId) });
     onClose();
   }
 
-  const cell = { padding: "0.3rem 0.4rem", borderBottom: "1px solid var(--hash)", whiteSpace: "nowrap" as const };
+  // Fixed layout + wrapping keeps the whole table inside the popup's width — rows grow taller instead of scrolling sideways.
+  const cell = { padding: "0.3rem 0.35rem", borderBottom: "1px solid var(--hash)", verticalAlign: "top" as const, overflowWrap: "break-word" as const };
 
   return (
     <div
@@ -131,17 +148,27 @@ export default function PoolPicksReport({
             <p style={{ color: "var(--chalk-dim)" }}>No open games with both a pool line and my line.</p>
           ) : (
             <>
-              <div style={{ overflowX: "auto", border: "1px solid var(--hash)", borderRadius: 8 }}>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.76rem" }}>
+              <div style={{ border: "1px solid var(--hash)", borderRadius: 8 }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed", fontSize: "0.74rem" }}>
+                  <colgroup>
+                    <col style={{ width: "2.2rem" }} />
+                    <col style={{ width: "11%" }} />
+                    <col style={{ width: "11%" }} />
+                    <col style={{ width: "3.6rem" }} />
+                    {factorKeys.map((k) => (
+                      <col key={k} />
+                    ))}
+                    <col style={{ width: "4rem" }} />
+                  </colgroup>
                   <thead>
                     <tr style={{ textAlign: "left", color: "var(--chalk-dim)" }}>
                       <th style={cell}>#</th>
                       <th style={cell}>Game</th>
                       <th style={cell}>Side (pool line)</th>
                       <th style={cell}>Score</th>
-                      {factorLabels.map((l) => (
-                        <th key={l} style={cell}>
-                          {l}
+                      {factorKeys.map((k) => (
+                        <th key={k} style={cell}>
+                          {FACTOR_HEADER[k]}
                         </th>
                       ))}
                       <th style={cell}>Pick</th>
@@ -155,20 +182,18 @@ export default function PoolPicksReport({
                         <tr key={g.input.gameId} style={{ opacity: why ? 0.45 : 1, background: pick?.key ? "var(--gold-dim)" : pick ? "var(--a-tint-1)" : undefined }}>
                           <td style={cell}>{g.rank}</td>
                           <td style={cell}>
-                            {g.input.away} @ {g.input.home}
+                            {g.input.away}
+                            <br />@ {g.input.home}
                           </td>
                           <td style={{ ...cell, fontWeight: 700 }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
-                              <TeamLogo team={g.sideTeam!} size={16} />
-                              {g.sideTeam} {fmtLine(g.sideLine)}
-                            </span>
+                            <TeamLogo team={g.sideTeam!} size={14} /> {g.sideTeam} {fmtLine(g.sideLine)}
                           </td>
                           <td style={{ ...cell, fontWeight: 700 }}>
                             {g.score} <span style={{ color: TIER_COLOR[g.tier!] }}>{g.tier}</span>
                           </td>
                           {g.factors.map((f) => (
-                            <td key={f.key} style={{ ...cell, color: factorColor(f) }} title={f.detail}>
-                              {f.short}
+                            <td key={f.key} style={{ ...cell, color: factorColor(f), whiteSpace: "pre-line" }} title={f.detail}>
+                              {noBreak(f.short)}
                             </td>
                           ))}
                           <td style={cell}>{why ? <span title={why}>ineligible</span> : pick ? (pick.key ? "🔑 Key" : "✅") : ""}</td>
