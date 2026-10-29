@@ -315,3 +315,8 @@ create table if not exists bot_reports (
   data jsonb
 );
 alter table bot_reports enable row level security;
+
+-- 2026-10-29: trading rebuild, stage D (weekly workflow). Additive.
+-- legacy = true: the Board and the original strategies (trust blend) trade this game, as before. Games added by the weekly workflow set it
+-- to false, so only the rebuilt books (shrunk fair value / target positions) trade them.
+alter table bot_watchlist add column if not exists legacy boolean not null default true;

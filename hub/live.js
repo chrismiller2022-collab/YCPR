@@ -468,7 +468,7 @@ function renderPnl(g, pos) {
     const who = p.m > 0 ? `${pick} by ${p.m}` : `${other} by ${-p.m}`;
     s += `<rect x="${(padL + i * bw + 0.5).toFixed(1)}" y="${(p.pnl >= 0 ? y0 - h : y0).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="1" fill="${p.pnl >= 0 ? "var(--up)" : "var(--down)"}"><title>${esc2(who)}: ${fmtUsd(p.pnl)}</title></rect>`;
   });
-  const marks = [[pickMargin(g.pick, g.ours), "var(--yc)", "YC"], [pickMargin(g.pick, g.market), "var(--k)", "Mkt"]];
+  const marks = [[pickMargin(g.pick, g.ours), "var(--yc)", "YC"], [pickMargin(g.pick, g.market), "var(--k)", "PM"]];
   marks.forEach(([mu, col, lab], i) => {
     if (mu == null) return;
     const x = xOf(mu);

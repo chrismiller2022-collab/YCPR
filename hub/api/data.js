@@ -1,6 +1,20 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
 import { authorized, sb, send } from "./_lib.js";
-import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate, botHealth } from "./_bot.mjs";
+import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate, botHealth, pmMedian, shrinkFrom, shrunkHomeMargin } from "./_bot.mjs";
+
+/**
+ * The lines a game is traded from (all HOME margins = the away spread, like the rest of the dashboard):
+ * yc = the number the bot prices from (a typed override, else YC's current line), ycOriginal = YC's line as first synced,
+ * pm = the median of the prediction-market venues' implied margins, shrunk = pm + beta · capped gap (the trading line).
+ */
+export function lineSummary(x, state) {
+  const n = (v) => (v == null || v === "" ? null : Number(v));
+  const s = shrinkFrom(state, x.beta);
+  const yc = n(x.my_home_margin) ?? n(x.ycpr_home_margin);
+  const pm = pmMedian(x.venue_margins);
+  const sh = shrunkHomeMargin(yc, pm, s);
+  return { ycOriginal: n(x.ycpr_original) ?? n(x.ycpr_home_margin), yc, pm, shrunk: sh.fair, edgePts: sh.edgePts, gap: sh.gap, beta: s.beta, humpCap: s.humpCap, sigma: s.sigma };
+}
 
 /** Is the bot actually running: the newest few runs of every job, read into one status (bot/runner/health.ts). */
 async function health() {
@@ -37,11 +51,12 @@ async function picker(q, res) {
   );
   const ids = games.map((g) => g.id);
   const inIds = ids.length ? `in.(${ids.join(",")})` : "eq.__none__";
-  const [lines, mkt, watched, strategies] = await Promise.all([
+  const [lines, mkt, watched, strategies, [pstate]] = await Promise.all([
     ids.length ? sb(`betting_lines?select=game_id,provider,spread&game_id=${inIds}&spread=not.is.null`) : [],
     ids.length ? sb(`bot_mkt_games?select=game_id,venue_margins,venue_events,updated_at&game_id=${inIds}`) : [],
     sb("bot_watchlist?select=id,game_id,enabled"),
     sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
+    sb("bot_state?select=beta,hump_cap,hump_fall,sigma&id=eq.1"),
   ]);
   const spread = {};
   for (const l of lines.sort((a, b) => lineRank(a.provider) - lineRank(b.provider))) if (spread[l.game_id] == null) spread[l.game_id] = Number(l.spread);
@@ -58,6 +73,7 @@ async function picker(q, res) {
       home_spread: spread[g.id] ?? null,
       yc_away_spread: yc.get(String(g.id)) ?? null,
       venue_margins: venues.get(String(g.id))?.venue_margins ?? {},
+      lines: lineSummary({ ycpr_home_margin: yc.get(String(g.id)) ?? null, venue_margins: venues.get(String(g.id))?.venue_margins ?? {} }, pstate),
       watch: watch.get(String(g.id)) ?? null,
     })),
   });
@@ -117,22 +133,36 @@ export default async function handler(req, res) {
     if (q.get("part") === "week") return await week(q, res);
     if (q.get("part") === "scores") return await scores(q, res);
     if (q.get("part") === "health") return send(res, 200, { health: await health() });
+    if (q.get("part") === "report") {
+      const [r] = await sb("bot_reports?select=id,title,body,updated_at&id=eq.shadow");
+      return send(res, 200, { report: r ?? null });
+    }
+    if (q.get("part") === "plan") {
+      // The plan behind a target book's orders on one game: why this size, what the P&L by margin looks like now and after the orders.
+      const game = String(q.get("game") || "");
+      if (!/^[\w-]{1,20}$/.test(game)) return send(res, 400, { error: "bad game id" });
+      const [plans, strategies] = await Promise.all([sb(`bot_plans?select=strategy_id,updated_at,plan&game_id=eq.${game}`), sb("bot_strategies?select=id,name&order=id")]);
+      return send(res, 200, { plans: plans.map((p) => ({ ...p, name: strategies.find((s) => s.id === p.strategy_id)?.name ?? `Book ${p.strategy_id}` })) });
+    }
     const mode = "paper";
     const [state] = await sb("bot_state?select=*&id=eq.1");
     const watchlist = await sb("bot_watchlist?select=*&order=kickoff.asc.nullslast");
+    for (const w of watchlist) w.lines = lineSummary(w, state);
     const ids = watchlist.map((w) => w.game_id);
     // Finished games leave the Board (they're in Review); `completed` comes from the site's games table.
     const done = ids.length ? await sb(`games?select=id&completed=is.true&id=in.(${ids.map(encodeURIComponent).join(",")})`) : [];
     const doneIds = new Set(done.map((g) => String(g.id)));
     for (const w of watchlist) w.completed = doneIds.has(String(w.game_id));
     const inIds = ids.length ? `&game_id=in.(${ids.map(encodeURIComponent).join(",")})` : "&game_id=eq.__none__";
-    const [orders, fills, runs, strategies, botStatus] = await Promise.all([
+    const [orders, fills, runs, strategies, botStatus, planRows] = await Promise.all([
       // The Board is strategy_id null; lab strategies live in /api/lab.
       sb(`bot_orders?select=id,venue,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
       sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
-      sb("bot_runs?mode=eq.paper&select=id,mode,host,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills&order=started_at.desc&limit=25"),
+      sb("bot_runs?mode=eq.paper&select=id,mode,host,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills,codeVersion:summary->codeVersion&order=started_at.desc&limit=25"),
       sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
       health().catch(() => null), // a health read failing never blanks the dashboard
+      // One line per target book and game (the curves load with the drawer): lean, edge, worst case and expected value after this cycle's orders.
+      sb("bot_plans?select=game_id,strategy_id,updated_at,lean:plan->lean,edgePts:plan->edgePts,worstAfter:plan->worstAfter,expectedAfter:plan->expectedAfter,room:plan->room,notes:plan->notes").catch(() => []),
     ]);
     // Latest snapshot per rung for watched games.
     const snaps = ids.length ? await sb(`bot_snapshots?select=game_id,venue,ticker,side,strike,bid,ask,fair,taken_at${inIds}&order=taken_at.desc&limit=3000`) : [];
@@ -174,7 +204,7 @@ export default async function handler(req, res) {
           h.cost += d * Number(f.price) + Number(f.fee);
           held.set(f.ticker, h);
         }
-        const m = v === "all" ? vm.kalshi ?? w.kalshi_home_margin ?? vm.novig ?? vm.prophetx : vm[v] ?? (v === "kalshi" ? w.kalshi_home_margin : null);
+        const m = v === "all" ? w.lines.pm ?? vm.kalshi ?? w.kalshi_home_margin ?? vm.novig ?? vm.prophetx : vm[v] ?? (v === "kalshi" ? w.kalshi_home_margin : null);
         const market = m == null ? null : Number(m);
         if (held.size)
           byVenue[v] = {
@@ -190,7 +220,7 @@ export default async function handler(req, res) {
     const snaps2 = await sb("bot_runs?select=started_at,board:summary->board&mode=eq.paper&finished_at=not.is.null&summary->board=not.is.null&order=started_at.desc&limit=2");
     const changes = snaps2.length === 2 ? { at: snaps2[0].started_at, since: snaps2[1].started_at, games: boardChanges(snaps2[0].board, snaps2[1].board) } : null;
 
-    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies, health: botStatus });
+    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies, health: botStatus, plans: planRows });
   } catch (err) {
     send(res, 500, { error: String(err.message || err) });
   }

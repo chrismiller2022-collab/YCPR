@@ -107,7 +107,7 @@
 
   /* Board: one row per game */
   .board { background:var(--a-surface); border:1px solid var(--a-line); border-radius:12px; box-shadow:var(--a-shadow); overflow:hidden; }
-  .brow { display:grid; grid-template-columns:minmax(170px,1.5fr) 118px 132px 110px 116px 110px 112px; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--a-row); cursor:pointer; }
+  .brow { display:grid; grid-template-columns:minmax(170px,1.4fr) 100px 236px 110px 116px 110px 112px; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--a-row); cursor:pointer; }
   .brow:last-child { border-bottom:0; }
   .brow:hover { background:var(--a-hover); }
   .brow.head { cursor:default; background:var(--a-surface); color:var(--a-muted); font-size:.66rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase; padding-top:8px; padding-bottom:8px; border-bottom:1px solid var(--a-line); }
@@ -116,8 +116,9 @@
   .lean .pill { max-width:100%; overflow:hidden; text-overflow:ellipsis; }
   .game b { display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .game span { font-size:.76rem; color:var(--a-muted); }
-  .lines { font-size:.8rem; line-height:1.35; font-variant-numeric:tabular-nums; }
-  .lines em { font-style:normal; color:var(--a-muted); display:inline-block; width:44px; }
+  .lines { font-size:.8rem; line-height:1.35; font-variant-numeric:tabular-nums; display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+  .lines em { font-style:normal; color:var(--a-muted); display:inline-block; width:46px; }
+  .lines .hi { font-weight:700; }
   .r { text-align:right; font-variant-numeric:tabular-nums; }
   .r small { display:block; color:var(--a-muted); font-size:.72rem; }
   .spark svg { display:block; }
@@ -197,7 +198,7 @@
   .drawer-head h2 { font:400 1.35rem Anton, Impact, sans-serif; text-transform:uppercase; letter-spacing:.02em; margin:0; line-height:1.1; }
   .drawer-body { padding:14px 18px 40px; overflow-y:auto; }
   .xbtn { margin-left:auto; border:1px solid var(--a-line); background:var(--a-surface); border-radius:8px; width:32px; height:32px; cursor:pointer; color:var(--a-ink-2); }
-  .mini-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+  .mini-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
   .mini-stats .stat { padding:9px 10px; } .mini-stats .stat .v { font-size:1.05rem; }
   svg text { fill:var(--a-muted); font-size:10px; font-family:Inter, sans-serif; }
 

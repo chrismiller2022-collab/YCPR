@@ -103,10 +103,32 @@ async function loadPicker() {
   }
 }
 
-const awayMkt = (g) => (g.home_spread == null ? null : -g.home_spread);
-/** The side YC favors versus Vegas (the bot's usual lean). */
-const autoPick = (g) => (g.yc_away_spread != null && awayMkt(g) != null && g.yc_away_spread > awayMkt(g) ? "home" : "away");
-const edgeOf = (g) => (g.yc_away_spread == null || awayMkt(g) == null ? null : Math.abs(g.yc_away_spread - awayMkt(g)));
+const awayMkt = (g) => (g.home_spread == null ? null : -g.home_spread); // the sportsbook reference line
+/** What the gap is measured against: the prediction-market median once the venues list the game, else the sportsbook line. */
+const refOf = (g) => g.lines?.pm ?? awayMkt(g);
+/** The side YC favors versus that market (the bot's usual lean). */
+const autoPick = (g) => (g.yc_away_spread != null && refOf(g) != null && g.yc_away_spread > refOf(g) ? "home" : "away");
+const edgeOf = (g) => (g.yc_away_spread == null || refOf(g) == null ? null : Math.abs(g.yc_away_spread - refOf(g)));
+
+// ---------- Weekly workflow (one button; the work is /api/admin weeklyWorkflow)
+let wfBusy = false;
+let wfResult = null;
+function workflowPanel() {
+  const r = wfResult;
+  const list = (title, xs) => (xs?.length ? `<p style="margin:6px 0 0;font-size:.82rem"><b>${title} (${xs.length}):</b> <span class="muted">${esc(xs.slice(0, 12).join(", "))}${xs.length > 12 ? ` and ${xs.length - 12} more` : ""}</span></p>` : "");
+  const out = !r ? "" : r.error
+    ? `<p class="err" style="margin:10px 0 0">${esc(r.error)}</p>`
+    : `<div style="margin-top:10px;border-top:1px solid var(--a-line);padding-top:8px">
+        <p style="margin:0;font-size:.86rem">Week ${r.week}: <b>${r.added}</b> game${r.added === 1 ? "" : "s"} added · ${r.alreadyWatched} already watched · YC lines synced on ${r.synced} · books on: ${esc((r.books || []).join(", "))}</p>
+        ${list("No market on any venue yet", r.noVenue)}${list("No YC line (ratings missing)", r.noYc)}
+        <p class="muted" style="margin:6px 0 0;font-size:.78rem">${esc(r.note || "")}</p></div>`;
+  return `<div class="panel" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center">
+      <div><h3 style="margin:0 0 4px">Weekly workflow · week ${picker.week}</h3>
+        <p class="muted" style="font-size:.82rem;margin:0;max-width:780px">One button: adds every game of the week that isn't being traded yet, syncs YC's lines (each game keeps your original line), and turns on the Shrunk and Target books. From then on each game is traded from its trading line (PM median + beta × the capped gap, following the market every cycle), sized from its own edge, inside the loss caps. Games with no edge get no size. Add games by hand below if you want the original strategies on a game too.</p></div>
+      <button class="btn primary" type="button" id="wfRun" ${wfBusy ? "disabled" : ""}>${wfBusy ? "Running…" : `Run for week ${picker.week}`}</button>
+    </div>${out}</div>`;
+}
 const dayOf = (g) => (g.start_date ? new Date(g.start_date).toLocaleDateString([], { weekday: "short" }) : "TBD");
 const started = (g) => g.start_date && new Date(g.start_date).getTime() <= Date.now();
 
@@ -142,11 +164,12 @@ function renderAdd() {
   const sel = [...pkSel.keys()].map((id) => picker.games.find((g) => g.id === id)).filter(Boolean);
   const needLine = sel.filter((g) => g.yc_away_spread == null && num(pkSel.get(g.id).override) == null);
   const noEdge = sel.filter((g) => {
-    const p = pkSel.get(g.id), ours = num(p.override) ?? g.yc_away_spread, mkt = awayMkt(g);
+    const p = pkSel.get(g.id), ours = num(p.override) ?? g.yc_away_spread, mkt = refOf(g);
     return ours != null && mkt != null && !(p.pick === "home" ? ours > mkt : ours < mkt);
   });
   const watchedN = picker.games.filter((g) => g.watch).length;
   pane.innerHTML = `
+    ${workflowPanel()}
     <div class="panel" style="margin-bottom:12px">
       <div class="hc-row" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
         <label class="field">Week<select id="pkWeek">${picker.weeks.map((w) => opt(w, `Week ${w}${w === picker.current ? " (current)" : ""}`, picker.week)).join("")}</select></label>
@@ -165,7 +188,7 @@ function renderAdd() {
       </div>
     </div>
     <div class="panel" style="padding:8px 10px;margin-bottom:12px"><div class="scroll"><table class="pk">
-      <tr><th><input type="checkbox" id="pkAll" aria-label="Select all shown" ${rows.length && rows.filter((g) => !g.watch && !started(g)).every((g) => pkSel.has(g.id)) ? "checked" : ""}></th><th style="text-align:left">Game</th><th>Kickoff</th><th>YC (away)</th><th>Vegas (away)</th><th>Edge</th><th>Venues</th><th style="text-align:left">Lean</th><th>Your line</th></tr>
+      <tr><th><input type="checkbox" id="pkAll" aria-label="Select all shown" ${rows.length && rows.filter((g) => !g.watch && !started(g)).every((g) => pkSel.has(g.id)) ? "checked" : ""}></th><th style="text-align:left">Game</th><th>Kickoff</th><th title="Your YC line as first synced">YC</th><th title="PM median + beta x the capped gap">Trade</th><th title="Median of the venues' implied margins">PM</th><th title="Sportsbook reference, not used for pricing">Book</th><th title="YC minus the PM median (the sportsbook when no venue lists it)">Gap</th><th>Venues</th><th style="text-align:left">Lean</th><th>Your line</th></tr>
       ${rows.map((g) => {
         const off = !!g.watch || started(g);
         const s = pkSel.get(g.id);
@@ -176,7 +199,9 @@ function renderAdd() {
           <td style="text-align:left"><b>${esc(g.away_team)} @ ${esc(g.home_team)}</b><small>${esc([g.away_conference, g.home_conference].filter(Boolean).join(" · "))}${g.neutral_site ? " · neutral" : ""}</small></td>
           <td>${g.start_date ? when(g.start_date) : "TBD"}</td>
           <td>${signed(g.yc_away_spread)}</td>
-          <td>${signed(awayMkt(g))}</td>
+          <td><b>${signed(g.lines?.shrunk)}</b></td>
+          <td>${signed(g.lines?.pm)}</td>
+          <td class="muted">${signed(awayMkt(g))}</td>
           <td class="${e >= 3 ? "ok" : ""}">${e == null ? "–" : e.toFixed(1)}</td>
           <td>${VENUES.filter((v) => g.venue_margins?.[v] != null).map((v) => `<span class="pill" title="${VNAME[v]} implies ${esc(g.away_team)} ${signed(Number(g.venue_margins[v]))}">${VSHORT[v]}</span>`).join(" ") || '<span class="muted">–</span>'}</td>
           <td style="text-align:left">${g.watch ? `<span class="pill ${g.watch.enabled ? "ok" : ""}">${g.watch.enabled ? "Trading" : "Paused"}</span> <button type="button" class="btn" data-manage="${g.watch.id}" style="padding:2px 8px">Edit</button>`
@@ -185,14 +210,14 @@ function renderAdd() {
             : `<span class="muted">${esc(lean === "home" ? g.home_team : g.away_team)}</span>`}</td>
           <td>${s ? `<input class="pkOverride" type="number" step="0.5" value="${esc(s.override ?? "")}" placeholder="${g.yc_away_spread == null ? "needed" : "YC"}" aria-label="Your away spread" style="width:76px;padding:4px 6px;border:1px solid var(--a-field-line);border-radius:6px;background:var(--a-field)">` : ""}</td>
         </tr>`;
-      }).join("") || '<tr><td colspan="9" class="muted">No games match these filters.</td></tr>'}
+      }).join("") || '<tr><td colspan="12" class="muted">No games match these filters.</td></tr>'}
     </table></div></div>
     <form class="panel pk-bar" id="pkForm">
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px"><h3 style="margin:0">Settings for ${sel.length || "the selected"} game${sel.length === 1 ? "" : "s"}</h3><span class="muted" style="font-size:.78rem">Pick a strategy to fill these in; change any field to make it custom.</span></div>
       <div ${sel.length ? "" : "hidden"}>${settingsBlock("pk", false)}</div>
       ${sel.length ? "" : '<p class="muted" style="margin:0">Tick games above to add them.</p>'}
       ${needLine.length ? `<p class="err" style="margin:10px 0 0">${needLine.length} selected game${needLine.length > 1 ? "s have" : " has"} no YC number: enter your line to add ${needLine.length > 1 ? "them" : "it"}.</p>` : ""}
-      ${noEdge.length ? `<div class="callout" style="margin:10px 0 0">${noEdge.map((g) => esc(`${g.away_team} @ ${g.home_team}`)).join(", ")}: your number isn't better than Vegas for the lean you picked, so the bot won't add exposure there until it is.</div>` : ""}
+      ${noEdge.length ? `<div class="callout" style="margin:10px 0 0">${noEdge.map((g) => esc(`${g.away_team} @ ${g.home_team}`)).join(", ")}: your number isn't better than the market for the lean you picked, so the bot won't add exposure there until it is.</div>` : ""}
       <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
         <button class="btn primary" ${!sel.length || needLine.length ? "disabled" : ""}>Add ${sel.length || ""} game${sel.length === 1 ? "" : "s"}</button>
         ${sel.length ? '<button class="btn" type="button" id="pkClear">Clear selection</button>' : ""}
@@ -241,7 +266,23 @@ addPane.addEventListener("click", (e) => {
   const m = e.target.closest("[data-manage]");
   if (m) { mgSel.clear(); mgSel.add(Number(m.dataset.manage)); setView("manage"); return; }
   if (e.target.id === "pkClear") { pkSel.clear(); renderAdd(); }
+  if (e.target.id === "wfRun" && !wfBusy) runWorkflow();
 });
+async function runWorkflow() {
+  wfBusy = true;
+  wfResult = null;
+  renderAdd();
+  try {
+    wfResult = await api("/api/admin", { action: "weeklyWorkflow", season: picker.season, week: picker.week });
+    await load();
+    wfBusy = false;
+    await loadPicker();
+  } catch (err) {
+    wfResult = { error: err.message };
+  }
+  wfBusy = false;
+  renderAdd();
+}
 addPane.addEventListener("submit", async (e) => {
   if (e.target.id !== "pkForm") return;
   e.preventDefault();
