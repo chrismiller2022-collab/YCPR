@@ -130,6 +130,8 @@ interface Book {
 }
 
 export interface CycleTotals {
+  /** Which generation of the runner wrote this run: 2 = shrunk fair value + target-position books (the dashboard checks this before enabling those strategies). */
+  codeVersion?: number;
   games: number;
   placed: number;
   cancelled: number;
@@ -230,7 +232,7 @@ async function settle(w: Watch) {
  * backup, so it skips if another cycle started in the last 4 minutes and hasn't finished.
  */
 export async function runCycle(): Promise<CycleTotals> {
-  const totals: CycleTotals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
+  const totals: CycleTotals = { codeVersion: 2, games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
   const started = Date.now();
   const recent = await db.select<{ id: number }>("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };

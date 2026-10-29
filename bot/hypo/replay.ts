@@ -382,7 +382,7 @@ export function summarize(state: HypoState, game: HypoGame, set: VenueSet): Hypo
 export const fairYes = (center: number, side: "home" | "away", strike: number) => kalshiSpreadYesProb(marginPmf(center), side, strike);
 
 /** Built-in methods. `base` = the lab's Default settings, so every method risks the same cap. */
-export function builtinMethods(defaultTrust: number): Method[] {
+export function builtinMethods(defaultTrust: number, shrink: ShrinkSettings = DEFAULT_SHRINK, tgt: { bankroll: number; kellyFrac: number } = { bankroll: DEFAULT_TARGET.bankroll, kellyFrac: DEFAULT_TARGET.kellyFrac }): Method[] {
   const base = { maxWorstCaseLoss: 10, perRungCap: 1, orderSize: 1, proEdge: 0.02, antiEdge: 0.04, takeEdge: 0.03, edgeStep: 0.01, profitTarget: null };
   const ladder = (key: string, label: string, over: Partial<Method["cfg"]> = {}, weight = defaultTrust): Method => ({ key, label, kind: "ladder", cfg: { ...base, ...over }, weight, stopMinutes: 30 });
   return [
@@ -392,6 +392,10 @@ export function builtinMethods(defaultTrust: number): Method[] {
     // Shaped positions (§21): the same cap, solved as one position with the default payoff rules.
     ladder("shaped", "Shaped", { shape: true }),
     ladder("shaped2", "Shaped · floor $2", { shape: true, marketFloor: 2 }),
+    // The rebuild (BOT_REBUILD_HANDOFF.md): the same ladder engine priced from the shrunk fair value, and target-position rebalancing across venues.
+    // Defined here rather than as bot_strategies rows so runners that predate them never replay them as plain ladders.
+    { key: "shrunk", label: "Shrunk ladder (PM median + β·gap)", kind: "ladder", cfg: { ...base }, weight: defaultTrust, stopMinutes: 30, fairMode: "shrunk", shrink },
+    { key: "target", label: "Target positions (rebuild)", kind: "target", cfg: { ...base, perRungCap: 3 }, weight: defaultTrust, stopMinutes: 30, fairMode: "shrunk", shrink, target: { bankroll: tgt.bankroll, kellyFrac: tgt.kellyFrac, takeEdge: 0.005 } },
     ladder("maker", "Maker only (never take)", { takeEdge: 9 }),
     ladder("taker", "Take only (no resting quotes)", { proEdge: 9, antiEdge: 9 }),
     { key: "early", label: "Straight bet · early", kind: "early", cfg: base, weight: defaultTrust, stopMinutes: 30 },
