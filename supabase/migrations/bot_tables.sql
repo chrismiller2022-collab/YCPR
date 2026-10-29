@@ -281,3 +281,20 @@ alter table bot_fills add column if not exists is_maker boolean;
 insert into bot_strategies (name, enabled, pro_edge, anti_edge, take_edge, edge_step, fair_mode, notes) values
   ('Shrunk', false, 0.02, 0.04, 0.03, 0.01, 'shrunk', 'Original ladder engine priced from the shrunk fair value (PM median + beta · capped gap), for comparison with the other strategies')
 on conflict (name) do nothing;
+
+-- 2026-10-29: trading rebuild, stage B (target-position rebalancing, bot/ladder/target.ts). Additive.
+-- Paper bankroll and fractional Kelly for sizing, and the loss caps shared between games (dollars, worst case after fees).
+alter table bot_state add column if not exists bankroll numeric not null default 1000 check (bankroll > 0);
+alter table bot_state add column if not exists kelly_frac numeric not null default 0.25 check (kelly_frac > 0 and kelly_frac <= 1);
+alter table bot_state add column if not exists team_cap numeric not null default 10 check (team_cap >= 0);
+alter table bot_state add column if not exists conf_cap numeric not null default 30 check (conf_cap >= 0);
+alter table bot_state add column if not exists portfolio_cap numeric not null default 100 check (portfolio_cap >= 0);
+-- The plan behind each target book's orders on each game, refreshed every cycle: why this size, what the P&L by margin looks like.
+create table if not exists bot_plans (
+  game_id text not null,
+  strategy_id bigint not null references bot_strategies (id) on delete cascade,
+  updated_at timestamptz not null default now(),
+  plan jsonb not null,
+  primary key (game_id, strategy_id)
+);
+alter table bot_plans enable row level security;

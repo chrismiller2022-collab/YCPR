@@ -33,11 +33,15 @@ interface GameRow {
 }
 
 export async function methodsNow(): Promise<{ methods: Method[]; defaultTrust: number }> {
-  const [state] = await db.select<{ default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null }>("bot_state", "select=default_ycpr_weight,beta,hump_cap,hump_fall,sigma&id=eq.1");
+  const [state] = await db.select<{ default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null }>("bot_state", "select=default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac&id=eq.1");
   const shrink = shrinkFrom(state);
   const defaultTrust = state?.default_ycpr_weight == null ? 1 : Number(state.default_ycpr_weight);
   const strategies = await db.select<Parameters<typeof strategyMethod>[0]>("bot_strategies", "select=*&order=id");
-  return { methods: [...builtinMethods(defaultTrust), ...strategies.map((st) => strategyMethod(st, defaultTrust, shrink))], defaultTrust };
+  const tgt = { bankroll: Number(state?.bankroll ?? 1000), kellyFrac: Number(state?.kelly_frac ?? 0.25) };
+  // Strategies on the rebuilt logic (shrunk fair value / target positions) are replayed as the built-in methods "Shrunk ladder" and
+  // "Target positions", which use the current global settings; runners that predate them would otherwise replay these rows as plain ladders.
+  const rows = strategies.filter((st) => (st as { method?: string }).method !== "target" && (st as { fair_mode?: string }).fair_mode !== "shrunk");
+  return { methods: [...builtinMethods(defaultTrust, shrink, tgt), ...rows.map((st) => strategyMethod(st, defaultTrust, shrink, tgt))], defaultTrust };
 }
 
 export async function finals(ids: string[]): Promise<Map<string, number>> {

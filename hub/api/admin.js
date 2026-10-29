@@ -58,7 +58,11 @@ export default async function handler(req, res) {
       case "shrinkSettings": {
         // The shrunk fair value (bot/fairPrice/shrink.ts): fair = PM median + beta · capped gap. Blank fields stay as they are.
         const patch = { updated_at: new Date().toISOString() };
-        const rules = { beta: [0, 1], hump_cap: [0.5, 60], hump_fall: [0, 60], sigma: [5, 40] };
+        const rules = {
+          beta: [0, 1], hump_cap: [0.5, 60], hump_fall: [0, 60], sigma: [5, 40],
+          // Target-position books: paper bankroll, fraction of Kelly, and the loss caps shared between games (dollars).
+          bankroll: [10, 1e7], kelly_frac: [0.01, 1], team_cap: [0, 1e5], conf_cap: [0, 1e5], portfolio_cap: [0, 1e6],
+        };
         for (const [k, [lo, hi]] of Object.entries(rules)) {
           if (body[k] === undefined || body[k] === "" || body[k] === null) continue;
           const v = Number(body[k]);
@@ -67,6 +71,21 @@ export default async function handler(req, res) {
         }
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify(patch) });
         return send(res, 200, { state: row });
+      }
+      case "enableRebuildBooks": {
+        // Adds (or re-enables) the paper books for the rebuilt logic: "Shrunk" (the original ladder engine priced from the shrunk
+        // fair value) and "Target" (target-position rebalancing). A runner that predates them would trade them as plain ladders,
+        // so this refuses while the newest tower run isn't from a runner that knows about them.
+        const runs = await sb("bot_runs?select=host,started_at,v:summary->codeVersion&mode=eq.paper&order=started_at.desc&limit=40");
+        const tower = runs.find((r) => r.host === "tower" && Date.now() - new Date(r.started_at).getTime() < 20 * 60e3);
+        if (tower && !(Number(tower.v) >= 2))
+          throw new Error("The tower is still running older code. On the tower run: cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot, wait for a cycle, then try again.");
+        const rows = [
+          { name: "Shrunk", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.03, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 1, fair_mode: "shrunk", method: "ladder", notes: "Original ladder engine priced from the shrunk fair value (PM median + beta · capped gap), for comparison" },
+          { name: "Target", enabled: true, pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.005, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 3, fair_mode: "shrunk", method: "target", notes: "Target-position rebalancing across venues: Kelly ramp from the shrunk edge, takes only, caps per game / team / conference / portfolio" },
+        ];
+        const saved = await sb("bot_strategies?on_conflict=name", { method: "POST", headers: { Prefer: "return=representation,resolution=merge-duplicates" }, body: JSON.stringify(rows) });
+        return send(res, 200, { strategies: saved });
       }
       case "saveStrategy": {
         const st = {};

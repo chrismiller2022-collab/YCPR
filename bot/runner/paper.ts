@@ -21,6 +21,7 @@ import { db, RUN_HOST } from "./io";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
+import { decideTarget, heldFrom, riskEntry, type FillLike, type GameNames, type RiskEntry } from "./targetBook";
 
 const MODE = "paper";
 /** Stop starting new games after this long (ycpr-bot's /api/cycle allows 300 s). */
@@ -88,6 +89,8 @@ interface Strategy {
   blowout_margin: number | null;
   /** "blend" (default) = the original fair value; "shrunk" = market + beta · capped gap (bot/fairPrice/shrink.ts). */
   fair_mode: "blend" | "shrunk" | null;
+  /** 'ladder' = the original engine; 'target' = target-position rebalancing across venues (bot/ladder/target.ts). */
+  method: "ladder" | "target" | null;
 }
 
 interface RestingRow {
@@ -118,6 +121,8 @@ interface FillRow {
 /** One independent paper book on a game: the Board (strategyId null) or a lab strategy. */
 interface Book {
   strategyId: number | null;
+  method: "ladder" | "target";
+  st?: Strategy;
   fairMode: "blend" | "shrunk";
   weight: number;
   stopMinutes: number;
@@ -125,6 +130,8 @@ interface Book {
 }
 
 export interface CycleTotals {
+  /** Which generation of the runner wrote this run: 2 = shrunk fair value + target-position books (the dashboard checks this before enabling those strategies). */
+  codeVersion?: number;
   games: number;
   placed: number;
   cancelled: number;
@@ -225,7 +232,7 @@ async function settle(w: Watch) {
  * backup, so it skips if another cycle started in the last 4 minutes and hasn't finished.
  */
 export async function runCycle(): Promise<CycleTotals> {
-  const totals: CycleTotals = { games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
+  const totals: CycleTotals = { codeVersion: 2, games: 0, placed: 0, cancelled: 0, fills: 0, skipped: 0, noEdge: 0, labFills: 0, venues: {} };
   const started = Date.now();
   const recent = await db.select<{ id: number }>("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
@@ -233,7 +240,7 @@ export async function runCycle(): Promise<CycleTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
     try {
@@ -284,7 +291,8 @@ export async function runCycle(): Promise<CycleTotals> {
     };
 
     // YCPR's current number for every watched game, computed like Admin Matchups.
-    const games = await db.select<YcprGame>("games", `select=id,season,week,home_team,away_team,neutral_site&id=in.(${watch.map((w) => w.game_id).join(",")})`);
+    const games = await db.select<YcprGame & { home_conference: string | null; away_conference: string | null }>("games", `select=id,season,week,home_team,away_team,neutral_site,home_conference,away_conference&id=in.(${watch.map((w) => w.game_id).join(",")})`);
+    const confOf = new Map(games.map((g) => [String(g.id), g]));
     const ycpr = await ycprAwaySpreads(games);
     for (const w of watch) {
       const yc = ycpr.get(String(w.game_id)) ?? null;
@@ -293,6 +301,25 @@ export async function runCycle(): Promise<CycleTotals> {
         await db.update("bot_watchlist", `id=eq.${w.id}`, { ycpr_home_margin: yc, ycpr_updated_at: iso(), ...(first ? { ycpr_original: yc, ycpr_original_at: iso() } : {}) });
         w.ycpr_home_margin = yc;
         if (first) w.ycpr_original = yc;
+      }
+    }
+
+    // What each target-position book risks now on every game, for the portfolio / team / conference caps shared between games.
+    const namesOf = (w: Watch): GameNames => ({ home: w.home_team, away: w.away_team, homeConf: confOf.get(String(w.game_id))?.home_conference ?? null, awayConf: confOf.get(String(w.game_id))?.away_conference ?? null });
+    const targetIds = strategies.filter((s) => s.method === "target").map((s) => s.id);
+    const risk = new Map<number, Map<string, RiskEntry>>();
+    if (targetIds.length) {
+      const open = await db.selectAll<FillRow & { game_id: string; strategy_id: number }>(
+        "bot_fills",
+        `select=game_id,strategy_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&strategy_id=in.(${targetIds.join(",")})&result=is.null&order=id`
+      );
+      for (const id of targetIds) {
+        const m = new Map<string, RiskEntry>();
+        for (const w of watch) {
+          const f = open.filter((x) => x.strategy_id === id && String(x.game_id) === String(w.game_id));
+          if (f.length) m.set(String(w.game_id), riskEntry(String(w.game_id), heldFrom(f as FillLike[]), namesOf(w)));
+        }
+        risk.set(id, m);
       }
     }
 
@@ -401,6 +428,7 @@ export async function runCycle(): Promise<CycleTotals> {
         const bookList: Book[] = [
           {
             strategyId: null,
+            method: "ladder" as const,
             fairMode: "blend",
             weight: num(w.ycpr_weight) ?? defaultTrust, // per-game trust wins over the default
             stopMinutes: w.stop_minutes_before,
@@ -412,6 +440,8 @@ export async function runCycle(): Promise<CycleTotals> {
           },
           ...strategies.map((st) => ({
             strategyId: st.id,
+            method: st.method === "target" ? ("target" as const) : ("ladder" as const),
+            st,
             fairMode: st.fair_mode === "shrunk" ? ("shrunk" as const) : ("blend" as const),
             weight: num(st.ycpr_weight) ?? defaultTrust,
             stopMinutes: st.stop_minutes_before,
@@ -434,6 +464,63 @@ export async function runCycle(): Promise<CycleTotals> {
             totals[kind]++;
             (totals.venues[v] ??= { ladders: 0, fills: 0, placed: 0 })[kind]++;
           };
+
+          if (bk.method === "target") {
+            // Target-position book: one decision for the game across every venue; takes only, no resting quotes.
+            const st = bk.st!;
+            if (kickoff != null && now() >= kickoff - bk.stopMinutes * 60) continue;
+            if (sh.fair == null || pm == null) continue;
+            const names = namesOf(w);
+            const decision = decideTarget({
+              books: [...ladders].map(([v, L]) => ({ venue: v, rungs: L.rungs, fee: adapters[v].fee(hours, L.eventKey) })),
+              fills: bookFills as FillLike[],
+              fair: sh.fair,
+              edgePts: sh.edgePts ?? 0,
+              sigma: shrinkCfg.sigma,
+              strategy: { max_worst_case_loss: Number(st.max_worst_case_loss), per_rung_cap: st.per_rung_cap, take_edge: Number(st.take_edge) },
+              settings: state,
+              others: [...(risk.get(st.id)?.values() ?? [])].filter((r) => r.gameId !== String(w.game_id)),
+              game: names,
+            });
+            if (decision.orders.length) {
+              const rows = await db.insert<{ id: number }>(
+                "bot_orders",
+                decision.orders.map((o) => ({
+                  mode: MODE, venue: o.venue, strategy_id: sid, game_id: w.game_id, ticker: o.ticker, action: o.action, price: o.price, count: o.count, kind: "take",
+                  direction: o.direction, fair: o.fair, reason: o.reason.slice(0, 200), status: "filled", closed_at: iso(),
+                }))
+              );
+              const fillRows = decision.orders.map((o, i) => {
+                const L = ladders.get(o.venue as VenueId)!;
+                const r = L.rungs.find((x) => x.ticker === o.ticker);
+                return {
+                  mode: MODE, venue: o.venue as VenueId, strategy_id: sid, order_id: rows[i].id, game_id: w.game_id, ticker: o.ticker, side: r?.side ?? "home", strike: r?.strike ?? 0,
+                  action: o.action, price: o.price, count: o.count, fee: adapters[o.venue as VenueId].fee(hours, L.eventKey)(o.price, { count: o.count, maker: false }),
+                  fair_at_fill: o.fair, mid_at_fill: r?.bid != null && r?.ask != null ? (r.bid + r.ask) / 2 : null,
+                  ycpr_at_fill: ours, market_at_fill: pm, shrunk_at_fill: sh.fair, hours_to_kickoff: Math.round(hours * 1000) / 1000, is_maker: false,
+                };
+              });
+              await db.insert("bot_fills", fillRows);
+              bookFills.push(...(fillRows as unknown as FillRow[]));
+              totals.labFills += fillRows.length;
+            }
+            (risk.get(st.id) ?? risk.set(st.id, new Map()).get(st.id)!).set(String(w.game_id), riskEntry(String(w.game_id), heldFrom(bookFills as FillLike[]), names));
+            // The plan behind these orders, for the dashboard (a failing write never stops trading).
+            try {
+              const mid = (a: number[]) => a.slice(40, 121).map((v) => Math.round(v * 100) / 100);
+              await db.upsert("bot_plans", [{
+                game_id: w.game_id, strategy_id: sid, updated_at: iso(),
+                plan: {
+                  lean: decision.plan.lean, edgePts: decision.plan.edgePts, ycpr: ours, pmMedian: pm, shrunkFair: sh.fair, rawGap: sh.gap, beta: shrinkCfg.beta,
+                  slope: decision.plan.slope, openable: decision.plan.openable, scale: decision.plan.scale, room: decision.room,
+                  worstBefore: decision.plan.worstBefore, worstAfter: decision.plan.worstAfter, expectedAfter: decision.plan.expectedAfter,
+                  curveBefore: mid(decision.plan.curveBefore), curveAfter: mid(decision.plan.curveAfter), heldByX: decision.plan.heldByX, notes: decision.notes,
+                  orders: decision.orders.map((o) => ({ venue: o.venue, ticker: o.ticker, action: o.action, price: o.price, count: o.count, direction: o.direction, reason: o.reason, forced: o.forced ?? false })),
+                },
+              }], "game_id,strategy_id");
+            } catch {}
+            continue;
+          }
 
           for (const [v, L] of ladders) {
             const adapter: VenueAdapter = adapters[v];

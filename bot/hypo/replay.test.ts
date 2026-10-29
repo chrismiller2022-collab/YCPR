@@ -6,7 +6,7 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { marginPmf } from "../fairPrice/marginDistribution";
 import { novigRungs, type NovigBook, type NovigMarket } from "../venues/novig";
 import type { VenueId } from "../venues/types";
-import { advance, annotateSteps, builtinMethods, emptyState, summarize, VENUE_SETS, type HypoGame, type SnapRow, type Step, type VenueRules } from "./replay";
+import { advance, annotateSteps, builtinMethods, emptyState, methodHash, strategyMethod, summarize, VENUE_SETS, type HypoGame, type SnapRow, type Step, type VenueRules } from "./replay";
 
 const fx = JSON.parse(readFileSync(fileURLToPath(new URL("../venues/fixtures/novig-cmu.json", import.meta.url)), "utf8")) as { markets: NovigMarket[]; books: Record<string, NovigBook> };
 const novig = novigRungs(fx.markets, new Map(Object.entries(fx.books)), true).rungs; // CMU (home) rungs, market ≈ Miami −2.5
@@ -110,5 +110,41 @@ describe("Hypotheticals replay", () => {
     expect(sum.settled).toBe(sum.curve[game.final! + 60]);
     expect(sum.resting).toBe(0);
     if (sum.fills) expect(sum.clv).not.toBeNull();
+  });
+});
+
+describe("Hypotheticals replay · target-position strategies", () => {
+  const steps = annotateSteps(makeSteps());
+  const now = T0 + 40 * 3600;
+  const st = (over = {}) => ({
+    id: 9, name: "Target", pro_edge: 0.02, anti_edge: 0.04, take_edge: 0.005, edge_step: 0.01, max_worst_case_loss: 10, per_rung_cap: 3, ycpr_weight: null,
+    stop_minutes_before: 30, shape: null, market_floor: null, against_limit: null, blowout_margin: null, fair_mode: "shrunk", method: "target", ...over,
+  });
+  const m = strategyMethod(st(), 1, undefined, { bankroll: 5000, kellyFrac: 0.25 });
+
+  it("is a target-kind method that hashes on its settings, so editing one restarts its replay", () => {
+    expect(m.kind).toBe("target");
+    expect(methodHash(m)).not.toBe(methodHash(strategyMethod(st(), 1, undefined, { bankroll: 100, kellyFrac: 0.25 })));
+    expect(methodHash(m)).not.toBe(methodHash(strategyMethod(st({ method: "ladder", fair_mode: "blend" }), 1)));
+  });
+
+  it("is incremental, stays inside the cap on every venue set, only takes, and trades off the stale Novig prices", () => {
+    let traded = 0;
+    for (const set of VENUE_SETS) {
+      const once = advance(emptyState(), steps, game, m, set, rules, now);
+      const twice = advance(advance(emptyState(), steps.slice(0, 13), game, m, set, rules, now), steps.slice(13), game, m, set, rules, now);
+      expect(twice, set).toEqual(once);
+      expect(once.resting, set).toEqual([]); // no resting quotes, ever
+      const sum = summarize(once, game, set);
+      expect(sum.worst, set).toBeGreaterThanOrEqual(-10 - 1e-6);
+      traded += sum.fills;
+    }
+    expect(traded).toBeGreaterThan(0);
+  });
+
+  it("does nothing when our number is the market", () => {
+    const flat = advance(emptyState(), steps, { ...game, ycpr: -2.5 - 0.0 }, m, "all", rules, now);
+    // the market sits within a couple of points of -2.5, the shrunk edge is tiny and inside the fee dead zone
+    expect(summarize(flat, game, "all").contracts).toBeLessThanOrEqual(summarize(advance(emptyState(), steps, game, m, "all", rules, now), game, "all").contracts);
   });
 });
