@@ -99,6 +99,8 @@ Dashboard → **Settings → Run history → Everything**. Within a few minutes 
 
 ## Day to day
 
+- After the trading rebuild (2026-10-29): `git pull && npm install && sudo systemctl restart ycpr-bot` also switches the tower to the runner that knows the shrunk fair value, the target books and Polymarket (read-only by default); every paper run then records `codeVersion` 3, which the dashboard checks before it lets you turn the rebuilt books on (Settings → Rebuild). See `BOT_REBUILD_HANDOFF.md` §13.
+
 - Update the code: `cd ~/YCPR && git pull && npm install && sudo systemctl restart ycpr-bot`
 - Stop the bot: `sudo systemctl stop ycpr-bot` (the dashboard's kill switch also works)
 - The status pill at the top of the dashboard says whether the bot is running: **Live** (a cycle finished in the last 3 min),
