@@ -13,7 +13,7 @@
 //    (Action Network). Makers pay nothing. Novig's own schedule was not reachable (novig.us/fees redirects to a landing page).
 //  - ProphetX: no official fee page found; reviews say 2% of net winnings (1% / 3% tiers also mentioned, unconfirmed).
 //    The commission is account-configurable, so it is a setting (PROPHETX_COMMISSION), default 2%.
-//  - Polymarket: filled in when the venue is added (Stage E).
+//  - Polymarket US: docs.polymarket.us/fees.md (taker 0.0695 · p · (1−p), makers free) and each market's own feeCoefficient; see below.
 
 import type { FeeFn } from "../ladder/engine";
 
@@ -123,3 +123,17 @@ export const prophetxFee =
   (): FeeFn =>
   (price, opts = {}) =>
     prophetxCommission() * (opts.count ?? 1) * (1 - price);
+
+// ---------- Polymarket US
+
+/**
+ * Polymarket US (docs.polymarket.us/fees.md, effective 2026-10-19): taker fee = theta · C · p · (1 − p) with theta 0.0695, exposed per market as
+ * `feeCoefficient` (read from the market data each cycle). Makers pay nothing; the maker rebate (tiered on prior-month maker volume, none below
+ * $10M) is ignored, which is conservative. Combo fills use another formula and are not traded here.
+ */
+export const POLYMARKET_DEFAULT_COEF = 0.0695;
+
+export const polymarketFee =
+  (coef: number = POLYMARKET_DEFAULT_COEF): FeeFn =>
+  (price, opts = {}) =>
+    opts.maker ? 0 : coef * (opts.count ?? 1) * price * (1 - price);

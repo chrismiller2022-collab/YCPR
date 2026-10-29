@@ -5,7 +5,7 @@
 
 import type { FeeFn, Rung } from "../ladder/engine";
 
-export type VenueId = "kalshi" | "novig" | "prophetx";
+export type VenueId = "kalshi" | "novig" | "prophetx" | "polymarket";
 
 export interface VenueGame {
   home_team: string;

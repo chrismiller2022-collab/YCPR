@@ -53,7 +53,7 @@ async function picker(q, res) {
   const inIds = ids.length ? `in.(${ids.join(",")})` : "eq.__none__";
   const [lines, mkt, watched, strategies, [pstate]] = await Promise.all([
     ids.length ? sb(`betting_lines?select=game_id,provider,spread&game_id=${inIds}&spread=not.is.null`) : [],
-    ids.length ? sb(`bot_mkt_games?select=game_id,venue_margins,venue_events,updated_at&game_id=${inIds}`) : [],
+    ids.length ? sb(`bot_mkt_games?select=game_id,venue_margins,ro_margins,venue_events,updated_at&game_id=${inIds}`) : [],
     sb("bot_watchlist?select=id,game_id,enabled"),
     sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
     sb("bot_state?select=beta,hump_cap,hump_fall,sigma&id=eq.1"),
@@ -73,6 +73,7 @@ async function picker(q, res) {
       home_spread: spread[g.id] ?? null,
       yc_away_spread: yc.get(String(g.id)) ?? null,
       venue_margins: venues.get(String(g.id))?.venue_margins ?? {},
+      ro_margins: venues.get(String(g.id))?.ro_margins ?? {},
       lines: lineSummary({ ycpr_home_margin: yc.get(String(g.id)) ?? null, venue_margins: venues.get(String(g.id))?.venue_margins ?? {} }, pstate),
       watch: watch.get(String(g.id)) ?? null,
     })),

@@ -49,7 +49,7 @@ function cleanWatch(body) {
   cleanShape(body, w);
   if (body.enabled !== undefined) w.enabled = !!body.enabled;
   if (body.venues !== undefined) {
-    if (!Array.isArray(body.venues) || body.venues.some((v) => !["kalshi", "novig", "prophetx"].includes(v))) throw new Error("venues must be kalshi, novig and/or prophetx");
+    if (!Array.isArray(body.venues) || body.venues.some((v) => !["kalshi", "novig", "prophetx", "polymarket"].includes(v))) throw new Error("venues must be kalshi, novig, prophetx and/or polymarket");
     w.venues = [...new Set(body.venues)];
   }
   if (body.notes !== undefined) w.notes = String(body.notes).slice(0, 500);
@@ -90,6 +90,12 @@ export default async function handler(req, res) {
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify(patch) });
         return send(res, 200, { state: row });
       }
+      case "polymarketMode": {
+        // off = untouched; read = recorded and shown, never in the PM median, never traded; paper = a venue like the others (simulated fills only).
+        if (!["off", "read", "paper"].includes(body.mode)) throw new Error("mode must be off, read or paper");
+        const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify({ polymarket_mode: body.mode, updated_at: new Date().toISOString() }) });
+        return send(res, 200, { state: row });
+      }
       case "enableRebuildBooks": {
         // A runner that predates the rebuilt books would trade them as plain ladders, so this refuses until the tower runs the new code.
         await requireNewRunner();
@@ -128,7 +134,7 @@ export default async function handler(req, res) {
           const pm = pmMedian(vm.get(String(g.id)));
           return {
             game_id: String(g.id), season: g.season, week: g.week, home_team: g.home_team, away_team: g.away_team, kickoff: g.start_date,
-            pick: y != null && pm != null && y > pm ? "home" : "away", enabled: true, legacy: false, my_home_margin: null,
+            pick: y != null && pm != null && y > pm ? "home" : "away", enabled: true, legacy: false, my_home_margin: null, venues: ["kalshi", "novig", "prophetx", "polymarket"],
             ycpr_home_margin: y ?? null, ycpr_updated_at: y != null ? stamp : null, ycpr_original: y ?? null, ycpr_original_at: y != null ? stamp : null,
           };
         });

@@ -71,9 +71,13 @@ export async function runRecord(): Promise<RecordTotals> {
     for (const l of lines.sort((a, b) => rank(a.provider) - rank(b.provider))) if (!book.has(String(l.game_id))) book.set(String(l.game_id), -Number(l.spread));
     const known = new Map((await db.select<{ game_id: string; venue_events: Partial<Record<VenueId, string>> }>("bot_mkt_games", `select=game_id,venue_events&game_id=in.(${games.map((g) => g.id).join(",")})`)).map((r) => [r.game_id, r.venue_events ?? {}]));
 
+    // Polymarket: off = not recorded; read (default) = recorded and shown, kept out of the PM median; paper = a venue like the others.
+    const [st] = await db.select<{ polymarket_mode: string | null }>("bot_state", "select=polymarket_mode&id=eq.1").catch(() => []);
+    const pmMode = st?.polymarket_mode === "off" || st?.polymarket_mode === "paper" ? st.polymarket_mode : "read";
     const adapters = makeAdapters();
     const active: VenueId[] = [];
     for (const v of VENUES) {
+      if (v === "polymarket" && pmMode === "off") continue;
       if (!adapters[v].available()) continue;
       try {
         await adapters[v].prepare();
@@ -93,6 +97,7 @@ export async function runRecord(): Promise<RecordTotals> {
       const gid = String(g.id);
       const events = { ...(known.get(gid) ?? {}) };
       const margins: Partial<Record<VenueId, number>> = {};
+      const ro: Partial<Record<VenueId, number>> = {};
       const snaps: object[] = [];
       const trades: object[] = [];
       const lastRows: Last[] = [];
@@ -109,7 +114,7 @@ export async function runRecord(): Promise<RecordTotals> {
         }
         totals.ladders[v] = (totals.ladders[v] ?? 0) + 1;
         const m = impliedHomeMargin(rungs);
-        if (m != null) margins[v] = Math.round(m * 100) / 100;
+        if (m != null) (v === "polymarket" && pmMode !== "paper" ? ro : margins)[v] = Math.round(m * 100) / 100;
         const moved: string[] = [];
         let since = Infinity;
         for (const r of rungs) {
@@ -150,7 +155,7 @@ export async function runRecord(): Promise<RecordTotals> {
       if (lastRows.length) await db.upsert("bot_mkt_last", lastRows, "venue,ticker");
       await db.upsert("bot_mkt_games", [{
         game_id: gid, season: g.season, week: g.week, kickoff: g.start_date, home_team: g.home_team, away_team: g.away_team,
-        ycpr_home_margin: ycpr.get(gid) ?? null, book_home_margin: book.get(gid) ?? null, venue_events: events, venue_margins: margins, updated_at: iso(),
+        ycpr_home_margin: ycpr.get(gid) ?? null, book_home_margin: book.get(gid) ?? null, venue_events: events, venue_margins: margins, ro_margins: ro, updated_at: iso(),
       }], "game_id");
       totals.games++;
       totals.snaps += snaps.length;

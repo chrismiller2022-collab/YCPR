@@ -22,7 +22,7 @@ const SETTLE_S = 120;
 
 export function venueRules(): Record<VenueId, VenueRules> {
   const a = makeAdapters();
-  return { kalshi: { tick: a.kalshi.tick, fee: a.kalshi.fee }, novig: { tick: a.novig.tick, fee: a.novig.fee }, prophetx: { tick: a.prophetx.tick, fee: a.prophetx.fee } };
+  return { kalshi: { tick: a.kalshi.tick, fee: a.kalshi.fee }, novig: { tick: a.novig.tick, fee: a.novig.fee }, prophetx: { tick: a.prophetx.tick, fee: a.prophetx.fee }, polymarket: { tick: a.polymarket.tick, fee: a.polymarket.fee } };
 }
 
 interface GameRow {

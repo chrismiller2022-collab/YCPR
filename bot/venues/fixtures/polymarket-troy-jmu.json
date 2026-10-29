@@ -1,0 +1,930 @@
+{
+"slug": "cfb-troy-jmad-2026-10-29",
+"title": "Troy vs. James Madison",
+"startTime": "2026-10-29T23:30:00Z",
+"closed": false,
+"teams": [
+{
+"id": 1307,
+"name": "Troy"
+},
+{
+"id": 1151,
+"name": "James Madison"
+}
+],
+"markets": [
+{
+"slug": "aec-cfb-troy-jmad-2026-10-29",
+"sportsMarketType": "football_team_full_game_winner",
+"status": "MARKET_STATUS_OPEN",
+"line": null,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.0900",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.0950",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "Trojans",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "Dukes",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-neg-1pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": -1.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.0800",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1000",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "-1.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "+1.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-neg-2pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": -2.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.0750",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1000",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "-2.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "+2.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-10pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 10.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.3000",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.3100",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+10.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-10.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-13pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 13.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.3600",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.3750",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+13.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-13.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-14pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 14.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.3900",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.4050",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+14.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-14.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-16pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 16.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.4300",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.4350",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+16.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-16.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-17pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 17.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.4650",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.4700",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+17.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-17.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-18pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 18.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.4950",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.5000",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+18.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-18.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-19pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 19.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.5100",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.5150",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+19.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-19.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-1pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 1.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1000",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1200",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+1.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-1.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-20pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 20.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.5350",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.5400",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+20.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-20.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-21pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 21.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.5850",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.5900",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+21.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-21.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-23pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 23.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.6150",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.6200",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+23.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-23.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-2pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 2.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1150",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1400",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+2.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-2.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-3pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 3.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1400",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1600",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+3.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-3.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-4pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 4.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1650",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1950",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+4.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-4.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-5pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 5.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1800",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.1900",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+5.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-5.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-6pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 6.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.1950",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.2150",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+6.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-6.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-7pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 7.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.2450",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.2600",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+7.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-7.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-8pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 8.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.2500",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.2700",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+8.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-8.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-pos-9pt5",
+"sportsMarketType": "football_team_full_game_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 9.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.005,
+"bestBidQuote": {
+"value": "0.2650",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.2800",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+9.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-9.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-1h-pos-10pt5",
+"sportsMarketType": "football_team_first_half_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 10.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.01,
+"bestBidQuote": {
+"value": "0.4800",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.5000",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+10.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-10.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+},
+{
+"slug": "asc-cfb-troy-jmad-2026-10-29-1h-pos-5pt5",
+"sportsMarketType": "football_team_first_half_spread",
+"status": "MARKET_STATUS_OPEN",
+"line": 5.5,
+"feeCoefficient": 0.0695,
+"orderPriceMinTickSize": 0.01,
+"bestBidQuote": {
+"value": "0.3000",
+"currency": "USD"
+},
+"bestAskQuote": {
+"value": "0.3400",
+"currency": "USD"
+},
+"marketSides": [
+{
+"long": true,
+"teamId": 1307,
+"description": "+5.50",
+"team": {
+"id": 1307,
+"name": "Troy",
+"ordering": "away"
+}
+},
+{
+"long": false,
+"teamId": 1151,
+"description": "-5.50",
+"team": {
+"id": 1151,
+"name": "James Madison",
+"ordering": "home"
+}
+}
+]
+}
+]
+}
