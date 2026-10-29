@@ -349,7 +349,7 @@ function rebuildPanel() {
   const st = data.state || {};
   const f = (k, d) => (st[k] == null ? d : Number(st[k]));
   const books = (data.strategies || []).filter((s) => s.fair_mode === "shrunk" || s.method === "target");
-  const tower = (data.runs || []).find((r) => r.host === "tower");
+  const tower = (data.runs || []).find((r) => r.host === "tower" && r.finished_at); // a cycle in progress has not reported its version yet
   const ver = tower ? (tower.codeVersion == null ? "older than the rebuild" : `version ${tower.codeVersion}`) : "no tower run in the latest cycles";
   const field = (id, label, val, step, hint) => `<label class="field">${label}<input id="${id}" type="number" step="${step}" value="${val}" required>${hint ? `<span class="muted" style="font-weight:400;font-size:.72rem">${hint}</span>` : ""}</label>`;
   return `<div class="panel" id="rebuildPanel" style="margin-top:16px">
