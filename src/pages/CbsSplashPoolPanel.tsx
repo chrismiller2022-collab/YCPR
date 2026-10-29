@@ -11,6 +11,8 @@ import { fetchCbsSplashWeek, gradeCbsPick, gradeKellyPick, type CbsSplashRow } f
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import KeyCrossSlot from "../components/KeyCrossSlot";
 import { TEAMS_BY_NAME } from "../data/teams";
+import PoolPicksReport, { type AppliedPicks, type PoolReportOption } from "../components/PoolPicksReport";
+import type { PoolSlateGame } from "../lib/usePoolReport";
 
 // CBS's own rules exclude games between two teams that are BOTH outside
 // these five conferences — Kelly has no such restriction, so a game can
@@ -18,11 +20,26 @@ import { TEAMS_BY_NAME } from "../data/teams";
 // to be in this set for the game to count for CBS.
 const CBS_ELIGIBLE_CONFERENCES = new Set(["Big Ten", "Big 12", "ACC", "Mountain West", "SEC"]);
 
-function isCbsEligible(r: CbsSplashRow): boolean {
-  const awayConf = TEAMS_BY_NAME[r.game.away_team]?.conf;
-  const homeConf = TEAMS_BY_NAME[r.game.home_team]?.conf;
+function isCbsEligibleTeams(away: string, home: string): boolean {
+  const awayConf = TEAMS_BY_NAME[away]?.conf;
+  const homeConf = TEAMS_BY_NAME[home]?.conf;
   return (!!awayConf && CBS_ELIGIBLE_CONFERENCES.has(awayConf)) || (!!homeConf && CBS_ELIGIBLE_CONFERENCES.has(homeConf));
 }
+
+function isCbsEligible(r: CbsSplashRow): boolean {
+  return isCbsEligibleTeams(r.game.away_team, r.game.home_team);
+}
+
+// Kelly's only exclusion: a game between two Pac-12 teams. (Pac-12 vs Pac-12
+// is already out for CBS, since Pac-12 isn't one of CBS's conferences.)
+function isKellyEligibleTeams(away: string, home: string): boolean {
+  return !(TEAMS_BY_NAME[away]?.conf === "Pac-12" && TEAMS_BY_NAME[home]?.conf === "Pac-12");
+}
+
+function isKellyEligible(r: CbsSplashRow): boolean {
+  return isKellyEligibleTeams(r.game.away_team, r.game.home_team);
+}
+
 
 // Copy of PeayPoolPanel.tsx for a second "ATS vs a custom line, every
 // FBS-vs-FBS game" pool.
@@ -35,6 +52,21 @@ const POOL_PICKS_URL: string | null =
 const CBS_GAMES_TARGET = 6;
 const CBS_KEY_PICKS_TARGET = 1;
 const KELLY_GAMES_TARGET = 7;
+
+const REPORT_POOLS: PoolReportOption[] = [
+  {
+    key: "kelly",
+    label: "Kelly",
+    rules: { picks: KELLY_GAMES_TARGET, keyPicks: 0, eligible: (g) => isKellyEligibleTeams(g.input.away, g.input.home) },
+    ineligibleReason: (g) => (isKellyEligibleTeams(g.input.away, g.input.home) ? null : "Pac-12 vs Pac-12"),
+  },
+  {
+    key: "cbs",
+    label: "CBS",
+    rules: { picks: CBS_GAMES_TARGET, keyPicks: CBS_KEY_PICKS_TARGET, eligible: (g) => isCbsEligibleTeams(g.input.away, g.input.home) },
+    ineligibleReason: (g) => (isCbsEligibleTeams(g.input.away, g.input.home) ? null : "No CBS conference"),
+  },
+];
 
 async function splashSave(season: number, week: number, rows: CbsSplashRow[]) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -93,8 +125,11 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
-  const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
+  const [sortMode, setSortMode] = useState<"time" | "bestBet" | "report">("time");
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  // Game ids in Pool Report order, set by its Sort & Make Picks.
+  const [reportOrder, setReportOrder] = useState<string[] | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
   const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
@@ -157,7 +192,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
   // 7th game still needs to be added by hand afterward. One-way only;
   // doesn't touch CBS.
   function copyCbsToKelly() {
-    setRows((prev) => prev.map((r) => (r.cbsSelected ? { ...r, kellySelected: true, kellyPickedSide: r.cbsPickedSide } : r)));
+    setRows((prev) => prev.map((r) => (r.cbsSelected && isKellyEligible(r) ? { ...r, kellySelected: true, kellyPickedSide: r.cbsPickedSide } : r)));
   }
 
   // Kelly-first workflow: Kelly has no conference restriction and picks
@@ -182,6 +217,59 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       });
     });
   }
+
+  // Pool Report's Sort & Make Picks, for whichever contest the report was on.
+  // Clear mode unselects that contest's every game first; fill mode keeps
+  // what's already selected (side included) and only adds the report's
+  // games that aren't, never past the contest's game/key-pick caps.
+  function applyReportPicks({ poolKey, mode, picks, order }: AppliedPicks) {
+    const isCbs = poolKey === "cbs";
+    const target = isCbs ? CBS_GAMES_TARGET : KELLY_GAMES_TARGET;
+    setRows((prev) => {
+      let next =
+        mode === "clear"
+          ? prev.map((r) =>
+              isCbs ? { ...r, cbsSelected: false, cbsPickedSide: null, cbsIsKeyPick: false } : { ...r, kellySelected: false, kellyPickedSide: null }
+            )
+          : prev;
+      let selected = next.filter((r) => (isCbs ? r.cbsSelected : r.kellySelected)).length;
+      let keys = next.filter((r) => r.cbsIsKeyPick).length;
+      const byId = new Map(picks.map((p) => [p.gameId, p]));
+      next = next.map((r) => {
+        const p = byId.get(r.game_id);
+        if (!p) return r;
+        let row = r;
+        if (isCbs) {
+          if (!row.cbsSelected) {
+            if (selected >= target) return row;
+            selected++;
+            row = { ...row, cbsSelected: true, cbsPickedSide: p.side };
+          } else if (row.cbsPickedSide == null) {
+            row = { ...row, cbsPickedSide: p.side };
+          }
+          if (p.key && !row.cbsIsKeyPick && keys < CBS_KEY_PICKS_TARGET) {
+            keys++;
+            row = { ...row, cbsIsKeyPick: true };
+          }
+        } else if (!row.kellySelected) {
+          if (selected >= target) return row;
+          selected++;
+          row = { ...row, kellySelected: true, kellyPickedSide: p.side };
+        } else if (row.kellyPickedSide == null) {
+          row = { ...row, kellyPickedSide: p.side };
+        }
+        return row;
+      });
+      return next;
+    });
+    setReportOrder(order);
+    setSortMode("report");
+  }
+
+  const reportSlate: PoolSlateGame[] = useMemo(
+    () => rows.map((r) => ({ gameId: r.game_id, poolLine: r.splash_line, myLine: r.myProjAwaySpread, vegasLine: r.vegasAwaySpread })),
+    [rows]
+  );
 
   async function handleSave() {
     setSaving(true);
@@ -273,7 +361,10 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       const q = gameSearch.trim().toLowerCase();
       list = list.filter((r) => r.game.away_team.toLowerCase().includes(q) || r.game.home_team.toLowerCase().includes(q));
     }
-    if (sortMode === "bestBet") {
+    if (sortMode === "report" && reportOrder) {
+      const idx = new Map(reportOrder.map((id, i) => [id, i]));
+      list = [...list].sort((a, b) => (idx.get(a.game_id) ?? Infinity) - (idx.get(b.game_id) ?? Infinity));
+    } else if (sortMode === "bestBet") {
       list = [...list].sort((a, b) => {
         const av = splashVsMineLive(a);
         const bv = splashVsMineLive(b);
@@ -295,7 +386,7 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, cbsEligibleOnly, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, cbsEligibleOnly, sortKey, sortDir, gameSearch, sortMode, reportOrder]);
 
   const kellyPossibleCount = rows.filter((r) => r.kellyIsPossible).length;
   const cbsSelectedCount = rows.filter((r) => r.cbsSelected).length;
@@ -357,8 +448,8 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
         the same line: check a game into Kelly ({KELLY_GAMES_TARGET} games, no key pick) and/or CBS
         ({CBS_GAMES_TARGET} games, {CBS_KEY_PICKS_TARGET} key pick) and pick a side for each. CBS
         excludes any game between two teams that are BOTH outside {Array.from(CBS_ELIGIBLE_CONFERENCES).join(", ")} —
-        Kelly has no such restriction, so a game can be Kelly-eligible without ever being pickable
-        for CBS. Suggested flow: save lines, make all of Kelly's picks first, "Copy Kelly → CBS
+        Kelly only excludes Pac-12 vs Pac-12 games, so a game can be Kelly-eligible without ever
+        being pickable for CBS. Suggested flow: save lines, make all of Kelly's picks first, "Copy Kelly → CBS
         (eligible)" to carry over whichever of those are also CBS-eligible, then check "CBS:
         eligible conferences only" to fill in CBS's remaining picks. Splash line convention matches
         the rest of the site: negative = away favored.
@@ -440,6 +531,14 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           }}
         >
           Time
+        </button>
+        {reportOrder && (
+          <button className={`mode-btn ${sortMode === "report" ? "mode-btn-active" : ""}`} onClick={() => setSortMode("report")}>
+            Report
+          </button>
+        )}
+        <button onClick={() => setShowReport(true)} disabled={loading || rows.length === 0}>
+          Pool Report
         </button>
         <SplashLinePaste
           format="cbs"
@@ -635,6 +734,8 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
                         <input
                           type="checkbox"
                           checked={r.kellySelected}
+                          disabled={!r.kellySelected && !isKellyEligible(r)}
+                          title={isKellyEligible(r) ? undefined : "Pac-12 vs Pac-12 — not eligible for Kelly"}
                           onChange={(e) => {
                             if (e.target.checked && kellySelectedCount >= KELLY_GAMES_TARGET) {
                               setSaveMsg(`Kelly is already at ${KELLY_GAMES_TARGET} games — uncheck one first.`);
@@ -764,6 +865,18 @@ export default function CbsSplashPoolPanel({ onBack }: { onBack: () => void }) {
           awayTeam={handicapGame.awayTeam}
           homeTeam={handicapGame.homeTeam}
           onClose={() => setHandicapGame(null)}
+        />
+      )}
+
+      {showReport && (
+        <PoolPicksReport
+          season={season}
+          week={week}
+          title="CBS/Kelly"
+          slate={reportSlate}
+          pools={REPORT_POOLS}
+          onApply={applyReportPicks}
+          onClose={() => setShowReport(false)}
         />
       )}
     </div>

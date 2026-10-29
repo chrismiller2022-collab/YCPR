@@ -10,10 +10,16 @@ import { fetchPeayWeek, gradePeayPick, type PeayRow } from "../lib/api/peayPool"
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import KeyCrossSlot from "../components/KeyCrossSlot";
 import SplashLinePaste from "../components/SplashLinePaste";
+import PoolPicksReport, { type AppliedPicks } from "../components/PoolPicksReport";
+import type { PoolSlateGame } from "../lib/usePoolReport";
 
 const POOL_URL =
   "https://contests.app.splashsports.com/team-pickem/contests/contest_01KYZ8NG5NAXAWP07SM1XKN1B8?_gl=1*xjk1n4*_ga*MTg2MTgyNDQ2Ni4xNzc5OTg5MDc4*_ga_HBBJBG5JSR*czE3ODU3NzE5NzckbzQkZzEkdDE3ODU3NzIwNTckajYwJGwwJGgxMDcyNTUwNDA0";
 const KEY_PICKS_TARGET = 3;
+// The report's Sort & Make Picks fills only part of the slate: Chris picks
+// the last 2 games (and the other 2 key picks) himself.
+const REPORT_PICKS = 8;
+const REPORT_KEY_PICKS = 1;
 
 async function peaySave(season: number, week: number, rows: PeayRow[]) {
   const password = sessionStorage.getItem("admin_password") ?? "";
@@ -77,8 +83,11 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
   const [sortKey, setSortKey] = useState("start_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [gameSearch, setGameSearch] = useState("");
-  const [sortMode, setSortMode] = useState<"time" | "bestBet">("time");
+  const [sortMode, setSortMode] = useState<"time" | "bestBet" | "report">("time");
   const [handicapGame, setHandicapGame] = useState<{ awayTeam: string; homeTeam: string } | null>(null);
+  const [showReport, setShowReport] = useState(false);
+  // Game ids in Pool Report order, set by its Sort & Make Picks.
+  const [reportOrder, setReportOrder] = useState<string[] | null>(null);
 
   const { byTeam: liveByTeam, loading: ratingsLoading } = useWeeklyStats("latest");
 
@@ -138,6 +147,42 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       })
     );
   }
+
+  // Clear mode wipes every pick and key pick first; fill mode keeps what's
+  // already picked (side included) and only adds the report's games that
+  // aren't, never past PICK_LIMIT, and only adds its key pick while there's
+  // room under KEY_PICKS_TARGET.
+  function applyReportPicks({ mode, picks, order }: AppliedPicks) {
+    setRows((prev) => {
+      let next = mode === "clear" ? prev.map((r) => ({ ...r, picked_side: null, is_key_pick: false })) : prev;
+      let picked = next.filter((r) => r.picked_side != null).length;
+      let keys = next.filter((r) => r.is_key_pick).length;
+      const byId = new Map(picks.map((p) => [p.gameId, p]));
+      next = next.map((r) => {
+        const p = byId.get(r.game_id);
+        if (!p) return r;
+        let row = r;
+        if (row.picked_side == null) {
+          if (picked >= PICK_LIMIT) return row;
+          picked++;
+          row = { ...row, picked_side: p.side };
+        }
+        if (p.key && !row.is_key_pick && keys < KEY_PICKS_TARGET) {
+          keys++;
+          row = { ...row, is_key_pick: true };
+        }
+        return row;
+      });
+      return next;
+    });
+    setReportOrder(order);
+    setSortMode("report");
+  }
+
+  const reportSlate: PoolSlateGame[] = useMemo(
+    () => rows.map((r) => ({ gameId: r.game_id, poolLine: r.peay_line, myLine: r.myProjAwaySpread, vegasLine: r.vegasAwaySpread })),
+    [rows]
+  );
 
   async function handleSave() {
     setSaving(true);
@@ -226,7 +271,10 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       const q = gameSearch.trim().toLowerCase();
       list = list.filter((r) => r.game.away_team.toLowerCase().includes(q) || r.game.home_team.toLowerCase().includes(q));
     }
-    if (sortMode === "bestBet") {
+    if (sortMode === "report" && reportOrder) {
+      const idx = new Map(reportOrder.map((id, i) => [id, i]));
+      list = [...list].sort((a, b) => (idx.get(a.game_id) ?? Infinity) - (idx.get(b.game_id) ?? Infinity));
+    } else if (sortMode === "bestBet") {
       list = [...list].sort((a, b) => {
         const av = peayVsMineLive(a);
         const bv = peayVsMineLive(b);
@@ -248,7 +296,7 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
       });
     }
     return list;
-  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode]);
+  }, [rows, showPickedOnly, showPossibleOnly, hideCompleted, sortKey, sortDir, gameSearch, sortMode, reportOrder]);
 
   const keyPickCount = rows.filter((r) => r.is_key_pick).length;
   const possibleCount = rows.filter((r) => r.is_possible_pick).length;
@@ -348,6 +396,14 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           }}
         >
           Time
+        </button>
+        {reportOrder && (
+          <button className={`mode-btn ${sortMode === "report" ? "mode-btn-active" : ""}`} onClick={() => setSortMode("report")}>
+            Report
+          </button>
+        )}
+        <button onClick={() => setShowReport(true)} disabled={loading || rows.length === 0}>
+          Pool Report
         </button>
         <SplashLinePaste
           format="peay"
@@ -602,6 +658,18 @@ export default function PeayPoolPanel({ onBack }: { onBack: () => void }) {
           awayTeam={handicapGame.awayTeam}
           homeTeam={handicapGame.homeTeam}
           onClose={() => setHandicapGame(null)}
+        />
+      )}
+
+      {showReport && (
+        <PoolPicksReport
+          season={season}
+          week={week}
+          title="Peay"
+          slate={reportSlate}
+          pools={[{ key: "peay", label: "Peay", rules: { picks: REPORT_PICKS, keyPicks: REPORT_KEY_PICKS, eligible: () => true } }]}
+          onApply={applyReportPicks}
+          onClose={() => setShowReport(false)}
         />
       )}
     </div>
