@@ -298,3 +298,20 @@ create table if not exists bot_plans (
   primary key (game_id, strategy_id)
 );
 alter table bot_plans enable row level security;
+
+-- 2026-10-29: trading rebuild, stage C (markouts + shadow report). Additive.
+-- Mid of the same ticker 1 / 15 / 60 minutes after the fill (last recorded quote at or before then); filled in by bot/analysis/markouts.ts.
+alter table bot_fills add column if not exists mid_1m numeric;
+alter table bot_fills add column if not exists mid_15m numeric;
+alter table bot_fills add column if not exists mid_60m numeric;
+alter table bot_fills add column if not exists markout_at timestamptz;
+create index if not exists bot_fills_markout_todo on bot_fills (id) where markout_at is null;
+-- Latest generated reports (markdown + the numbers behind them), e.g. id 'shadow'.
+create table if not exists bot_reports (
+  id text primary key,
+  updated_at timestamptz not null default now(),
+  title text not null,
+  body text not null,
+  data jsonb
+);
+alter table bot_reports enable row level security;

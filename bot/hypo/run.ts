@@ -4,6 +4,8 @@
 // Runs after the market recorder (/api/record) and in the hourly GitHub backup.
 // Logs counts only (the repo's Actions logs are public).
 
+import { runMarkouts } from "../analysis/markouts";
+import { runReport } from "../analysis/report";
 import { shrinkFrom } from "../fairPrice/shrink";
 import { db, RUN_HOST } from "../runner/io";
 import { makeAdapters, type VenueId } from "../venues";
@@ -168,6 +170,12 @@ export async function runHypo(budgetMs = 200e3): Promise<HypoTotals> {
       totals.combos += rows.length;
       totals.steps += steps.length;
     }
+    // Markouts for fills that are now old enough, and the shadow report (at most every 6 hours). Neither may fail the replay.
+    try {
+      if (Date.now() - started < budgetMs) await runMarkouts(Math.max(15e3, Math.min(90e3, budgetMs - (Date.now() - started))));
+      const [last] = await db.select<{ updated_at: string }>("bot_reports", "select=updated_at&id=eq.shadow");
+      if (!last || Date.now() - new Date(last.updated_at).getTime() > 6 * 3600e3) await runReport();
+    } catch {}
   } catch (e) {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(e).slice(0, 2000) });
     throw e;
