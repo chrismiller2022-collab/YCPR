@@ -1,0 +1,37 @@
+# Shadow replay + markouts + the shadow report, on demand (Actions > Bot shadow report > Run workflow).
+# Replays every strategy and the rebuilt methods over the recorded market history, stores fill markouts, and writes the
+# report to the bot_reports table (the dashboard's Hypotheticals tab and Review read it). Paper only; this repo is public, so
+# the jobs log counts only.
+name: Bot shadow report
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsx bot/hypo/run.ts
+        env:
+          BOT_HYPO_BUDGET_MS: "1500000"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - run: npx tsx bot/analysis/run.ts
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
