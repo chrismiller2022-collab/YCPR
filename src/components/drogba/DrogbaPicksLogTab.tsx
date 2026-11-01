@@ -11,6 +11,7 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
   const [picks, setPicks] = useState<DrogbaPickRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [onlyFiltered, setOnlyFiltered] = useState(true);
+  const [weekFilter, setWeekFilter] = useState<string>("all"); // "all" or "<season>-<week>"
 
   useEffect(() => {
     fetchDrogbaPicks().then(setPicks).catch((e) => setError(e?.message ?? "Failed to load the log"));
@@ -19,6 +20,13 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
   const gameById = useMemo(() => new Map(state.games.map((g) => [g.id, g])), [state.games]);
 
   const graded = useMemo(() => gradePicks(picks ?? [], gameById, onlyFiltered), [picks, gameById, onlyFiltered]);
+  // Season/week groups, newest first, for the by-week table and the list filter.
+  const weekKeys = useMemo(() => {
+    const seen = new Map<string, { season: number; week: number }>();
+    for (const r of graded) seen.set(`${r.p.season}-${r.p.week}`, { season: r.p.season, week: r.p.week });
+    return Array.from(seen.entries()).sort((a, b) => b[1].season - a[1].season || b[1].week - a[1].week);
+  }, [graded]);
+  const listed = weekFilter === "all" ? graded : graded.filter((r) => `${r.p.season}-${r.p.week}` === weekFilter);
 
   const summarize = summarizePicks;
   const tierSummary = [
@@ -31,7 +39,7 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
     <div>
       <h2 style={{ marginTop: 0 }}>Picks log</h2>
       <p style={P}>
-        Numbers saved from the This week tab while the line was open. The first save for a game is kept (it's a record of what the model said then); it only changes if you explicitly overwrite. Graded both ways: against the open
+        Numbers saved automatically by every Sunday run (reruns refresh games that haven't kicked off; once a game starts its number is final). Graded both ways: against the open
         the number was compared with, and against the closing line — plus how far the line moved toward the pick (closing-line value).
       </p>
       <label style={{ fontSize: "0.85rem" }}>
@@ -41,7 +49,7 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
       {picks == null && !error && <p style={DIM}>Loading…</p>}
       {picks != null && (
         <>
-          <h3 style={H3}>Record</h3>
+          <h3 style={H3}>Season record</h3>
           <div className="table-scroll">
             <table>
               <thead>
@@ -70,6 +78,56 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
               </tbody>
             </table>
           </div>
+          <h3 style={H3}>By week</h3>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style={CELL}>Week</th>
+                  <th style={NUM}>Power vs power</th>
+                  <th style={NUM}>CLV</th>
+                  <th style={NUM}>Other games</th>
+                  <th style={NUM}>CLV</th>
+                  <th style={NUM}>All picks</th>
+                  <th style={NUM}>vs close</th>
+                  <th style={NUM}>CLV</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weekKeys.map(([key, { season, week }]) => {
+                  const wk = graded.filter((r) => r.p.season === season && r.p.week === week);
+                  const pw = summarize(wk.filter((r) => r.p.tier === "power"));
+                  const ot = summarize(wk.filter((r) => r.p.tier !== "power"));
+                  const all = summarize(wk);
+                  const rec = (t: ReturnType<typeof summarize>) => (
+                    <td style={{ ...NUM, color: atsColor(t.open.n ? t.open.pct : null) }}>{t.open.n ? `${t.open.w}–${t.open.l} (${t.open.pct.toFixed(0)}%)` : t.n ? `${t.n} pending` : "–"}</td>
+                  );
+                  return (
+                    <tr key={key} style={{ cursor: "pointer" }} onClick={() => setWeekFilter(key)} title="Show this week's picks below">
+                      <td style={CELL}>{season} wk {week}{wk.some((r) => r.p.model_version?.endsWith("-backfill")) ? " (backfill)" : ""}</td>
+                      {rec(pw)}
+                      <td style={{ ...NUM, color: clvColor(pw.clv) }}>{pw.clv == null ? "–" : sgn(pw.clv, 2)}</td>
+                      {rec(ot)}
+                      <td style={{ ...NUM, color: clvColor(ot.clv) }}>{ot.clv == null ? "–" : sgn(ot.clv, 2)}</td>
+                      {rec(all)}
+                      <td style={NUM}>{all.close.n ? `${all.close.w}–${all.close.l}` : "–"}</td>
+                      <td style={{ ...NUM, color: clvColor(all.clv) }}>{all.clv == null ? "–" : sgn(all.clv, 2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <h3 style={H3}>Picks</h3>
+          <label style={{ fontSize: "0.85rem" }}>
+            Week:{" "}
+            <select className="filter" value={weekFilter} onChange={(e) => setWeekFilter(e.target.value)}>
+              <option value="all">All weeks</option>
+              {weekKeys.map(([key, { season, week }]) => (
+                <option key={key} value={key}>{season} week {week}</option>
+              ))}
+            </select>
+          </label>
           <div className="table-scroll">
             <table>
               <thead>
@@ -88,7 +146,7 @@ export default function DrogbaPicksLogTab({ state }: { state: DrogbaState }) {
                 </tr>
               </thead>
               <tbody>
-                {graded.map(({ p, g, result, vsClose, clv }) => (
+                {listed.map(({ p, g, result, vsClose, clv }) => (
                   <tr key={p.game_id}>
                     <td style={CELL}>{p.week}</td>
                     <td style={{ ...CELL, color: p.tier === "power" ? undefined : "var(--chalk-dim)" }}>{p.tier === "power" ? "Power" : "Other"}</td>

@@ -321,7 +321,9 @@ export default async function handler(req: any, res: any) {
   // open, so by default a game that is already logged is left alone (first save wins); the caller must
   // pass overwrite: true — the page asks for confirmation first — to replace existing rows.
   if (action === "saveDrogbaPicks") {
-    const { picks, overwrite } = req.body ?? {};
+    // overwrite: replace already-logged numbers, but only for games that haven't kicked off — once a game starts its
+    // logged number is final. backfill: a deliberate rerun of a past week, which may replace played games too.
+    const { picks, overwrite, backfill } = req.body ?? {};
     if (!Array.isArray(picks) || picks.length === 0) {
       res.status(400).json({ error: "No picks to save" });
       return;
@@ -340,6 +342,7 @@ export default async function handler(req: any, res: any) {
       side: p.side === "home" || p.side === "away" ? p.side : null,
       filtered: !!p.filtered,
       model_version: p.model_version ?? null,
+      market_lines: p.market_lines && typeof p.market_lines === "object" ? p.market_lines : null,
     }));
     if (rows.some((r: any) => !r.game_id || !Number.isFinite(r.season) || !Number.isFinite(r.week) || !Number.isFinite(r.model_home_spread))) {
       res.status(400).json({ error: "Every pick needs game_id, season, week and model_home_spread" });
@@ -353,12 +356,25 @@ export default async function handler(req: any, res: any) {
         if (error) throw error;
         for (const d of data ?? []) existing.add(d.game_id);
       }
-      const toWrite = overwrite ? rows : rows.filter((r: any) => !existing.has(r.game_id));
+      const started = new Set<string>();
+      if (overwrite && !backfill) {
+        const ids = rows.map((r: any) => r.game_id).filter((id: string) => existing.has(id));
+        for (let i = 0; i < ids.length; i += 200) {
+          const { data, error } = await supabaseAdmin.from("games").select("id, start_date").in("id", ids.slice(i, i + 200));
+          if (error) throw error;
+          for (const g of data ?? []) if (g.start_date && Date.parse(g.start_date) <= Date.now()) started.add(String(g.id));
+        }
+      }
+      const toWrite = rows.filter((r: any) => !existing.has(r.game_id) || (overwrite && !started.has(r.game_id)));
       if (toWrite.length > 0) {
-        const { error } = await supabaseAdmin.from("drogba_picks").upsert(toWrite, { onConflict: "game_id" });
+        const { error } = await supabaseAdmin.from("drogba_picks").upsert(
+          toWrite.map((r: any) => ({ ...r, created_at: new Date().toISOString() })),
+          { onConflict: "game_id" }
+        );
         if (error) throw error;
       }
-      res.status(200).json({ ok: true, saved: toWrite.length, skippedExisting: overwrite ? 0 : rows.length - toWrite.length, overwritten: overwrite ? rows.filter((r: any) => existing.has(r.game_id)).length : 0 });
+      const overwritten = toWrite.filter((r: any) => existing.has(r.game_id)).length;
+      res.status(200).json({ ok: true, saved: toWrite.length - overwritten, overwritten, skippedExisting: rows.length - toWrite.length, skippedStarted: started.size });
     } catch (err: any) {
       res.status(500).json({ error: err.message ?? "Save failed" });
     }

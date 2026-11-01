@@ -14,7 +14,7 @@ const TABS = ["sunday", "thisweek", "backtest", "buckets", "log", "teasers", "da
 type Tab = (typeof TABS)[number];
 const LABELS: Record<Tab, string> = {
   sunday: "Sunday check",
-  thisweek: "This week",
+  thisweek: "Week view",
   backtest: "Backtest",
   buckets: "Buckets",
   log: "Picks log",
