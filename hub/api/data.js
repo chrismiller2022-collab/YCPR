@@ -1,5 +1,5 @@
 // GET: everything the dashboard shows. Requires the x-bot-password header.
-import { authorized, sb, send } from "./_lib.js";
+import { authorized, fillsFromPositions, sb, sbAll, send } from "./_lib.js";
 import { ycprAwaySpreads, outcomeRanges, marginPmf, boardChanges, espnScoreGame, espnDate, botHealth, pmMedian, shrinkFrom, shrunkHomeMargin } from "./_bot.mjs";
 
 /**
@@ -89,19 +89,22 @@ async function week(q, res) {
   const watch = await sb("bot_watchlist?select=id,game_id,season,week,away_team,home_team,kickoff,pick,my_home_margin,ycpr_home_margin,kalshi_home_margin,venue_margins,enabled&order=kickoff.asc.nullslast");
   const weeks = [...new Set(watch.map((w) => w.week).filter((w) => w != null))].sort((a, b) => a - b);
   const soon = watch.filter((w) => w.kickoff && new Date(w.kickoff).getTime() > Date.now() - 86400e3 && w.week != null);
+  const bookQ = String(q.get("book") ?? "");
+  const book = /^\d{1,6}$/.test(bookQ) ? Number(bookQ) : null; // null = the Board
   const wk = Number(q.get("week")) || (soon.length ? Math.min(...soon.map((w) => w.week)) : weeks.at(-1) ?? null);
   const games = watch.filter((w) => w.week === wk);
   const ids = games.map((w) => w.game_id);
   const inIds = ids.length ? `in.(${ids.map(encodeURIComponent).join(",")})` : "eq.__none__";
   const [fills, finals, lines, strategies] = await Promise.all([
-    ids.length ? sb(`bot_fills?select=id,strategy_id,venue,game_id,ticker,side,strike,action,price,count,fee&mode=eq.paper&game_id=${inIds}&order=id&limit=10000`) : [],
+    // Net positions of the book being viewed (the Board by default), summed in the database: the raw fills are thousands of rows a week and the API returns at most 1,000 per request.
+    ids.length ? sbAll(`bot_positions?select=strategy_id,game_id,venue,ticker,side,strike,yes,cost,fees,result,close_mid,last_at&mode=eq.paper&strategy_id=${book == null ? "is.null" : `eq.${book}`}&game_id=${inIds}&order=game_id,venue,ticker`) : [],
     ids.length ? sb(`games?select=id,completed,home_points,away_points,start_date,score_source&id=${inIds}`) : [],
     ids.length ? sb(`betting_lines?select=game_id,provider,spread&game_id=${inIds}&spread=not.is.null`) : [],
     sb("bot_strategies?select=id,name,enabled&order=id"),
   ]);
   const spread = {};
   for (const l of lines.sort((a, b) => lineRank(a.provider) - lineRank(b.provider))) if (spread[l.game_id] == null) spread[l.game_id] = Number(l.spread);
-  send(res, 200, { weeks, week: wk, games: games.map((w) => ({ ...w, home_spread: spread[w.game_id] ?? null })), fills, finals, strategies });
+  send(res, 200, { weeks, week: wk, book, games: games.map((w) => ({ ...w, home_spread: spread[w.game_id] ?? null })), fills: fillsFromPositions(fills), finals, strategies });
 }
 
 // ESPN scoreboard days, cached per function instance for 10 s so every open Scores tab shares one upstream fetch.
@@ -158,13 +161,23 @@ export default async function handler(req, res) {
     const [orders, fills, runs, strategies, botStatus, planRows] = await Promise.all([
       // The Board is strategy_id null; lab strategies live in /api/lab.
       sb(`bot_orders?select=id,venue,game_id,ticker,action,price,count,kind,direction,fair,reason,created_at&mode=eq.${mode}&status=eq.resting&strategy_id=is.null${inIds}&order=ticker`),
-      sb(`bot_fills?select=*&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=500`),
+      // The Fills tab's list: the latest 300 Board fills, only the columns it shows. Positions and counts come from bot_positions below.
+      sb(`bot_fills?select=id,filled_at,venue,game_id,ticker,side,strike,action,price,count,fee,fair_at_fill,close_mid,result&mode=eq.${mode}&strategy_id=is.null${inIds}&order=filled_at.desc&limit=300`),
       sb("bot_runs?mode=eq.paper&select=id,mode,host,started_at,finished_at,games,orders_placed,orders_cancelled,fills,error,venues:summary->venues,venueErrors:summary->venueErrors,labFills:summary->labFills,codeVersion:summary->codeVersion&order=started_at.desc&limit=25"),
       sb(`bot_strategies?select=${STRAT_COLS}&order=id`),
       health().catch(() => null), // a health read failing never blanks the dashboard
       // One line per target book and game (the curves load with the drawer): lean, edge, worst case and expected value after this cycle's orders.
       sb("bot_plans?select=game_id,strategy_id,updated_at,lean:plan->lean,edgePts:plan->edgePts,worstAfter:plan->worstAfter,expectedAfter:plan->expectedAfter,room:plan->room,notes:plan->notes").catch(() => []),
     ]);
+    // The Board's positions on the games still in play (finished ones are in Review), summed in the database; `pos` is fill-shaped so the
+    // dashboard's position math is unchanged, `fillCounts` the number of real fills behind each game.
+    const openIds = ids.filter((id) => !doneIds.has(String(id)));
+    const posRows = openIds.length
+      ? await sbAll(`bot_positions?select=game_id,venue,ticker,side,strike,yes,cost,fees,fills,result,close_mid,last_at&mode=eq.${mode}&strategy_id=is.null&game_id=in.(${openIds.map(encodeURIComponent).join(",")})&order=game_id,venue,ticker`)
+      : [];
+    const pos = fillsFromPositions(posRows);
+    const fillCounts = {};
+    for (const p of posRows) ((fillCounts[p.game_id] ??= {})[p.venue || "kalshi"] = (fillCounts[p.game_id][p.venue || "kalshi"] ?? 0) + Number(p.fills));
     // Latest snapshot per rung for watched games.
     const snaps = ids.length ? await sb(`bot_snapshots?select=game_id,venue,ticker,side,strike,bid,ask,fair,taken_at${inIds}&order=taken_at.desc&limit=3000`) : [];
     const latest = {};
@@ -194,7 +207,7 @@ export default async function handler(req, res) {
       const center = w.my_home_margin ?? w.ycpr_home_margin;
       if (center == null) continue;
       const vm = w.venue_margins || {};
-      const gameFills = fills.filter((x) => x.game_id === w.game_id);
+      const gameFills = pos.filter((x) => x.game_id === w.game_id);
       const byVenue = {};
       for (const v of ["all", ...new Set(gameFills.map((f) => f.venue || "kalshi"))]) {
         const held = new Map();
@@ -221,7 +234,7 @@ export default async function handler(req, res) {
     const snaps2 = await sb("bot_runs?select=started_at,board:summary->board&mode=eq.paper&finished_at=not.is.null&summary->board=not.is.null&order=started_at.desc&limit=2");
     const changes = snaps2.length === 2 ? { at: snaps2[0].started_at, since: snaps2[1].started_at, games: boardChanges(snaps2[0].board, snaps2[1].board) } : null;
 
-    send(res, 200, { state, watchlist, orders, fills, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies, health: botStatus, plans: planRows });
+    send(res, 200, { state, watchlist, orders, fills, pos, fillCounts, snapshots: Object.values(latest), runs, upcoming, outcomes, changes, strategies, health: botStatus, plans: planRows });
   } catch (err) {
     send(res, 500, { error: String(err.message || err) });
   }

@@ -227,17 +227,23 @@ function deltaHtml(x, tag = "span") {
 
 /** On the Board until the game is final (then it's only in Review). */
 const onBoard = (w) => !w.completed;
+// The Board's positions come from the database already summed (data.pos, fill-shaped); data.fills is only the latest fills for the Fills tab.
+const boardPos = () => vf(data.pos || []);
+const boardFillCount = (gid) => Object.entries(data.fillCounts?.[gid] || {}).reduce((n, [v, k]) => n + (venue === "all" || venue === v ? k : 0), 0);
 
 function renderBoard() {
   const watchlist = data.watchlist.filter(onBoard);
   const finished = data.watchlist.length - watchlist.length;
   const shown = new Set(watchlist.map((w) => w.game_id));
-  const fills = vf(data.fills).filter((f) => shown.has(f.game_id));
+  const pos = boardPos().filter((f) => shown.has(f.game_id));
+  let fillsN = 0;
   let worst = 0, best = 0, evY = 0, evK = 0, anyK = false;
   let dWorst = 0, dBest = 0, dEvY = 0, dEvK = 0;
   const rows = watchlist.map((w) => {
     const g = gameOf(w);
-    const gFills = fills.filter((f) => f.game_id === w.game_id);
+    const gFills = pos.filter((f) => f.game_id === w.game_id);
+    const nFills = boardFillCount(w.game_id);
+    fillsN += nFills;
     const pts = curve(positions(gFills));
     const wv = pts.length ? Math.min(...pts.map((p) => p.v)) : 0;
     const bv = pts.length ? Math.max(...pts.map((p) => p.v)) : 0;
@@ -255,7 +261,7 @@ function renderBoard() {
       <div class="spark">${sparkSvg(pts)}</div>
       <div class="r risk"><span class="${cls(wv)}">${usd(wv)}</span> / <span class="${cls(bv)}">${usd(bv)}</span><small>worst / best</small>${showDeltas && ch ? `<small title="Change since the last run">Δ ${deltaHtml(ch[0])} / ${deltaHtml(ch[1])}</small>` : ""}</div>
       <div class="r ev"><span class="${cls(o?.expected)}">${o ? usd(o.expected) : "–"}</span><small>${o?.marketExpected != null ? `${mktName(w)} ${usd(o.marketExpected)}` : "EV (yours)"}</small>${rowDelta(ch?.[2])}</div>
-      <div class="r st"><span class="pill ${stCls}">${esc(st)}</span><small>${gFills.length} fills</small></div>
+      <div class="r st"><span class="pill ${stCls}">${esc(st)}</span><small>${nFills} fills</small></div>
     </div>`;
   }).join("");
   const last = data.runs?.[0];
@@ -267,7 +273,7 @@ function renderBoard() {
       <div class="stat"><div class="l">Worst case (all games)</div><div class="v ${cls(worst)}">${usd(worst)}</div><div class="d">if every game lands badly</div>${tileDelta(dWorst)}</div>
       <div class="stat"><div class="l">Best case</div><div class="v ${cls(best)}">${usd(best)}</div><div class="d">if every game lands well</div>${tileDelta(dBest)}</div>
       <div class="stat"><div class="l">Expected · your number</div><div class="v ${cls(evY)}">${usd(evY)}</div><div class="d">${anyK ? `market's number: ${usd(evK)}` : "after fees"}</div>${data.changes ? `<div class="d">${deltaHtml(dEvY)} · market ${deltaHtml(dEvK)} ${since}</div>` : ""}</div>
-      <div class="stat"><div class="l">Fills / resting</div><div class="v">${fills.length} / ${resting}</div><div class="d">paper · ${VNAME[venue]}</div></div>
+      <div class="stat"><div class="l">Fills / resting</div><div class="v">${fillsN} / ${resting}</div><div class="d">paper · ${VNAME[venue]}</div></div>
       <div class="stat"><div class="l">Last run</div><div class="v" style="font-size:1.05rem">${last ? ago(last.started_at) : "–"}</div><div class="d ${last?.error ? "bad" : ""}">${last ? (last.error ? "error" : `${last.games ?? 0} games · ${last.fills ?? 0} fills`) : "not yet"}</div></div>
     </div>
     <label class="chk" style="margin:0 0 10px;color:var(--a-ink-2)"><input type="checkbox" id="boardDeltas" ${showDeltas ? "checked" : ""}> Show change since last run on each game${data.changes ? "" : ' <span class="muted">(available after two cycles have run)</span>'}</label>
@@ -292,7 +298,7 @@ function renderFills() {
   const fees = list.reduce((s, f) => s + Number(f.fee), 0);
   document.querySelector('[data-pane="fills"]').innerHTML = `
     <div class="stats">
-      <div class="stat"><div class="l">Fills</div><div class="v">${list.length}</div><div class="d">${settled.length} settled</div></div>
+      <div class="stat"><div class="l">Latest Board fills</div><div class="v">${list.length}</div><div class="d">${settled.length} settled · newest ${data.fills.length < 300 ? "all" : "300"} shown</div></div>
       <div class="stat"><div class="l">Settled P&amp;L</div><div class="v ${cls(settledPnl)}">${settled.length ? usd(settledPnl) : "–"}</div><div class="d">after fees</div></div>
       <div class="stat"><div class="l">Average CLV</div><div class="v ${cls(avgClv)}">${avgClv == null ? "–" : c(avgClv)}</div><div class="d">vs last pregame mid</div></div>
       <div class="stat"><div class="l">Fees</div><div class="v">${usd(fees)}</div><div class="d">each venue's fee model</div></div>
@@ -597,9 +603,11 @@ function renderReviewDrawer() {
 
 // ---------- Strategy lab
 
+let labAt = 0; // when the lab last loaded
 async function loadLab() {
   try {
     lab = await api("/api/lab");
+    labAt = Date.now();
     renderLab();
     if (openStrat != null) renderLabDrawer();
   } catch (e) {
@@ -689,7 +697,7 @@ function renderDrawer() {
   const w = openGame && data.watchlist.find((x) => x.game_id === openGame);
   if (!w) { root.innerHTML = ""; return; }
   const g = gameOf(w);
-  const gFills = vf(data.fills).filter((f) => f.game_id === w.game_id);
+  const gFills = boardPos().filter((f) => f.game_id === w.game_id);
   const pts = curve(positions(gFills));
   const o = outcomeOf(w);
   const [st, stCls] = statusOf(w, g);
@@ -1142,7 +1150,8 @@ setInterval(() => {
   if (!PW || document.hidden) return;
   load();
   const a = document.activeElement;
-  if (view === "lab" && !(a?.closest?.("#stratForm") && a.matches("input"))) loadLab();
+  // The lab reads every strategy's positions (about a megabyte), so it refreshes every 5 minutes, not every 30 seconds.
+  if (view === "lab" && Date.now() - labAt > 300e3 && !(a?.closest?.("#stratForm") && a.matches("input"))) loadLab();
 }, 30000);
 
 // Settings → run history
