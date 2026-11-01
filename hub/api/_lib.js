@@ -22,6 +22,20 @@ export async function sb(path, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+/**
+ * Every matching row. The database returns at most 1,000 rows per request whatever `limit` says (the Review tab silently lost everything past the
+ * oldest 1,000 fills), so this pages with Range. `path` must carry a unique `order` (e.g. `order=id`) and no `limit`.
+ */
+export async function sbAll(path, pageSize = 1000, maxRows = 100000) {
+  const out = [];
+  for (let from = 0; out.length < maxRows; from += pageSize) {
+    const rows = await sb(path, { headers: { Range: `${from}-${from + pageSize - 1}` } });
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
 export function send(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");

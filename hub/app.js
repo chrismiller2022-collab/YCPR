@@ -12,6 +12,14 @@ let fillsFilter = "";
 let lab = null; // /api/lab payload
 let openStrat = null; // strategy id, or "new"
 let review = null; // /api/review payload
+let reviewWeeks = null; // Review: the weeks shown (a Set); null = every week
+let reviewBook = "board"; // Review: whose numbers the cards and tables show: "board" or a strategy id
+try {
+  const sv = JSON.parse(localStorage.getItem("botreview") || "{}");
+  if (Array.isArray(sv.weeks)) reviewWeeks = new Set(sv.weeks);
+  if (sv.book != null) reviewBook = sv.book;
+} catch {}
+const saveReview = () => { try { localStorage.setItem("botreview", JSON.stringify({ weeks: reviewWeeks ? [...reviewWeeks] : null, book: reviewBook })); } catch {} };
 let openReview = null; // game_id shown in the Review drawer
 let openHypo = null; // { gameId, methodKey } shown in the Hypotheticals drawer (hypo.js)
 let venue = "all"; // venue filter: all | kalshi | novig | prophetx
@@ -440,50 +448,106 @@ async function loadReview() {
 const finalLabel = (r) => (r.final == null ? (r.completed ? "–" : "in progress") : `${r.final < 0 ? r.away_team : r.home_team} by ${Math.abs(r.final)}`);
 const roi = (pnl, risk) => (pnl == null || !risk ? "–" : ((pnl / risk) * 100).toFixed(1) + "%");
 
+/** One book's summary on one game (the Board's, or a strategy's); null when that book never traded it. */
+const bookSummary = (g, book) => (book === "board" ? g.board : g.byStrategy?.[book] ?? null);
+
+/** Totals over several games' summaries of one book (CLV weighted by the contracts behind it). */
+function reviewAgg(sums) {
+  const traded = sums.filter((x) => x && x.fills > 0);
+  const settled = traded.filter((x) => x.settled != null);
+  const total = (a, f) => a.reduce((t, x) => t + f(x), 0);
+  const clvN = total(traded, (x) => x.clvN || 0);
+  return {
+    games: traded.length,
+    fills: total(traded, (x) => x.fills),
+    contracts: total(traded, (x) => x.contracts),
+    fees: total(traded, (x) => x.fees),
+    settledGames: settled.length,
+    settled: settled.length ? total(settled, (x) => x.settled) : null,
+    settledContracts: total(settled, (x) => x.settledContracts || 0),
+    risked: total(settled, (x) => x.risked),
+    won: settled.filter((x) => x.settled > 0).length,
+    lost: settled.filter((x) => x.settled < 0).length,
+    clv: clvN ? total(traded, (x) => (x.clv ?? 0) * (x.clvN || 0)) / clvN : null,
+  };
+}
+const perContract = (a) => (a.settled == null || !a.settledContracts ? null : a.settled / a.settledContracts);
+
 function renderReview() {
   const pane = document.querySelector('[data-pane="review"]');
   if (!review) { pane.innerHTML = '<p class="muted">Loading…</p>'; return; }
-  const { games, strategies, season } = review;
+  const { games, strategies } = review;
   if (!games.length) { pane.innerHTML = '<div class="empty">No games have kicked off yet. Post-mortems appear here once a watchlist game starts.</div>'; return; }
+  const weeks = [...new Set(games.map((g) => g.week))].sort((a, b) => b - a);
+  const sel = reviewWeeks ? weeks.filter((w) => reviewWeeks.has(w)) : weeks;
+  const shownWeeks = sel.length ? sel : weeks;
+  const inSel = new Set(shownWeeks);
+  const gs = games.filter((g) => inSel.has(g.week));
+  const books = [{ id: "board", name: "Board" }, ...strategies.map((st) => ({ id: st.id, name: st.name + (st.enabled ? "" : " (off)") }))];
+  const book = books.some((b) => String(b.id) === String(reviewBook)) ? reviewBook : "board";
+  const bookName = books.find((b) => String(b.id) === String(book))?.name ?? "Board";
+  const key = (x) => (x === "board" ? "board" : Number(x));
+  const k = key(book);
+  const cur = reviewAgg(gs.map((g) => bookSummary(g, k)));
+  const graded = gs.filter((g) => g.oursCloser != null);
+  const closer = graded.filter((g) => g.oursCloser).length;
+  const feesAll = reviewAgg(gs.map((g) => bookSummary(g, k))).fees;
   // Venue totals across settled games (Board).
   const vt = {};
-  for (const g of games) for (const [v, x] of Object.entries(g.venues)) {
+  for (const g of gs) for (const [v, x] of Object.entries(g.venues)) {
     const t = (vt[v] ??= { fills: 0, settled: 0, any: false, risked: 0 });
     t.fills += x.fills;
     if (x.settled != null) { t.settled += x.settled; t.any = true; t.risked += x.risked; }
   }
-  const weeks = [...new Set(games.map((g) => g.week))].sort((a, b) => b - a);
+  const weekRow = (label, a) => `<tr><td>${label}</td><td>${a.games}</td><td>${a.fills}</td><td>${a.contracts}</td><td class="${cls(a.settled)}">${usd(a.settled)}<small>${a.settledGames ? `${a.won}–${a.lost} games` : ""}</small></td><td class="${cls(perContract(a))}">${perContract(a) == null ? "–" : c(perContract(a))}</td><td>${roi(a.settled, a.risked)}<small>risked ${usd(a.risked)}</small></td><td class="${cls(a.clv)}">${c(a.clv)}</td><td>${usd(a.fees)}</td></tr>`;
+  const presets = [["all", "All weeks"], ["1", "Latest week"], ["2", "Last 2"], ["3", "Last 3"]];
   pane.innerHTML = `
+    <div class="panel" style="margin-bottom:14px">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <div class="field" style="min-width:0">Weeks
+          <div style="display:flex;gap:6px 12px;flex-wrap:wrap;align-items:center;min-height:32px">
+            ${weeks.map((w) => `<label class="chk"><input type="checkbox" data-rvweek="${w}" ${inSel.has(w) ? "checked" : ""}> Wk ${w ?? "–"} <span class="muted">(${games.filter((g) => g.week === w).length})</span></label>`).join("")}
+          </div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${presets.map(([id, l]) => `<button type="button" class="btn" data-rvpreset="${id}" style="padding:4px 10px">${l}</button>`).join("")}</div>
+        <label class="field" style="min-width:200px">Book<select id="rvBook">${books.map((b) => `<option value="${b.id}" ${String(b.id) === String(book) ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
+      </div>
+      <p class="muted" style="font-size:.78rem;margin:8px 0 0">Showing ${gs.length} game${gs.length === 1 ? "" : "s"} in ${shownWeeks.length === weeks.length ? "every week" : `week${shownWeeks.length === 1 ? "" : "s"} ${[...shownWeeks].sort((a, b) => a - b).join(", ")}`} · numbers are ${esc(bookName)}'s.</p>
+    </div>
     <div class="stats">
-      <div class="stat"><div class="l">Settled P&amp;L · Board</div><div class="v ${cls(season.settled)}">${usd(season.settled)}</div><div class="d">${season.won}–${season.lost} games · ${season.settledGames} settled</div></div>
-      <div class="stat"><div class="l">Return on risk</div><div class="v ${cls(season.settled)}">${roi(season.settled, season.risked)}</div><div class="d">P&amp;L ÷ worst cases (${usd(season.risked)})</div></div>
-      <div class="stat"><div class="l">Average CLV</div><div class="v ${cls(season.clv)}">${c(season.clv)}</div><div class="d">per contract, vs last pregame mid</div></div>
-      <div class="stat"><div class="l">Your number vs the close</div><div class="v">${season.graded ? `${season.oursCloser}/${season.graded}` : "–"}</div><div class="d">finals closer to yours</div></div>
-      <div class="stat"><div class="l">Fees</div><div class="v">${usd(season.fees)}</div><div class="d">all venues</div></div>
+      <div class="stat"><div class="l">Settled P&amp;L · ${esc(bookName)}</div><div class="v ${cls(cur.settled)}">${usd(cur.settled)}</div><div class="d">${cur.won}–${cur.lost} games · ${cur.settledGames} settled of ${cur.games} traded</div></div>
+      <div class="stat"><div class="l">Return on risk</div><div class="v ${cls(cur.settled)}">${roi(cur.settled, cur.risked)}</div><div class="d">P&amp;L ÷ worst cases (${usd(cur.risked)})</div></div>
+      <div class="stat"><div class="l">P&amp;L per contract</div><div class="v ${cls(perContract(cur))}">${perContract(cur) == null ? "–" : c(perContract(cur))}</div><div class="d">${cur.contracts} contracts · ${cur.fills} fills</div></div>
+      <div class="stat"><div class="l">Average CLV</div><div class="v ${cls(cur.clv)}">${c(cur.clv)}</div><div class="d">per contract, vs last pregame mid</div></div>
+      <div class="stat"><div class="l">Your number vs the close</div><div class="v">${graded.length ? `${closer}/${graded.length}` : "–"}</div><div class="d">finals closer to yours</div></div>
+      <div class="stat"><div class="l">Fees</div><div class="v">${usd(feesAll)}</div><div class="d">${esc(bookName)}, all venues</div></div>
     </div>
-    <div style="display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));align-items:start;margin-bottom:16px">
-      <div class="panel"><h3>By venue</h3><div class="scroll"><table><tr><th>Venue</th><th>Fills</th><th>Settled</th><th>Return</th></tr>
-        ${Object.entries(vt).map(([v, t]) => `<tr><td>${VNAME[v]}</td><td>${t.fills}</td><td class="${cls(t.any ? t.settled : null)}">${t.any ? usd(t.settled) : "–"}</td><td>${t.any ? roi(t.settled, t.risked) : "–"}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No fills.</td></tr>'}
+    <div style="display:grid;gap:16px;grid-template-columns:minmax(0,1fr);margin-bottom:16px">
+      <div class="panel"><h3>By week · ${esc(bookName)}</h3><div class="scroll"><table class="review"><tr><th>Week</th><th>Games</th><th>Fills</th><th>Contracts</th><th>Settled</th><th>Per contract</th><th>Return</th><th>CLV</th><th>Fees</th></tr>
+        ${shownWeeks.map((w) => weekRow(`Wk ${w ?? "–"}`, reviewAgg(games.filter((g) => g.week === w).map((g) => bookSummary(g, k))))).join("")}
+        ${shownWeeks.length > 1 ? weekRow("<b>Selected</b>", cur) : ""}
       </table></div></div>
-      <div class="panel"><h3>Strategies (lab)</h3><div class="scroll"><table><tr><th>Strategy</th><th>Games</th><th>Settled</th><th>Return</th><th>CLV</th></tr>
-        ${strategies.map((st) => `<tr><td>${esc(st.name)}${st.enabled ? "" : ' <span class="pill">Off</span>'}</td><td>${st.games}</td><td class="${cls(st.settled)}">${usd(st.settled)}</td><td>${roi(st.settled, st.risked)}</td><td class="${cls(st.clv)}">${c(st.clv)}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No strategies.</td></tr>'}
+      <div class="panel"><h3>Books compared · same weeks</h3><div class="scroll"><table class="review"><tr><th>Book</th><th>Games</th><th>Fills</th><th>Settled</th><th>Return</th><th>Per contract</th><th>CLV</th><th>Fees</th></tr>
+        ${books.map((b) => { const a = reviewAgg(gs.map((g) => bookSummary(g, key(b.id)))); return `<tr data-rvbook="${b.id}" style="cursor:pointer;${String(b.id) === String(book) ? "font-weight:700" : ""}"><td>${esc(b.name)}</td><td>${a.games}</td><td>${a.fills}</td><td class="${cls(a.settled)}">${usd(a.settled)}<small>${a.settledGames ? `${a.won}–${a.lost}` : ""}</small></td><td>${roi(a.settled, a.risked)}</td><td class="${cls(perContract(a))}">${perContract(a) == null ? "–" : c(perContract(a))}</td><td class="${cls(a.clv)}">${c(a.clv)}</td><td>${usd(a.fees)}</td></tr>`; }).join("")}
+      </table></div><p class="muted" style="font-size:.74rem;margin:6px 0 0">Click a row to show that book above.</p></div>
+      <div class="panel"><h3>By venue · Board</h3><div class="scroll"><table class="review"><tr><th>Venue</th><th>Fills</th><th>Settled</th><th>Return</th></tr>
+        ${Object.entries(vt).map(([v, t]) => `<tr><td>${VNAME[v] || v}</td><td>${t.fills}</td><td class="${cls(t.any ? t.settled : null)}">${t.any ? usd(t.settled) : "–"}</td><td>${t.any ? roi(t.settled, t.risked) : "–"}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No Board fills in these weeks.</td></tr>'}
       </table></div></div>
     </div>
-    ${weeks.map((wk) => `<h3 style="margin:14px 0 8px">Week ${wk ?? "–"}</h3>
+    ${shownWeeks.map((wk) => `<h3 style="margin:14px 0 8px">Week ${wk ?? "–"} · ${esc(bookName)}</h3>
       <div class="panel" style="padding:8px 10px"><div class="scroll"><table class="review">
         <tr><th>Game</th><th>Lean</th><th>Yours / close / final</th><th>Fills</th><th>CLV</th><th>Settled</th><th>Return</th><th>Your bets</th></tr>
-        ${games.filter((g) => g.week === wk).map((g) => `<tr data-review="${esc(g.game_id)}" tabindex="0" style="cursor:pointer">
+        ${games.filter((g) => g.week === wk).map((g) => { const b = bookSummary(g, k); return `<tr data-review="${esc(g.game_id)}" tabindex="0" style="cursor:pointer">
           <td><b>${esc(g.away_team)} @ ${esc(g.home_team)}</b><small>${when(g.kickoff)}</small></td>
           <td>${esc(g.pick === "home" ? g.home_team : g.away_team)}</td>
           <td>${signed(g.ours)} / ${signed(g.close)} / ${g.final == null ? "–" : signed(g.final)}<small>${g.oursCloser == null ? finalLabel(g) : g.oursCloser ? "final closer to yours" : "final closer to the close"}</small></td>
-          <td>${g.board.fills}<small>${Object.keys(g.venues).map((v) => VSHORT[v]).join(" · ") || "none"}</small></td>
-          <td class="${cls(g.board.clv)}">${c(g.board.clv)}</td>
-          <td class="${cls(g.board.settled)}">${usd(g.board.settled)}<small>${g.board.unsettled ? `${g.board.unsettled} ungraded` : ""}</small></td>
-          <td>${roi(g.board.settled, g.board.risked)}<small>risked ${usd(g.board.risked)}</small></td>
+          <td>${b ? b.fills : 0}<small>${k === "board" ? Object.keys(g.venues).map((v) => VSHORT[v]).join(" · ") || "none" : b ? "" : "didn't trade"}</small></td>
+          <td class="${cls(b?.clv)}">${c(b?.clv)}</td>
+          <td class="${cls(b?.settled)}">${usd(b?.settled)}<small>${b?.unsettled ? `${b.unsettled} ungraded` : ""}</small></td>
+          <td>${roi(b?.settled, b?.risked)}<small>${b ? `risked ${usd(b.risked)}` : ""}</small></td>
           <td>${g.bets.length || "–"}</td>
-        </tr>`).join("")}
+        </tr>`; }).join("")}
       </table></div></div>`).join("")}
-    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Lines are away spreads (negative = away favored). Close = last pregame line the bot saw (Kalshi, else Novig/ProphetX). Risked = the worst final-margin outcome of what was held. Paper results only; your real bets are shown for comparison and never changed.</p>`;
+    <p class="muted" style="font-size:.76rem;margin:8px 0 0">Lines are away spreads (negative = away favored). Close = last pregame line the bot saw (Kalshi, else Novig/ProphetX). Risked = the worst final-margin outcome of what was held. Paper results only; your real bets are shown for comparison and never changed. Opening a game shows the Board's fills and every strategy's result on it.</p>`;
 }
 
 function renderReviewDrawer() {
@@ -1127,3 +1191,31 @@ document.querySelector('[data-pane="settings"]').addEventListener("change", asyn
   e.target.blur();
   load();
 });
+
+// Review: week and book filters
+{
+  const pane = document.querySelector('[data-pane="review"]');
+  const allWeeks = () => [...new Set((review?.games ?? []).map((g) => g.week))].sort((a, b) => b - a);
+  const setWeeks = (set) => { reviewWeeks = set; saveReview(); renderReview(); };
+  pane.addEventListener("change", (e) => {
+    if (e.target.id === "rvBook") { reviewBook = e.target.value === "board" ? "board" : Number(e.target.value); saveReview(); renderReview(); return; }
+    const w = e.target.dataset?.rvweek;
+    if (w == null) return;
+    const weeks = allWeeks();
+    const cur = new Set(reviewWeeks ? weeks.filter((x) => reviewWeeks.has(x)) : weeks);
+    const n = Number(w);
+    if (cur.has(n)) cur.delete(n); else cur.add(n);
+    if (!cur.size) { renderReview(); return; } // keep at least one week
+    setWeeks(cur.size === weeks.length ? null : cur);
+  });
+  pane.addEventListener("click", (e) => {
+    const p = e.target.closest("[data-rvpreset]");
+    if (p) {
+      const weeks = allWeeks();
+      setWeeks(p.dataset.rvpreset === "all" ? null : new Set(weeks.slice(0, Number(p.dataset.rvpreset))));
+      return;
+    }
+    const b = e.target.closest("tr[data-rvbook]");
+    if (b) { reviewBook = b.dataset.rvbook === "board" ? "board" : Number(b.dataset.rvbook); saveReview(); renderReview(); }
+  });
+}
