@@ -19,6 +19,7 @@ vi.mock("../../hub/api/_bot.mjs", async () => {
 });
 import data, { lineSummary } from "../../hub/api/data.js";
 import admin from "../../hub/api/admin.js";
+import review from "../../hub/api/review.js";
 
 const game = (id: string, week: number, completed: boolean, extra: Row = {}) => ({
   id, season: 2026, week, season_type: "regular", start_date: `2026-10-${20 + Number(id)}T23:00:00Z`, home_team: `Home${id}`, away_team: `Away${id}`,
@@ -185,5 +186,26 @@ describe("Add games / Manage games API", () => {
       await call(admin, "/api/admin", { action: "enableRebuildBooks" });
       expect(db.bot_strategies).toHaveLength(2);
     });
+  });
+
+  it("review: sees every paper fill, not just the first 1,000 the database returns per request (week 9 was showing 0 fills)", async () => {
+    const past = (d: number) => new Date(Date.now() - d * 86400e3).toISOString();
+    db.games = [game("1", 8, true), game("2", 9, true)];
+    db.bot_watchlist = [
+      { id: 1, game_id: "1", week: 8, kickoff: past(8), pick: "away", enabled: true, home_team: "Home1", away_team: "Away1" },
+      { id: 2, game_id: "2", week: 9, kickoff: past(1), pick: "away", enabled: true, home_team: "Home2", away_team: "Away2" },
+    ];
+    db.bot_strategies = [{ id: 7, name: "Patient", enabled: true }];
+    db.placed_bets = [];
+    // 1,500 older fills on the week 8 game, then 1,000 newer ones on week 9: the oldest 1,000 alone contain no week 9 fill.
+    db.bot_fills = Array.from({ length: 2500 }, (_, i) => ({
+      id: i + 1, mode: "paper", strategy_id: i % 2 ? 7 : null, venue: "kalshi", game_id: i < 1500 ? "1" : "2", ticker: `t${i}`, side: "home", strike: 1.5,
+      action: "buy", price: 0.5, count: 1, fee: 0, fair_at_fill: 0.55, close_mid: 0.5, result: 1, filled_at: new Date(Date.now() - (2500 - i) * 60e3).toISOString(),
+    }));
+    const r = await call(review, "/api/review");
+    const wk9 = r.games.find((g: Row) => g.game_id === "2");
+    expect(wk9.board.fills + wk9.byStrategy[7].fills).toBe(1000);
+    expect(r.games.find((g: Row) => g.game_id === "1").board.fills + r.games.find((g: Row) => g.game_id === "1").byStrategy[7].fills).toBe(1500);
+    expect(r.strategies.find((s: Row) => s.id === 7).fills).toBe(1250);
   });
 });

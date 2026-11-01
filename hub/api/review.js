@@ -2,7 +2,7 @@
 // Board results (strategy_id null) per game and venue, every lab strategy's settled
 // results side by side, and your real bets on the same games (read-only from placed_bets;
 // paper fills are never written to Bet History).
-import { authorized, sb, send } from "./_lib.js";
+import { authorized, sb, sbAll, send } from "./_lib.js";
 
 const pnlOf = (f) => (f.result == null ? null : (f.action === "buy" ? f.count * (f.result - f.price) : f.count * (f.price - f.result)) - Number(f.fee));
 const clvOf = (f) => (f.close_mid == null ? null : f.action === "buy" ? f.close_mid - f.price : f.price - f.close_mid);
@@ -39,9 +39,12 @@ function summarize(fills) {
     fills: fills.length,
     contracts: sum(fills.map((f) => f.count)),
     settled: settled.length ? sum(settled.map(pnlOf)) : null,
+    settledContracts: sum(settled.map((f) => f.count)),
     unsettled: fills.length - settled.length,
     fees: sum(fills.map((f) => Number(f.fee))),
     clv: wavg(fills, clvOf),
+    // Contracts behind `clv`, so averages over several games can be weighted exactly.
+    clvN: sum(fills.filter((f) => f.close_mid != null).map((f) => f.count)),
     edgeAtFill: wavg(fills, (f) => (f.fair_at_fill == null ? null : f.action === "buy" ? f.fair_at_fill - f.price : f.price - f.fair_at_fill)),
     risked: -worstCase(fills),
   };
@@ -59,7 +62,7 @@ export default async function handler(req, res) {
     const ids = watchlist.map((w) => w.game_id);
     const inIds = `in.(${ids.map(encodeURIComponent).join(",")})`;
     const [fills, games, bets] = await Promise.all([
-      sb(`bot_fills?select=strategy_id,venue,game_id,ticker,side,strike,action,price,count,fee,fair_at_fill,close_mid,result,filled_at&mode=eq.paper&game_id=${inIds}&order=filled_at.asc&limit=10000`),
+      sbAll(`bot_fills?select=strategy_id,venue,game_id,ticker,side,strike,action,price,count,fee,fair_at_fill,close_mid,result,filled_at&mode=eq.paper&game_id=${inIds}&order=id`),
       sb(`games?select=id,week,completed,home_points,away_points&id=${inIds}`),
       sb(`placed_bets?select=game_id,book,bet_type,side,line_value,price,stake,to_win,result,placed_at&game_id=${inIds}&bet_type=eq.spread`),
     ]);
