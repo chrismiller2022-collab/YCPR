@@ -4,6 +4,7 @@ import { isFbsGame, type DGame } from "./dataset";
 import type { Engine } from "./engine";
 import { fitEdgeResponse, fitLayer1, predictEdge, predictLayer1, type EdgePrediction, type EdgeResponse, type GameSignals, type Layer1 } from "./model";
 import { gameTier, type Tier } from "./tiers";
+import type { MarketLines } from "../api/drogbaData";
 
 export interface WeekSplit {
   season: number;
@@ -87,7 +88,8 @@ export const MODEL_VERSION = "drogba-v2-independent";
 export const DEFAULT_MIN_EDGE = 5; // JP+'s published threshold; the backtest shows what each level has actually done
 
 // The rows saved to the picks log: every projected game with an opening line, flagged when its edge passes the filter.
-export function buildPickRows(rows: WeekRow[], minEdge: number) {
+// marketLines (by game id) are the prediction-market lines at the time of the run, stored alongside.
+export function buildPickRows(rows: WeekRow[], minEdge: number, marketLines?: Map<string, MarketLines>, modelVersion: string = MODEL_VERSION) {
   return rows
     .filter((r) => r.pred && r.modelSpread != null && r.open != null)
     .map((r) => ({
@@ -103,7 +105,8 @@ export function buildPickRows(rows: WeekRow[], minEdge: number) {
       tier: r.tier,
       side: r.pred!.edge > 0 ? ("home" as const) : ("away" as const),
       filtered: Math.abs(r.pred!.edge) >= minEdge,
-      model_version: MODEL_VERSION,
+      model_version: modelVersion,
+      market_lines: marketLines?.get(r.g.id) ?? null,
     }));
 }
 

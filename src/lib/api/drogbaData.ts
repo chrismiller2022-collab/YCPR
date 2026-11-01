@@ -94,7 +94,33 @@ export interface DrogbaPickRow {
   side: "home" | "away" | null;
   filtered: boolean;
   model_version: string | null;
+  // Prediction-market lines seen when DROGBA was run, home spreads (negative = home favored), by venue key.
+  market_lines?: MarketLines | null;
   created_at: string;
+}
+
+export const MARKET_VENUES = [
+  { key: "kalshi", label: "Kalshi" },
+  { key: "novig", label: "Novig" },
+  { key: "prophetx", label: "ProphetX" },
+  { key: "polymarket", label: "Polymarket" },
+] as const;
+export type MarketLines = Partial<Record<(typeof MARKET_VENUES)[number]["key"], number>>;
+
+// Current prediction-market lines per game for a week, from the trading bot's per-game summary (it refreshes each
+// venue's implied margin every few hours). Margins are home-team margins, so the home spread is the negative.
+export async function fetchMarketLines(season: number, week: number): Promise<Map<string, MarketLines>> {
+  const { data, error } = await supabase.from("bot_mkt_games").select("game_id, venue_margins, ro_margins").eq("season", season).eq("week", week);
+  if (error) throw error;
+  const out = new Map<string, MarketLines>();
+  for (const r of (data ?? []) as { game_id: string; venue_margins: Record<string, number> | null; ro_margins: Record<string, number> | null }[]) {
+    const lines: MarketLines = {};
+    for (const [venue, margin] of Object.entries({ ...(r.venue_margins ?? {}), ...(r.ro_margins ?? {}) })) {
+      if (MARKET_VENUES.some((v) => v.key === venue) && Number.isFinite(Number(margin))) lines[venue as keyof MarketLines] = Math.round(-Number(margin) * 10) / 10;
+    }
+    out.set(String(r.game_id), lines);
+  }
+  return out;
 }
 
 export async function fetchDrogbaPicks(): Promise<DrogbaPickRow[]> {
@@ -143,16 +169,20 @@ export interface SavePicksResult {
   saved: number;
   skippedExisting: number;
   overwritten: number;
+  skippedStarted?: number; // already-logged games left alone because they had kicked off
 }
 
+// overwrite replaces logged numbers only for games that haven't kicked off; backfill (a deliberate rerun of a past week)
+// may replace played games too.
 export async function saveDrogbaPicks(
   picks: Omit<DrogbaPickRow, "created_at">[],
-  overwrite: boolean
+  overwrite: boolean,
+  backfill = false
 ): Promise<SavePicksResult> {
   const res = await fetch("/api/admin-save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: adminPassword(), action: "saveDrogbaPicks", picks, overwrite }),
+    body: JSON.stringify({ password: adminPassword(), action: "saveDrogbaPicks", picks, overwrite, backfill }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Save failed (${res.status})`);

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { pullDrogba, syncGamesWeek } from "../../lib/api/drogbaData";
-import { pullFanDuelSnapshot } from "../../lib/drogba/fanduelPull";
+import { pullWeekOpeners } from "../../lib/drogba/fanduelPull";
+import { saveWeekPicks } from "../../lib/drogba/saveWeek";
 import { findGaps, fitForWeek, projectWeek, type GapPlan, type WeekSplit } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import { DIM } from "./shared";
@@ -98,11 +99,13 @@ export default function SundayRunner({ state, split, onDiff }: { state: DrogbaSt
       const r = await pullDrogba("plays", season, w);
       return `${r.plays?.fetched.toLocaleString() ?? 0} plays pulled, ${r.plays?.saved ?? 0} team-games saved.${r.warnings?.length ? ` ${r.warnings.join("; ")}` : ""}`;
     });
-    const openersStep = () => add("openers", `FanDuel openers (current lines)`, "10 Odds API credits", async () => {
+    // FanDuel's lines as they stood at the fixed Sunday-morning times (not whenever this is clicked), so a run at 3pm still
+    // records the 6–11am open. Only slots not already pulled cost anything.
+    const openersStep = () => add("openers", `FanDuel openers for week ${upcoming} (Sunday 6, 8, 10, 11am ET)`, "up to 40 Odds API credits", async () => {
       const s = stateRef.current;
-      const r = await pullFanDuelSnapshot(s.games, s.bovadaOpen, null, null, null);
-      const wk = r.summary;
-      return `${wk.matched} of ${wk.withLine} FanDuel lines matched to games (${wk.unmatched} not matched); credits left ${wk.remaining ?? "?"}. Games FanDuel hasn't posted yet are filled by running "Fill gaps" later.`;
+      const r = await pullWeekOpeners(s.games, s.bovadaOpen, s.fanduelLines, season, upcoming);
+      if (r.pulls === 0) return `Nothing to pull: ${r.covered} of ${r.games} games already have a FanDuel open from the morning slots.`;
+      return `${r.covered} of ${r.games} games have a FanDuel open (${r.pulls} pull${r.pulls > 1 ? "s" : ""}, ~${r.credits} credits, ${r.remaining ?? "?"} left). ${r.log.join(" · ")}`;
     });
 
     if (kind === "full") {
@@ -127,10 +130,19 @@ export default function SundayRunner({ state, split, onDiff }: { state: DrogbaSt
       return;
     }
     add("rebuild", "Rebuild ratings and re-check", "no external calls", rebuild);
+    // Saved on every run, so the log always holds what the model said before kickoff. A rerun refreshes games that
+    // haven't kicked off; a started game's number is final.
+    add("save", `Save week ${upcoming} numbers to the picks log`, "no external calls", async () => {
+      const s = stateRef.current;
+      if (!s.engine) throw new Error("Ratings aren't built");
+      const r = await saveWeekPicks(s.engine, season, upcoming);
+      if (r.rows === 0) return "No games with an opening line yet — nothing to save.";
+      return `${r.saved} new, ${r.overwritten} refreshed${r.skippedStarted ? `, ${r.skippedStarted} already kicked off (kept as logged)` : ""}.`;
+    });
 
     const cfbd = list.filter((s) => s.cost.includes("CFBD")).reduce((n, s) => n + (s.id.startsWith("games") ? 3 : 1), 0);
-    const credits = list.some((s) => s.id === "openers") ? 10 : 0;
-    const summary = `${kind === "full" ? "Run the full Sunday routine" : "Fill the gaps"}:\n\n${list.map((s, i) => `${i + 1}. ${s.label}`).join("\n")}\n\nUses about ${cfbd} CFBD calls${credits ? ` and ${credits} Odds API credits` : ""}. Continue?`;
+    const credits = list.some((s) => s.id === "openers") ? 40 : 0;
+    const summary = `${kind === "full" ? "Run the full Sunday routine" : "Fill the gaps"}:\n\n${list.map((s, i) => `${i + 1}. ${s.label}`).join("\n")}\n\nUses about ${cfbd} CFBD calls${credits ? ` and up to ${credits} Odds API credits` : ""}. Continue?`;
     if (!window.confirm(summary)) return;
 
     diffRef.current = { before: snapshot() };

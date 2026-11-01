@@ -510,8 +510,10 @@ export function TotalsTab({
   );
 }
 
-export function GamePerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+// poolRows: what "std dev off" is measured against — pass the whole season when `rows` is one week, or a week's own
+// (much tighter) spread makes far more games look 1.5 std dev off than the season-wide bar every other page uses.
+export function GamePerformanceTab({ rows, settings, poolRows }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[] }) {
+  const betRows = useMemo(() => buildBetRows(rows, settings.filterThresholdMultiplier, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
   const segments = useMemo(() => computeGamePerformanceBreakdown(betRows), [betRows]);
   const [chartMetric, setChartMetric] = useState<AmountOffMetric>("stdDevOff");
   // Chart segment: every game (default), or only the bets that were Overs / Unders;
@@ -1240,8 +1242,9 @@ export function GamesAheadTab({ rows, season, week }: { rows: EnrichedGameRow[];
   );
 }
 
-export function TeamPerformanceTab({ rows, settings }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings }) {
-  const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier), [rows, settings.filterThresholdMultiplier]);
+// poolRows: see GamePerformanceTab.
+export function TeamPerformanceTab({ rows, settings, poolRows }: { rows: EnrichedGameRow[]; settings: GameTotalsSettings; poolRows?: EnrichedGameRow[] }) {
+  const betRows = useMemo(() => buildTeamSplitBetRows(rows, settings.filterThresholdMultiplier, undefined, poolRows), [rows, settings.filterThresholdMultiplier, poolRows]);
   const segments = useMemo(() => computeTeamPerformanceBreakdown(betRows), [betRows]);
   const [chartMetric, setChartMetric] = useState<AmountOffMetric>("stdDevOff");
   const buckets = useMemo(() => computeAmountOffDistribution(betRows, chartMetric), [betRows, chartMetric]);

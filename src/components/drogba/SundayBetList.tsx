@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { invalidateDrogbaCache, saveDrogbaPicks, type DrogbaPickRow } from "../../lib/api/drogbaData";
+import type { DrogbaPickRow } from "../../lib/api/drogbaData";
+import { saveWeekPicks } from "../../lib/drogba/saveWeek";
 import { TIER_LABELS, type Tier } from "../../lib/drogba/tiers";
-import { buildPickRows, DEFAULT_MIN_EDGE, fitForWeek, projectWeek, type WeekSplit } from "../../lib/drogba/weekPlan";
+import { DEFAULT_MIN_EDGE, fitForWeek, projectWeek, type WeekSplit } from "../../lib/drogba/weekPlan";
 import type { DrogbaState } from "../../lib/drogba/useDrogba";
 import type { RunDiff } from "./SundayRunner";
 import { CELL, DIM, H3, NUM, away, f1, sgn, spreadLabel } from "./shared";
@@ -37,16 +38,14 @@ export default function SundayBetList({ state, split, picks, minEdge, setMinEdge
   };
   const provisional = rows.filter((r) => r.pred && !state.fanduelLines.has(r.g.id)).length;
 
+  // Same save the Sunday run does at the end: refreshes every game that hasn't kicked off. A game still on Bovada's
+  // open picks up FanDuel's on the next run.
   async function save() {
-    const flagged = buildPickRows(rows, minEdge);
-    const ok = provisional === 0 || window.confirm(`${provisional} game(s) are still on Bovada's open (FanDuel hasn't posted them). The log keeps the first save for each game, so those would be recorded against Bovada's number. Save anyway?`);
-    if (!ok) return;
     setSaving(true);
     setMsg(null);
     try {
-      const res = await saveDrogbaPicks(flagged, false);
-      invalidateDrogbaCache();
-      setMsg(`Saved ${res.saved} new${res.skippedExisting ? `, left ${res.skippedExisting} already-logged games untouched` : ""}.`);
+      const res = await saveWeekPicks(engine!, split.season, split.upcoming, { minEdge });
+      setMsg(`Saved ${res.saved} new, refreshed ${res.overwritten}${res.skippedStarted ? `, ${res.skippedStarted} already kicked off (kept as logged)` : ""}.`);
       onSaved();
     } catch (e: any) {
       setMsg(e?.message ?? "Save failed");
@@ -132,7 +131,7 @@ export default function SundayBetList({ state, split, picks, minEdge, setMinEdge
           Save this week to the Picks log
         </button>
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
-          Keeps the first save per game. {provisional ? `${provisional} game(s) are still on Bovada's open; run "Fill gaps only" once FanDuel posts them, then save.` : "Every game is on FanDuel's open."}
+          Every Sunday run saves these automatically; saving again refreshes games that haven't kicked off. {provisional ? `${provisional} game(s) are still on Bovada's open; the next run picks up FanDuel's once it's posted.` : "Every game is on FanDuel's open."}
         </span>
       </div>
       {msg && <p style={DIM}>{msg}</p>}
