@@ -14,6 +14,10 @@ import { CELL, DIM, NUM, P, away, f1, pct, sgn, spreadLabel } from "./shared";
 const HEAD = { ...NUM, color: "var(--chalk-dim)", fontWeight: 600 };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const resultColor = (r: string | null) => (r === "W" ? "#8fd39a" : r === "L" ? "#e07a7a" : undefined);
+// DROGBA's edge against any book's line, the same way the Edge column measures it against the open: the book's home
+// spread minus DROGBA's (positive = home side), capped at EDGE_CAP. Null when either number is missing.
+const edgeVs = (modelHomeSpread: number | null, line: number | null | undefined) =>
+  modelHomeSpread == null || line == null ? null : Math.max(-EDGE_CAP, Math.min(EDGE_CAP, line - modelHomeSpread));
 
 // One week of DROGBA, before or after the games: the numbers saved to the picks log when the Sunday run went (games
 // never saved fall back to what the model says now, marked "live"), every line on file for each game, and how each
@@ -27,6 +31,8 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   const [week, setWeek] = useState(1);
   useDefaultToAdminWeek(setWeek);
   const [minEdge, setMinEdge] = useState(DEFAULT_MIN_EDGE);
+  // The book columns (FanDuel, Bovada, the markets, the close) show each book's line, or DROGBA's edge against it.
+  const [bookView, setBookView] = useState<"lines" | "edge">("lines");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [picks, setPicks] = useState<DrogbaPickRow[] | null>(null);
@@ -74,6 +80,14 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
   }, [engine, saved, S, week, minEdge, gameById]);
 
   const isPick = (r: GradedPick) => Math.abs(r.p.edge ?? 0) >= minEdge;
+  // The comparison columns, each a home spread for a game (or null): FanDuel's and Bovada's opens, each prediction
+  // market (as saved with the pick, or current for an unsaved game before kickoff), and the close.
+  const bookCols: { label: string; line: (id: string, mk: MarketLines | null, close: number | null) => number | null }[] = [
+    { label: "FanDuel", line: (id) => state.fanduelLines.get(id)?.open ?? null },
+    { label: "Bovada", line: (id) => state.bovadaOpen.get(id) ?? null },
+    ...MARKET_VENUES.map((v) => ({ label: v.label as string, line: (_id: string, mk: MarketLines | null) => mk?.[v.key] ?? null })),
+    { label: "Close", line: (_id: string, _mk: MarketLines | null, close: number | null) => close },
+  ];
   const split = useMemo(() => currentWeekSplit(state.games), [state.games]);
   const weekGames = state.games.filter((g) => g.season === S && g.week === week && g.homeFbs && g.awayFbs);
   const weekOver = weekGames.length > 0 && weekGames.every((g) => g.completed || (g.startMs != null && g.startMs < Date.now()));
@@ -154,10 +168,17 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
           Pick when the model disagrees with the open by ≥{" "}
           <input className="filter" type="number" step={0.5} value={minEdge} onChange={(e) => setMinEdge(Number(e.target.value))} style={{ width: "5rem" }} /> pts
         </label>
+        <span style={{ fontSize: "0.85rem", marginLeft: "0.5rem" }}>Book columns:</span>
+        {(["lines", "edge"] as const).map((v) => (
+          <button key={v} className={`mode-btn ${bookView === v ? "mode-btn-active" : ""}`} onClick={() => setBookView(v)}>
+            {v === "lines" ? "Lines" : "Edge"}
+          </button>
+        ))}
       </div>
       <p style={DIM}>
         The numbers saved when DROGBA was run (every Sunday run saves them; reruns refresh games that haven't kicked off, and a started game's number is final). Spreads are from the away team's side (negative = away favored). <strong>Open</strong> is the line the pick is graded against (FanDuel's open where on file, Bovada's otherwise);
         FanDuel, Bovada and the prediction markets are shown for comparison, with the markets as they stood when DROGBA was last run before kickoff. Edges are capped at {EDGE_CAP}.
+        {bookView === "edge" ? ` The book columns now show DROGBA's edge against each book's line, read like the Edge column (positive = the away side, negative = the home side); highlighted where it reaches ${minEdge} pts, blank where the book has no line.` : ""}
         {liveCount > 0 ? ` ${liveCount} game${liveCount > 1 ? "s were" : " was"} never saved, so ${liveCount > 1 ? "they show" : "it shows"} what the model says now (marked "live").` : ""}
         {noOpenCount > 0 ? ` ${noOpenCount} game${noOpenCount > 1 ? "s have" : " has"} no opening line on file yet (run the Sunday routine), so there's no pick or edge.` : ""}
         {noModelCount > 0 ? ` ${noModelCount} game${noModelCount > 1 ? "s have" : " has"} no DROGBA number yet: last week's advanced stats aren't pulled (run the Sunday routine).` : ""}
@@ -212,12 +233,9 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
                     <th style={HEAD}>DROGBA</th>
                     <th style={HEAD}>Open</th>
                     <th style={HEAD}>Edge</th>
-                    <th style={HEAD}>FanDuel</th>
-                    <th style={HEAD}>Bovada</th>
-                    {MARKET_VENUES.map((v) => (
-                      <th key={v.key} style={HEAD}>{v.label}</th>
+                    {[...bookCols.map((c) => c.label)].map((l) => (
+                      <th key={l} style={HEAD}>{l}{bookView === "edge" ? " edge" : ""}</th>
                     ))}
-                    <th style={HEAD}>Close</th>
                     <th style={HEAD}>Final</th>
                     <th style={CELL}>vs open</th>
                     <th style={CELL}>vs close</th>
@@ -237,12 +255,15 @@ export default function DrogbaThisWeekTab({ state }: { state: DrogbaState }) {
                         <td style={NUM}>{f1(away(p.model_home_spread))}</td>
                         <td style={NUM} title={p.open_provider ?? undefined}>{f1(away(p.open_spread))}{p.open_provider && p.open_provider !== "FanDuel" ? <span style={{ color: "#e8c84a" }}> B</span> : null}</td>
                         <td style={NUM}>{sgn(away(p.edge))}</td>
-                        <td style={NUM}>{f1(away(state.fanduelLines.get(p.game_id)?.open))}</td>
-                        <td style={NUM}>{f1(away(state.bovadaOpen.get(p.game_id)))}</td>
-                        {MARKET_VENUES.map((v) => (
-                          <td key={v.key} style={NUM}>{f1(away(mk?.[v.key]))}</td>
-                        ))}
-                        <td style={NUM}>{f1(away(g?.close))}</td>
+                        {bookCols.map((c) => {
+                          const line = c.line(p.game_id, mk, g?.close ?? null);
+                          if (bookView === "lines") return <td key={c.label} style={NUM}>{f1(away(line))}</td>;
+                          const e = edgeVs(p.model_home_spread, line);
+                          const big = e != null && Math.abs(e) >= minEdge;
+                          return (
+                            <td key={c.label} style={{ ...NUM, fontWeight: big ? 700 : 400, background: big ? "rgba(120,200,120,0.18)" : undefined }}>{sgn(away(e))}</td>
+                          );
+                        })}
                         <td style={NUM}>{g?.completed ? `${g.awayPts}–${g.homePts}` : "–"}</td>
                         <td style={{ ...CELL, color: resultColor(result), fontWeight: 700 }}>{result ?? "–"}</td>
                         <td style={{ ...CELL, color: resultColor(vsClose), fontWeight: 700 }}>{vsClose ?? "–"}</td>
