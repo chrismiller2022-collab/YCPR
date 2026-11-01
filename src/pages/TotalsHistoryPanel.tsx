@@ -452,14 +452,14 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
       ) : (
         <>
           {tab === "wkcompare" && <TotalsWindowCompare rows={rows} filterMultiplier={settings.filterThresholdMultiplier} />}
-          {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} />}
-          {tab === "teamperformance" && <TeamPerformanceTab rows={viewRows} settings={settings} />}
+          {tab === "performance" && <GamePerformanceTab rows={viewRows} settings={settings} poolRows={rows} />}
+          {tab === "teamperformance" && <TeamPerformanceTab rows={viewRows} settings={settings} poolRows={rows} />}
 
           {singleSeason && tab !== "wkcompare" && (
             <div style={{ marginTop: "2rem" }}>
               <h3>Game-by-game — {seasons[0]}</h3>
-              {tab === "performance" && <TotalsTab rows={viewRows} settings={settings} />}
-              {tab === "teamperformance" && <TeamTotalsTab rows={viewRows} settings={settings} />}
+              {tab === "performance" && <TotalsTab rows={viewRows} settings={settings} poolRows={rows} />}
+              {tab === "teamperformance" && <TeamTotalsTab rows={viewRows} settings={settings} poolRows={rows} />}
             </div>
           )}
         </>
