@@ -3,7 +3,7 @@
 // Per game: P&L if it ended now, projected final P&L (expected, chance of profit, likely range) and the live cover %
 // of every line held. Live projections use the TV score bug's model (src/lib/liveScore.ts, bundled to
 // live/score.js): score so far + the pregame line for the time left, starting from the market's line by default.
-// Data: /api/data?part=week about once a minute, ?part=scores every 15 s while games are on. Uses app.js's api().
+// Data: /api/data?part=week about every two minutes (the viewed book's positions), ?part=scores every 15 s while games are on. Uses app.js's api().
 import { liveMargin, marginProbs } from "./live/score.js";
 import { positions, pnlAt, marginPmf, marketMargin, oursOf, worstBest } from "./live/model.js";
 
@@ -32,7 +32,7 @@ const lineLabel = (team, k) => `${team} ${k >= 0 ? "−" : "+"}${Math.abs(Number
 
 async function loadWeek() {
   try {
-    wk = await api(`/api/data?part=week${weekSel ? `&week=${weekSel}` : ""}`);
+    wk = await api(`/api/data?part=week${weekSel ? `&week=${weekSel}` : ""}&book=${book ?? ""}`); // positions of the book being viewed only
     weekSel = wk.week;
     err = "";
   } catch (e) {
@@ -72,7 +72,7 @@ function show(on) {
   if (!on) return;
   render();
   loadWeek();
-  tWeek = setInterval(() => { if (!document.hidden) loadWeek(); }, 60e3);
+  tWeek = setInterval(() => { if (!document.hidden) loadWeek(); }, 120e3);
 }
 window.scoresTab = { show };
 
@@ -281,7 +281,7 @@ pane?.addEventListener("click", (e) => {
 pane?.addEventListener("change", (e) => {
   const t = e.target;
   if (t.id === "scWeek") { weekSel = Number(t.value); scores = {}; loadWeek(); }
-  if (t.id === "scBook") { book = t.value === "" ? null : Number(t.value); render(); }
+  if (t.id === "scBook") { book = t.value === "" ? null : Number(t.value); loadWeek(); }
   if (t.id === "scBase") { base = t.value; ls.set("botscorebase", base); render(); }
 });
 

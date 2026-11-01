@@ -327,3 +327,30 @@ alter table bot_watchlist add column if not exists legacy boolean not null defau
 alter table bot_state add column if not exists polymarket_mode text not null default 'read' check (polymarket_mode in ('off', 'read', 'paper'));
 alter table bot_watchlist add column if not exists ro_margins jsonb not null default '{}'::jsonb;
 alter table bot_mkt_games add column if not exists ro_margins jsonb not null default '{}'::jsonb;
+
+-- 2026-11-01: net positions per ticker, summed in the database (the dashboard was fetching raw fills, and the API returns at most 1,000 rows per request).
+-- One row per paper book (strategy_id null = the Board), game, venue and ticker: what is held (yes, cost incl. fees) plus the sums the Lab, Scores and Board
+-- need (fills, fees, settled P&L, CLV and edge sums, risk). security_invoker keeps the bot_* tables' row-level security in force for whoever reads the view.
+create or replace view bot_positions with (security_invoker = true) as
+select
+  mode, strategy_id, game_id, venue, ticker, side, strike,
+  sum(case when action = 'buy' then count else -count end)::int as yes,
+  sum(case when action = 'buy' then count * price else -count * price end + fee) as cost,
+  count(*)::int as fills,
+  sum(count)::int as contracts,
+  sum(fee) as fees,
+  sum(case when result is not null then (case when action = 'buy' then count * (result - price) else count * (price - result) end) - fee end) as settled_pnl,
+  (count(*) filter (where result is not null))::int as settled_fills,
+  (sum(count) filter (where result is not null))::int as settled_contracts,
+  max(result) as result,
+  max(close_mid) as close_mid,
+  sum(case when close_mid is not null then count * (case when action = 'buy' then close_mid - price else price - close_mid end) end) as clv_sum,
+  (sum(count) filter (where close_mid is not null))::int as clv_n,
+  sum(case when fair_at_fill is not null then count * (case when action = 'buy' then fair_at_fill - price else price - fair_at_fill end) end) as edge_sum,
+  (sum(count) filter (where fair_at_fill is not null))::int as edge_n,
+  sum(count * (case when action = 'buy' then price else 1 - price end)) as risked,
+  min(filled_at) as first_at,
+  max(filled_at) as last_at
+from bot_fills
+group by mode, strategy_id, game_id, venue, ticker, side, strike;
+revoke all on bot_positions from anon, authenticated;

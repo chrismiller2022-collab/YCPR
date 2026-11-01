@@ -6,7 +6,7 @@
 // Cursor "v1.<ms>.<order>.<fill>.<mktSnap>.<botSnap>.<trade>.<impliedMs>.<watchlistMs>": the poll time, the last id
 // seen per table (ids only grow), the newest implied-line time, and when the watchlist was last sent.
 // Requires the x-bot-password header.
-import { authorized, sb, send } from "./_lib.js";
+import { authorized, sb, sbAll, send } from "./_lib.js";
 
 const MODE = "paper";
 const RANGES = { "15m": 15 * 60e3, "1h": 3600e3, "6h": 6 * 3600e3, "24h": 86400e3, all: null };
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
         ? sb(`bot_orders?select=${ORDER_COLS}&mode=eq.${MODE}${inIds}&or=(status.eq.resting,created_at.gte.${dayIso},closed_at.gte.${dayIso})&order=id.desc&limit=3000`)
         : sb(`bot_orders?select=${ORDER_COLS}&mode=eq.${MODE}${inIds}&or=(id.gt.${c.o},closed_at.gt.${since})&order=id.desc&limit=3000`),
       full
-        ? sb(`bot_fills?select=${FILL_COLS}&mode=eq.${MODE}${inIds}&order=id.desc&limit=5000`)
+        ? sbAll(`bot_fills?select=${FILL_COLS}&mode=eq.${MODE}${inIds}&order=id.desc`) // every fill, paged (the API returns 1,000 rows per request); only on a full load, polls ask for what is new
         : sb(`bot_fills?select=${FILL_COLS}&mode=eq.${MODE}${inIds}&id=gt.${c.f}&order=id.desc&limit=2000`),
       // The Board's ladder rows (with its fair) for every watched game: the focused game's feed the ladder,
       // the rest only name the rungs that orders point at.

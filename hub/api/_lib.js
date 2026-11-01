@@ -36,6 +36,25 @@ export async function sbAll(path, pageSize = 1000, maxRows = 100000) {
   return out;
 }
 
+/**
+ * Net positions (rows of the bot_positions view) as fill-shaped rows, for code that builds positions from fills (hub/live/model.js positions(),
+ * the Board's curves, the Scores tab). A position held is one fill of its net size at its average cost (cost incl. fees), carrying the real fees;
+ * a flat position keeps its realized result as a buy of 1 at (cost - fees) and a sell of 1 at 0.
+ */
+export function fillsFromPositions(rows) {
+  const out = [];
+  for (const p of rows) {
+    const yes = Number(p.yes), cost = Number(p.cost), fees = Number(p.fees ?? 0);
+    const base = { id: `p:${p.strategy_id ?? "b"}:${p.game_id}:${p.venue}:${p.ticker}`, strategy_id: p.strategy_id ?? null, game_id: p.game_id, venue: p.venue, ticker: p.ticker, side: p.side, strike: p.strike, result: p.result ?? null, close_mid: p.close_mid ?? null, filled_at: p.last_at ?? null };
+    if (yes !== 0) out.push({ ...base, action: yes > 0 ? "buy" : "sell", count: Math.abs(yes), price: (cost - fees) / yes, fee: fees });
+    else {
+      out.push({ ...base, action: "buy", count: 1, price: cost - fees, fee: fees });
+      out.push({ ...base, action: "sell", count: 1, price: 0, fee: 0 });
+    }
+  }
+  return out;
+}
+
 export function send(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");

@@ -20,6 +20,9 @@ vi.mock("../../hub/api/_bot.mjs", async () => {
 import data, { lineSummary } from "../../hub/api/data.js";
 import admin from "../../hub/api/admin.js";
 import review from "../../hub/api/review.js";
+import lab from "../../hub/api/lab.js";
+import { fillsFromPositions } from "../../hub/api/_lib.js";
+import { positions as positionsOf } from "../../hub/live/model.js";
 
 const game = (id: string, week: number, completed: boolean, extra: Row = {}) => ({
   id, season: 2026, week, season_type: "regular", start_date: `2026-10-${20 + Number(id)}T23:00:00Z`, home_team: `Home${id}`, away_team: `Away${id}`,
@@ -95,13 +98,17 @@ describe("Add games / Manage games API", () => {
       { id: 1, game_id: "1", week: 8, kickoff: old, pick: "away", enabled: true },
       { id: 2, game_id: "2", week: 9, kickoff: soon, pick: "home", enabled: true },
     ];
-    db.bot_fills = [{ id: 1, mode: "paper", strategy_id: null, game_id: "2", venue: "kalshi", ticker: "t", side: "home", strike: 1.5, action: "buy", price: 0.5, count: 1, fee: 0 }, { id: 2, mode: "paper", strategy_id: 7, game_id: "1" }];
+    const pos = (over: Row) => ({ mode: "paper", strategy_id: null, game_id: "2", venue: "kalshi", ticker: "t", side: "home", strike: 1.5, yes: 1, cost: 0.5, fees: 0, fills: 1, result: null, close_mid: null, last_at: soon, ...over });
+    db.bot_positions = [pos({}), pos({ strategy_id: 7, game_id: "1", ticker: "u", yes: -2, cost: -0.8, fees: 0.02 })];
     const d = await call(data, "/api/data?part=week");
-    expect([d.weeks, d.week]).toEqual([[8, 9], 9]);
+    expect([d.weeks, d.week, d.book]).toEqual([[8, 9], 9, null]);
     expect(d.games.map((g: Row) => [g.game_id, g.home_spread])).toEqual([["2", 3.5]]);
-    expect(d.fills.map((f: Row) => f.id)).toEqual([1]);
+    // The Board's positions only, as fill-shaped rows (one fill of the net size at its average cost).
+    expect(d.fills.map((f: Row) => [f.game_id, f.ticker, f.action, f.count])).toEqual([["2", "t", "buy", 1]]);
     expect(d.finals.map((f: Row) => f.id)).toEqual(["2"]);
-    expect((await call(data, "/api/data?part=week&week=8")).fills.map((f: Row) => f.id)).toEqual([2]);
+    const w8 = await call(data, "/api/data?part=week&week=8&book=7"); // another book, another week
+    expect(w8.book).toBe(7);
+    expect(w8.fills.map((f: Row) => [f.strategy_id, f.ticker, f.action, f.count])).toEqual([[7, "u", "sell", 2]]);
   });
 
   it("scores: ESPN games for the asked ids only, one fetch per day and division, cached", async () => {
@@ -207,5 +214,68 @@ describe("Add games / Manage games API", () => {
     expect(wk9.board.fills + wk9.byStrategy[7].fills).toBe(1000);
     expect(r.games.find((g: Row) => g.game_id === "1").board.fills + r.games.find((g: Row) => g.game_id === "1").byStrategy[7].fills).toBe(1500);
     expect(r.strategies.find((s: Row) => s.id === 7).fills).toBe(1250);
+  });
+
+  it("positions as fill-shaped rows give exactly the positions the raw fills give (held, cost, fees), including a flat position", () => {
+    const raw = [
+      { venue: "kalshi", ticker: "a", side: "home", strike: 2.5, action: "buy", count: 2, price: 0.4, fee: 0.02 },
+      { venue: "kalshi", ticker: "a", side: "home", strike: 2.5, action: "buy", count: 1, price: 0.5, fee: 0.01 },
+      { venue: "novig", ticker: "b", side: "away", strike: -3.5, action: "sell", count: 3, price: 0.6, fee: 0 },
+      { venue: "novig", ticker: "c", side: "home", strike: 7.5, action: "buy", count: 1, price: 0.3, fee: 0.01 },
+      { venue: "novig", ticker: "c", side: "home", strike: 7.5, action: "sell", count: 1, price: 0.35, fee: 0.01 },
+    ];
+    const rows = [
+      { game_id: "g", venue: "kalshi", ticker: "a", side: "home", strike: 2.5, yes: 3, cost: 0.8 + 0.5 + 0.03, fees: 0.03 },
+      { game_id: "g", venue: "novig", ticker: "b", side: "away", strike: -3.5, yes: -3, cost: -1.8, fees: 0 },
+      { game_id: "g", venue: "novig", ticker: "c", side: "home", strike: 7.5, yes: 0, cost: 0.3 - 0.35 + 0.02, fees: 0.02 },
+    ];
+    const key = (p: Row) => `${p.venue}|${p.ticker}`;
+    const want = new Map((positionsOf(raw) as Row[]).map((p) => [key(p), p]));
+    const got = positionsOf(fillsFromPositions(rows)) as Row[];
+    expect(got).toHaveLength(3);
+    for (const p of got) {
+      expect(p.yes).toBe(want.get(key(p))!.yes);
+      expect(p.cost).toBeCloseTo(want.get(key(p))!.cost, 10);
+    }
+    const fees = fillsFromPositions(rows).reduce((s, f) => s + Number(f.fee), 0);
+    expect(fees).toBeCloseTo(0.05, 10);
+  });
+
+  it("board: every position of a game still in play, not just the first 1,000 rows", async () => {
+    db.games = [game("1", 9, true), game("2", 9, false)];
+    db.bot_watchlist = [
+      { id: 1, game_id: "1", week: 9, kickoff: "2026-10-20T00:00:00Z", pick: "away", enabled: true, my_home_margin: null, ycpr_home_margin: -3 },
+      { id: 2, game_id: "2", week: 9, kickoff: "2026-12-20T00:00:00Z", pick: "away", enabled: true, my_home_margin: null, ycpr_home_margin: -3, venue_margins: { kalshi: -1 } },
+    ];
+    db.bot_state = [{ id: 1, mode: "paper", kill_switch: false }];
+    const mk = (game_id: string, i: number) => ({ mode: "paper", strategy_id: null, game_id, venue: "kalshi", ticker: `t${String(i).padStart(4, "0")}`, side: "home", strike: 0.5 + (i % 20), yes: 1, cost: 0.4, fees: 0.01, fills: 2, result: null, close_mid: null, last_at: "2026-10-30T00:00:00Z" });
+    db.bot_positions = [...Array.from({ length: 1300 }, (_, i) => mk("2", i)), ...Array.from({ length: 5 }, (_, i) => mk("1", i))]; // game 1 is final: left out
+    const d = await call(data, "/api/data");
+    expect(d.pos.filter((p: Row) => p.game_id === "2")).toHaveLength(1300);
+    expect(d.pos.some((p: Row) => p.game_id === "1")).toBe(false);
+    expect(d.fillCounts).toEqual({ "2": { kalshi: 2600 } });
+    expect(d.fills.length).toBeLessThanOrEqual(300);
+  });
+
+  it("lab: stats from positions: fills, settled P&L, weighted CLV and edge, risk, fees, and the P&L range from what is held", async () => {
+    db.bot_strategies = [{ id: 7, name: "Patient", enabled: true }, { id: 8, name: "Idle", enabled: true }];
+    db.bot_watchlist = [{ game_id: "2", away_team: "A", home_team: "H", my_home_margin: -3, enabled: true }];
+    db.bot_orders = [{ strategy_id: 7, game_id: "2", status: "resting", mode: "paper" }];
+    const p = (over: Row) => ({ mode: "paper", strategy_id: 7, game_id: "2", venue: "kalshi", ticker: "a", side: "home", strike: 1.5, yes: 1, cost: 0.51, fees: 0.01, fills: 1, settled_pnl: null, settled_fills: 0, clv_sum: null, clv_n: 0, edge_sum: null, edge_n: 0, risked: 0.5, ...over });
+    db.bot_positions = [
+      p({ settled_pnl: 0.49, settled_fills: 1, clv_sum: 0.02, clv_n: 1, edge_sum: 0.06, edge_n: 1 }),
+      p({ ticker: "b", yes: 2, cost: 0.9, fees: 0.02, fills: 2, settled_pnl: -0.9, settled_fills: 2, clv_sum: 0.1, clv_n: 4, edge_sum: 0.08, edge_n: 4, risked: 0.88 }),
+      p({ strategy_id: null, ticker: "board" }), // the Board is not a lab strategy
+    ];
+    const r = await call(lab, "/api/lab");
+    const patient = r.strategies.find((s: Row) => s.name === "Patient");
+    expect(patient.stats).toMatchObject({ fills: 3, games: 1, resting: 1, settledFills: 3 });
+    expect(patient.stats.settled).toBeCloseTo(-0.41, 10);
+    expect(patient.stats.avgClv).toBeCloseTo(0.12 / 5, 10); // contract-weighted over the 5 contracts that have a close
+    expect(patient.stats.avgEdgeAtFill).toBeCloseTo(0.14 / 5, 10);
+    expect(patient.stats.fees).toBeCloseTo(0.03, 10);
+    expect(patient.stats.risked).toBeCloseTo(1.38, 10);
+    expect(patient.perGame[0]).toMatchObject({ game_id: "2", fills: 3, resting: 1 });
+    expect(r.strategies.find((s: Row) => s.name === "Idle").stats).toMatchObject({ fills: 0, games: 0, settled: null, avgClv: null });
   });
 });
