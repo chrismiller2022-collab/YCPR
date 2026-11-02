@@ -201,6 +201,17 @@ async function snapshot(gameId: string, venue: VenueId, rungs: Rung[], fairOf: (
   if (rows.length) await db.insert("bot_snapshots", rows);
 }
 
+/** Which of these games still have a fill without a result or a closing mid. */
+async function gamesWithOpenFills(gameIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < gameIds.length; i += 80) {
+    const ids = gameIds.slice(i, i + 80).join(",");
+    const rows = await db.select<{ game_id: string }>("bot_fills", `select=game_id&mode=eq.${MODE}&game_id=in.(${ids})&or=(result.is.null,close_mid.is.null)`);
+    for (const r of rows) out.add(String(r.game_id));
+  }
+  return out;
+}
+
 /**
  * After the game: grade every fill from the final score (works for any venue: a rung's YES
  * is "side wins by over strike") and record the last pregame mid on its venue for CLV.
@@ -263,8 +274,11 @@ export async function runCycle(): Promise<CycleTotals> {
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
     const strategies = await db.select<Strategy>("bot_strategies", "select=*&enabled=is.true&order=id");
-    // Paused or removed games aren't traded, but still get graded once they've kicked off.
-    for (const w of await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`)) {
+    // Paused or removed games aren't traded, but still get graded once they've kicked off. One query finds which of
+    // them still have an ungraded fill, so fully graded games (nearly all of them) cost nothing per cycle.
+    const paused = await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`);
+    const toSettle = await gamesWithOpenFills(paused.map((w) => String(w.game_id)));
+    for (const w of paused.filter((p) => toSettle.has(String(p.game_id)))) {
       try {
         await settle(w);
       } catch (err) {
