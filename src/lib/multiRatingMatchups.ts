@@ -71,7 +71,8 @@ function computeSystemResult(
 export function computeMultiSystemRow(
   game: GameWithLines,
   ratingsByTeam: Record<string, Record<string, number>>,
-  liveByTeam: Record<string, any>
+  liveByTeam: Record<string, any>,
+  systemKeys: string[] = RATING_SYSTEMS.map((s) => s.key)
 ): MultiSystemGameRow {
   const line = pickLine(game.lines);
   const vegasAwaySpread = line?.spread != null ? -line.spread : null;
@@ -80,11 +81,11 @@ export function computeMultiSystemRow(
   const homeRatings = ratingsByTeam[game.home_team] ?? {};
 
   const systems: Record<string, SystemGameResult> = {};
-  for (const s of RATING_SYSTEMS) {
-    systems[s.key] = computeSystemResult(
-      s.key,
-      awayRatings[s.key] ?? null,
-      homeRatings[s.key] ?? null,
+  for (const key of systemKeys) {
+    systems[key] = computeSystemResult(
+      key,
+      awayRatings[key] ?? null,
+      homeRatings[key] ?? null,
       game.home_team,
       liveByTeam,
       vegasAwaySpread,
@@ -113,7 +114,7 @@ export interface SystemRecord {
   push: number;
 }
 
-function emptyRecord(): SystemRecord {
+export function emptyRecord(): SystemRecord {
   return { w: 0, l: 0, push: 0 };
 }
 
@@ -128,7 +129,7 @@ export interface SystemPerformance {
   nwfb: SystemRecord;
 }
 
-function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home" | "push" | null, into: SystemRecord) {
+export function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home" | "push" | null, into: SystemRecord) {
   if (pickedTeam == null || actCoverTeam == null) return;
   if (actCoverTeam === "push") into.push++;
   else if (pickedTeam === actCoverTeam) into.w++;
@@ -136,19 +137,22 @@ function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home"
 }
 
 /** Per-system performance across a set of already-computed rows (typically one week or a full season's worth). */
-export function aggregateSystemPerformance(rows: MultiSystemGameRow[]): Record<string, SystemPerformance> {
+export function aggregateSystemPerformance(
+  rows: MultiSystemGameRow[],
+  systemKeys: string[] = RATING_SYSTEMS.map((s) => s.key)
+): Record<string, SystemPerformance> {
   const out: Record<string, SystemPerformance> = {};
-  for (const s of RATING_SYSTEMS) {
-    out[s.key] = { everyBet: emptyRecord(), filteredBet: emptyRecord(), nwfb: emptyRecord() };
+  for (const key of systemKeys) {
+    out[key] = { everyBet: emptyRecord(), filteredBet: emptyRecord(), nwfb: emptyRecord() };
   }
   for (const row of rows) {
     if (row.actCoverTeam == null) continue; // game not completed / no line yet
-    for (const s of RATING_SYSTEMS) {
-      const sys = row.systems[s.key];
+    for (const key of systemKeys) {
+      const sys = row.systems[key];
       if (!sys) continue;
-      grade(sys.projCoverTeam, row.actCoverTeam, out[s.key].everyBet);
-      grade(sys.filteredBetTeam, row.actCoverTeam, out[s.key].filteredBet);
-      grade(sys.nwfbTeam, row.actCoverTeam, out[s.key].nwfb);
+      grade(sys.projCoverTeam, row.actCoverTeam, out[key].everyBet);
+      grade(sys.filteredBetTeam, row.actCoverTeam, out[key].filteredBet);
+      grade(sys.nwfbTeam, row.actCoverTeam, out[key].nwfb);
     }
   }
   return out;
