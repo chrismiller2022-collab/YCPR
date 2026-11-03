@@ -23,6 +23,8 @@ import { computeConglomeratedTable, conglomeratedRowsToSaveFormat, teamDivConf, 
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
 import { buildRatingsByTeam, computeMultiSystemRow, aggregateSystemPerformance, winPct } from "../lib/multiRatingMatchups";
+import { runStandardizedStudy } from "../lib/standardizedStudy";
+import { ATS_BREAKEVEN_PCT } from "../lib/matchupsCompute";
 import {
   fetchRatingPulls,
   fetchRatingWeights,
@@ -64,15 +66,19 @@ function fmtNum(v: number | null, digits = 2) {
 function WeightsEditor({
   weights,
   onSave,
+  onDraftChange,
 }: {
   weights: Record<string, number>;
   onSave: (w: Record<string, number>) => Promise<void>;
+  /** Called with the in-progress (unsaved) weights so the performance table can backtest them live. */
+  onDraftChange?: (w: Record<string, number>) => void;
 }) {
   const [draft, setDraft] = useState<Record<string, number>>(weights);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => setDraft(weights), [weights]);
+  useEffect(() => onDraftChange?.(draft), [draft]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const editableKeys = [...YC_INPUT_SYSTEMS]; // includes "consensus"
 
@@ -776,25 +782,22 @@ function SyncControls({ onDataChanged }: { onDataChanged: () => void }) {
 // system's live win % is exactly what's useful for deciding weights —
 // legitimately 0-0 (0%) until a week gets saved and games complete.
 // ---------------------------------------------------------------------
-function SystemPerformanceSummary({ season }: { season: number }) {
+function SystemPerformanceSummary({ season, weights }: { season: number; weights: Record<string, number> }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [bucket, setBucket] = useState<"everyBet" | "filteredBet" | "nwfb">("everyBet");
   const [raw, setRaw] = useState<{
     games: Awaited<ReturnType<typeof fetchGamesWithLines>>;
     weekly: Awaited<ReturnType<typeof fetchWeeklyPowerRatings>>;
   } | null>(null);
 
-  const { byTeam: liveByTeam } = useWeeklyStats("latest");
+  // useWeeklyStats' byTeam is rebuilt every render; key the grading off its
+  // (stable) rows instead, or typing in the weight boxes regrades everything.
+  const { rows: liveRows } = useWeeklyStats("latest");
+  const liveByTeam = useMemo(() => Object.fromEntries(liveRows.map((r) => [r.team, r])), [liveRows]);
 
-  // Fetch depends only on `season` — NOT on liveByTeam. useWeeklyStats'
-  // byTeam is a plain object rebuilt every render (not memoized), so
-  // putting it in this effect's dependency array meant every unrelated
-  // re-render of this page (e.g. typing in the YC weight boxes above)
-  // re-fired the fetch and cancelled the in-flight one before it could
-  // ever resolve — this is what got it stuck on "Loading…" indefinitely.
-  // Same bug/fix already applied to useMultiSeasonGameTotalsEngine
-  // earlier — grading itself (which does need liveByTeam) happens in a
-  // separate, cheap useMemo below instead.
+  // Fetch depends only on `season` (see git history: depending on liveByTeam
+  // re-fired the fetch on every render and left this stuck on "Loading…").
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -810,31 +813,79 @@ function SystemPerformanceSummary({ season }: { season: number }) {
     };
   }, [season]);
 
-  const perf = useMemo(() => {
-    if (!raw) return null;
-    const { games, weekly } = raw;
-    const byWeek = new Map<number, typeof weekly>();
-    for (const r of weekly) {
+  const ratingsByWeek = useMemo(() => {
+    const out = new Map<number, Record<string, Record<string, number>>>();
+    if (!raw) return out;
+    const byWeek = new Map<number, typeof raw.weekly>();
+    for (const r of raw.weekly) {
       const list = byWeek.get(r.week) ?? [];
       list.push(r);
       byWeek.set(r.week, list);
     }
-    const ratingsByWeek = new Map<number, Record<string, Record<string, number>>>();
-    for (const [wk, rowsForWeek] of byWeek) ratingsByWeek.set(wk, buildRatingsByTeam(rowsForWeek));
+    for (const [wk, rowsForWeek] of byWeek) out.set(wk, buildRatingsByTeam(rowsForWeek));
+    return out;
+  }, [raw]);
 
+  // Weeks saved after the switch to the standardized build carry yc_legacy rows.
+  const switchWeek = useMemo(() => {
+    const wks = (raw?.weekly ?? []).filter((r) => r.system_key === "yc_legacy").map((r) => r.week);
+    return wks.length ? Math.min(...wks) : null;
+  }, [raw]);
+
+  // As rated: every system's real record from the ratings saved each week.
+  const asRated = useMemo(() => {
+    if (!raw) return null;
     const graded = [];
-    for (const g of games) {
+    for (const g of raw.games) {
       const ratingsByTeam = ratingsByWeek.get(g.week);
       if (!ratingsByTeam) continue; // no saved snapshot for this game's week yet
       graded.push(computeMultiSystemRow(g, ratingsByTeam, liveByTeam));
     }
     return aggregateSystemPerformance(graded);
-  }, [raw, liveByTeam]);
+  }, [raw, ratingsByWeek, liveByTeam]);
+
+  // New method, backtested over the whole season: every system standardized
+  // (SDs from its FBS average × the multiplier), YC / Consensus rebuilt with
+  // the weights in the box below — unsaved edits included.
+  const multiplier = liveStdMultiplier(weights);
+  const backtest = useMemo(() => {
+    if (!raw) return null;
+    const res = runStandardizedStudy({ games: raw.games, ratingsByWeek, liveByTeam, weights, multiplier, scaleStat: "sd", sweep: [] });
+    return Object.fromEntries(res.rows.filter((r) => r.id === r.key).map((r) => [r.key, r]));
+  }, [raw, ratingsByWeek, liveByTeam, weights, multiplier]);
+
+  const cell: CSSProperties = { padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right", whiteSpace: "nowrap" };
+  const fmtRec = (r?: { w: number; l: number; push: number }) =>
+    r && r.w + r.l > 0 ? `${r.w}-${r.l}${r.push ? `-${r.push}` : ""} (${winPct(r).toFixed(1)}%)` : "–";
+  const color = (r?: { w: number; l: number }) =>
+    !r || r.w + r.l === 0 ? undefined : winPct(r as any) >= ATS_BREAKEVEN_PCT * 100 ? "var(--c-ok)" : "var(--c-err)";
 
   return (
     <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
-      <div className="section-label" style={{ marginBottom: "0.6rem" }}>
-        Win % by system ({season} season-to-date)
+      <div className="section-label" style={{ marginBottom: "0.4rem" }}>
+        Win % by system ({season} season-to-date): as rated vs new method
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem", maxWidth: 820 }}>
+        <b>As rated</b> grades each week's saved ratings as they were.{" "}
+        {switchWeek != null
+          ? `YC / Consensus switched to the standardized build in week ${switchWeek}; earlier weeks are the old build.`
+          : "Every saved week so far was rated with the old YC / Consensus build."}{" "}
+        <b>New method</b> backtests the whole season with every system as standard deviations from its FBS average × {multiplier}, and YC /
+        Consensus rebuilt from those with the weights in the box below (edits show here before you save). Same games, same lines, same HFA.
+        Use this column to set weights.
+      </p>
+      <div style={{ display: "flex", gap: "0.3rem", marginBottom: "0.5rem" }}>
+        {(
+          [
+            ["everyBet", "Every Bet"],
+            ["filteredBet", "Filtered"],
+            ["nwfb", "NWFB"],
+          ] as const
+        ).map(([k, l]) => (
+          <button key={k} className={`mode-btn ${bucket === k ? "mode-btn-active" : ""}`} onClick={() => setBucket(k)}>
+            {l}
+          </button>
+        ))}
       </div>
       {error && <p style={{ color: "var(--c-err)" }}>{error}</p>}
       {loading ? (
@@ -845,28 +896,41 @@ function SystemPerformanceSummary({ season }: { season: number }) {
             <thead>
               <tr>
                 <th className="th">System</th>
-                <th className="th th-right">Every Bet</th>
-                <th className="th th-right">Filtered</th>
-                <th className="th th-right">NWFB</th>
+                <th className="th th-right">Weight</th>
+                <th className="th th-right">As rated</th>
+                <th className="th th-right">New method</th>
+                <th className="th th-right" title="New method win % minus as-rated win %">Δ</th>
+                <th className="th th-right" title="Every Bet: games where the new method picks the other side, and its record on just those">Picks changed</th>
+                <th className="th th-right" title="Mean absolute miss vs the final margin, new method">Spread error</th>
+                <th className="th th-right" title="The system's own FBS standard deviation in its stored units, season average">Pts / SD as stored</th>
               </tr>
             </thead>
             <tbody>
               {RATING_SYSTEMS.map((s) => {
-                const p = perf?.[s.key];
-                const fmtRec = (r?: { w: number; l: number; push: number }) =>
-                  r ? `${r.w}-${r.l}${r.push ? `-${r.push}` : ""} (${winPct(r).toFixed(1)}%)` : "0-0 (0.0%)";
+                const a = asRated?.[s.key]?.[bucket];
+                const st = backtest?.[s.key];
+                const b = st?.std[bucket];
+                const d = a && b && a.w + a.l > 0 && b.w + b.l > 0 ? winPct(b) - winPct(a) : null;
+                const legacy = s.key === "yc_legacy" || s.key === "consensus_legacy";
+                const w = s.key === "yc" || legacy ? null : (weights[s.key] ?? 0);
                 return (
-                  <tr key={s.key}>
-                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>{s.label}</td>
-                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {fmtRec(p?.everyBet)}
+                  <tr key={s.key} style={legacy ? { color: "var(--chalk-dim)" } : undefined}>
+                    <td style={{ ...cell, textAlign: "left", fontWeight: s.key === "yc" || s.key === "consensus" ? 700 : 400 }}>
+                      {s.label}
+                      {st && st.deadWeeks.length > 0 && (
+                        <span style={{ color: "var(--chalk-dim)", fontWeight: 400 }} title="Saved with no FBS spread (e.g. all zeros); the new method leaves these weeks out">
+                          {" "}
+                          (new method skips wk {st.deadWeeks.join(", ")})
+                        </span>
+                      )}
                     </td>
-                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {fmtRec(p?.filteredBet)}
-                    </td>
-                    <td style={{ padding: "0.3rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {fmtRec(p?.nwfb)}
-                    </td>
+                    <td style={cell}>{w == null ? "" : w ? w : <span style={{ color: "var(--chalk-dim)" }}>0</span>}</td>
+                    <td style={{ ...cell, color: color(a) }}>{fmtRec(a)}</td>
+                    <td style={{ ...cell, color: color(b), fontWeight: 700 }}>{legacy ? "" : fmtRec(b)}</td>
+                    <td style={cell}>{d == null || legacy ? "" : `${d > 0 ? "+" : ""}${d.toFixed(1)}`}</td>
+                    <td style={cell}>{st && !legacy && st.flipped ? `${st.flipped} (${st.flippedStd.w}-${st.flippedStd.l})` : ""}</td>
+                    <td style={cell}>{st?.maeStd != null && !legacy ? st.maeStd.toFixed(2) : ""}</td>
+                    <td style={cell}>{st?.avgPointsPerSd != null && !legacy ? st.avgPointsPerSd.toFixed(1) : ""}</td>
                   </tr>
                 );
               })}
@@ -875,8 +939,9 @@ function SystemPerformanceSummary({ season }: { season: number }) {
         </div>
       )}
       <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", marginTop: "0.5rem", marginBottom: 0 }}>
-        Only weeks with a saved snapshot (Save As Week, below) count toward these records — everything reads 0-0
-        until at least one week is saved and its games complete.
+        Only weeks with a saved snapshot count. New method skips a system-week with no FBS spread (e.g. a column saved as all zeros). The
+        full breakdown (multiplier sweep, controls, best-fit multipliers) is on Rating Systems Matchups → Std Study, and each team's SD values are on
+        its Std Devs tab.
       </p>
     </div>
   );
@@ -1506,6 +1571,8 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
   const [panelTab, setPanelTab] = useState<"manage" | "performance" | "history">("manage");
   const [pulls, setPulls] = useState<RatingPullRow[]>([]);
   const [weights, setWeights] = useState<Record<string, number>>({});
+  // Unsaved edits in the weights box, so the performance table can backtest them before saving.
+  const [draftWeights, setDraftWeights] = useState<Record<string, number> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1571,8 +1638,8 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
             <p>Loading…</p>
           ) : (
             <>
-              <SystemPerformanceSummary season={new Date().getFullYear()} />
-              <WeightsEditor weights={weights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
+              <SystemPerformanceSummary season={new Date().getFullYear()} weights={draftWeights ?? weights} />
+              <WeightsEditor weights={weights} onDraftChange={setDraftWeights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
             </>
           )}
         </>

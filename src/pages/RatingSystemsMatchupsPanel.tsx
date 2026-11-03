@@ -7,6 +7,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { fetchRatingWeights, fetchWeeklyPowerRatings, type WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { DEFAULT_STD_MULTIPLIER, standardizeWeeks, type ScaleStat } from "../lib/ratingStandardize";
 import StandardizedStudyTab from "../components/StandardizedStudyTab";
+import StdDevsTab from "../components/StdDevsTab";
 import { RATING_SYSTEMS } from "../lib/ratingSystems";
 import {
   buildRatingsByTeam,
@@ -690,7 +691,9 @@ function StdControls({ mode, setMode, multiplier, setMultiplier, scaleStat, setS
         <option value="mad">Robust (MAD)</option>
       </select>
       <span style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>
-        {mode === "std" ? `Every tab is using standardized ratings (×${multiplier}, FBS baseline).` : "Std Study compares both regardless of this switch."}
+        {mode === "std"
+          ? `Every tab is using standardized ratings: SDs from the FBS average × ${multiplier}. The SD values themselves are on the Std Devs tab.`
+          : "Std Study and Std Devs work regardless of this switch."}
       </span>
     </div>
   );
@@ -703,7 +706,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
   useDefaultToAdminWeek(setWeek);
-  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results" | "system" | "stdstudy">("spreads");
+  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results" | "system" | "stdstudy" | "stddevs">("spreads");
   const [stdPrefs, setStdPrefs] = useState(loadStdPrefs);
   useEffect(() => {
     try {
@@ -862,6 +865,9 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <button className={`mode-btn ${tab === "stdstudy" ? "mode-btn-active" : ""}`} onClick={() => setTab("stdstudy")}>
           Std Study
         </button>
+        <button className={`mode-btn ${tab === "stddevs" ? "mode-btn-active" : ""}`} onClick={() => setTab("stddevs")}>
+          Std Devs
+        </button>
       </div>
 
       <StdControls
@@ -918,6 +924,17 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
               systemKey={systemKey}
               setSystemKey={setSystemKey}
               weekLabel={week === "all" ? "Season" : `Week ${week}`}
+            />
+          )}
+          {tab === "stddevs" && (
+            <StdDevsTab
+              ratingsByWeek={rawRatingsByWeek}
+              weeks={savedWeeks}
+              initialWeek={typeof week === "number" && savedWeeks.includes(week) ? week : null}
+              weights={weights}
+              scaleStat={stdPrefs.scaleStat}
+              divFilter={divFilter}
+              confFilter={confFilter}
             />
           )}
           {tab === "stdstudy" && (
