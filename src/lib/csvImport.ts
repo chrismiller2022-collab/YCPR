@@ -4,7 +4,7 @@
 // timeout risk. Column names here are copied verbatim from the actual
 // uploaded files, not guessed.
 
-function parseCsvLine(line: string): string[] {
+function parseCsvLine(line: string, delim = ","): string[] {
   const fields: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -23,7 +23,7 @@ function parseCsvLine(line: string): string[] {
       }
     } else {
       if (ch === '"') inQuotes = true;
-      else if (ch === ",") {
+      else if (ch === delim) {
         fields.push(cur);
         cur = "";
       } else cur += ch;
@@ -33,13 +33,17 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
+// Accepts comma- or tab-separated text. Tab is chosen when the header row
+// contains a tab — that's what you get copying a table out of a web page or
+// spreadsheet and pasting it into a textarea.
 export function parseCsv(text: string): Record<string, string>[] {
-  const clean = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
-  const lines = clean.split("\n").filter((l) => l.length > 0);
+  const clean = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const lines = clean.split("\n").filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
-  const headers = parseCsvLine(lines[0]);
+  const delim = lines[0].includes("\t") ? "\t" : ",";
+  const headers = parseCsvLine(lines[0], delim).map((h) => h.trim());
   return lines.slice(1).map((line) => {
-    const values = parseCsvLine(line);
+    const values = parseCsvLine(line, delim);
     const row: Record<string, string> = {};
     headers.forEach((h, i) => (row[h] = values[i] ?? ""));
     return row;

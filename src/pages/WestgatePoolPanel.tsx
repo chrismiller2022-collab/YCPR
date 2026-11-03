@@ -361,7 +361,7 @@ function StandingsTab({ season }: { season: number }) {
             </button>
           </p>
           <input type="file" accept=".csv" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-          <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0.2rem" }}>...or paste CSV text:</p>
+          <p style={{ fontSize: "0.75rem", color: "var(--chalk-dim)", margin: "0.5rem 0 0.2rem" }}>...or paste CSV or tab-separated text (copied straight from the standings table):</p>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
