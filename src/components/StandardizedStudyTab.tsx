@@ -103,7 +103,7 @@ export default function StandardizedStudyTab({
             {study.rows.map((r) => {
               const a = r.raw[bucket];
               const b = r.std[bucket];
-              const control = r.id.includes("~") || r.id.endsWith("_stored");
+              const control = r.id.includes("~"); // control rows (rescaled-only / rebuilt-raw comparisons)
               return (
                 <tr key={r.id} style={control ? { fontStyle: "italic" } : undefined}>
                   <td style={{ ...CP, fontWeight: 700 }}>
