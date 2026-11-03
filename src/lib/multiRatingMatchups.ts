@@ -20,6 +20,19 @@ export function buildRatingsByTeam(weekly: WeeklyPowerRatingRow[]): Record<strin
     entry[r.system_key] = r.value;
     out[r.team] = entry;
   }
+  // Weeks saved before YC/Consensus switched to the standardized build have no
+  // yc_legacy / consensus_legacy rows — their yc / consensus ARE the old
+  // method, so the old-method series reads them (in memory only, nothing is
+  // written). Decided per week (any legacy row present = saved after the
+  // switch), never per team, so a new week's missing value isn't backfilled
+  // with the new method's number.
+  const hasLegacy = weekly.some((r) => r.system_key === "yc_legacy" || r.system_key === "consensus_legacy");
+  if (!hasLegacy) {
+    for (const entry of Object.values(out)) {
+      if (entry.yc != null) entry.yc_legacy = entry.yc;
+      if (entry.consensus != null) entry.consensus_legacy = entry.consensus;
+    }
+  }
   return out;
 }
 

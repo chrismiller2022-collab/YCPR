@@ -5,14 +5,16 @@
 // per-system projections.
 
 import { TEAMS, TEAMS_BY_NAME } from "../data/teams";
-import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, isInConsensus } from "./ratingSystems";
+import { ALL_PULLED_SYSTEMS, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, isInConsensus, liveStdMultiplier } from "./ratingSystems";
+import { standardizeWeek } from "./ratingStandardize";
 import type { RatingPullRow } from "./api/ratingSystems";
 
 export interface ConglomeratedRow {
   team: string;
   div: "FBS" | "FCS";
   conf: string;
-  values: Record<string, number | null>; // every source system's value, null if not pulled for this team
+  values: Record<string, number | null>; // every source system's value, null if not pulled for this team (plus yc_legacy / consensus_legacy)
+  /** Standardized build (the live one): inputs as SDs from the FBS average × the saved multiplier. */
   consensus: number | null;
   yc: number | null;
 }
@@ -37,6 +39,13 @@ export function computeConglomeratedTable(
     byTeam.set(p.team, entry);
   }
 
+  // Live YC / Consensus: rebuilt from standardized inputs (each system as SDs
+  // from its FBS average, so a system's influence is its weight and not its
+  // native spread), re-standardized, times the saved multiplier. Changing this
+  // only affects what's saved / pushed from now on — saved weeks and locked
+  // spreads are never rewritten.
+  const std = standardizeWeek(Object.fromEntries(byTeam), { multiplier: liveStdMultiplier(weights), weights }).byTeam;
+
   return TEAMS.map((t) => {
     const pulled = byTeam.get(t.team) ?? {};
 
@@ -49,8 +58,9 @@ export function computeConglomeratedTable(
       values[key] = pulled[key] ?? null;
     }
 
-    // Consensus: plain (unweighted) average of the systems switched on for it
-    // that have a value for this team.
+    // Old method (kept as yc_legacy / consensus_legacy for tracking): plain
+    // average of the stored values. Consensus = unweighted average of the
+    // systems switched on for it that have a value for this team.
     const consensusValues = CONSENSUS_INPUT_SYSTEMS.filter((k) => isInConsensus(k, weights))
       .map((k) => pulled[k])
       .filter((v): v is number => v != null);
@@ -63,15 +73,17 @@ export function computeConglomeratedTable(
       const w = weights[key] ?? 0;
       if (w > 0) ycEntries.push({ value: v, weight: w });
     }
-    const yc = weightedAvg(ycEntries);
+    const ycLegacy = weightedAvg(ycEntries);
+    values.yc_legacy = ycLegacy;
+    values.consensus_legacy = consensus;
 
     return {
       team: t.team,
       div: t.div,
       conf: t.conf,
       values,
-      consensus,
-      yc,
+      consensus: std[t.team]?.consensus ?? null,
+      yc: std[t.team]?.yc ?? null,
     };
   });
 }

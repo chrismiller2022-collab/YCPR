@@ -30,7 +30,8 @@ import {
 } from "./ratingStandardize";
 
 export const STUDY_SYSTEMS: { key: string; label: string; rawKey: string }[] = [
-  ...RATING_SYSTEMS.map((s) => ({ key: s.key, label: s.label, rawKey: s.key })),
+  // The old-method YC / Consensus have no standardized counterpart; the control rows below cover that comparison.
+  ...RATING_SYSTEMS.filter((s) => s.key !== "yc_legacy" && s.key !== "consensus_legacy").map((s) => ({ key: s.key, label: s.label, rawKey: s.key })),
   // The stored YC / Consensus, standardized directly — compares against raw
   // YC / Consensus with no rebuild, i.e. the pure rescale effect.
   { key: STORED_YC_KEY, label: "YC (stored, rescaled only)", rawKey: "yc" },

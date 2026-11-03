@@ -4,7 +4,16 @@ import type { CSSProperties } from "react";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { CONFERENCES } from "../data/teams";
-import { RATING_SYSTEMS, RATING_SYSTEMS_BY_KEY, CONSENSUS_INPUT_SYSTEMS, YC_INPUT_SYSTEMS, consensusMemberKey, isInConsensus } from "../lib/ratingSystems";
+import {
+  RATING_SYSTEMS,
+  RATING_SYSTEMS_BY_KEY,
+  CONSENSUS_INPUT_SYSTEMS,
+  YC_INPUT_SYSTEMS,
+  STD_MULTIPLIER_SETTING_KEY,
+  consensusMemberKey,
+  isInConsensus,
+  liveStdMultiplier,
+} from "../lib/ratingSystems";
 import type { WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
 import { matchTeamRows } from "../lib/teamNameMatch";
 import { SP_CSV_TEMPLATE, spFreshness, spValuesFromSheet, type SpValue } from "../lib/spPlusPull";
@@ -117,6 +126,29 @@ function WeightsEditor({
           );
         })}
       </div>
+      <div className="section-label" style={{ margin: "0.9rem 0 0.4rem" }}>
+        Standardized build
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.5rem", maxWidth: 760 }}>
+        YC and Consensus average each system as standard deviations from its FBS average (so a system counts by its weight, not by how
+        spread out its numbers are), then scale the result to this many points per SD. The old plain-average build is still saved every week
+        as YC (old method) / Consensus (old method) for comparison. Changing this affects what you save or push from now on, never saved weeks or
+        locked spreads.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem" }}>
+        Points per SD
+        <input
+          type="number"
+          step="0.5"
+          min="1"
+          value={liveStdMultiplier(draft)}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (Number.isFinite(v) && v > 0) setDraft((d) => ({ ...d, [STD_MULTIPLIER_SETTING_KEY]: v }));
+          }}
+          style={{ width: 70 }}
+        />
+      </label>
       <button onClick={handleSave} disabled={saving} style={{ marginTop: "0.75rem" }}>
         {saving ? "Saving…" : "Save weights"}
       </button>

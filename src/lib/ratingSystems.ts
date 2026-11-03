@@ -20,6 +20,14 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
   // Computed by this app, not pulled from anywhere.
   { key: "yc", label: "YC", source: "computed" },
   { key: "consensus", label: "Consensus", source: "computed" },
+  // The pre-standardization build of YC / Consensus (plain weighted average of
+  // each system's stored value), still computed and saved every week so the
+  // new build can be tracked against it. Never an input to anything. Weeks
+  // saved before the switch have no rows for these — their "yc"/"consensus"
+  // ARE the old method (buildRatingsByTeam fills these from them for those
+  // weeks, in memory only).
+  { key: "yc_legacy", label: "YC (old method)", source: "computed" },
+  { key: "consensus_legacy", label: "Consensus (old method)", source: "computed" },
   // Sent here from the Monte Carlo SRS tab's "Send to Rating Systems" button —
   // this app's own SRS computation (Monte Carlo engine's computeSrsStats),
   // distinct from the CFBD-sourced "srs" system below.
@@ -103,11 +111,24 @@ export function isInConsensus(systemKey: string, saved: Record<string, number>):
   return v == null ? defaultInConsensus(systemKey) : v > 0;
 }
 
-/** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
-export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);
+/** YC, Consensus and their old-method twins — computed here, never pulled, never inputs to each other except Consensus -> YC. */
+export const COMPOSITE_SYSTEMS = ["yc", "consensus", "yc_legacy", "consensus_legacy"];
 
-/** Every system that's an input to the YC weighted average (everything except YC itself; Consensus is one of them). */
-export const YC_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc").map((s) => s.key);
+/** Every system that's shown in the systems table / saved to a week snapshot — independent of whether it currently feeds YC or Consensus. */
+export const ALL_PULLED_SYSTEMS = RATING_SYSTEMS.filter((s) => !COMPOSITE_SYSTEMS.includes(s.key)).map((s) => s.key);
+
+/** Every system that's an input to the YC weighted average (every pulled system, plus Consensus). */
+export const YC_INPUT_SYSTEMS = ["consensus", ...ALL_PULLED_SYSTEMS];
 
 /** Every system that CAN be in the Consensus average (each is switched in/out via consensusMemberKey). */
-export const CONSENSUS_INPUT_SYSTEMS = RATING_SYSTEMS.filter((s) => s.key !== "yc" && s.key !== "consensus").map((s) => s.key);
+export const CONSENSUS_INPUT_SYSTEMS = ALL_PULLED_SYSTEMS;
+
+// YC / Consensus are built from STANDARDIZED inputs (see lib/ratingStandardize.ts):
+// each system's value as SDs from the FBS average, times this many points.
+// Stored beside the weights as a `setting:` row so it's edited and saved with them.
+export const STD_MULTIPLIER_SETTING_KEY = "setting:std_multiplier";
+export const DEFAULT_LIVE_STD_MULTIPLIER = 13.5;
+export function liveStdMultiplier(saved: Record<string, number>): number {
+  const v = saved[STD_MULTIPLIER_SETTING_KEY];
+  return v != null && Number.isFinite(v) && v > 0 ? v : DEFAULT_LIVE_STD_MULTIPLIER;
+}
