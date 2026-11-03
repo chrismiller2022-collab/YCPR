@@ -104,6 +104,14 @@ const ALIASES: Record<string, string> = {
   "southern california": "USC", // Sagarin's own spelling — no "USC"/mascot in its raw text at all
   "ucla": "UCLA",
   "nc state": "NC State",
+  // Spelled-out forms. Without these, "North Carolina State" fell through to
+  // the fuzzy match and landed on South Carolina State (2 letters apart) —
+  // the fuzzy guard below now refuses that kind of match too.
+  "north carolina state": "NC State",
+  "north carolina st": "NC State",
+  "n carolina state": "NC State",
+  "n carolina st": "NC State",
+  "nc st": "NC State",
   "n carolina": "North Carolina",
   "unc": "North Carolina",
   "virginia tech": "Virginia Tech",
@@ -781,6 +789,8 @@ function expandAbbrevs(norm: string): string {
     .join(" ");
 }
 
+const DIRECTION_WORDS = new Set(["north", "south", "east", "west", "central", "northern", "southern", "eastern", "western"]);
+
 function levenshtein(a: string, b: string): number {
   const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
   for (let i = 0; i <= a.length; i++) dp[i][0] = i;
@@ -828,8 +838,14 @@ export function matchTeamName(input: string): TeamMatchResult {
   if (norm.length < 6) {
     return { input, matched: null, confidence: "none" };
   }
+  // Never fuzzy-match across a different compass word: "North Carolina
+  // State" vs "South Carolina State" is only 2 edits apart but a different
+  // school. Same for East/West Carolina-style pairs.
+  const lead = expandAbbrevs(norm).split(" ")[0];
   let best: { team: string; dist: number } | null = null;
   for (const t of TEAMS) {
+    const candLead = normalize(t.team).split(" ")[0];
+    if (lead !== candLead && DIRECTION_WORDS.has(lead) && DIRECTION_WORDS.has(candLead)) continue;
     const d = levenshtein(norm, normalize(t.team));
     if (best == null || d < best.dist) best = { team: t.team, dist: d };
   }
