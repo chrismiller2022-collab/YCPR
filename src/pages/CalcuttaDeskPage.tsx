@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import "../styles/calcutta.css";
 import { NFL_COMPOSITE_WEEK9_TEXT } from "../data/nflCompositeRatings";
 import { restorePasskeySession } from "../lib/adminAuth";
-import { currentLot, highBid, lotName, lotTeams, participantById, remainingMs } from "../lib/calcutta/engine";
+import { currentLot, highBid, lotName, lotTeams, minNextBid, participantById, remainingMs } from "../lib/calcutta/engine";
+import type { Lot } from "../lib/calcutta/types";
 import { propKind } from "../lib/calcutta/formats";
 import { scored } from "../lib/calcutta/scoring";
 import { DEFAULT_SIM, fairShares, payoutMatrix, simulateNflPlayoffs, validateNflField, type SimOutput, type SimPropKind } from "../lib/calcutta/nflPlayoffSim";
@@ -186,7 +187,7 @@ function Desk({ a }: { a: CalcuttaAuction }) {
       </header>
 
       <div className="cal-desk-grid">
-        <LiveCard a={a} live={live} high={high} meId={st.meId} now={now} sim={sim} edgePct={st.edgePct} />
+        <LiveCard a={a} live={live} high={high} meId={st.meId} now={now} sim={sim} matrix={matrix} netPot={netPot} edgePct={st.edgePct} />
         <PortfolioCard a={a} port={myPort} me={me?.name ?? null} />
       </div>
 
@@ -329,6 +330,8 @@ function LiveCard({
   meId,
   now,
   sim,
+  matrix,
+  netPot,
   edgePct,
 }: {
   a: CalcuttaAuction;
@@ -337,6 +340,8 @@ function LiveCard({
   meId: string | null;
   now: number;
   sim: SimOutput;
+  matrix: Float32Array;
+  netPot: number;
   edgePct: number;
 }) {
   if (!live || a.live.phase === "idle") {
@@ -388,6 +393,7 @@ function LiveCard({
         <Kpi label="Edge at bid" value={atBid == null ? "—" : fmt$(atBid)} sub={atBid == null || !bid ? "" : `${pct(atBid / bid, 0)} ROI`} />
       </div>
       <div className={`cal-signal ${signal.cls}`}>{signal.text}</div>
+      {meId && !sold && <WhatIf a={a} lot={lot} fair={live.fair} defaultPrice={mine ? bid ?? 0 : minNextBid(a)} meId={meId} sim={sim} matrix={matrix} netPot={netPot} />}
       <table className="cal-dtable">
         <thead>
           <tr>
@@ -538,6 +544,85 @@ function RatingsCheck({ a, ratings }: { a: CalcuttaAuction; ratings: Record<stri
             );
           })}
       </div>
+    </div>
+  );
+}
+
+/**
+ * "If I win this": your portfolio now vs with the lot on the block at a
+ * price (defaults to the next bid you'd have to make). Uses the same sims,
+ * so overlap with teams you already own — e.g. two AFC teams that can only
+ * have one Super Bowl run between them — shows up in EV and the spread.
+ */
+function WhatIf({
+  a,
+  lot,
+  fair,
+  defaultPrice,
+  meId,
+  sim,
+  matrix,
+  netPot,
+}: {
+  a: CalcuttaAuction;
+  lot: Lot;
+  fair: number;
+  defaultPrice: number;
+  meId: string;
+  sim: SimOutput;
+  matrix: Float32Array;
+  netPot: number;
+}) {
+  const [typed, setTyped] = useState<string>("");
+  useEffect(() => setTyped(""), [lot.id]);
+  const price = typed.trim() !== "" && Number.isFinite(Number(typed)) ? Number(typed) : defaultPrice;
+  const docKey = a.updatedAt;
+  const before = useMemo(() => portfolio(a, sim, matrix, meId, netPot), [docKey, sim, matrix, meId, netPot]); // eslint-disable-line react-hooks/exhaustive-deps
+  const after = useMemo(() => portfolio(a, sim, matrix, meId, netPot, { lot, price }), [docKey, sim, matrix, meId, netPot, lot.id, price]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lotConfs = new Set(lotTeams(a, lot).map((t) => t.group));
+  const overlap = before.pieces.filter((p) => lotTeams(a, p.lot).some((t) => lotConfs.has(t.group)));
+  const delta = (x: number, y: number, f: (v: number) => string, neutral = false) => {
+    const d = y - x;
+    return (
+      <span className={neutral ? "" : d > 0 ? "good" : d < 0 ? "bad" : "dim"}>
+        {f(x)} → {f(y)}
+      </span>
+    );
+  };
+  const p0 = (v: number) => `${Math.round(v * 100)}%`;
+  const evGain = fair - price;
+
+  return (
+    <div className="cal-whatif">
+      <div className="cal-whatif-head">
+        <span className="cal-stage-eyebrow">If I win it at</span>
+        <span className="cal-num">
+          <span className="cal-suffix">$</span>
+          <input type="number" value={typed} placeholder={String(defaultPrice)} onChange={(e) => setTyped(e.target.value)} style={{ width: 90 }} />
+        </span>
+        <span className={evGain >= 0 ? "good" : "bad"}>
+          <b>{evGain >= 0 ? "+" : ""}
+          {fmt$(evGain)}</b> EV
+        </span>
+      </div>
+      <div className="cal-whatif-grid">
+        <span className="dim">Cost</span>
+        {delta(before.cost, after.cost, (v) => fmt$(v), true)}
+        <span className="dim">EV</span>
+        {delta(before.ev, after.ev, (v) => fmt$(v))}
+        <span className="dim">P(profit)</span>
+        {delta(before.pProfit, after.pProfit, p0)}
+        <span className="dim">10th pct</span>
+        {delta(before.p10, after.p10, (v) => fmt$(v))}
+        <span className="dim">90th pct</span>
+        {delta(before.p90, after.p90, (v) => fmt$(v))}
+      </div>
+      {overlap.length > 0 && (
+        <div className="cal-desk-note warn">
+          Same conference as your {overlap.map((p) => lotName(a, p.lot)).join(", ")} — they can't both make the Super Bowl, so this adds less upside than its EV alone suggests.
+        </div>
+      )}
     </div>
   );
 }

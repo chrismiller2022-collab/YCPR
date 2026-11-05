@@ -272,3 +272,7 @@
 .cal-desk .cal-side-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .cal-desk .cal-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0; }
 .cal-desk .cal-stage-eyebrow { font-size: 11px; letter-spacing: 0.1em; }
+.cal-whatif { background: var(--s-panel-2); border: 1px dashed var(--s-line); border-radius: 10px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.cal-whatif-head { display: flex; align-items: center; gap: 10px; }
+.cal-whatif-grid { display: grid; grid-template-columns: repeat(5, max-content 1fr); gap: 4px 10px; font-variant-numeric: tabular-nums; font-size: 13px; }
+@media (max-width: 1300px) { .cal-whatif-grid { grid-template-columns: repeat(3, max-content 1fr); } }
