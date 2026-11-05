@@ -301,50 +301,56 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
                   </div>
                 </div>
 
-                <div className="cal-bidline">
-                  {phase === "sold" ? (
-                    <div className="cal-sold" style={{ borderColor: highP?.color }}>
-                      <div className="cal-sold-word">SOLD</div>
-                      <div className="cal-sold-to">
-                        to <span style={{ color: highP?.color }}>{highP?.name}</span> for {fmt$(high?.amount)}
-                      </div>
+                <div className="cal-bidrow">
+                  <div className="cal-bidcol">
+                    <div className="cal-bidline">
+                      {phase === "sold" ? (
+                        <div className="cal-sold" style={{ borderColor: highP?.color }}>
+                          <div className="cal-sold-word">SOLD</div>
+                          <div className="cal-sold-to">
+                            to <span style={{ color: highP?.color }}>{highP?.name}</span> for {fmt$(high?.amount)}
+                          </div>
+                        </div>
+                      ) : high ? (
+                        <>
+                          <div className="cal-bid-amount">{fmt$(high.amount)}</div>
+                          <div className="cal-bid-who" style={{ background: highP?.color }}>
+                            {highP?.name}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="cal-bid-amount dim">{fmt$(a.settings.openingMin)}</div>
+                          <div className="cal-bid-who empty">Opening bid</div>
+                        </>
+                      )}
                     </div>
-                  ) : high ? (
-                    <>
-                      <div className="cal-bid-amount">{fmt$(high.amount)}</div>
-                      <div className="cal-bid-who" style={{ background: highP?.color }}>
-                        {highP?.name}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="cal-bid-amount dim">{fmt$(a.settings.openingMin)}</div>
-                      <div className="cal-bid-who empty">Opening bid</div>
-                    </>
-                  )}
-                </div>
-
-                {phase !== "sold" && (
-                  <div className="cal-clock">
-                    <div className={`cal-clock-bar ${clockClass}`}>
-                      <div style={{ width: `${clockFrac * 100}%` }} />
-                    </div>
-                    <div className="cal-clock-row">
-                      <span className={`cal-clock-secs ${clockClass}`}>{phase === "expired" ? "0" : secs}s</span>
-                      <span className="cal-going">
-                        {phase === "paused" && "Paused"}
-                        {phase === "ready" && (controls ? "Space to start the clock" : "")}
-                        {phase === "expired" && (high ? "SOLD?" : "No bids")}
-                        {goingText}
-                      </span>
-                      <span className="cal-next">
+                    {phase !== "sold" && (
+                      <div className="cal-next">
                         Next bid <b>{fmt$(minNext)}</b>
-                      </span>
-                    </div>
-                    {phase === "expired" && controls && (
-                      <div className="cal-hint">{high ? "Enter to sell · any bid keeps it going · + adds 10s" : "Enter to pass · any bid opens it · + adds 10s"}</div>
+                      </div>
                     )}
                   </div>
+
+                  {phase !== "sold" && (
+                    <div className={`cal-timer ${clockClass}`}>
+                      <div className="cal-stage-eyebrow">Clock</div>
+                      <div className="cal-timer-secs">{phase === "expired" ? 0 : secs}</div>
+                      <div className={`cal-clock-bar ${clockClass}`}>
+                        <div style={{ width: `${clockFrac * 100}%` }} />
+                      </div>
+                      <div className="cal-timer-status">
+                        {phase === "paused" && "Paused"}
+                        {phase === "ready" && "Ready"}
+                        {phase === "expired" && (high ? "SOLD?" : "No bids")}
+                        {phase === "running" && (goingText ?? "Bidding open")}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {phase === "ready" && controls && <div className="cal-hint">Space to start the clock · or just take the first bid</div>}
+                {phase === "expired" && controls && (
+                  <div className="cal-hint">{high ? "Enter to sell · any bid keeps it going · + adds 10s" : "Enter to pass · any bid opens it · + adds 10s"}</div>
                 )}
                 {phase === "sold" && controls && <div className="cal-hint">Enter for the next lot</div>}
 
@@ -528,10 +534,13 @@ function BoardView({ a, summaries }: { a: CalcuttaAuction; summaries: ReturnType
             );
           })}
           {a.payouts.props.map((p) => (
-            <div key={p.id} className="cal-side-row">
-              <span className="grow">{p.label}</span>
-              <span className="dim">{p.pct}%</span>
-              <span className="money">{fmtPayout((p.pct / 100) * np)}</span>
+            <div key={p.id} className="cal-side-prop">
+              <div className="cal-side-row">
+                <span className="grow">{p.label}</span>
+                <span className="dim">{p.pct}%</span>
+                <span className="money">{fmtPayout((p.pct / 100) * np)}</span>
+              </div>
+              {p.rule && <div className="cal-side-rule">{p.rule}</div>}
             </div>
           ))}
         </div>

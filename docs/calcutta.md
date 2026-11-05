@@ -23,6 +23,21 @@ Admin → Pools → **Calcutta**. Set the auction up there, then **Open Stage wi
 
 Each bid puts the clock back up to at least the "reset" time. At 0:00 the default is a **SOLD?** prompt you confirm with Enter (a late Zoom bid still counts); auto-sell is a setting.
 
+## NFL Playoffs default payouts
+Wins pay 75%: Wild Card win 3% (×6), Divisional win 5% (×4), conference title 10% (×2), Super Bowl 17%. The #1 seeds' bye is **not** paid as a win (toggle).
+Side prizes pay 25%: biggest upset by seed 7%, worst margin of defeat 6%, Cinderella (furthest 5–7 seed) 6%, best ATS record 6%. Ties split.
+
+Why (from `scripts/calcutta/nfl_payout_sim.py`, 100k simulated playoffs with typical ratings by seed), each team's expected share of the pot by seed:
+
+| Structure | #1 | #2 | #3 | #4 | #5 | #6 | #7 | #1 ÷ #7 |
+|---|---|---|---|---|---|---|---|---|
+| 40% Super Bowl, bye paid (old default) | 19.8 | 9.1 | 6.5 | 3.8 | 5.0 | 3.5 | 2.4 | 8.4× |
+| Unabated/BTP 3.5/6.5/10/13 + 20% props | 13.1 | 9.1 | 7.1 | 5.0 | 6.0 | 5.0 | 4.8 | 2.7× |
+| 3/5/10/17 + upset, worst loss, turnovers, ATS | 13.2 | 8.8 | 6.9 | 4.8 | 5.9 | 5.2 | 5.3 | 2.5× |
+| **3/5/10/17 + upset, worst loss, Cinderella, ATS (default)** | 12.7 | 8.1 | 6.3 | 4.5 | 6.6 | 5.9 | 6.0 | 2.1× |
+
+"Most turnovers" over the whole playoffs mostly goes to teams that play the most games (#1/#2 seeds), so it doesn't help long shots; Cinderella replaces it. Biggest upset by seed lands on a 6 or 7 seed ~40% of the time.
+
 ## Partners and buybacks
 Owners & Results → Partners & buybacks records a share of a sold team moving between two people for a price. The winning bidder still owes the full price to the pot; the share price is paid person-to-person, and payouts split by ownership %.
 

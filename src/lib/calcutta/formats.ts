@@ -33,10 +33,22 @@ export const FORMATS: FormatDef[] = [
     key: "nfl_playoffs",
     label: "NFL Playoffs",
     available: true,
-    blurb: "14 teams (7 AFC, 7 NFC). #1 seeds get a bye. Paid per round cleared.",
+    blurb: "14 teams (7 AFC, 7 NFC). #1 seeds get a bye. Paid per win, plus side prizes that keep the low seeds live.",
     rounds: NFL_PLAYOFF_ROUNDS,
-    // 8 × 2.5 (6 WC winners + 2 byes) + 4 × 5 + 2 × 10 + 40 = 100
-    defaultPayouts: { roundPct: { wc: 2.5, div: 5, conf: 10, sb: 40 }, byeCountsAsWin: true, props: [] },
+    // Wins: 6 × 3 + 4 × 5 + 2 × 10 + 17 = 75%. Side prizes: 25%. The bye is
+    // not paid as a win — it's already worth a lot (a free pass to the
+    // Divisional round). Picked from a 100k-run playoff sim (docs/calcutta.md):
+    // a #1 seed is worth ~2x a #7 seed here, vs ~8x with a 40% Super Bowl.
+    defaultPayouts: {
+      roundPct: { wc: 3, div: 5, conf: 10, sb: 17 },
+      byeCountsAsWin: false,
+      props: [
+        { id: "biggest_upset", label: "Biggest upset by seed", pct: 7, teamIds: [], rule: "Winner's seed minus loser's seed (7 over 2 = 5). Tiebreak: bigger margin. No upsets → Super Bowl champ." },
+        { id: "worst_loss", label: "Worst margin of defeat", pct: 6, teamIds: [], rule: "Largest losing margin in any one game. Ties split." },
+        { id: "cinderella", label: "Cinderella (best 5–7 seed)", pct: 6, teamIds: [], rule: "Furthest-advancing 5, 6 or 7 seed. Tiebreak: lower seed (7 beats 5), then split." },
+        { id: "best_ats", label: "Best ATS record", pct: 6, teamIds: [], rule: "Cover % vs closing line, pushes don't count. Tiebreak: most ATS wins, then split." },
+      ],
+    },
   },
   { key: "march_madness", label: "March Madness", available: false, blurb: "68-team bracket.", rounds: [], defaultPayouts: { roundPct: {}, byeCountsAsWin: false, props: [] } },
   { key: "cfb_playoff24", label: "CFB 24-team Playoff", available: false, blurb: "Next season's expanded CFP.", rounds: [], defaultPayouts: { roundPct: {}, byeCountsAsWin: true, props: [] } },

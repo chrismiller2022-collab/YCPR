@@ -184,3 +184,28 @@
 .cal-owner-head { display: flex; justify-content: space-between; align-items: baseline; }
 .cal-owner-name { font-size: clamp(16px, 1.5vw, 26px); font-weight: 900; color: var(--pc); }
 .cal-owner-team { display: flex; align-items: center; gap: 0.5vw; font-size: clamp(12px, 1.05vw, 18px); }
+
+/* side prizes */
+.cal-input.cal-rule { display: block; width: 100%; margin-top: 0.25rem; font-size: 0.78rem; color: var(--a-muted, inherit); }
+.cal-prop { border-top: 1px solid var(--a-row, var(--hash)); padding: 0.6rem 0; }
+.cal-prop-teams { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
+.cal-prop-team { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.78rem; font-weight: 600; border: 1px solid var(--a-line, #ddd); border-radius: 999px; padding: 0.1rem 0.5rem 0.1rem 0.3rem; cursor: pointer; }
+.cal-prop-team input { margin: 0; }
+.cal-prop-team.on { background: var(--c-ok-bg, #e5f4ea); border-color: var(--c-ok, #157a3a); color: var(--c-ok, #157a3a); }
+
+/* Stage: bid on the left, clock in its own box on the right */
+.cal-bidrow { display: flex; align-items: stretch; gap: 1.6vw; }
+.cal-bidcol { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1vh; }
+.cal-timer { flex: none; width: clamp(200px, 17vw, 320px); background: var(--s-panel-2); border: 2px solid var(--s-line); border-radius: 16px; padding: 1.4vh 1.2vw; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.8vh; transition: border-color 0.2s, box-shadow 0.2s; }
+.cal-timer .cal-clock-bar { width: 100%; }
+.cal-timer-secs { font-size: clamp(56px, 7vw, 128px); font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; color: var(--s-ok); }
+.cal-timer-status { font-size: clamp(14px, 1.4vw, 24px); font-weight: 800; color: var(--s-dim); text-align: center; min-height: 1.3em; }
+.cal-timer.warn { border-color: var(--s-warn); }
+.cal-timer.warn .cal-timer-secs, .cal-timer.warn .cal-timer-status { color: var(--s-warn); }
+.cal-timer.danger, .cal-timer.expired { border-color: var(--s-danger); box-shadow: 0 0 28px rgba(255, 77, 94, 0.35); }
+.cal-timer.danger .cal-timer-secs, .cal-timer.expired .cal-timer-secs, .cal-timer.danger .cal-timer-status, .cal-timer.expired .cal-timer-status { color: var(--s-danger); }
+.cal-timer.danger .cal-timer-status, .cal-timer.warn .cal-timer-status, .cal-timer.expired .cal-timer-status { animation: cal-pulse 1s ease-in-out infinite; }
+.cal-timer.paused .cal-timer-secs, .cal-timer.ready .cal-timer-secs { color: var(--s-ink); }
+.cal-timer.paused .cal-timer-status { color: var(--s-warn); }
+.cal-bidcol .cal-next { font-size: clamp(16px, 1.6vw, 28px); }
+.cal-side-rule { font-size: clamp(11px, 0.85vw, 14px); color: var(--s-dim); margin: 0.1vh 0 0.4vh; line-height: 1.3; }

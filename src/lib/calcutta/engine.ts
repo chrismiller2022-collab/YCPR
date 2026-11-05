@@ -52,7 +52,7 @@ export function newAuction(name: string, format: FormatKey, now: number): Calcut
     createdAt: now,
     updatedAt: now,
     settings: { ...DEFAULT_SETTINGS, increments: DEFAULT_SETTINGS.increments.map((t) => ({ ...t })) },
-    payouts: { ...def.defaultPayouts, roundPct: { ...def.defaultPayouts.roundPct }, props: [] },
+    payouts: { ...def.defaultPayouts, roundPct: { ...def.defaultPayouts.roundPct }, props: def.defaultPayouts.props.map((p) => ({ ...p, id: uid("prop_"), teamIds: [] })) },
     participants: [],
     field: [],
     lots: [],
@@ -407,8 +407,15 @@ export function teamEarned(a: CalcuttaAuction, teamId: string): EarnedEvent[] {
     const pct = a.payouts.roundPct[r.key] ?? 0;
     if (pct) out.push({ key: r.key, label: i === 0 && team?.bye ? `${r.label} (bye)` : r.label, pct });
   });
-  for (const p of a.payouts.props) if (p.teamId === teamId && p.pct) out.push({ key: p.id, label: p.label, pct: p.pct });
+  for (const p of a.payouts.props) {
+    const winners = propWinners(p);
+    if (p.pct && winners.includes(teamId)) out.push({ key: p.id, label: winners.length > 1 ? `${p.label} (split ${winners.length})` : p.label, pct: p.pct / winners.length });
+  }
   return out;
+}
+
+export function propWinners(p: { teamIds?: string[]; teamId?: string | null }): string[] {
+  return p.teamIds ?? (p.teamId ? [p.teamId] : []);
 }
 
 export function lotEarnedPct(a: CalcuttaAuction, lot: Lot): number {

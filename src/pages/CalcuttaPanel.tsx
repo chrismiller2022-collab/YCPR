@@ -15,6 +15,7 @@ import {
   ownerSummaries,
   participantById,
   potTotal,
+  propWinners,
   removeTransfer,
   reopenLot,
   sortedLots,
@@ -462,6 +463,12 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
               <tr key={p.id}>
                 <td>
                   <input className="cal-input" value={p.label} onChange={(e) => setPay({ props: a.payouts.props.map((x) => (x.id === p.id ? { ...x, label: e.target.value } : x)) })} />
+                  <input
+                    className="cal-input cal-rule"
+                    placeholder="Rule / tiebreak shown to the room"
+                    value={p.rule ?? ""}
+                    onChange={(e) => setPay({ props: a.payouts.props.map((x) => (x.id === p.id ? { ...x, rule: e.target.value } : x)) })}
+                  />
                 </td>
                 <td className="r">
                   <NumField value={p.pct} step={0.5} onCommit={(v) => setPay({ props: a.payouts.props.map((x) => (x.id === p.id ? { ...x, pct: v } : x)) })} suffix="%" width={64} />
@@ -479,8 +486,18 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
           <tfoot>
             <tr>
               <td colSpan={3}>
-                <button className="cal-btn sm" onClick={() => setPay({ props: [...a.payouts.props, { id: uid("prop_"), label: "Side prize", pct: 0, teamId: null }] })}>
+                <button className="cal-btn sm" onClick={() => setPay({ props: [...a.payouts.props, { id: uid("prop_"), label: "Side prize", pct: 0, teamIds: [], rule: "" }] })}>
                   + side prize
+                </button>{" "}
+                <button
+                  className="cal-btn sm"
+                  onClick={() => {
+                    if (!window.confirm("Replace the payouts and side prizes with the recommended defaults?")) return;
+                    const d = formatDef(a.format).defaultPayouts;
+                    setPay({ roundPct: { ...d.roundPct }, byeCountsAsWin: d.byeCountsAsWin, props: d.props.map((p) => ({ ...p, id: uid("prop_"), teamIds: [] })) });
+                  }}
+                >
+                  Reset to recommended
                 </button>
               </td>
               <td className={`r ${Math.abs(total - 100) < 0.01 ? "good" : "bad"}`}>
@@ -941,25 +958,39 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
         {a.payouts.props.length > 0 && (
           <>
             <h3>Side prizes</h3>
-            {a.payouts.props.map((p) => (
-              <div key={p.id} className="cal-row tight">
-                <span style={{ minWidth: 180 }}>
-                  {p.label} ({p.pct}%)
-                </span>
-                <select
-                  className="cal-input"
-                  value={p.teamId ?? ""}
-                  onChange={(e) => patch((x) => ({ payouts: { ...x.payouts, props: x.payouts.props.map((q) => (q.id === p.id ? { ...q, teamId: e.target.value || null } : q)) } }))}
-                >
-                  <option value="">— not awarded yet —</option>
-                  {a.field.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+            <div className="cal-note">Tick the winner. Tick more than one for a tie — the prize splits evenly.</div>
+            {a.payouts.props.map((p) => {
+              const winners = propWinners(p);
+              const toggle = (teamId: string) =>
+                patch((x) => ({
+                  payouts: {
+                    ...x.payouts,
+                    props: x.payouts.props.map((q) => {
+                      if (q.id !== p.id) return q;
+                      const cur = propWinners(q);
+                      return { ...q, teamId: null, teamIds: cur.includes(teamId) ? cur.filter((t) => t !== teamId) : [...cur, teamId] };
+                    }),
+                  },
+                }));
+              return (
+                <div key={p.id} className="cal-prop">
+                  <div>
+                    <b>{p.label}</b> · {p.pct}% {np > 0 && <span className="cal-note">({fmtPayout((p.pct / 100) * np)})</span>}
+                    {p.rule && <div className="cal-note">{p.rule}</div>}
+                  </div>
+                  <div className="cal-prop-teams">
+                    {[...a.field]
+                      .sort((x, y) => x.group.localeCompare(y.group) || (x.seed ?? 0) - (y.seed ?? 0))
+                      .map((t) => (
+                        <label key={t.id} className={`cal-prop-team ${winners.includes(t.id) ? "on" : ""}`} title={t.name}>
+                          <input type="checkbox" checked={winners.includes(t.id)} onChange={() => toggle(t.id)} />
+                          <TeamBadge team={t} size={18} /> {t.abbr}
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              );
+            })}
           </>
         )}
         {soldLots.length === 0 && <div className="cal-note">Nothing sold yet.</div>}

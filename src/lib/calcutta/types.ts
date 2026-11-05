@@ -102,12 +102,17 @@ export interface TeamResult {
   eliminated: boolean;
 }
 
-/** A one-off prize ("biggest blowout") paid to whoever owns the chosen team. */
+/** A one-off prize ("biggest upset") paid to whoever owns the winning team(s). Ties split evenly. */
 export interface PropEvent {
   id: string;
   label: string;
   pct: number;
-  teamId: string | null;
+  /** Winner(s); more than one = a tie, the prize splits evenly. */
+  teamIds: string[];
+  /** One-line rule shown to the room (tiebreaks etc.). */
+  rule?: string | null;
+  /** Legacy single winner (docs saved before ties were supported). */
+  teamId?: string | null;
 }
 
 export interface PayoutRules {

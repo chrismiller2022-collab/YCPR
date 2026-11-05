@@ -40,7 +40,8 @@ describe("calcutta engine", () => {
   it("default NFL playoff payouts sum to 100%", () => {
     const a = setup();
     expect(payoutTotalPct(a.format, a.payouts, a.field)).toBe(100);
-    expect(payoutTotalPct(a.format, { ...a.payouts, byeCountsAsWin: false }, a.field)).toBe(95);
+    expect(a.payouts.props.length).toBe(4);
+    expect(payoutTotalPct(a.format, { ...a.payouts, byeCountsAsWin: true }, a.field)).toBe(106);
   });
 
   it("assigns unique hotkeys", () => {
@@ -139,11 +140,13 @@ describe("calcutta engine", () => {
       [50, 100],
       [50, 100],
     ]);
-    // KC wins the Super Bowl: bye (2.5) + div (5) + conf (10) + SB (40) = 57.5% of a $200 pot
-    a = { ...a, results: { KC: { roundsCleared: 4, eliminated: false } } };
+    // KC wins the Super Bowl off a bye: div (5) + conf (10) + SB (17) = 32%, plus half of a
+    // tied 6% side prize (3%) = 35% of a $200 pot = $70, split 50/50 → $35 each.
+    const props = a.payouts.props.map((p, i) => (i === 1 ? { ...p, teamIds: ["KC", "DET"] } : p));
+    a = { ...a, results: { KC: { roundsCleared: 4, eliminated: false } }, payouts: { ...a.payouts, props } };
     const s = ownerSummaries(a);
     const kal = s.find((x) => x.participant.name === "Kal")!;
-    expect(kal.earned).toBeCloseTo(57.5);
+    expect(kal.earned).toBeCloseTo(35);
     expect(kal.owed).toBe(200);
   });
 });
