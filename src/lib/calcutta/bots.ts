@@ -150,6 +150,12 @@ export function botMax(a: CalcuttaAuction, p: Participant, lot: Lot): number {
   }
   let max = fair * mult * mood;
   const done = spent(a, p.id);
+  // Unused minimum buy-in is owed anyway, so as lots run out a bot will spend it.
+  const left = Math.max(0, (a.settings.minBuyIn || 0) - done);
+  if (left > 0) {
+    const sold = a.lots.filter((l) => l.status === "sold").length;
+    max += left * (sold / Math.max(1, a.lots.length));
+  }
   if (bot.budget != null) max = Math.min(max, Math.max(0, bot.budget - done));
   else {
     // Soft spending limit: past ~its share of the room it cools off, then stops.

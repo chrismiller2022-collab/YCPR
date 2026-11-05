@@ -149,4 +149,26 @@ describe("calcutta engine", () => {
     expect(kal.earned).toBeCloseTo(35);
     expect(kal.owed).toBe(200);
   });
+
+  it("minimum buy-in: pot floor, top-ups owed, unused buy-in counts as cost", () => {
+    let a = setup();
+    a = { ...a, settings: { ...a.settings, minBuyIn: 50 } };
+    expect(potTotal(a)).toBe(150); // 3 attendees × $50 before anything sells
+    a = openLot(a, null, 0).auction;
+    a = placeBid(a, pid(a, "Kal"), 80, 0).auction;
+    a = sellCurrent(a, 0).auction;
+    a = openLot(a, null, 0).auction;
+    a = placeBid(a, pid(a, "Chris"), 20, 0).auction;
+    a = sellCurrent(a, 0).auction;
+    // Kal 80 (over the minimum), Chris 20 → tops up 30, Ethan nothing → 50
+    expect(potTotal(a)).toBe(80 + 50 + 50);
+    const s = ownerSummaries(a);
+    const get = (n: string) => s.find((x) => x.participant.name === n)!;
+    expect(get("Kal").owed).toBe(80);
+    expect(get("Chris").owed).toBe(50);
+    expect(get("Chris").cost).toBe(50);
+    expect(get("Ethan").owed).toBe(50);
+    expect(get("Ethan").net).toBe(-50);
+  });
 });
+

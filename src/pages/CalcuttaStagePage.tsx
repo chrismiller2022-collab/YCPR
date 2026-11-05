@@ -20,6 +20,9 @@ import {
   potTotal,
   remainingMs,
   sellCurrent,
+  buyInLeft,
+  soldTotal,
+  spentBy,
   sortedLots,
   startClock,
   tick,
@@ -259,7 +262,7 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
           <div className="cal-stage-title">{a.name}</div>
         </div>
         <div className="cal-stage-pot">
-          <div className="cal-stage-eyebrow">Pot</div>
+          <div className="cal-stage-eyebrow">Pot{a.settings.minBuyIn ? ` · incl. ${fmt$(a.settings.minBuyIn)} min buy-ins` : ""}</div>
           <div className="cal-stage-potv">{fmt$(pot)}</div>
           <div className="cal-stage-eyebrow">
             {soldCount}/{a.lots.length} sold{a.settings.rakePct ? ` · ${fmt$(netPot(a))} after rake` : ""}
@@ -415,7 +418,8 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
                 {p.name}
               </span>
               <span className="cal-bidder-meta">
-                {s?.owed ? fmt$(s.owed) : "$0"} · {s?.lots.length ?? 0} {s?.lots.length === 1 ? "team" : "teams"}
+                {fmt$(spentBy(a, p.id))} · {s?.lots.length ?? 0} {s?.lots.length === 1 ? "team" : "teams"}
+                {buyInLeft(a, p.id) > 0 && soldTotal(a) > 0 ? ` · ${fmt$(buyInLeft(a, p.id))} buy-in left` : ""}
               </span>
             </button>
           );

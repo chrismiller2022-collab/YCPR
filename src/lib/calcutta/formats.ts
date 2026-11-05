@@ -101,15 +101,17 @@ export const FORMATS: FormatDef[] = [
     byeCount: 0,
     cinderellaMinSeed: 11,
     sim: { hfa: 0, marginSd: 11, ratingNoise: 1.5 },
-    // Wins: 32 × 0.5 + 16 × 1 + 8 × 2 + 4 × 3 + 2 × 5 + 10 = 80%. Side prizes 20%.
+    // Chris's pool: each team's TOTAL by how far it goes — win 1 game 0.75%,
+    // lose in the Sweet 16 2.25%, Elite 8 5%, Final Four 9%, title game 12.5%,
+    // champion 17.5% (its 6 wins add up to exactly that). Stored as the extra
+    // each win adds: 0.75, 1.5, 2.75, 4, 3.5, 5 → 98%, plus 3 × 0.67% prizes.
     defaultPayouts: {
-      roundPct: { r64: 0.5, r32: 1, s16: 2, e8: 3, f4: 5, title: 10 },
+      roundPct: { r64: 0.75, r32: 1.5, s16: 2.75, e8: 4, f4: 3.5, title: 5 },
       byeCountsAsWin: false,
       props: [
-        prop("biggest_upset", "Biggest upset by seed", 6, "Winner's seed minus loser's seed (15 over 2 = 13). Tiebreak: bigger margin. No upsets → champion. First Four doesn't count."),
-        prop("worst_loss", "Worst margin of defeat", 4, "Largest losing margin in any one game (First Four excluded). Ties split."),
-        prop("cinderella", "Cinderella (best 11+ seed)", 6, "Furthest-advancing seed 11–16. Tiebreak: lower seed, then split."),
-        prop("best_ats", "Best ATS record", 4, "Cover % vs closing line, pushes don't count. Tiebreak: most ATS wins, then split."),
+        prop("worst_loss", "Biggest blowout victim", 0.67, "Largest losing margin in any one game (First Four excluded). Ties split."),
+        prop("biggest_upset", "Biggest upset", 0.67, "Winner's seed minus loser's seed (15 over 2 = 13). Tiebreak: bigger margin. No upsets → champion. First Four doesn't count."),
+        prop("lowest_f4_seed", "Lowest Final Four seed", 0.67, "Highest seed number in the Final Four. Ties split."),
       ],
     },
   },
@@ -226,6 +228,7 @@ export function propKind(p: PropEvent): PropKind {
   if (p.kind) return p.kind;
   const l = p.label.toLowerCase();
   if (l.includes("upset")) return "biggest_upset";
+  if (l.includes("final four seed") || l.includes("final 4 seed")) return "lowest_f4_seed";
   if (l.includes("cinderella")) return "cinderella";
   if (l.includes("ats") || l.includes("spread")) return "best_ats";
   if (l.includes("margin of defeat") || l.includes("worst loss") || l.includes("biggest loss") || l.includes("blowout")) return "worst_loss";

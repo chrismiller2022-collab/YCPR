@@ -38,18 +38,32 @@ describe("March Madness", () => {
     expect(a.lots.filter((l) => l.teamIds.length === 2).length).toBe(4);
   });
 
-  it("default payouts total 100% and every sim pays out 100%", () => {
-    expect(payoutTotalPct(a.format, a.payouts, a.field)).toBe(100);
+  it("default payouts are Chris's: each team's total by how far it goes", () => {
+    const pct = a.payouts.roundPct;
+    const running = ["r64", "r32", "s16", "e8", "f4", "title"].reduce<number[]>((acc, k) => [...acc, (acc[acc.length - 1] ?? 0) + pct[k]], []);
+    // won 1 game, lost in S16, lost in E8, lost in F4, lost title game, champion (6 wins)
+    expect(running.map((x) => Math.round(x * 100) / 100)).toEqual([0.75, 2.25, 5, 9, 12.5, 17.5]);
+    expect(a.payouts.props.map((p) => [p.kind, p.pct])).toEqual([
+      ["worst_loss", 0.67],
+      ["biggest_upset", 0.67],
+      ["lowest_f4_seed", 0.67],
+    ]);
+  });
+
+  it("default payouts total 100% (± rounding) and every sim pays it out", () => {
+    expect(payoutTotalPct(a.format, a.payouts, a.field)).toBeCloseTo(100.01, 6);
     const sim = simulateBracket({ format: a.format, field: a.field, regions: a.regions, ratings: seedRatings(a.field, 22, 1.4), hfa: 0, marginSd: 11, ratingNoise: 1.5, useSourceSd: false, sims: 3000 });
     const m = payoutMatrix(sim, a);
     const T = sim.teamIds.length;
     for (let s = 0; s < 20; s++) {
       let t = 0;
       for (let i = 0; i < T; i++) t += m[s * T + i];
-      expect(t).toBeCloseTo(100, 3);
+      expect(t).toBeCloseTo(100.01, 3);
     }
     const sum = (r: number) => Object.values(sim.reach).reduce((x, v) => x + v[r], 0);
     expect(sum(0)).toBeCloseTo(32, 6);
+    expect(Object.values(sim.propProb.lowest_f4_seed).reduce((x, v) => x + v, 0)).toBeCloseTo(1, 4);
+    expect(sim.propProb.lowest_f4_seed["east-seed16"]).toBeLessThan(sim.propProb.lowest_f4_seed["east-seed5"] + 0.01);
     expect(sum(5)).toBeCloseTo(1, 6);
     const pi = Object.entries(sim.playInWin);
     expect(pi.length).toBe(8);

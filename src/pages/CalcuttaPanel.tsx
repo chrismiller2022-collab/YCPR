@@ -349,7 +349,7 @@ function ReadinessChecklist({ a, onGo }: { a: CalcuttaAuction; onGo: (t: Tab) =>
   if (a.status !== "setup") return null;
   const total = payoutTotalPct(a.format, a.payouts, a.field);
   const items: [boolean, string, Tab][] = [
-    [Math.abs(total - 100) < 0.01, `Payouts add to 100% (now ${total}%)`, "setup"],
+    [Math.abs(total - 100) < 0.05, `Payouts add to 100% (now ${total}%)`, "setup"],
     [a.participants.length >= 2, "At least 2 attendees", "attendees"],
     [!validateField(a.format, a.field, a.regions), validateField(a.format, a.field, a.regions) ?? `Full field (${a.field.length} teams)`, "field"],
     [a.lots.length > 0 && a.field.every((t) => a.lots.some((l) => l.teamIds.includes(t.id))), "Lots built for every team", "field"],
@@ -447,6 +447,11 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
             <option value="requeue">Back of the line once, then unsold</option>
             <option value="unsold">Unsold right away</option>
           </select>
+          <label>Minimum buy-in</label>
+          <span>
+            <NumField value={s.minBuyIn ?? 0} onCommit={(v) => set({ minBuyIn: Math.max(0, v) })} suffix="$ each" />
+            <span className="cal-note"> 0 = off. Spend less and the difference goes into the pot anyway.</span>
+          </span>
           <label>Rake (host cut)</label>
           <NumField value={s.rakePct} onCommit={(v) => set({ rakePct: Math.min(100, Math.max(0, v)) })} suffix="%" />
           <label>Stage sounds</label>
@@ -466,6 +471,7 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
               <th className="r">% per team</th>
               <th className="r">Teams</th>
               <th className="r">Total</th>
+              <th className="r" title="What a team has collected in all once it wins this round">Team's running total</th>
               <th className="r">{np > 0 ? "$ each now" : ""}</th>
             </tr>
           </thead>
@@ -477,10 +483,11 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
                 <tr key={r.key}>
                   <td>{r.label}</td>
                   <td className="r">
-                    <NumField value={pct} step={0.5} onCommit={(v) => setPay({ roundPct: { ...a.payouts.roundPct, [r.key]: v } })} suffix="%" width={64} />
+                    <NumField value={pct} step={0.5} onCommit={(v) => setPay({ roundPct: { ...a.payouts.roundPct, [r.key]: v } })} suffix="%" width={72} />
                   </td>
                   <td className="r">× {slots}</td>
                   <td className="r">{Math.round(pct * slots * 100) / 100}%</td>
+                  <td className="r cal-note">{Math.round(def.rounds.slice(0, def.rounds.indexOf(r) + 1).reduce((x, y) => x + (a.payouts.roundPct[y.key] ?? 0), 0) * 100) / 100}%</td>
                   <td className="r">{np > 0 ? fmtPayout((pct / 100) * np) : ""}</td>
                 </tr>
               );
@@ -501,6 +508,7 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
                 </td>
                 <td className="r">× 1</td>
                 <td className="r">{p.pct}%</td>
+                <td />
                 <td className="r">
                   <button className="cal-btn sm" onClick={() => setPay({ props: a.payouts.props.filter((x) => x.id !== p.id) })}>
                     ✕
@@ -526,9 +534,10 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
                   Reset to recommended
                 </button>
               </td>
-              <td className={`r ${Math.abs(total - 100) < 0.01 ? "good" : "bad"}`}>
+              <td className={`r ${Math.abs(total - 100) < 0.05 ? "good" : "bad"}`}>
                 <b>{total}%</b>
               </td>
+              <td />
               <td />
             </tr>
           </tfoot>

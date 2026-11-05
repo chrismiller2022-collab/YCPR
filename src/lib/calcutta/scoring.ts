@@ -120,6 +120,19 @@ export function deriveFromGames(a: CalcuttaAuction): Derived {
         detail: played.length && win.length ? win.map((t) => `${t.abbr} (${t.seed}) — ${results[t.id].roundsCleared} win${results[t.id].roundsCleared === 1 ? "" : "s"}`).join("; ") : null,
         blocker: settled ? null : `Settles once every ${minSeed}+ seed is out`,
       };
+    } else if (kind === "lowest_f4_seed") {
+      const R = totalRounds(a);
+      const need = formatDef(a.format).rounds[R - 3]?.slots ?? 4;
+      const four = a.field.filter((t) => results[t.id].roundsCleared >= R - 2);
+      const lo = Math.max(0, ...four.map((t) => t.seed ?? 0));
+      const win = four.filter((t) => (t.seed ?? 0) === lo);
+      const settled = four.length >= need;
+      props[p.id] = {
+        winners: win.map((t) => t.id),
+        final: settled,
+        detail: four.length ? `${four.length === need ? "Final Four" : "So far"}: ${four.map((t) => `${t.abbr} (${t.seed})`).join(", ")}` : null,
+        blocker: settled ? null : "Settles once the Final Four is set",
+      };
     } else if (kind === "best_ats") {
       const w: Record<string, number> = {};
       const n: Record<string, number> = {};

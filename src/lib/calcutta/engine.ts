@@ -371,8 +371,33 @@ export function reopenLot(a: CalcuttaAuction, lotId: string, now: number): Resul
 
 // ---- money -----------------------------------------------------------------
 
-export function potTotal(a: CalcuttaAuction): number {
+/** Winning bids only (no buy-in top-ups). */
+export function soldTotal(a: CalcuttaAuction): number {
   return a.lots.reduce((s, l) => s + (l.status === "sold" ? l.price ?? 0 : 0), 0);
+}
+
+export function spentBy(a: CalcuttaAuction, participantId: string): number {
+  return a.lots.reduce((s, l) => s + (l.status === "sold" && l.winnerId === participantId ? l.price ?? 0 : 0), 0);
+}
+
+/** What each attendee owes the pot: their winning bids, but never less than the minimum buy-in. */
+export function owedBy(a: CalcuttaAuction, participantId: string): number {
+  return Math.max(spentBy(a, participantId), a.settings.minBuyIn || 0);
+}
+
+/** Buy-in still unused: bids up to this cost the attendee nothing extra. */
+export function buyInLeft(a: CalcuttaAuction, participantId: string): number {
+  return Math.max(0, (a.settings.minBuyIn || 0) - spentBy(a, participantId));
+}
+
+/**
+ * The pot: winning bids plus each attendee's buy-in top-up. With a minimum
+ * buy-in the pot starts at attendees × minimum and only grows once someone
+ * spends past it.
+ */
+export function potTotal(a: CalcuttaAuction): number {
+  if (!(a.settings.minBuyIn || 0)) return soldTotal(a);
+  return soldTotal(a) + a.participants.reduce((s, p) => s + buyInLeft(a, p.id), 0);
 }
 
 export function netPot(a: CalcuttaAuction): number {
@@ -491,6 +516,12 @@ export function ownerSummaries(a: CalcuttaAuction): OwnerSummary[] {
       s.lots.push({ lot, pct: h.pct, cost: h.cost, earned });
     }
   }
-  for (const s of by.values()) s.net = s.earned - s.cost;
+  // Unused buy-in is money paid in with nothing to show for it.
+  for (const s of by.values()) {
+    const topUp = buyInLeft(a, s.participant.id);
+    s.owed += topUp;
+    s.cost += topUp;
+    s.net = s.earned - s.cost;
+  }
   return [...by.values()];
 }

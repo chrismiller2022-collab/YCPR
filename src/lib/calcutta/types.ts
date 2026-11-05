@@ -32,6 +32,8 @@ export interface CalcuttaSettings {
   /** What happens to a lot that gets no bids: back of the queue, or left unsold. */
   noBidAction: "requeue" | "unsold";
   rakePct: number;
+  /** Everyone owes at least this; if their winning bids total less, the difference goes into the pot. 0 = off. */
+  minBuyIn?: number;
   sound: boolean;
 }
 
@@ -147,7 +149,7 @@ export interface PropEvent {
   teamId?: string | null;
 }
 
-export type PropKind = "biggest_upset" | "worst_loss" | "cinderella" | "best_ats" | "custom";
+export type PropKind = "biggest_upset" | "worst_loss" | "cinderella" | "best_ats" | "lowest_f4_seed" | "custom";
 
 export interface PayoutRules {
   /** % of net pot paid PER TEAM that clears each round, keyed by the format's round keys. */

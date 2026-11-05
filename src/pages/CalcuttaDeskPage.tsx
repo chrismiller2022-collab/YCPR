@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import "../styles/calcutta.css";
 import { NFL_COMPOSITE_WEEK9_TEXT } from "../data/nflCompositeRatings";
 import { restorePasskeySession } from "../lib/adminAuth";
-import { currentLot, highBid, lotName, lotTeams, minNextBid, participantById, remainingMs } from "../lib/calcutta/engine";
+import { buyInLeft, currentLot, highBid, lotName, lotTeams, minNextBid, participantById, remainingMs } from "../lib/calcutta/engine";
 import type { Lot } from "../lib/calcutta/types";
 import { formatDef, propKind, type Sport } from "../lib/calcutta/formats";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
@@ -433,23 +433,26 @@ function LiveCard({
   const mine = !!meId && high?.participantId === meId;
   const secs = Math.ceil(remainingMs(a.live, now) / 1000);
   const sold = a.live.phase === "sold";
+  // Unused minimum buy-in is owed either way, so the first `left` dollars of a bid cost nothing extra.
+  const left = meId ? buyInLeft(a, meId) : 0;
+  const myMax = live.max + left;
+  const myFair = live.fair + left;
+  const freeNote = left > 0 ? ` (incl. ${fmt$(left)} unused buy-in)` : "";
   let signal: { cls: string; text: string };
   if (sold) signal = { cls: mine ? "good" : "", text: mine ? `Bought at ${fmt$(bid)}` : `Sold ${fmt$(bid)} — ${pct((bid ?? 0) / Math.max(1, live.fair), 0)} of fair` };
   else if (mine) signal = { cls: "good", text: "You're the high bidder" };
-  else if (bid == null || bid < live.max) signal = { cls: "good", text: `BID — up to ${fmt$(live.max)}` };
-  else if (bid < live.fair) signal = { cls: "warn", text: `Thin — ${fmt$(live.fair - bid)} under fair, below your ${edgePct}% edge` };
-  else signal = { cls: "bad", text: `PASS — ${fmt$(bid - live.fair)} over fair` };
+  else if (bid == null || bid < myMax) signal = { cls: "good", text: `BID — up to ${fmt$(myMax)}${freeNote}` };
+  else if (bid < myFair) signal = { cls: "warn", text: `Thin — ${fmt$(myFair - bid)} under fair, below your ${edgePct}% edge` };
+  else signal = { cls: "bad", text: `PASS — ${fmt$(bid - myFair)} over fair${freeNote}` };
 
   const teams = lotTeams(a, lot);
   const rounds = formatDef(a.format).rounds;
   const anyPlayIn = teams.some((t) => sim.playInWin[t.id] != null);
-  const kinds: { k: SimPropKind; label: string }[] = [
-    { k: "biggest_upset", label: "Upset" },
-    { k: "worst_loss", label: "Worst L" },
-    { k: "cinderella", label: "Cind." },
-    { k: "best_ats", label: "ATS" },
-  ];
-  const atBid = bid != null && !sold ? live.fair - bid : null;
+  const KIND_LABEL: Record<SimPropKind, string> = { biggest_upset: "Upset", worst_loss: "Worst L", cinderella: "Cind.", best_ats: "ATS", lowest_f4_seed: "Low F4" };
+  const kinds = [...new Set(a.payouts.props.filter((p) => p.pct > 0).map(propKind))]
+    .filter((k): k is SimPropKind => k !== "custom")
+    .map((k) => ({ k, label: KIND_LABEL[k] }));
+  const atBid = bid != null && !sold ? live.fair - Math.max(0, bid - left) : null;
 
   return (
     <section className={`cal-dcard cal-live ${signal.cls}`}>
@@ -468,7 +471,7 @@ function LiveCard({
         <Kpi label="Fair" value={fmt$(live.fair)} sub={`${live.share.toFixed(2)}% of pot`} />
         <Kpi label={`Max (−${edgePct}%)`} value={fmt$(live.max)} />
         <Kpi label="Room expects" value={fmt$(live.expected)} />
-        <Kpi label="Edge at bid" value={atBid == null ? "—" : fmt$(atBid)} sub={atBid == null || !bid ? "" : `${pct(atBid / bid, 0)} ROI`} />
+        <Kpi label="Edge at bid" value={atBid == null ? "—" : fmt$(atBid)} sub={atBid == null || !bid ? "" : `${pct(atBid / Math.max(1, bid - left), 0)} ROI${left > 0 ? " on new money" : ""}`} />
       </div>
       <div className={`cal-signal ${signal.cls}`}>{signal.text}</div>
       {meId && !sold && <WhatIf a={a} lot={lot} fair={live.fair} defaultPrice={mine ? bid ?? 0 : minNextBid(a)} meId={meId} sim={sim} matrix={matrix} netPot={netPot} />}

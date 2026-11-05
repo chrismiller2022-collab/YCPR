@@ -55,11 +55,13 @@ Calcutta page → **Open Desk ↗** (admin sign-in required; keep it on the moni
 | Format | Field entry | Bracket (sim) | Default payouts |
 |---|---|---|---|
 | NFL Playoffs | AFC/NFC seeds 1–7 | 2v7/3v6/4v5, 1 seed hosts lowest left, Super Bowl neutral | 3/5/10/17 per win + 25% side prizes |
-| March Madness | paste "Region" then "seed team" lines (two on one seed line = First Four pair, sold as one lot); Final Four region order | First Four, fixed 1v16 … 2v15 regions, all neutral | 0.5/1/2/3/5/10 per win + 20% side prizes (Cinderella = 11+ seed) |
+| March Madness | paste "Region" then "seed team" lines (two on one seed line = First Four pair, sold as one lot); Final Four region order | First Four, fixed 1v16 … 2v15 regions, all neutral | Each team's total by how far it goes: win 1 game 0.75%, lose in S16 2.25%, E8 5%, F4 9%, title game 12.5%, champion 17.5% (stored per win: 0.75/1.5/2.75/4/3.5/5 = 98%) + biggest blowout victim, biggest upset, lowest Final Four seed at 0.67% each |
 | CFB 12-team | seeds 1–12 (or fill from the latest Monte Carlo projection) | byes 1–4, first round on campus, then neutral bowls, fixed bracket | 4/6/10/15 per win + 25% (Cinderella = 9–12) |
 | CFB 24-team | seeds 1–24 (or fill from projection) | byes 1–8, 9v24 … 16v17 on campus, reseeded each round, higher seed hosts, neutral title | 2/3/5/6/8 per win + 20% (Cinderella = 17–24) |
 
-Byes don't pay as a win by default (toggle). "Bundle long shots" groups every team at or below a seed into one lot per region (or per seed line in March Madness).
+Byes don't pay as a win by default (toggle). Rules & Payouts shows each team's running total by round.
+
+**Minimum buy-in** (Rules & Payouts, 0 = off): everyone owes at least this; spend less and the difference goes into the pot. The pot starts at attendees × minimum; owners, the Stage and payouts include top-ups. The Desk treats your unused buy-in as free money (your max bid rises by it), and bots spend theirs as lots run out. "Bundle long shots" groups every team at or below a seed into one lot per region (or per seed line in March Madness).
 
 Desk ratings: NFL paste (composite format); CFB uses the site's latest power ratings and each team's home field (or a paste); March Madness paste — one "Team rating" per line, KenPom/Torvik rows work (records are skipped; tick "per 100 possessions" to scale AdjEM × 0.68).
 

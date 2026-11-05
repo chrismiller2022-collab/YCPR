@@ -1,4 +1,4 @@
-import { highBid, lotHoldings, sortedLots } from "./engine";
+import { highBid, lotHoldings, potTotal, sortedLots, spentBy } from "./engine";
 import type { SimOutput } from "./nflPlayoffSim";
 import type { CalcuttaAuction, Lot } from "./types";
 
@@ -41,7 +41,9 @@ export function projectPot(a: CalcuttaAuction, shares: Record<string, number>, p
   const roomPace = soldShare > 0.02 ? sold / soldShare : null;
   const rate = roomPace == null ? prior : soldShare * roomPace + (1 - soldShare) * prior;
   const unsold = a.lots.every((l) => l.status === "sold" || l.status === "unsold") ? 0 : 1 - soldShare;
-  return { sold, soldShare, roomPace, prior, projected: sold + unsold * rate };
+  // Never below what's already locked in (winning bids + everyone's minimum buy-in).
+  const projected = unsold ? Math.max(sold + unsold * rate, potTotal(a)) : potTotal(a);
+  return { sold, soldShare, roomPace, prior, projected };
 }
 
 export type Tier = "fav" | "mid" | "long";
@@ -156,7 +158,10 @@ export function portfolio(
     if (h && h.pct > 0) pieces.push({ lot, pct: h.pct, cost: h.cost, ev: 0 });
   }
   if (extra) pieces.push({ lot: extra.lot, pct: 100, cost: extra.price, ev: 0 });
-  const cost = pieces.reduce((s, p) => s + p.cost, 0);
+  // Unused minimum buy-in is owed either way, so it's part of the cost.
+  const minBuyIn = a.settings.minBuyIn || 0;
+  const topUp = Math.max(0, minBuyIn - spentBy(a, participantId) - (extra?.price ?? 0));
+  const cost = pieces.reduce((s, p) => s + p.cost, 0) + topUp;
   const outcomes = new Float64Array(sim.sims);
   const cols = pieces.map((p) => p.lot.teamIds.map((id) => col.get(id)).filter((x) => x != null) as number[]);
   for (let s = 0; s < sim.sims; s++) {

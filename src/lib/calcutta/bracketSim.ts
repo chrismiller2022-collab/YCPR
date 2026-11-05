@@ -26,7 +26,7 @@ import type { CalcuttaAuction, FieldTeam, FormatKey, PropKind, TeamResult } from
 // per team) so payouts re-price instantly and portfolio spreads can be read.
 
 export type SimPropKind = Exclude<PropKind, "custom">;
-export const SIM_PROP_KINDS: SimPropKind[] = ["biggest_upset", "worst_loss", "cinderella", "best_ats"];
+export const SIM_PROP_KINDS: SimPropKind[] = ["biggest_upset", "worst_loss", "cinderella", "best_ats", "lowest_f4_seed"];
 
 export interface SimInputs {
   format: FormatKey;
@@ -322,6 +322,18 @@ export function simulateBracket(inp: SimInputs): SimOutput {
       } else if (key === ck) cw.push(i);
     }
     for (const u of cw) props.cinderella[off + u] += 1 / cw.length;
+
+    // Lowest seed (highest number) among the last four teams, ties split
+    let lf = -1;
+    let lw: number[] = [];
+    for (let i = 0; i < T; i++) {
+      if (cleared[i] < R_ - 2) continue;
+      if (seedOf[i] > lf) {
+        lf = seedOf[i];
+        lw = [i];
+      } else if (seedOf[i] === lf) lw.push(i);
+    }
+    for (const u of lw) props.lowest_f4_seed[off + u] += 1 / lw.length;
 
     // Best ATS %, tiebreak most ATS wins
     let ak = -1;
