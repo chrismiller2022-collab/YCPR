@@ -74,6 +74,11 @@ const SECTIONS: { title: string; pools: PoolDef[] }[] = [
     title: "Other",
     pools: [
       {
+        key: "calcutta",
+        label: "Calcutta",
+        description: "Live team auction — setup, screen-share Stage with bid timer, owners, splits and payouts. NFL Playoffs first.",
+      },
+      {
         key: "nfldraftpool",
         label: "NFL Win Total Draft",
         description: "Projected NFL win totals by power-rating system, plus a live draft tool for Kal/Presley/Ethan/YC.",
