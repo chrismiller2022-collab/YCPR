@@ -41,8 +41,18 @@ Why (from `scripts/calcutta/nfl_payout_sim.py`, 100k simulated playoffs with typ
 ## Partners and buybacks
 Owners & Results → Partners & buybacks records a share of a sold team moving between two people for a price. The winning bidder still owes the full price to the pot; the share price is paid person-to-person, and payouts split by ownership %.
 
+## Desk (private model window)
+Calcutta page → **Open Desk ↗** (admin sign-in required; keep it on the monitor you don't share). It follows the Stage live.
+
+- **Ratings:** paste one team per line in Model inputs — the composite table format (`1 Los Angeles Rams 5.5 1.1`, first number = rating vs an average team, second = sources' std dev), `LAR 5.5`, or full table rows. For a screenshot, "Copy screenshot prompt for Claude", paste the image + prompt into any Claude chat, paste the reply back. Starts with the Week 9 composite.
+- **Sim:** 20k playoffs by default (`src/lib/calcutta/nflPlayoffSim.ts`): margin ~ Normal(rating diff + HFA 1.5, SD 13.5), per-sim rating noise 1.5 pts (optionally + source SD), reseeded bracket, all four side prizes. Results entered on Owners & Results are locked in.
+- **Fair** = team's expected share of the net pot × projected pot. **Max** = fair less your required edge. **Projected pot** starts at your expected pot and shifts to the room's pace as value sells.
+- **Room expects** = fair × the room's paid-to-fair ratio for that tier (favorites / middle / long shots), shrunk toward 1 until a few lots per tier sell.
+- **Portfolio** = your holdings after splits, with EV, P(profit) and 10th/50th/90th percentile payouts from the same sims.
+- Desk settings and ratings stay in this browser only — never in the (public-readable) auction doc.
+
 ## Roadmap
-1. Desk tab: power ratings → NFL playoff sim → fair share %, projected pot, max bid, value ratio, portfolio. Reads the same local auction doc.
+1. Attendee history → per-bidder price model; futures-based market prior.
 2. Market model: expected prices from futures + per-attendee bidding history.
 3. More formats: March Madness, CFB 24-team playoff, NFL and CFB regular season.
 4. Read-only phone link for attendees (4-digit code → Stage view).

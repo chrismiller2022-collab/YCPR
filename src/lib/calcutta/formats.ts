@@ -1,5 +1,5 @@
 import { NFL_TEAMS, nflLogoUrl } from "../../data/nflTeams";
-import type { FieldTeam, FormatKey, PayoutRules } from "./types";
+import type { FieldTeam, FormatKey, PayoutRules, PropEvent, PropKind } from "./types";
 
 // Format registry. Every format shares the same auction core; a format only
 // decides the team field, the payout rounds, and the default payout split.
@@ -43,10 +43,10 @@ export const FORMATS: FormatDef[] = [
       roundPct: { wc: 3, div: 5, conf: 10, sb: 17 },
       byeCountsAsWin: false,
       props: [
-        { id: "biggest_upset", label: "Biggest upset by seed", pct: 7, teamIds: [], rule: "Winner's seed minus loser's seed (7 over 2 = 5). Tiebreak: bigger margin. No upsets → Super Bowl champ." },
-        { id: "worst_loss", label: "Worst margin of defeat", pct: 6, teamIds: [], rule: "Largest losing margin in any one game. Ties split." },
-        { id: "cinderella", label: "Cinderella (best 5–7 seed)", pct: 6, teamIds: [], rule: "Furthest-advancing 5, 6 or 7 seed. Tiebreak: lower seed (7 beats 5), then split." },
-        { id: "best_ats", label: "Best ATS record", pct: 6, teamIds: [], rule: "Cover % vs closing line, pushes don't count. Tiebreak: most ATS wins, then split." },
+        { id: "biggest_upset", kind: "biggest_upset", label: "Biggest upset by seed", pct: 7, teamIds: [], rule: "Winner's seed minus loser's seed (7 over 2 = 5). Tiebreak: bigger margin. No upsets → Super Bowl champ." },
+        { id: "worst_loss", kind: "worst_loss", label: "Worst margin of defeat", pct: 6, teamIds: [], rule: "Largest losing margin in any one game. Ties split." },
+        { id: "cinderella", kind: "cinderella", label: "Cinderella (best 5–7 seed)", pct: 6, teamIds: [], rule: "Furthest-advancing 5, 6 or 7 seed. Tiebreak: lower seed (7 beats 5), then split." },
+        { id: "best_ats", kind: "best_ats", label: "Best ATS record", pct: 6, teamIds: [], rule: "Cover % vs closing line, pushes don't count. Tiebreak: most ATS wins, then split." },
       ],
     },
   },
@@ -101,4 +101,15 @@ export function nflFieldFromSlots(slots: NflSeedSlot[]): FieldTeam[] {
       const t = NFL_TEAMS.find((x) => x.abbr === s.abbr)!;
       return { id: t.abbr, name: t.name, abbr: t.abbr, group: s.conf, seed: s.seed, bye: s.seed === 1, logo: nflLogoUrl(t.abbr) };
     });
+}
+
+/** The built-in prize a side prize is, from its kind or (older docs) its label. */
+export function propKind(p: PropEvent): PropKind {
+  if (p.kind) return p.kind;
+  const l = p.label.toLowerCase();
+  if (l.includes("upset")) return "biggest_upset";
+  if (l.includes("cinderella")) return "cinderella";
+  if (l.includes("ats") || l.includes("spread")) return "best_ats";
+  if (l.includes("margin of defeat") || l.includes("worst loss") || l.includes("biggest loss") || l.includes("blowout")) return "worst_loss";
+  return "custom";
 }

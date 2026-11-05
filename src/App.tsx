@@ -38,6 +38,7 @@ const AdminPage = lazy(() => import("./pages/AdminPage"));
 const OverlayPage = lazy(() => import("./pages/OverlayPage"));
 const OverlayControlPage = lazy(() => import("./pages/OverlayControlPage"));
 const CalcuttaStagePage = lazy(() => import("./pages/CalcuttaStagePage"));
+const CalcuttaDeskPage = lazy(() => import("./pages/CalcuttaDeskPage"));
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
@@ -240,6 +241,8 @@ export default function App() {
 
       {/* Calcutta auction Stage — the window that gets screen-shared on Zoom; no site nav/footer. */}
       <Route path="/calcutta/stage/:id" element={<Suspense fallback={null}><CalcuttaStagePage /></Suspense>} />
+      {/* Calcutta Desk — private model window (admin sign-in required); never screen-shared. */}
+      <Route path="/calcutta/desk/:id" element={<Suspense fallback={null}><CalcuttaDeskPage /></Suspense>} />
 
       <Route path="/survivor-pool/standings/:season/:viewerSlug" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />
       <Route path="/survivor-pool/standings/:season" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />

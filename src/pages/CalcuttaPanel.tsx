@@ -52,6 +52,10 @@ export function openStageWindow(id: string) {
   window.open(`/calcutta/stage/${id}`, `calcutta-stage-${id}`, "popup=yes,width=1600,height=900");
 }
 
+export function openDeskWindow(id: string) {
+  window.open(`/calcutta/desk/${id}`, `calcutta-desk-${id}`, "popup=yes,width=1600,height=1000");
+}
+
 export default function CalcuttaPanel({ onBack }: { onBack: () => void }) {
   const [selected, setSelected] = useState<string | null>(() => {
     try {
@@ -283,6 +287,9 @@ function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
         <div className="cal-row">
           <button className="cal-btn" onClick={() => saveToCloud(a.id)}>
             Save to cloud
+          </button>
+          <button className="cal-btn" onClick={() => openDeskWindow(a.id)} disabled={a.format !== "nfl_playoffs" || a.field.length < 14} title="Private model — keep it on the monitor you don't share">
+            Open Desk ↗
           </button>
           <button className="cal-btn primary" onClick={() => openStageWindow(a.id)} disabled={a.lots.length === 0 || a.participants.length === 0}>
             Open Stage window ↗

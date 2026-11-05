@@ -111,9 +111,13 @@ export interface PropEvent {
   teamIds: string[];
   /** One-line rule shown to the room (tiebreaks etc.). */
   rule?: string | null;
+  /** Which built-in prize this is, so the Desk's sim can price it. "custom" = priced as an even split. */
+  kind?: PropKind;
   /** Legacy single winner (docs saved before ties were supported). */
   teamId?: string | null;
 }
+
+export type PropKind = "biggest_upset" | "worst_loss" | "cinderella" | "best_ats" | "custom";
 
 export interface PayoutRules {
   /** % of net pot paid PER TEAM that clears each round, keyed by the format's round keys. */
