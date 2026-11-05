@@ -1,6 +1,7 @@
 import { formatDef } from "./formats";
 import { scored } from "./scoring";
 import type { Bid, CalcuttaAuction, CalcuttaSettings, FieldTeam, FormatKey, Lot, LiveState, Participant } from "./types";
+export type { FieldTeam };
 
 // Pure auction logic. Every function takes an auction and returns a new one
 // (never mutates), plus an error string when the action was refused, so
@@ -108,10 +109,17 @@ export function lotsFromField(field: FieldTeam[], order: "seed" | "seed_desc" | 
     teams.sort((x, y) => (x.seed ?? 99) - (y.seed ?? 99) || x.group.localeCompare(y.group));
     if (order === "seed_desc") teams = teams.reverse();
   }
-  return teams.map((t, i) => ({
+  // First Four pairs (same region + seed) always sell together.
+  const groups: FieldTeam[][] = [];
+  for (const t of teams) {
+    const pair = groups.find((g) => t.seed != null && g[0].seed === t.seed && g[0].group === t.group && !!t.group && g.length === 1 && teams.filter((x) => x.group === t.group && x.seed === t.seed).length === 2);
+    if (pair) pair.push(t);
+    else groups.push([t]);
+  }
+  return groups.map((g, i) => ({
     id: uid("lot_"),
-    teamIds: [t.id],
-    label: null,
+    teamIds: g.map((t) => t.id),
+    label: g.length > 1 ? `${g[0].group} ${g[0].seed}: ${g.map((t) => t.name).join(" / ")}` : null,
     order: i + 1,
     status: "pending",
     winnerId: null,
@@ -119,6 +127,35 @@ export function lotsFromField(field: FieldTeam[], order: "seed" | "seed_desc" | 
     soldAt: null,
     passCount: 0,
   }));
+}
+
+/**
+ * Bundle every pending lot whose teams are all seeded at least `minSeed`:
+ * one bundle per region ("East 13–16") or per seed line ("All 16 seeds").
+ */
+export function bundleBySeed(a: CalcuttaAuction, minSeed: number, mode: "region" | "line", now: number): Result {
+  const teamOf = new Map(a.field.map((t) => [t.id, t]));
+  const eligible = a.lots.filter((l) => l.status === "pending" && l.teamIds.every((id) => (teamOf.get(id)?.seed ?? 0) >= minSeed));
+  const buckets = new Map<string, Lot[]>();
+  for (const l of eligible) {
+    const t = teamOf.get(l.teamIds[0])!;
+    const key = mode === "region" ? t.group || "All" : String(t.seed);
+    buckets.set(key, [...(buckets.get(key) ?? []), l]);
+  }
+  let cur = a;
+  let made = 0;
+  for (const [key, lots] of buckets) {
+    if (lots.length < 2) continue;
+    const seeds = lots.flatMap((l) => l.teamIds.map((id) => teamOf.get(id)?.seed ?? 0));
+    const lo = Math.min(...seeds);
+    const hi = Math.max(...seeds);
+    const label = mode === "region" ? `${key === "All" ? "" : key + " "}${lo === hi ? lo : `${lo}–${hi}`} seeds`.trim() : `All ${key} seeds`;
+    const r = bundleLots(cur, lots.map((l) => l.id), label, now);
+    if (r.error) return r;
+    cur = r.auction;
+    made++;
+  }
+  return made ? ok(cur) : fail(a, "Nothing to bundle at that seed");
 }
 
 /** Merge pending lots into one bundle (keeps the earliest slot in the order). */

@@ -28,3 +28,36 @@ describe("parseRatings", () => {
     expect(r.unmatched.map((u) => u.text)).toEqual(["garbage 12"]);
   });
 });
+
+import { parseFieldRatings } from "./ratings";
+
+describe("parseFieldRatings", () => {
+  const field = [
+    { id: "iowa", name: "Iowa" },
+    { id: "iowa-state", name: "Iowa State" },
+    { id: "st-johns", name: "St. John's" },
+    { id: "texas-a-m", name: "Texas A&M" },
+  ];
+  it("matches the longest name, handles St./State and flips/scales", () => {
+    const r = parseFieldRatings(["1. Iowa St. 24.5", "Iowa 18.2", "St. John's +20.1", "Texas A&M -3"].join("\n"), field, { scale: 0.5 });
+    expect(r.ratings["iowa-state"].rating).toBeCloseTo(12.25);
+    expect(r.ratings.iowa.rating).toBeCloseTo(9.1);
+    expect(r.ratings["st-johns"].rating).toBeCloseTo(10.05);
+    expect(r.ratings["texas-a-m"].rating).toBeCloseTo(-1.5);
+    const flip = parseFieldRatings("Iowa -7.5", field, { lowerIsBetter: true });
+    expect(flip.ratings.iowa.rating).toBe(7.5);
+  });
+
+  it("skips other schools with the same stem and win-loss records", () => {
+    const f = [
+      { id: "alabama", name: "Alabama" },
+      { id: "duke", name: "Duke" },
+      { id: "texas", name: "Texas" },
+    ];
+    const r = parseFieldRatings(["1 Duke ACC 35-4 +38.32 128.0", "Alabama 25.1", "Alabama State 2.0", "Texas Tech 20", "Texas SEC 19-15 12.5"].join("\n"), f);
+    expect(r.ratings.duke.rating).toBeCloseTo(38.32);
+    expect(r.ratings.alabama.rating).toBe(25.1);
+    expect(r.ratings.texas.rating).toBe(12.5);
+    expect(r.duplicates).toEqual([]);
+  });
+});

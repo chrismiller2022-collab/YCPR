@@ -1,4 +1,4 @@
-import { propKind } from "./formats";
+import { formatDef, propKind } from "./formats";
 import type { CalcuttaAuction, FieldTeam, PlayoffGame, PropEvent, TeamResult } from "./types";
 
 // Works out results and the built-in side prizes from the game log, so the
@@ -32,7 +32,7 @@ export interface Derived {
 }
 
 function totalRounds(a: CalcuttaAuction): number {
-  return a.format === "nfl_playoffs" ? 4 : 0;
+  return formatDef(a.format).rounds.length;
 }
 
 export function finalGames(a: CalcuttaAuction): PlayoffGame[] {
@@ -48,15 +48,23 @@ export function deriveFromGames(a: CalcuttaAuction): Derived {
   for (const t of a.field) results[t.id] = { roundsCleared: t.bye ? 1 : 0, eliminated: false };
   const lastRound = totalRounds(a) - 1;
   let champ: string | null = null;
-  const played = games.map((g) => {
+  const played: { g: PlayoffGame; w: string; l: string; margin: number }[] = [];
+  for (const g of games) {
     const homeWon = (g.homeScore ?? 0) > (g.awayScore ?? 0);
     const w = homeWon ? g.homeId : g.awayId;
     const l = homeWon ? g.awayId : g.homeId;
+    if (g.round < 0) {
+      // First Four: decides who's in the bracket, not a paid round or a prize game.
+      results[w].playIn = "won";
+      results[l].playIn = "lost";
+      results[l].eliminated = true;
+      continue;
+    }
     results[w].roundsCleared += 1;
     results[l].eliminated = true;
     if (g.round === lastRound) champ = w;
-    return { g, w, l, margin: Math.abs((g.homeScore ?? 0) - (g.awayScore ?? 0)) };
-  });
+    played.push({ g, w, l, margin: Math.abs((g.homeScore ?? 0) - (g.awayScore ?? 0)) });
+  }
   const titleDone = champ != null;
 
   const props: Record<string, PropStatus> = {};
@@ -93,11 +101,12 @@ export function deriveFromGames(a: CalcuttaAuction): Derived {
         blocker: titleDone ? null : "Settles after the title game",
       };
     } else if (kind === "cinderella") {
-      const low = a.field.filter((t) => (t.seed ?? 0) >= 5);
+      const minSeed = formatDef(a.format).cinderellaMinSeed;
+      const low = a.field.filter((t) => (t.seed ?? 0) >= minSeed);
       let key = -1;
       let win: FieldTeam[] = [];
       for (const t of low) {
-        const k = results[t.id].roundsCleared * 10 + (t.seed ?? 0);
+        const k = results[t.id].roundsCleared * 100 + (t.seed ?? 0);
         if (k > key) {
           key = k;
           win = [t];
@@ -109,7 +118,7 @@ export function deriveFromGames(a: CalcuttaAuction): Derived {
         winners: played.length ? win.map((t) => t.id) : [],
         final: settled,
         detail: played.length && win.length ? win.map((t) => `${t.abbr} (${t.seed}) — ${results[t.id].roundsCleared} win${results[t.id].roundsCleared === 1 ? "" : "s"}`).join("; ") : null,
-        blocker: settled ? null : "Settles once every 5–7 seed is out",
+        blocker: settled ? null : `Settles once every ${minSeed}+ seed is out`,
       };
     } else if (kind === "best_ats") {
       const w: Record<string, number> = {};

@@ -5,10 +5,11 @@ import { NFL_COMPOSITE_WEEK9_TEXT } from "../data/nflCompositeRatings";
 import { restorePasskeySession } from "../lib/adminAuth";
 import { currentLot, highBid, lotName, lotTeams, minNextBid, participantById, remainingMs } from "../lib/calcutta/engine";
 import type { Lot } from "../lib/calcutta/types";
-import { propKind } from "../lib/calcutta/formats";
+import { formatDef, propKind, type Sport } from "../lib/calcutta/formats";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { scored } from "../lib/calcutta/scoring";
-import { DEFAULT_SIM, fairShares, payoutMatrix, simulateNflPlayoffs, validateNflField, type SimOutput, type SimPropKind } from "../lib/calcutta/nflPlayoffSim";
-import { RATINGS_IMAGE_PROMPT, parseRatings } from "../lib/calcutta/ratings";
+import { DEFAULT_SIM, fairShares, payoutMatrix, simulateBracket, validateField, type SimOutput, type SimPropKind } from "../lib/calcutta/bracketSim";
+import { RATINGS_IMAGE_PROMPT, parseFieldRatings, parseRatings, type ParseResult } from "../lib/calcutta/ratings";
 import { fetchCloudAuction, useAuction, writeAuction } from "../lib/calcutta/store";
 import type { CalcuttaAuction } from "../lib/calcutta/types";
 import { LotLogos, NumField, fmt$, seedLabel } from "../lib/calcutta/ui";
@@ -23,7 +24,14 @@ import { TIER_LABEL, lotValues, portfolio, projectPot, roomMarkup, roomTracker, 
 
 interface DeskState {
   ratingsText: string;
+  /** CFB: "site" = this site's latest power ratings (+ per-team home field); "paste" = the box. */
+  ratingSource: "site" | "paste";
+  /** Pasted ratings are spread-style (−7 = 7 points better). */
+  lowerIsBetter: boolean;
+  /** Multiply pasted ratings (0.68 turns KenPom/Torvik AdjEM per 100 possessions into points). */
+  scale: number;
   hfa: number;
+  marginSd: number;
   ratingNoise: number;
   useSourceSd: boolean;
   sims: number;
@@ -32,22 +40,27 @@ interface DeskState {
   meId: string | null;
 }
 
-const RATINGS_KEY = "calcutta:nfl-ratings-text";
+const ratingsKey = (sport: Sport) => (sport === "nfl" ? "calcutta:nfl-ratings-text" : `calcutta:${sport}-ratings-text`);
 const deskKey = (id: string) => `calcutta:desk:${id}`;
 
-function loadDesk(id: string): DeskState {
+function loadDesk(id: string, a: CalcuttaAuction): DeskState {
+  const def = formatDef(a.format);
   let saved: Partial<DeskState> = {};
-  let ratingsText = NFL_COMPOSITE_WEEK9_TEXT;
+  let ratingsText = def.sport === "nfl" ? NFL_COMPOSITE_WEEK9_TEXT : "";
   try {
     saved = JSON.parse(localStorage.getItem(deskKey(id)) ?? "{}");
-    ratingsText = localStorage.getItem(RATINGS_KEY) ?? ratingsText;
+    ratingsText = localStorage.getItem(ratingsKey(def.sport)) ?? ratingsText;
   } catch {
     // defaults
   }
   return {
     ratingsText: saved.ratingsText ?? ratingsText,
-    hfa: saved.hfa ?? DEFAULT_SIM.hfa,
-    ratingNoise: saved.ratingNoise ?? DEFAULT_SIM.ratingNoise,
+    ratingSource: saved.ratingSource ?? (def.sport === "cfb" ? "site" : "paste"),
+    lowerIsBetter: saved.lowerIsBetter ?? false,
+    scale: saved.scale ?? 1,
+    hfa: saved.hfa ?? def.sim.hfa,
+    marginSd: saved.marginSd ?? def.sim.marginSd,
+    ratingNoise: saved.ratingNoise ?? def.sim.ratingNoise,
     useSourceSd: saved.useSourceSd ?? DEFAULT_SIM.useSourceSd,
     sims: saved.sims ?? DEFAULT_SIM.sims,
     edgePct: saved.edgePct ?? 10,
@@ -90,12 +103,14 @@ export default function CalcuttaDeskPage() {
 
   if (!authed) return <div className="cal-desk cal-desk-empty">Sign in to Admin in this browser first, then open the Desk from the Calcutta page.</div>;
   if (!auction) return <div className="cal-desk cal-desk-empty">{missing ? "Auction not found." : "Loading…"}</div>;
-  if (auction.format !== "nfl_playoffs") return <div className="cal-desk cal-desk-empty">The Desk model is NFL Playoffs only for now.</div>;
+  if (!formatDef(auction.format).available || !formatDef(auction.format).rounds.length) return <div className="cal-desk cal-desk-empty">No Desk model for this format yet.</div>;
   return <Desk a={auction} />;
 }
 
 function Desk({ a }: { a: CalcuttaAuction }) {
-  const [st, setSt] = useState<DeskState>(() => loadDesk(a.id));
+  const def = formatDef(a.format);
+  const [st, setSt] = useState<DeskState>(() => loadDesk(a.id, a));
+  const { byTeam: siteByTeam, resolvedWeek } = useWeeklyStats(def.sport === "cfb" ? "latest" : "none");
   const [showInputs, setShowInputs] = useState(false);
   const now = useNow(250);
   const set = (p: Partial<DeskState>) =>
@@ -103,34 +118,55 @@ function Desk({ a }: { a: CalcuttaAuction }) {
       const next = { ...s, ...p };
       try {
         localStorage.setItem(deskKey(a.id), JSON.stringify(next));
-        if (p.ratingsText != null) localStorage.setItem(RATINGS_KEY, p.ratingsText);
+        if (p.ratingsText != null) localStorage.setItem(ratingsKey(def.sport), p.ratingsText);
       } catch {
         // storage full / disabled
       }
       return next;
     });
 
-  const parsed = useMemo(() => parseRatings(st.ratingsText), [st.ratingsText]);
-  const fieldErr = validateNflField(a.field);
   const fieldKey = JSON.stringify(a.field.map((t) => [t.id, t.group, t.seed]));
+  const pasted: ParseResult = useMemo(
+    () => (def.sport === "nfl" ? parseRatings(st.ratingsText) : parseFieldRatings(st.ratingsText, a.field, { lowerIsBetter: st.lowerIsBetter, scale: st.scale })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [st.ratingsText, st.lowerIsBetter, st.scale, fieldKey, def.sport],
+  );
+  // CFB: the site's own power ratings (spread-style, lower = better) + each team's home field.
+  const site = useMemo(() => {
+    if (def.sport !== "cfb" || st.ratingSource !== "site") return null;
+    const ratings: Record<string, { rating: number; sd: number | null }> = {};
+    const hfaByTeam: Record<string, number> = {};
+    for (const t of a.field) {
+      const row: any = (siteByTeam as any)?.[t.name];
+      if (row?.rating != null) ratings[t.id] = { rating: -Number(row.rating), sd: null };
+      if (row?.hfa != null) hfaByTeam[t.id] = Number(row.hfa);
+    }
+    return { ratings, hfaByTeam };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [def.sport, st.ratingSource, siteByTeam, fieldKey]);
+  const parsed: ParseResult = site ? { ratings: Object.fromEntries(Object.entries({ ...pasted.ratings, ...site.ratings }).map(([k, v]) => [k, { abbr: k, line: 0, ...v }])) as any, unmatched: [], duplicates: [] } : pasted;
+  const fieldErr = validateField(a.format, a.field, a.regions);
   const effResults = scored(a).results;
   const resultsKey = JSON.stringify(effResults);
-  const ratingsKey = JSON.stringify(parsed.ratings);
+  const ratingsKeyStr = JSON.stringify(parsed.ratings) + JSON.stringify(site?.hfaByTeam ?? {});
 
   const sim: SimOutput | null = useMemo(() => {
     if (fieldErr) return null;
-    return simulateNflPlayoffs({
+    return simulateBracket({
+      format: a.format,
       field: a.field,
+      regions: a.regions,
       ratings: parsed.ratings,
       hfa: st.hfa,
-      marginSd: DEFAULT_SIM.marginSd,
+      hfaByTeam: site?.hfaByTeam,
+      marginSd: st.marginSd,
       ratingNoise: st.ratingNoise,
       useSourceSd: st.useSourceSd,
       sims: st.sims,
       results: effResults,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldKey, resultsKey, ratingsKey, st.hfa, st.ratingNoise, st.useSourceSd, st.sims, fieldErr]);
+  }, [fieldKey, resultsKey, ratingsKeyStr, st.hfa, st.marginSd, st.ratingNoise, st.useSourceSd, st.sims, fieldErr, a.regions?.join("|")]);
 
   const payoutKey = JSON.stringify(a.payouts) + fieldKey;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -261,34 +297,75 @@ function Desk({ a }: { a: CalcuttaAuction }) {
             {customProps.map((p) => (
               <div key={p.id}>⚠ "{p.label}" isn't modeled — priced as an even split across all 14 teams.</div>
             ))}
-            {parsed.unmatched.map((u) => (
-              <div key={u.line}>
-                ⚠ Line {u.line} not read: {u.text}
-              </div>
-            ))}
+            {parsed.unmatched.length > 5 ? (
+              <div className="dim">{parsed.unmatched.length} pasted lines didn't match a team in the field — fine if you pasted a full ratings list.</div>
+            ) : (
+              parsed.unmatched.map((u) => (
+                <div key={u.line}>
+                  ⚠ Line {u.line} not read: {u.text}
+                </div>
+              ))
+            )}
             {parsed.duplicates.length > 0 && <div>⚠ Listed twice (last one used): {parsed.duplicates.join(", ")}</div>}
           </div>
         )}
         {showInputs && (
           <div className="cal-desk-inputs">
             <div>
-              <textarea className="cal-dtext" value={st.ratingsText} onChange={(e) => set({ ratingsText: e.target.value })} spellCheck={false} />
-              <div className="cal-row tight">
-                <button className="cal-cbtn" onClick={() => navigator.clipboard?.writeText(RATINGS_IMAGE_PROMPT)}>
-                  Copy screenshot prompt for Claude
-                </button>
-                <button className="cal-cbtn" onClick={() => set({ ratingsText: NFL_COMPOSITE_WEEK9_TEXT })}>
-                  Reset to Week 9 composite
-                </button>
-              </div>
-              <div className="cal-desk-note">
-                Paste one team per line — "1 Los Angeles Rams 5.5 1.1", "LAR 5.5" or a full row of the composite table all work. The first number after the team is the rating (points vs an
-                average team); the second is the sources' std dev. To read a screenshot, paste it into any Claude chat with the copied prompt and paste the reply here.
-              </div>
+              {def.sport === "cfb" && (
+                <div className="cal-row tight">
+                  <label className="cal-toggle">
+                    <input type="radio" checked={st.ratingSource === "site"} onChange={() => set({ ratingSource: "site" })} /> YCPR power ratings ({resolvedWeek ?? "loading"}) + each team's home field
+                  </label>
+                  <label className="cal-toggle">
+                    <input type="radio" checked={st.ratingSource === "paste"} onChange={() => set({ ratingSource: "paste" })} /> Pasted ratings
+                  </label>
+                </div>
+              )}
+              {(def.sport !== "cfb" || st.ratingSource === "paste") && (
+                <>
+                  <textarea className="cal-dtext" value={st.ratingsText} onChange={(e) => set({ ratingsText: e.target.value })} spellCheck={false} placeholder={def.sport === "cbb" ? "Duke 38.2\nAuburn 35.9\n…" : "Team rating"} />
+                  {def.sport === "nfl" ? (
+                    <>
+                      <div className="cal-row tight">
+                        <button className="cal-cbtn" onClick={() => navigator.clipboard?.writeText(RATINGS_IMAGE_PROMPT)}>
+                          Copy screenshot prompt for Claude
+                        </button>
+                        <button className="cal-cbtn" onClick={() => set({ ratingsText: NFL_COMPOSITE_WEEK9_TEXT })}>
+                          Reset to Week 9 composite
+                        </button>
+                      </div>
+                      <div className="cal-desk-note">
+                        Paste one team per line — "1 Los Angeles Rams 5.5 1.1", "LAR 5.5" or a full row of the composite table all work. The first number after the team is the rating (points vs an
+                        average team); the second is the sources' std dev. To read a screenshot, paste it into any Claude chat with the copied prompt and paste the reply here.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="cal-row tight">
+                        <label className="cal-toggle">
+                          <input type="checkbox" checked={st.lowerIsBetter} onChange={(e) => set({ lowerIsBetter: e.target.checked })} /> Lower is better (spread-style, −7 = 7 pts better)
+                        </label>
+                        {def.sport === "cbb" && (
+                          <label className="cal-toggle">
+                            <input type="checkbox" checked={Math.abs(st.scale - 0.68) < 1e-9} onChange={(e) => set({ scale: e.target.checked ? 0.68 : 1 })} /> Per 100 possessions (KenPom / Torvik AdjEM → × 0.68)
+                          </label>
+                        )}
+                      </div>
+                      <div className="cal-desk-note">
+                        One team per line with its name as in the field ("Iowa St." = "Iowa State"); the first number after the name is the rating. Ranks before the name and extra columns after are
+                        fine. For a screenshot, ask any Claude chat to "list each team and its rating, one per line" and paste the reply.
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </div>
             <div className="cal-desk-form">
-              <label>Home field (pts)</label>
+              <label>{def.sport === "cfb" && st.ratingSource === "site" ? "Home field if a team has none (pts)" : "Home field (pts)"}</label>
               <NumField value={st.hfa} step={0.25} onCommit={(v) => set({ hfa: v })} width={70} />
+              <label>Game margin SD (pts)</label>
+              <NumField value={st.marginSd} step={0.5} onCommit={(v) => set({ marginSd: Math.max(1, v) })} width={70} />
               <label>Rating noise per sim (pts)</label>
               <NumField value={st.ratingNoise} step={0.25} onCommit={(v) => set({ ratingNoise: Math.max(0, v) })} width={70} />
               <label>Add sources' std dev</label>
@@ -302,7 +379,7 @@ function Desk({ a }: { a: CalcuttaAuction }) {
                 ))}
               </select>
               <div className="cal-desk-note" style={{ gridColumn: "1 / -1" }}>
-                Game margin SD {DEFAULT_SIM.marginSd} pts. Super Bowl neutral. Results entered on the Owners &amp; Results tab are locked in.
+                {def.sport === "cbb" ? "Every game neutral." : def.sport === "cfb" ? (a.format === "cfb_playoff12" ? "First round on campus, then neutral bowls." : "Higher seed hosts until a neutral title game.") : "Super Bowl neutral."} Results entered on the Owners &amp; Results tab (or auto-scored games) are locked in.
               </div>
               <RatingsCheck a={a} ratings={parsed.ratings} />
             </div>
@@ -365,6 +442,8 @@ function LiveCard({
   else signal = { cls: "bad", text: `PASS — ${fmt$(bid - live.fair)} over fair` };
 
   const teams = lotTeams(a, lot);
+  const rounds = formatDef(a.format).rounds;
+  const anyPlayIn = teams.some((t) => sim.playInWin[t.id] != null);
   const kinds: { k: SimPropKind; label: string }[] = [
     { k: "biggest_upset", label: "Upset" },
     { k: "worst_loss", label: "Worst L" },
@@ -398,10 +477,12 @@ function LiveCard({
         <thead>
           <tr>
             <th>Team</th>
-            <th className="r">WC</th>
-            <th className="r">Div</th>
-            <th className="r">Conf</th>
-            <th className="r">SB</th>
+            {anyPlayIn && <th className="r">FF</th>}
+            {rounds.map((r) => (
+              <th key={r.key} className="r">
+                {r.short}
+              </th>
+            ))}
             {kinds.map((k) => (
               <th key={k.k} className="r">
                 {k.label}
@@ -415,10 +496,12 @@ function LiveCard({
             return (
               <tr key={t.id}>
                 <td>{t.name}</td>
-                <td className="r">{t.bye ? "bye" : pct(r[0])}</td>
-                <td className="r">{pct(r[1])}</td>
-                <td className="r">{pct(r[2])}</td>
-                <td className="r">{pct(r[3])}</td>
+                {anyPlayIn && <td className="r">{sim.playInWin[t.id] != null ? pct(sim.playInWin[t.id]) : ""}</td>}
+                {rounds.map((rd, i) => (
+                  <td key={rd.key} className="r">
+                    {i === 0 && t.bye ? "bye" : pct(r[i])}
+                  </td>
+                ))}
                 {kinds.map((k) => (
                   <td key={k.k} className="r">
                     {pct(sim.propProb[k.k][t.id])}
@@ -484,7 +567,7 @@ function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]
             <th>#</th>
             <th>Lot</th>
             <th>Seed</th>
-            <th className="r">SB</th>
+            <th className="r">{formatDef(a.format).rounds.slice(-1)[0]?.short ?? "Title"}</th>
             <th className="r">Share</th>
             <th className="r">Fair</th>
             <th className="r">Max</th>
@@ -497,7 +580,7 @@ function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]
         <tbody>
           {values.map((v) => {
             const teams = lotTeams(a, v.lot);
-            const sb = teams.reduce((s, t) => s + (sim.reach[t.id]?.[3] ?? 0), 0);
+            const sb = teams.reduce((s, t) => s + (sim.reach[t.id]?.[sim.rounds - 1] ?? 0), 0);
             const owner = participantById(a, v.lot.winnerId);
             return (
               <tr key={v.lot.id} className={`${v.lot.id === curId ? "cur" : ""} ${v.lot.status === "sold" ? "done" : ""}`}>
@@ -580,8 +663,10 @@ function WhatIf({
   const before = useMemo(() => portfolio(a, sim, matrix, meId, netPot), [docKey, sim, matrix, meId, netPot]); // eslint-disable-line react-hooks/exhaustive-deps
   const after = useMemo(() => portfolio(a, sim, matrix, meId, netPot, { lot, price }), [docKey, sim, matrix, meId, netPot, lot.id, price]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const lotConfs = new Set(lotTeams(a, lot).map((t) => t.group));
-  const overlap = before.pieces.filter((p) => lotTeams(a, p.lot).some((t) => lotConfs.has(t.group)));
+  const lotConfs = new Set(lotTeams(a, lot).map((t) => t.group).filter(Boolean));
+  const overlap = before.pieces.filter((p) => lotTeams(a, p.lot).some((t) => t.group && lotConfs.has(t.group)));
+  const groupWord = a.format === "march_madness" ? "region" : "conference";
+  const finalWord = a.format === "march_madness" ? "Final Four" : "Super Bowl";
   const delta = (x: number, y: number, f: (v: number) => string, neutral = false) => {
     const d = y - x;
     return (
@@ -620,7 +705,7 @@ function WhatIf({
       </div>
       {overlap.length > 0 && (
         <div className="cal-desk-note warn">
-          Same conference as your {overlap.map((p) => lotName(a, p.lot)).join(", ")} — they can't both make the Super Bowl, so this adds less upside than its EV alone suggests.
+          Same {groupWord} as your {overlap.map((p) => lotName(a, p.lot)).join(", ")} — they can't both make the {finalWord}, so this adds less upside than its EV alone suggests.
         </div>
       )}
     </div>

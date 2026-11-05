@@ -39,7 +39,8 @@ export function LotLogos({ auction, lot, size = 22 }: { auction: CalcuttaAuction
 }
 
 export function seedLabel(t: FieldTeam): string {
-  return t.seed != null ? `${t.group} #${t.seed}` : t.group;
+  if (t.seed == null) return t.group;
+  return t.group ? `${t.group} #${t.seed}` : `#${t.seed}`;
 }
 
 /** Number input that only commits on blur/Enter, so clearing the box to retype doesn't write a 0. */

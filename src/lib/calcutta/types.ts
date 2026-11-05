@@ -10,7 +10,7 @@
 // Bids are append-only: undo marks a bid `voided` instead of deleting it,
 // so the full bid log (including retracted bids) is kept for history.
 
-export type FormatKey = "nfl_playoffs" | "nfl_season" | "cfb_season" | "cfb_playoff24" | "march_madness";
+export type FormatKey = "nfl_playoffs" | "nfl_season" | "cfb_season" | "cfb_playoff12" | "cfb_playoff24" | "march_madness";
 
 export interface IncrementTier {
   /** This step applies while the current high bid is below `upTo` (null = no ceiling). */
@@ -50,7 +50,9 @@ export interface FieldTeam {
   id: string;
   name: string;
   abbr: string;
-  group: string; // AFC / NFC, region, conference…
+  group: string; // AFC / NFC, region; "" when seeds are one list (CFP)
+  /** Extra display info (a CFB team's conference). */
+  note?: string | null;
   seed: number | null;
   bye: boolean;
   logo: string | null;
@@ -100,6 +102,8 @@ export interface OwnershipTransfer {
 export interface TeamResult {
   roundsCleared: number;
   eliminated: boolean;
+  /** March Madness First Four: won/lost the play-in (doesn't count as a round). */
+  playIn?: "won" | "lost" | null;
 }
 
 /** A one-off prize ("biggest upset") paid to whoever owns the winning team(s). Ties split evenly. */
@@ -130,7 +134,7 @@ export interface PayoutRules {
 /** One playoff game, from ESPN or typed in. Only final games count toward results. */
 export interface PlayoffGame {
   id: string;
-  /** 0 = first round (Wild Card / Round of 64 …). */
+  /** 0 = first round (Wild Card / Round of 64 …); −1 = First Four play-in. */
   round: number;
   homeId: string;
   awayId: string;
@@ -175,5 +179,7 @@ export interface CalcuttaAuction {
   /** Game log (optional). With autoScore on, results and side prizes are worked out from it. */
   games?: PlayoffGame[];
   autoScore?: boolean;
+  /** March Madness region order: Final Four is [0] vs [1], [2] vs [3]. */
+  regions?: string[];
   live: LiveState;
 }

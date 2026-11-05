@@ -51,8 +51,21 @@ Calcutta page → **Open Desk ↗** (admin sign-in required; keep it on the moni
 - **Portfolio** = your holdings after splits, with EV, P(profit) and 10th/50th/90th percentile payouts from the same sims.
 - Desk settings and ratings stay in this browser only — never in the (public-readable) auction doc.
 
+## Formats
+| Format | Field entry | Bracket (sim) | Default payouts |
+|---|---|---|---|
+| NFL Playoffs | AFC/NFC seeds 1–7 | 2v7/3v6/4v5, 1 seed hosts lowest left, Super Bowl neutral | 3/5/10/17 per win + 25% side prizes |
+| March Madness | paste "Region" then "seed team" lines (two on one seed line = First Four pair, sold as one lot); Final Four region order | First Four, fixed 1v16 … 2v15 regions, all neutral | 0.5/1/2/3/5/10 per win + 20% side prizes (Cinderella = 11+ seed) |
+| CFB 12-team | seeds 1–12 (or fill from the latest Monte Carlo projection) | byes 1–4, first round on campus, then neutral bowls, fixed bracket | 4/6/10/15 per win + 25% (Cinderella = 9–12) |
+| CFB 24-team | seeds 1–24 (or fill from projection) | byes 1–8, 9v24 … 16v17 on campus, reseeded each round, higher seed hosts, neutral title | 2/3/5/6/8 per win + 20% (Cinderella = 17–24) |
+
+Byes don't pay as a win by default (toggle). "Bundle long shots" groups every team at or below a seed into one lot per region (or per seed line in March Madness).
+
+Desk ratings: NFL paste (composite format); CFB uses the site's latest power ratings and each team's home field (or a paste); March Madness paste — one "Team rating" per line, KenPom/Torvik rows work (records are skipped; tick "per 100 possessions" to scale AdjEM × 0.68).
+
+Auto-scoring works for every format from the Games card; ESPN sync is NFL-only so far (others: add games by hand).
+
 ## Roadmap
-1. Attendee history → per-bidder price model; futures-based market prior.
-2. Market model: expected prices from futures + per-attendee bidding history.
-3. More formats: March Madness, CFB 24-team playoff, NFL and CFB regular season.
-4. Read-only phone link for attendees (4-digit code → Stage view).
+1. Practice mode: bot bidders with noisy valuations.
+2. ESPN sync for March Madness and the CFP; NFL and CFB regular-season formats.
+3. Postponed: futures-based market prior, read-only phone link (4-digit code), per-bidder price model from attendee history.

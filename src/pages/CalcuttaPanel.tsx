@@ -4,6 +4,7 @@ import { NFL_TEAMS } from "../data/nflTeams";
 import {
   addParticipant,
   addTransfer,
+  bundleBySeed,
   bundleLots,
   lotHoldings,
   lotName,
@@ -40,6 +41,12 @@ import {
 } from "../lib/calcutta/store";
 import type { CalcuttaAuction, CalcuttaSettings, FormatKey, Participant, PayoutRules } from "../lib/calcutta/types";
 import { NFL_ESPN_WEEK_ROUND, deriveFromGames, mergeEspnGames, scored } from "../lib/calcutta/scoring";
+import { validateField, regionOrder } from "../lib/calcutta/bracketSim";
+import { cfbFieldFromSeeds, madnessFieldToText, parseMadnessField, seedNamesFromField } from "../lib/calcutta/fields";
+import { TEAMS } from "../data/teams";
+import { deriveBracketSeeds } from "../lib/bracketSeeds";
+import { fetchMonteCarloRun, fetchMonteCarloRuns } from "../lib/api/monteCarlo";
+import type { FieldTeam, TeamResult } from "../lib/calcutta/types";
 import { fetchScoreboard } from "../lib/overlay";
 import type { PlayoffGame } from "../lib/calcutta/types";
 import { LotLogos, NumField, TeamBadge, downloadCsv, fmt$, fmtPayout, fmtTime, seedLabel } from "../lib/calcutta/ui";
@@ -291,7 +298,7 @@ function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
           <button className="cal-btn" onClick={() => saveToCloud(a.id)}>
             Save to cloud
           </button>
-          <button className="cal-btn" onClick={() => openDeskWindow(a.id)} disabled={a.format !== "nfl_playoffs" || a.field.length < 14} title="Private model — keep it on the monitor you don't share">
+          <button className="cal-btn" onClick={() => openDeskWindow(a.id)} disabled={!!validateField(a.format, a.field, a.regions)} title="Private model — keep it on the monitor you don't share">
             Open Desk ↗
           </button>
           <button className="cal-btn primary" onClick={() => openStageWindow(a.id)} disabled={a.lots.length === 0 || a.participants.length === 0}>
@@ -335,7 +342,7 @@ function ReadinessChecklist({ a, onGo }: { a: CalcuttaAuction; onGo: (t: Tab) =>
   const items: [boolean, string, Tab][] = [
     [Math.abs(total - 100) < 0.01, `Payouts add to 100% (now ${total}%)`, "setup"],
     [a.participants.length >= 2, "At least 2 attendees", "attendees"],
-    [a.field.length === 14, `Full field: 14 teams (now ${a.field.length})`, "field"],
+    [!validateField(a.format, a.field, a.regions), validateField(a.format, a.field, a.regions) ?? `Full field (${a.field.length} teams)`, "field"],
     [a.lots.length > 0 && a.field.every((t) => a.lots.some((l) => l.teamIds.includes(t.id))), "Lots built for every team", "field"],
   ];
   return (
@@ -664,6 +671,8 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
   };
 
   const missing = a.field.filter((t) => !a.lots.some((l) => l.teamIds.includes(t.id)));
+  const maxSeed = Math.max(2, ...a.field.map((t) => t.seed ?? 0));
+  const [bundleMin, setBundleMin] = useState(() => (a.format === "march_madness" ? 13 : a.format === "cfb_playoff24" ? 21 : maxSeed));
   const stale = a.lots.filter((l) => l.teamIds.some((id) => !a.field.some((t) => t.id === id)));
 
   return (
@@ -698,6 +707,9 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
         </section>
       )}
 
+      {(a.format === "cfb_playoff12" || a.format === "cfb_playoff24") && <CfbFieldEditor a={a} patch={patch} started={started} />}
+      {a.format === "march_madness" && <MadnessFieldEditor a={a} patch={patch} started={started} />}
+
       <section className="cal-card">
         <h2>Lots &amp; auction order</h2>
         <div className="cal-row">
@@ -706,12 +718,38 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
             By seed (1s first)
           </button>
           <button className="cal-btn" disabled={started || a.field.length === 0} onClick={() => build("seed_desc")}>
-            By seed (7s first)
+            By seed (lowest seeds first)
           </button>
           <button className="cal-btn" disabled={started || a.field.length === 0} onClick={() => build("random")}>
             Random
           </button>
         </div>
+        {a.format !== "nfl_playoffs" && a.lots.length > 0 && (
+          <div className="cal-row">
+            <span className="cal-note">Bundle long shots: every team seeded</span>
+            <select className="cal-input" value={bundleMin} onChange={(e) => setBundleMin(Number(e.target.value))}>
+              {Array.from({ length: maxSeed - 1 }, (_, i) => i + 2).map((n) => (
+                <option key={n} value={n}>
+                  {n}+
+                </option>
+              ))}
+            </select>
+            {a.format === "march_madness" ? (
+              <>
+                <button className="cal-btn" disabled={started} onClick={() => act((x, now) => bundleBySeed(x, bundleMin, "region", now))}>
+                  One bundle per region
+                </button>
+                <button className="cal-btn" disabled={started} onClick={() => act((x, now) => bundleBySeed(x, bundleMin, "line", now))}>
+                  One bundle per seed line
+                </button>
+              </>
+            ) : (
+              <button className="cal-btn" disabled={started} onClick={() => act((x, now) => bundleBySeed(x, bundleMin, "region", now))}>
+                Bundle them
+              </button>
+            )}
+          </div>
+        )}
         {(missing.length > 0 || stale.length > 0) && a.lots.length > 0 && (
           <div className="cal-note warn">
             Lots don't match the field
@@ -813,17 +851,41 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
 // Owners, ownership splits, results
 // ---------------------------------------------------------------------------
 
-const NFL_RESULT_OPTIONS = [
-  { rounds: 0, elim: false, label: "Alive — Wild Card" },
-  { rounds: 0, elim: true, label: "Lost Wild Card" },
-  { rounds: 1, elim: false, label: "Alive — Divisional" },
-  { rounds: 1, elim: true, label: "Lost Divisional" },
-  { rounds: 2, elim: false, label: "Alive — Conf. Championship" },
-  { rounds: 2, elim: true, label: "Lost Conf. Championship" },
-  { rounds: 3, elim: false, label: "In Super Bowl" },
-  { rounds: 3, elim: true, label: "Lost Super Bowl" },
-  { rounds: 4, elim: false, label: "Champion" },
-];
+interface ResultOption {
+  value: string;
+  label: string;
+  result: TeamResult;
+}
+
+function isPlayInTeam(a: CalcuttaAuction, t: FieldTeam): boolean {
+  return !!t.group && a.field.filter((x) => x.group === t.group && x.seed === t.seed).length === 2;
+}
+
+/** Status menu for one team, from the format's rounds (byes start one round in; First Four teams get play-in options). */
+function resultOptions(a: CalcuttaAuction, t: FieldTeam): ResultOption[] {
+  const rounds = formatDef(a.format).rounds;
+  const pi = isPlayInTeam(a, t);
+  const out: ResultOption[] = [];
+  if (pi) {
+    out.push({ value: "pi:alive", label: "Alive — First Four", result: { roundsCleared: 0, eliminated: false, playIn: null } });
+    out.push({ value: "pi:lost", label: "Lost First Four", result: { roundsCleared: 0, eliminated: true, playIn: "lost" } });
+  }
+  const playIn = pi ? ("won" as const) : null;
+  for (let r = t.bye ? 1 : 0; r < rounds.length; r++) {
+    out.push({ value: `${r}:0`, label: `${r === rounds.length - 1 ? "In" : "Alive —"} ${rounds[r].game}`, result: { roundsCleared: r, eliminated: false, playIn } });
+    out.push({ value: `${r}:1`, label: `Lost ${rounds[r].game}`, result: { roundsCleared: r, eliminated: true, playIn } });
+  }
+  out.push({ value: `${rounds.length}:0`, label: "Champion", result: { roundsCleared: rounds.length, eliminated: false, playIn } });
+  return out;
+}
+
+function resultValue(a: CalcuttaAuction, t: FieldTeam, res: TeamResult): string {
+  if (isPlayInTeam(a, t)) {
+    if (res.playIn === "lost") return "pi:lost";
+    if (res.playIn !== "won" && res.roundsCleared === 0 && !res.eliminated) return "pi:alive";
+  }
+  return `${res.roundsCleared}:${res.eliminated ? 1 : 0}`;
+}
 
 function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patch }) {
   const summaries = ownerSummaries(a).filter((s) => s.owed || s.lots.length || s.participant.paid);
@@ -900,7 +962,7 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
 
       <SplitsCard a={a} act={act} />
 
-      {a.format === "nfl_playoffs" && <GamesCard a={a} patch={patch} />}
+      <GamesCard a={a} patch={patch} />
 
       <section className="cal-card">
         <h2>Results</h2>
@@ -926,7 +988,7 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
                 const pct = earned.reduce((s, e) => s + e.pct, 0);
                 const lot = a.lots.find((l) => l.teamIds.includes(t.id));
                 const holders = lot ? lotHoldings(a, lot) : [];
-                const opts = NFL_RESULT_OPTIONS.filter((o) => !t.bye || o.rounds >= 1);
+                const opts = resultOptions(a, t);
                 return (
                   <tr key={t.id} className={res.eliminated ? "dim" : ""}>
                     <td>{seedLabel(t)}</td>
@@ -950,14 +1012,14 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
                       <select
                         className="cal-input"
                         disabled={auto}
-                        value={`${res.roundsCleared}:${res.eliminated ? 1 : 0}`}
+                        value={resultValue(a, t, res)}
                         onChange={(e) => {
-                          const [r, el] = e.target.value.split(":").map(Number);
-                          patch((x) => ({ results: { ...x.results, [t.id]: { roundsCleared: r, eliminated: !!el } } }));
+                          const o = opts.find((x) => x.value === e.target.value)!;
+                          patch((x) => ({ results: { ...x.results, [t.id]: o.result } }));
                         }}
                       >
                         {opts.map((o) => (
-                          <option key={o.label} value={`${o.rounds}:${o.elim ? 1 : 0}`}>
+                          <option key={o.value} value={o.value}>
                             {o.label}
                           </option>
                         ))}
@@ -1243,9 +1305,11 @@ function LogTab({ a }: { a: CalcuttaAuction }) {
 // Game log + ESPN sync (auto-scoring)
 // ---------------------------------------------------------------------------
 
-const NFL_ROUND_LABELS = ["Wild Card", "Divisional", "Conference", "Super Bowl"];
 
 function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
+  const roundLabels = [...(a.format === "march_madness" ? ["First Four"] : []), ...formatDef(a.format).rounds.map((r) => r.game)];
+  const roundOffset = a.format === "march_madness" ? 1 : 0; // First Four is round −1
+  const espn = a.format === "nfl_playoffs";
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(false);
@@ -1293,7 +1357,7 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
     if (!draft.homeId || !draft.awayId || draft.homeId === draft.awayId) return;
     setGames((gs) => [
       ...gs,
-      { id: uid("g_"), round: draft.round, homeId: draft.homeId, awayId: draft.awayId, homeScore: null, awayScore: null, final: false, homeSpread: null, neutral: draft.round === 3, start: null, espnId: null, lineManual: false },
+      { id: uid("g_"), round: draft.round, homeId: draft.homeId, awayId: draft.awayId, homeScore: null, awayScore: null, final: false, homeSpread: null, neutral: a.format === "march_madness" || draft.round === formatDef(a.format).rounds.length - 1, start: null, espnId: null, lineManual: false },
     ]);
     setDraft({ round: draft.round, homeId: "", awayId: "" });
   };
@@ -1310,7 +1374,7 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
           </label>
         </div>
       </div>
-      <div className="cal-row">
+      {espn ? <div className="cal-row">
         <button className="cal-btn primary" onClick={sync} disabled={busy || a.field.length < 14}>
           {busy ? "Syncing…" : "Sync from ESPN"}
         </button>
@@ -1319,10 +1383,10 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
         </label>
         <input className="cal-input" placeholder="Season (blank = current)" value={season} onChange={(e) => setSeason(e.target.value)} style={{ width: 170 }} />
         {msg && <span className="cal-note">{msg}</span>}
-      </div>
+      </div> : <div className="cal-note">Add games as they're played (ESPN sync is NFL-only for now). With auto-score on, results and side prizes fill in from final games.</div>}
       <div className="cal-note">
-        ESPN fills in scores and finals. Its line (DraftKings) is kept from before kickoff as the closing line — ESPN drops it once a game ends, so sync at least once before each game, or
-        type the line in. A typed line is never overwritten.
+        {espn && "ESPN fills in scores and finals. Its line (DraftKings) is kept from before kickoff as the closing line — ESPN drops it once a game ends, so sync at least once before each game, or type the line in. "}
+        A typed line is never overwritten.
         {missingLines > 0 && <b className="bad"> {missingLines} final game{missingLines === 1 ? "" : "s"} missing a line — Best ATS can't settle.</b>}
       </div>
       {games.length > 0 && (
@@ -1345,7 +1409,7 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
               const w = team(g.awayId);
               return (
                 <tr key={g.id}>
-                  <td>{NFL_ROUND_LABELS[g.round] ?? g.round}</td>
+                  <td>{roundLabels[g.round + roundOffset] ?? g.round}</td>
                   <td>{w ? `${seedLabel(w)} ${w.abbr}` : g.awayId}</td>
                   <td className="r">
                     <NumField value={g.awayScore ?? 0} onCommit={(v) => update(g.id, { awayScore: v })} width={56} />
@@ -1390,8 +1454,8 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
       <div className="cal-row">
         <span className="cal-note">Add by hand:</span>
         <select className="cal-input" value={draft.round} onChange={(e) => setDraft({ ...draft, round: Number(e.target.value) })}>
-          {NFL_ROUND_LABELS.map((l, i) => (
-            <option key={l} value={i}>
+          {roundLabels.map((l, i) => (
+            <option key={l} value={i - roundOffset}>
               {l}
             </option>
           ))}
@@ -1416,6 +1480,151 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
         <button className="cal-btn" onClick={addManual} disabled={!draft.homeId || !draft.awayId}>
           Add game
         </button>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Field editors: CFB playoff (seed list) and March Madness (paste)
+// ---------------------------------------------------------------------------
+
+const FBS_NAMES = TEAMS.filter((t) => t.div === "FBS")
+  .map((t) => t.team)
+  .sort();
+
+function CfbFieldEditor({ a, patch, started }: { a: CalcuttaAuction; patch: Patch; started: boolean }) {
+  const def = formatDef(a.format);
+  const names = seedNamesFromField(a.format, a.field);
+  const [msg, setMsg] = useState<string | null>(null);
+  const setSeed = (i: number, raw: string) => {
+    const name = FBS_NAMES.find((n) => n.toLowerCase() === raw.trim().toLowerCase()) ?? (raw.trim() || null);
+    const next = names.map((n, j) => (j === i ? name : n === name && name ? null : n));
+    patch(() => ({ field: cfbFieldFromSeeds(a.format, next) }));
+  };
+  const fillFromProjection = async () => {
+    setMsg("Loading the latest Monte Carlo run…");
+    try {
+      const now = new Date();
+      const season = now.getMonth() < 6 ? now.getFullYear() - 1 : now.getFullYear();
+      const runs = await fetchMonteCarloRuns(season);
+      if (!runs.length) return setMsg(`No Monte Carlo runs saved for ${season}.`);
+      const run = await fetchMonteCarloRun(runs[0].id);
+      const seeds = deriveBracketSeeds((run as any)?.results, def.fieldSize);
+      if (seeds.length < def.fieldSize) return setMsg(`That run only projects ${seeds.length} playoff teams.`);
+      patch(() => ({ field: cfbFieldFromSeeds(a.format, seeds) }));
+      setMsg(`Filled from the week ${runs[0].week} Monte Carlo projection (highest playoff odds, ordered by average seed). Adjust any seed by hand.`);
+    } catch (e: any) {
+      setMsg(`Couldn't load the projection: ${e?.message ?? e}`);
+    }
+  };
+  const unknown = names.filter((n) => n && !FBS_NAMES.includes(n));
+  const half = Math.ceil(def.fieldSize / 2);
+  return (
+    <section className="cal-card">
+      <div className="cal-row" style={{ justifyContent: "space-between" }}>
+        <h2>Playoff field</h2>
+        <button className="cal-btn" onClick={fillFromProjection} disabled={started}>
+          Fill from latest projection
+        </button>
+      </div>
+      {msg && <div className="cal-note">{msg}</div>}
+      {started && <div className="cal-note warn">Bidding has started — changing the field now won't touch lots already sold.</div>}
+      <datalist id="cal-fbs-teams">
+        {FBS_NAMES.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+      <div className="cal-grid2">
+        {[0, 1].map((col) => (
+          <div key={col}>
+            {names.slice(col * half, (col + 1) * half).map((n, k) => {
+              const i = col * half + k;
+              const t = a.field.find((x) => x.seed === i + 1);
+              return (
+                <div key={i} className="cal-row tight">
+                  <span className="cal-seed">{i + 1}</span>
+                  <input className="cal-input" list="cal-fbs-teams" defaultValue={n ?? ""} key={n ?? `empty-${i}`} placeholder="Team…" onBlur={(e) => e.target.value.trim() !== (n ?? "") && setSeed(i, e.target.value)} style={{ minWidth: 220 }} />
+                  {t && <TeamBadge team={t} size={20} />}
+                  <span className="cal-note">
+                    {t?.note ?? ""}
+                    {i < def.byeCount ? " · bye" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      {unknown.length > 0 && <div className="cal-note warn">Not an FBS team name the site knows (no logo or ratings): {unknown.join(", ")}</div>}
+    </section>
+  );
+}
+
+function MadnessFieldEditor({ a, patch, started }: { a: CalcuttaAuction; patch: Patch; started: boolean }) {
+  const regions = regionOrder(a.field, a.regions);
+  const [text, setText] = useState(() => (a.field.length ? madnessFieldToText(a.field, regions) : ""));
+  const parsed = useMemo(() => parseMadnessField(text), [text]);
+  const problem = validateField("march_madness", parsed.field, parsed.regions);
+  const playIns = parsed.field.filter((t) => parsed.field.filter((x) => x.group === t.group && x.seed === t.seed).length === 2).length / 2;
+  const apply = () => patch(() => ({ field: parsed.field, regions: parsed.regions }));
+  const moveRegion = (i: number, d: -1 | 1) => {
+    const next = [...regions];
+    const j = i + d;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    patch(() => ({ regions: next }));
+  };
+  return (
+    <section className="cal-card">
+      <h2>Bracket</h2>
+      {started && <div className="cal-note warn">Bidding has started — changing the field now won't touch lots already sold.</div>}
+      <div className="cal-grid2">
+        <div>
+          <textarea
+            className="cal-input"
+            style={{ width: "100%", minHeight: 320, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12 }}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={"East\n1 Duke\n16 American\n16 Mount St. Mary's\n8 Mississippi State\n…\n\nor one per line: South 1 Auburn"}
+            spellCheck={false}
+          />
+          <div className="cal-row">
+            <button className="cal-btn primary" onClick={apply} disabled={parsed.field.length === 0}>
+              Use this bracket ({parsed.field.length} teams, {playIns} First Four)
+            </button>
+          </div>
+        </div>
+        <div>
+          <div className="cal-note">
+            Paste the bracket: a region name on its own line, then "seed team" lines — or "Region seed team" on every line. Two teams on the same seed line in a region are a First Four pair (they
+            sell as one lot). Numbers after a name (ratings, records) are ignored.
+          </div>
+          {parsed.errors.map((e) => (
+            <div key={e} className="cal-note warn">
+              {e}
+            </div>
+          ))}
+          {text.trim() && <div className={`cal-note ${problem ? "warn" : "good"}`}>{problem ?? "✓ Full bracket"}</div>}
+          {regions.length > 0 && (
+            <>
+              <h3>Final Four pairing</h3>
+              {regions.map((r, i) => (
+                <div key={r} className="cal-row tight">
+                  <span className="cal-seed">{i + 1}</span>
+                  <span style={{ minWidth: 120 }}>{r}</span>
+                  <button className="cal-btn sm" onClick={() => moveRegion(i, -1)}>
+                    ↑
+                  </button>
+                  <button className="cal-btn sm" onClick={() => moveRegion(i, 1)}>
+                    ↓
+                  </button>
+                </div>
+              ))}
+              <div className="cal-note">Region 1 plays region 2, region 3 plays region 4.</div>
+            </>
+          )}
+        </div>
       </div>
     </section>
   );
