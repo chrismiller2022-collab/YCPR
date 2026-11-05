@@ -23,7 +23,8 @@ import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from
 //     Odds API's books AND ESPN's, not just one source.
 //   - mode=scoreboard&dates=YYYYMMDD[,YYYYMMDD…]: ESPN's free live
 //     scoreboard for the TV score bug (/overlay). No key, no credits.
-//     &league=nfl[&week=N] for the NFL (a whole week per request).
+//     &league=nfl[&week=N] for the NFL (a whole week per request);
+//     &seasontype=3 for the playoffs, &season=YYYY for a past season.
 //   - mode=sleeper-players: Sleeper's NFL player list trimmed to name /
 //     team / position / injury, edge-cached a day (fantasy view).
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
@@ -227,8 +228,12 @@ async function handleEspnScoreboard(req: any, res: any) {
   let week: number | null = null;
   if (nfl) {
     // NFL: a whole week in one request. No week = ESPN's current week.
+    // &seasontype=3 = postseason (weeks 1 WC, 2 Div, 3 Conf, 5 Super Bowl);
+    // &season=YYYY picks a past season (the year it started).
     const wk = parseInt(String(req.query?.week ?? ""), 10);
-    const url = Number.isFinite(wk) && wk > 0 && wk < 30 ? `${ESPN_NFL_SCOREBOARD}?seasontype=2&week=${wk}` : ESPN_NFL_SCOREBOARD;
+    const stype = String(req.query?.seasontype ?? "") === "3" ? 3 : 2;
+    const season = /^\d{4}$/.test(String(req.query?.season ?? "")) ? `&dates=${req.query.season}` : "";
+    const url = Number.isFinite(wk) && wk > 0 && wk < 30 ? `${ESPN_NFL_SCOREBOARD}?seasontype=${stype}&week=${wk}${season}` : ESPN_NFL_SCOREBOARD;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`ESPN NFL scoreboard request failed (${r.status})`);
     const body = await r.json();

@@ -5,6 +5,7 @@ import { NFL_COMPOSITE_WEEK9_TEXT } from "../data/nflCompositeRatings";
 import { restorePasskeySession } from "../lib/adminAuth";
 import { currentLot, highBid, lotName, lotTeams, participantById, remainingMs } from "../lib/calcutta/engine";
 import { propKind } from "../lib/calcutta/formats";
+import { scored } from "../lib/calcutta/scoring";
 import { DEFAULT_SIM, fairShares, payoutMatrix, simulateNflPlayoffs, validateNflField, type SimOutput, type SimPropKind } from "../lib/calcutta/nflPlayoffSim";
 import { RATINGS_IMAGE_PROMPT, parseRatings } from "../lib/calcutta/ratings";
 import { fetchCloudAuction, useAuction, writeAuction } from "../lib/calcutta/store";
@@ -111,7 +112,8 @@ function Desk({ a }: { a: CalcuttaAuction }) {
   const parsed = useMemo(() => parseRatings(st.ratingsText), [st.ratingsText]);
   const fieldErr = validateNflField(a.field);
   const fieldKey = JSON.stringify(a.field.map((t) => [t.id, t.group, t.seed]));
-  const resultsKey = JSON.stringify(a.results);
+  const effResults = scored(a).results;
+  const resultsKey = JSON.stringify(effResults);
   const ratingsKey = JSON.stringify(parsed.ratings);
 
   const sim: SimOutput | null = useMemo(() => {
@@ -124,7 +126,7 @@ function Desk({ a }: { a: CalcuttaAuction }) {
       ratingNoise: st.ratingNoise,
       useSourceSd: st.useSourceSd,
       sims: st.sims,
-      results: a.results,
+      results: effResults,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldKey, resultsKey, ratingsKey, st.hfa, st.ratingNoise, st.useSourceSd, st.sims, fieldErr]);

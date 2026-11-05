@@ -39,6 +39,9 @@ import {
   type CloudAuctionMeta,
 } from "../lib/calcutta/store";
 import type { CalcuttaAuction, CalcuttaSettings, FormatKey, Participant, PayoutRules } from "../lib/calcutta/types";
+import { NFL_ESPN_WEEK_ROUND, deriveFromGames, mergeEspnGames, scored } from "../lib/calcutta/scoring";
+import { fetchScoreboard } from "../lib/overlay";
+import type { PlayoffGame } from "../lib/calcutta/types";
 import { LotLogos, NumField, TeamBadge, downloadCsv, fmt$, fmtPayout, fmtTime, seedLabel } from "../lib/calcutta/ui";
 
 // Admin → Pools → Calcutta. Setup, attendees, field/lots, results and the
@@ -828,6 +831,9 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
   const np = netPot(a);
   const soldLots = sortedLots(a).filter((l) => l.status === "sold");
   const paidOut = summaries.reduce((s, x) => s + x.earned, 0);
+  const auto = !!a.autoScore && (a.games ?? []).length > 0;
+  const eff = scored(a);
+  const derived = auto ? deriveFromGames(a) : null;
 
   return (
     <>
@@ -894,8 +900,11 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
 
       <SplitsCard a={a} act={act} />
 
+      {a.format === "nfl_playoffs" && <GamesCard a={a} patch={patch} />}
+
       <section className="cal-card">
         <h2>Results</h2>
+        {auto && <div className="cal-note">Auto-scoring from the game log — turn it off on the Games card to set results by hand.</div>}
         <table className="cal-table">
           <thead>
             <tr>
@@ -912,7 +921,7 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
             {[...a.field]
               .sort((x, y) => x.group.localeCompare(y.group) || (x.seed ?? 0) - (y.seed ?? 0))
               .map((t) => {
-                const res = a.results[t.id] ?? { roundsCleared: t.bye ? 1 : 0, eliminated: false };
+                const res = eff.results[t.id] ?? { roundsCleared: t.bye ? 1 : 0, eliminated: false };
                 const earned = teamEarned(a, t.id);
                 const pct = earned.reduce((s, e) => s + e.pct, 0);
                 const lot = a.lots.find((l) => l.teamIds.includes(t.id));
@@ -940,6 +949,7 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
                     <td>
                       <select
                         className="cal-input"
+                        disabled={auto}
                         value={`${res.roundsCleared}:${res.eliminated ? 1 : 0}`}
                         onChange={(e) => {
                           const [r, el] = e.target.value.split(":").map(Number);
@@ -967,7 +977,8 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
             <h3>Side prizes</h3>
             <div className="cal-note">Tick the winner. Tick more than one for a tie — the prize splits evenly.</div>
             {a.payouts.props.map((p) => {
-              const winners = propWinners(p);
+              const autoSt = auto ? derived?.props[p.id] : undefined;
+              const winners = autoSt ? (autoSt.final ? autoSt.winners : []) : propWinners(p);
               const toggle = (teamId: string) =>
                 patch((x) => ({
                   payouts: {
@@ -984,8 +995,15 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
                   <div>
                     <b>{p.label}</b> · {p.pct}% {np > 0 && <span className="cal-note">({fmtPayout((p.pct / 100) * np)})</span>}
                     {p.rule && <div className="cal-note">{p.rule}</div>}
+                    {autoSt && (
+                      <div className={`cal-note ${autoSt.final ? "good" : ""}`}>
+                        {autoSt.final ? "Settled: " : autoSt.winners.length ? "Leader so far: " : ""}
+                        {autoSt.detail ?? "No games yet"}
+                        {autoSt.blocker ? ` · ${autoSt.blocker}` : ""}
+                      </div>
+                    )}
                   </div>
-                  <div className="cal-prop-teams">
+                  {!autoSt && <div className="cal-prop-teams">
                     {[...a.field]
                       .sort((x, y) => x.group.localeCompare(y.group) || (x.seed ?? 0) - (y.seed ?? 0))
                       .map((t) => (
@@ -994,7 +1012,7 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
                           <TeamBadge team={t} size={18} /> {t.abbr}
                         </label>
                       ))}
-                  </div>
+                  </div>}
                 </div>
               );
             })}
@@ -1218,5 +1236,187 @@ function LogTab({ a }: { a: CalcuttaAuction }) {
         </table>
       </section>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Game log + ESPN sync (auto-scoring)
+// ---------------------------------------------------------------------------
+
+const NFL_ROUND_LABELS = ["Wild Card", "Divisional", "Conference", "Super Bowl"];
+
+function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [autoSync, setAutoSync] = useState(false);
+  const [season, setSeason] = useState("");
+  const [draft, setDraft] = useState({ round: 0, homeId: "", awayId: "" });
+  const games = [...(a.games ?? [])].sort((x, y) => x.round - y.round || (x.start ?? "").localeCompare(y.start ?? ""));
+  const team = (id: string) => a.field.find((t) => t.id === id);
+  const setGames = (fn: (g: PlayoffGame[]) => PlayoffGame[]) => patch((x) => ({ games: fn(x.games ?? []) }));
+  const update = (id: string, p: Partial<PlayoffGame>) => setGames((gs) => gs.map((g) => (g.id === id ? { ...g, ...p } : g)));
+
+  const sync = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      let added = 0;
+      let updated = 0;
+      const extra = /^\d{4}$/.test(season.trim()) ? `&season=${season.trim()}` : "";
+      for (const [week, round] of Object.entries(NFL_ESPN_WEEK_ROUND)) {
+        const { games: list } = await fetchScoreboard(`league=nfl&seasontype=3&week=${week}${extra}`);
+        let res: ReturnType<typeof mergeEspnGames> | null = null;
+        patch((x) => {
+          res = mergeEspnGames(x, round, list, round === 3);
+          return { games: res.games, autoScore: x.autoScore ?? true };
+        });
+        added += res?.added ?? 0;
+        updated += res?.updated ?? 0;
+      }
+      setMsg(`ESPN: ${added} new, ${updated} updated · ${new Date().toLocaleTimeString()}`);
+    } catch (e: any) {
+      setMsg(`ESPN sync failed: ${e?.message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoSync) return;
+    void sync();
+    const t = setInterval(() => void sync(), 120_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSync]);
+
+  const addManual = () => {
+    if (!draft.homeId || !draft.awayId || draft.homeId === draft.awayId) return;
+    setGames((gs) => [
+      ...gs,
+      { id: uid("g_"), round: draft.round, homeId: draft.homeId, awayId: draft.awayId, homeScore: null, awayScore: null, final: false, homeSpread: null, neutral: draft.round === 3, start: null, espnId: null, lineManual: false },
+    ]);
+    setDraft({ round: draft.round, homeId: "", awayId: "" });
+  };
+
+  const missingLines = games.filter((g) => g.final && g.homeSpread == null).length;
+
+  return (
+    <section className="cal-card">
+      <div className="cal-row" style={{ justifyContent: "space-between" }}>
+        <h2>Games</h2>
+        <div className="cal-row tight">
+          <label className="cal-toggle">
+            <input type="checkbox" checked={!!a.autoScore} onChange={(e) => patch(() => ({ autoScore: e.target.checked }))} /> Auto-score results &amp; side prizes from these games
+          </label>
+        </div>
+      </div>
+      <div className="cal-row">
+        <button className="cal-btn primary" onClick={sync} disabled={busy || a.field.length < 14}>
+          {busy ? "Syncing…" : "Sync from ESPN"}
+        </button>
+        <label className="cal-toggle">
+          <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} /> every 2 min while this page is open
+        </label>
+        <input className="cal-input" placeholder="Season (blank = current)" value={season} onChange={(e) => setSeason(e.target.value)} style={{ width: 170 }} />
+        {msg && <span className="cal-note">{msg}</span>}
+      </div>
+      <div className="cal-note">
+        ESPN fills in scores and finals. Its line (DraftKings) is kept from before kickoff as the closing line — ESPN drops it once a game ends, so sync at least once before each game, or
+        type the line in. A typed line is never overwritten.
+        {missingLines > 0 && <b className="bad"> {missingLines} final game{missingLines === 1 ? "" : "s"} missing a line — Best ATS can't settle.</b>}
+      </div>
+      {games.length > 0 && (
+        <table className="cal-table">
+          <thead>
+            <tr>
+              <th>Round</th>
+              <th>Away</th>
+              <th className="r">Score</th>
+              <th>Home</th>
+              <th className="r">Score</th>
+              <th className="r">Home line</th>
+              <th>Final</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {games.map((g) => {
+              const h = team(g.homeId);
+              const w = team(g.awayId);
+              return (
+                <tr key={g.id}>
+                  <td>{NFL_ROUND_LABELS[g.round] ?? g.round}</td>
+                  <td>{w ? `${seedLabel(w)} ${w.abbr}` : g.awayId}</td>
+                  <td className="r">
+                    <NumField value={g.awayScore ?? 0} onCommit={(v) => update(g.id, { awayScore: v })} width={56} />
+                  </td>
+                  <td>
+                    {h ? `${seedLabel(h)} ${h.abbr}` : g.homeId}
+                    {g.neutral ? " (neutral)" : ""}
+                  </td>
+                  <td className="r">
+                    <NumField value={g.homeScore ?? 0} onCommit={(v) => update(g.id, { homeScore: v })} width={56} />
+                  </td>
+                  <td className="r">
+                    <input
+                      className="cal-input"
+                      style={{ width: 70, textAlign: "right" }}
+                      defaultValue={g.homeSpread ?? ""}
+                      key={String(g.homeSpread)}
+                      placeholder="—"
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        const n = v === "" ? null : Number(v);
+                        if (v !== "" && !Number.isFinite(n)) return;
+                        if (n !== g.homeSpread) update(g.id, { homeSpread: n, lineManual: n != null });
+                      }}
+                    />
+                    {g.lineManual && <span className="cal-note"> typed</span>}
+                  </td>
+                  <td>
+                    <input type="checkbox" checked={g.final} onChange={(e) => update(g.id, { final: e.target.checked })} />
+                  </td>
+                  <td className="r">
+                    <button className="cal-btn sm" onClick={() => window.confirm("Remove this game?") && setGames((gs) => gs.filter((x) => x.id !== g.id))}>
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <div className="cal-row">
+        <span className="cal-note">Add by hand:</span>
+        <select className="cal-input" value={draft.round} onChange={(e) => setDraft({ ...draft, round: Number(e.target.value) })}>
+          {NFL_ROUND_LABELS.map((l, i) => (
+            <option key={l} value={i}>
+              {l}
+            </option>
+          ))}
+        </select>
+        <select className="cal-input" value={draft.awayId} onChange={(e) => setDraft({ ...draft, awayId: e.target.value })}>
+          <option value="">Away…</option>
+          {a.field.map((t) => (
+            <option key={t.id} value={t.id}>
+              {seedLabel(t)} {t.name}
+            </option>
+          ))}
+        </select>
+        <span className="cal-note">at</span>
+        <select className="cal-input" value={draft.homeId} onChange={(e) => setDraft({ ...draft, homeId: e.target.value })}>
+          <option value="">Home…</option>
+          {a.field.map((t) => (
+            <option key={t.id} value={t.id}>
+              {seedLabel(t)} {t.name}
+            </option>
+          ))}
+        </select>
+        <button className="cal-btn" onClick={addManual} disabled={!draft.homeId || !draft.awayId}>
+          Add game
+        </button>
+      </div>
+    </section>
   );
 }

@@ -1,4 +1,5 @@
 import { formatDef } from "./formats";
+import { scored } from "./scoring";
 import type { Bid, CalcuttaAuction, CalcuttaSettings, FieldTeam, FormatKey, Lot, LiveState, Participant } from "./types";
 
 // Pure auction logic. Every function takes an auction and returns a new one
@@ -396,7 +397,8 @@ export interface EarnedEvent {
 }
 
 /** Payout events this team has already cashed, from its result + props. */
-export function teamEarned(a: CalcuttaAuction, teamId: string): EarnedEvent[] {
+export function teamEarned(auction: CalcuttaAuction, teamId: string): EarnedEvent[] {
+  const a = scored(auction);
   const def = formatDef(a.format);
   const team = a.field.find((t) => t.id === teamId);
   const res = a.results[teamId] ?? { roundsCleared: team?.bye ? 1 : 0, eliminated: false };

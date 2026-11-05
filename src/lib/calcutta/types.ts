@@ -127,6 +127,25 @@ export interface PayoutRules {
   props: PropEvent[];
 }
 
+/** One playoff game, from ESPN or typed in. Only final games count toward results. */
+export interface PlayoffGame {
+  id: string;
+  /** 0 = first round (Wild Card / Round of 64 …). */
+  round: number;
+  homeId: string;
+  awayId: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  final: boolean;
+  /** Closing line for the HOME team (−3.5 = home favored by 3.5). Needed for the ATS prize. */
+  homeSpread: number | null;
+  neutral: boolean;
+  start: string | null;
+  espnId: string | null;
+  /** true once the line was typed in by hand — ESPN sync won't overwrite it. */
+  lineManual: boolean;
+}
+
 export type LivePhase = "idle" | "ready" | "running" | "paused" | "expired" | "sold";
 
 export interface LiveState {
@@ -153,5 +172,8 @@ export interface CalcuttaAuction {
   bids: Bid[];
   transfers: OwnershipTransfer[];
   results: Record<string, TeamResult>;
+  /** Game log (optional). With autoScore on, results and side prizes are worked out from it. */
+  games?: PlayoffGame[];
+  autoScore?: boolean;
   live: LiveState;
 }
