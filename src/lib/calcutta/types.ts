@@ -43,6 +43,32 @@ export interface Participant {
   hotkey: string;
   /** Dollars actually collected from this person so far. */
   paid: number;
+  /** Practice mode: set when this attendee is a bot. */
+  bot?: BotProfile | null;
+}
+
+export type BotStyle = "balanced" | "aggressive" | "bargain" | "fan" | "longshot" | "budget";
+
+export interface BotProfile {
+  style: BotStyle;
+  /** This bot's own fair share (% of net pot) per team, from its own noisy ratings. */
+  values: Record<string, number>;
+  /** Its guess at the final pot before anything sells. */
+  potGuess: number;
+  /** Fan: the teams it overpays for. */
+  favorites: string[];
+  /** Budget: stops bidding past this total. */
+  budget: number | null;
+  /** Per-bot randomness seed (reaction speed, per-lot mood). */
+  seed: number;
+}
+
+export interface PracticeSettings {
+  enabled: boolean;
+  /** Stage opens/starts/sells lots by itself. */
+  autoAdvance: boolean;
+  /** The pot the bots are guessing around. */
+  expectedPot: number;
 }
 
 /** One team in the auction field (format-specific bits like seed/bye live here). */
@@ -181,5 +207,7 @@ export interface CalcuttaAuction {
   autoScore?: boolean;
   /** March Madness region order: Final Four is [0] vs [1], [2] vs [3]. */
   regions?: string[];
+  /** Practice auction against bots (kept out of bidding history and the cloud). */
+  practice?: PracticeSettings | null;
   live: LiveState;
 }

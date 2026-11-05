@@ -65,7 +65,13 @@ Desk ratings: NFL paste (composite format); CFB uses the site's latest power rat
 
 Auto-scoring works for every format from the Games card; ESPN sync is NFL-only so far (others: add games by hand).
 
+## Practice mode (bots)
+Any auction → **Practice** tab → "Create practice auction with N bots" makes a separate copy (same rules, payouts, field, lots; just you + bots, a 15s/8s clock). Practice auctions never go to the cloud or into bidding history.
+
+- Each bot values teams from your Desk ratings (CFB: site power ratings; none → typical by seed) plus its own noise, so bots disagree. Personalities: Steady Eddie (≈fair), Big Spender (overpays favorites, jumps bids), Bargain Bill (discounts only, bids late), Homer Hank (two pet teams), Longshot Lou (low seeds/bundles), Budget Betty (hard cap). Each guesses the pot ±25% around "room size" and half-follows the room's pace; non-budget bots cool off past their share of the room.
+- On the Stage, press Enter once; bots bid by themselves (one at a time, 0.6–3s reactions, faster near 0:00) and auto-advance starts the clock, sells at 0:00 and opens the next lot. Space pauses. The Desk works as normal.
+- Practice tab: replay with the same bots, new bots, peek at bot secrets, and a report (spent vs fair, EV, P(profit), and "play out the tournament" for one simulated result).
+
 ## Roadmap
-1. Practice mode: bot bidders with noisy valuations.
-2. ESPN sync for March Madness and the CFP; NFL and CFB regular-season formats.
-3. Postponed: futures-based market prior, read-only phone link (4-digit code), per-bidder price model from attendee history.
+1. ESPN sync for March Madness and the CFP; NFL and CFB regular-season formats.
+2. Postponed: futures-based market prior, read-only phone link (4-digit code), per-bidder price model from attendee history.

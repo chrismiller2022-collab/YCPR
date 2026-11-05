@@ -41,7 +41,11 @@ import {
 } from "../lib/calcutta/store";
 import type { CalcuttaAuction, CalcuttaSettings, FormatKey, Participant, PayoutRules } from "../lib/calcutta/types";
 import { NFL_ESPN_WEEK_ROUND, deriveFromGames, mergeEspnGames, scored } from "../lib/calcutta/scoring";
-import { validateField, regionOrder } from "../lib/calcutta/bracketSim";
+import { validateField, regionOrder, simulateBracket, payoutMatrix, fairShares } from "../lib/calcutta/bracketSim";
+import { BOT_STYLES, addBots, botBaseRatings, practiceCopy, resetForReplay } from "../lib/calcutta/bots";
+import { savedRatings } from "../lib/calcutta/deskStorage";
+import { lotShare, portfolio, projectPot } from "../lib/calcutta/value";
+import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { cfbFieldFromSeeds, madnessFieldToText, parseMadnessField, seedNamesFromField } from "../lib/calcutta/fields";
 import { TEAMS } from "../data/teams";
 import { deriveBracketSeeds } from "../lib/bracketSeeds";
@@ -90,7 +94,7 @@ export default function CalcuttaPanel({ onBack }: { onBack: () => void }) {
       <button className="back-link" onClick={auction ? () => select(null) : onBack}>
         ‹ {auction ? "All auctions" : "Pools"}
       </button>
-      {auction ? <AuctionEditor auction={auction} /> : <AuctionList onOpen={select} />}
+      {auction ? <AuctionEditor auction={auction} onOpen={select} /> : <AuctionList onOpen={select} />}
     </div>
   );
 }
@@ -190,6 +194,7 @@ function AuctionList({ onOpen }: { onOpen: (id: string) => void }) {
                   <td>{formatDef(a.format).label}</td>
                   <td>
                     <span className={`cal-pill ${a.status}`}>{a.status}</span>
+                    {a.practice?.enabled && <span className="cal-pill"> practice</span>}
                   </td>
                   <td className="r">
                     {a.lots.filter((l) => l.status === "sold").length}/{a.lots.length}
@@ -241,7 +246,7 @@ function AuctionList({ onOpen }: { onOpen: (id: string) => void }) {
 // Editor
 // ---------------------------------------------------------------------------
 
-type Tab = "setup" | "attendees" | "field" | "owners" | "log";
+type Tab = "setup" | "attendees" | "field" | "owners" | "log" | "practice";
 
 function useAct(id: string) {
   const [err, setErr] = useState<string | null>(null);
@@ -277,7 +282,7 @@ function SyncBadge({ id }: { id: string }) {
   );
 }
 
-function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
+function AuctionEditor({ auction: a, onOpen }: { auction: CalcuttaAuction; onOpen: (id: string) => void }) {
   const [tab, setTab] = useState<Tab>(() => (a.participants.length === 0 ? "setup" : a.status === "setup" ? "field" : "owners"));
   const { act, patch, err } = useAct(a.id);
   const sync = useSyncState(a.id);
@@ -295,9 +300,11 @@ function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
           {sync.state === "error" && <div className="cal-note warn">{sync.message}</div>}
         </div>
         <div className="cal-row">
-          <button className="cal-btn" onClick={() => saveToCloud(a.id)}>
-            Save to cloud
-          </button>
+          {!a.practice?.enabled && (
+            <button className="cal-btn" onClick={() => saveToCloud(a.id)}>
+              Save to cloud
+            </button>
+          )}
           <button className="cal-btn" onClick={() => openDeskWindow(a.id)} disabled={!!validateField(a.format, a.field, a.regions)} title="Private model — keep it on the monitor you don't share">
             Open Desk ↗
           </button>
@@ -317,6 +324,7 @@ function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
             ["field", `Field & Lots (${a.lots.length})`],
             ["owners", "Owners & Results"],
             ["log", `Bid Log (${a.bids.length})`],
+            ["practice", a.practice?.enabled ? "Practice 🤖" : "Practice"],
           ] as [Tab, string][]
         ).map(([k, label]) => (
           <button key={k} className={`cal-tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>
@@ -332,6 +340,7 @@ function AuctionEditor({ auction: a }: { auction: CalcuttaAuction }) {
       {tab === "field" && <FieldTab a={a} act={act} patch={patch} />}
       {tab === "owners" && <OwnersTab a={a} act={act} patch={patch} />}
       {tab === "log" && <LogTab a={a} />}
+      {tab === "practice" && <PracticeTab a={a} act={act} patch={patch} onOpen={onOpen} />}
     </>
   );
 }
@@ -546,7 +555,7 @@ function AttendeesTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: 
   const all = useLocalAuctions();
   const known = useMemo(() => {
     const names = new Set<string>();
-    for (const x of all) for (const p of x.participants) names.add(p.name);
+    for (const x of all) if (!x.practice?.enabled) for (const p of x.participants) if (!p.bot) names.add(p.name);
     for (const p of a.participants) names.delete(p.name);
     return [...names].sort();
   }, [all, a.participants]);
@@ -1626,6 +1635,275 @@ function MadnessFieldEditor({ a, patch, started }: { a: CalcuttaAuction; patch: 
           )}
         </div>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Practice against bots
+// ---------------------------------------------------------------------------
+
+function PracticeTab({ a, act, patch, onOpen }: { a: CalcuttaAuction; act: Act; patch: Patch; onOpen: (id: string) => void }) {
+  const fieldErr = validateField(a.format, a.field, a.regions);
+  const human = a.participants.find((p) => !p.bot);
+  const [meName, setMeName] = useState(human?.name ?? "Me");
+  const [count, setCount] = useState(6);
+  const [secrets, setSecrets] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const sport = formatDef(a.format).sport;
+  const { byTeam } = useWeeklyStats(sport === "cfb" ? "latest" : "none");
+
+  // The bots (and the report) start from YOUR ratings: the Desk's pasted ones,
+  // the site's power ratings for CFB, or typical-by-seed if you have none.
+  const yours = useMemo(() => {
+    if (sport === "cfb") {
+      const out: Record<string, { rating: number }> = {};
+      for (const t of a.field) {
+        const row: any = (byTeam as any)?.[t.name];
+        if (row?.rating != null) out[t.id] = { rating: -Number(row.rating) };
+      }
+      if (Object.keys(out).length) return out;
+    }
+    return savedRatings(a);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a.id, a.field, byTeam, sport]);
+  const ratingSource = yours ? (sport === "cfb" && Object.keys(yours).length && !savedRatings(a) ? "the site's power ratings" : "your Desk ratings") : "typical ratings by seed (no ratings found)";
+
+  if (!a.practice?.enabled) {
+    return (
+      <section className="cal-card">
+        <h2>Practice against bots</h2>
+        <p className="cal-note">
+          Makes a separate practice auction with this one's rules, payouts, field and lots — just you plus bot bidders. Your real auction isn't touched, and practice auctions stay on this
+          computer (no cloud, not in bidding history).
+        </p>
+        {fieldErr && <div className="cal-note warn">Finish the field first: {fieldErr}</div>}
+        <div className="cal-row">
+          <span className="cal-note">You bid as</span>
+          <input className="cal-input" value={meName} onChange={(e) => setMeName(e.target.value)} />
+          <button
+            className="cal-btn primary"
+            disabled={!!fieldErr || a.lots.length === 0 || busy}
+            onClick={() => {
+              setBusy(true);
+              setTimeout(() => {
+                const now = Date.now();
+                let copy = practiceCopy(a, meName.trim() || "Me", now);
+                copy = addBots(copy, count, botBaseRatings(copy, yours), now).auction;
+                copy = { ...copy, practice: { ...copy.practice!, expectedPot: Math.max(200, (count + 1) * 150) } };
+                writeAuction(copy, { cloud: false });
+                setBusy(false);
+                onOpen(copy.id);
+              }, 20);
+            }}
+          >
+            {busy ? "Building bots…" : `Create practice auction with ${count} bots`}
+          </button>
+          <select className="cal-input" value={count} onChange={(e) => setCount(Number(e.target.value))}>
+            {[3, 4, 5, 6, 7, 8, 10, 12].map((n) => (
+              <option key={n} value={n}>
+                {n} bots
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="cal-note">Bots value teams from {ratingSource}, each with its own noise, so they disagree with you and with each other.</div>
+      </section>
+    );
+  }
+
+  const bots = a.participants.filter((p) => p.bot);
+  const meId = human?.id ?? null;
+  const reroll = () => {
+    setBusy(true);
+    setTimeout(() => {
+      act((x, now) => {
+        const base = resetForReplay({ ...x, participants: x.participants.filter((p) => !p.bot) }, now);
+        return addBots(base, bots.length || count, botBaseRatings(base, yours), now);
+      });
+      setBusy(false);
+    }, 20);
+  };
+
+  return (
+    <>
+      <section className="cal-card">
+        <div className="cal-row" style={{ justifyContent: "space-between" }}>
+          <h2>Practice auction</h2>
+          <div className="cal-row tight">
+            <button className="cal-btn primary" onClick={() => openStageWindow(a.id)}>
+              Open Stage ↗
+            </button>
+            <button className="cal-btn" onClick={() => openDeskWindow(a.id)}>
+              Open Desk ↗
+            </button>
+          </div>
+        </div>
+        <ol className="cal-steps">
+          <li>Open the Stage and the Desk (pick yourself under "Me" on the Desk).</li>
+          <li>
+            Press <b>Enter</b> on the Stage to open the first lot. Bid with your key ({human?.hotkey.toUpperCase()}) — the bots bid on their own.
+          </li>
+          <li>With auto-advance on, the clock starts, lots sell and the next one opens by itself. Space pauses.</li>
+          <li>When it's done, the report below shows who overpaid and how your portfolio would do.</li>
+        </ol>
+        <div className="cal-form" style={{ maxWidth: 640 }}>
+          <label>Auto-advance</label>
+          <label className="cal-toggle">
+            <input type="checkbox" checked={a.practice.autoAdvance} onChange={(e) => patch((x) => ({ practice: { ...x.practice!, autoAdvance: e.target.checked } }))} /> Start clock, sell at 0:00 and open the next lot automatically
+          </label>
+          <label>Room size the bots expect</label>
+          <span>
+            <NumField
+              value={a.practice.expectedPot}
+              onCommit={(v) => patch((x) => ({ practice: { ...x.practice!, expectedPot: Math.max(50, v) }, participants: x.participants.map((p) => (p.bot ? { ...p, bot: { ...p.bot, potGuess: p.bot.potGuess * (Math.max(50, v) / Math.max(1, x.practice!.expectedPot)) } } : p)) }))}
+              suffix="$ pot"
+              width={90}
+            />
+            <span className="cal-note"> each bot guesses ±25% around this, then follows the room's pace</span>
+          </span>
+          <label>Clock</label>
+          <span className="cal-note">
+            {a.settings.timerStart}s to open, {a.settings.timerReset}s after each bid (change on Rules &amp; Payouts)
+          </span>
+        </div>
+        <div className="cal-row">
+          <button className="cal-btn" onClick={() => window.confirm("Start over with the same bots? Every bid and sale is cleared.") && act((x, now) => ({ auction: resetForReplay(x, now) }))}>
+            Replay with the same bots
+          </button>
+          <button className="cal-btn" disabled={busy} onClick={() => window.confirm("Start over with brand-new bots?") && reroll()}>
+            {busy ? "Building bots…" : "New bots"}
+          </button>
+          <span className="cal-note">Bots value teams from {ratingSource}.</span>
+        </div>
+      </section>
+
+      <section className="cal-card">
+        <div className="cal-row" style={{ justifyContent: "space-between" }}>
+          <h2>The bots</h2>
+          <label className="cal-toggle">
+            <input type="checkbox" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} /> Show their secrets (pet teams, budgets, pot guesses)
+          </label>
+        </div>
+        <table className="cal-table">
+          <tbody>
+            {bots.map((p) => {
+              const meta = BOT_STYLES.find((b) => b.style === p.bot!.style);
+              return (
+                <tr key={p.id}>
+                  <td style={{ color: p.color, fontWeight: 700 }}>🤖 {p.name}</td>
+                  <td>{meta?.blurb}</td>
+                  <td className="cal-note">
+                    {secrets &&
+                      [
+                        `pot guess ${fmt$(p.bot!.potGuess)}`,
+                        p.bot!.favorites.length ? `pets: ${p.bot!.favorites.map((id) => a.field.find((t) => t.id === id)?.name ?? id).join(", ")}` : null,
+                        p.bot!.budget != null ? `budget ${fmt$(p.bot!.budget)}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      {a.lots.some((l) => l.status === "sold") && <PracticeReport a={a} meId={meId} yours={yours} />}
+    </>
+  );
+}
+
+function PracticeReport({ a, meId, yours }: { a: CalcuttaAuction; meId: string | null; yours: Record<string, { rating: number }> | null }) {
+  const [playout, setPlayout] = useState<number | null>(null);
+  const def = formatDef(a.format);
+  const soldKey = a.lots.map((l) => `${l.id}:${l.status}:${l.price}:${l.winnerId}`).join("|");
+  const sim = useMemo(
+    () =>
+      simulateBracket({
+        format: a.format,
+        field: a.field,
+        regions: a.regions,
+        ratings: botBaseRatings(a, yours),
+        hfa: def.sim.hfa,
+        marginSd: def.sim.marginSd,
+        ratingNoise: def.sim.ratingNoise,
+        useSourceSd: false,
+        sims: 10000,
+        seed: 777,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [a.id, JSON.stringify(a.field), JSON.stringify(yours)],
+  );
+  const matrix = useMemo(() => payoutMatrix(sim, a), [sim, a.payouts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shares = useMemo(() => fairShares(sim, matrix), [sim, matrix]);
+  void soldKey;
+  const pot = potTotal(a);
+  const done = a.status === "complete";
+  // Mid-auction, value everything at the projected final pot, not the partial one.
+  const finalPot = done ? pot : projectPot(a, shares, a.practice?.expectedPot ?? pot).projected;
+  const np = finalPot * (1 - (a.settings.rakePct || 0) / 100);
+  const T = sim.teamIds.length;
+  const col = new Map(sim.teamIds.map((id, i) => [id, i]));
+  const rows = a.participants
+    .map((p) => {
+      const won = a.lots.filter((l) => l.status === "sold" && l.winnerId === p.id);
+      const spent = won.reduce((s, l) => s + (l.price ?? 0), 0);
+      const fair = won.reduce((s, l) => s + (lotShare(l, shares) / 100) * np, 0);
+      const port = portfolio(a, sim, matrix, p.id, np);
+      const payout = playout == null ? null : won.reduce((s, l) => s + l.teamIds.reduce((x, id) => x + (matrix[playout * T + (col.get(id) ?? 0)] / 100) * np, 0), 0);
+      return { p, won: won.length, spent, fair, port, payout };
+    })
+    .sort((x, y) => y.port.ev - y.port.cost - (x.port.ev - x.port.cost));
+  const champ = playout == null ? null : sim.teamIds.find((id, i) => sim.rc[playout * T + i] === sim.rounds);
+
+  return (
+    <section className="cal-card">
+      <div className="cal-row" style={{ justifyContent: "space-between" }}>
+        <h2>How it went</h2>
+        <div className="cal-row tight">
+          <button className="cal-btn" onClick={() => setPlayout(Math.floor(Math.random() * sim.sims))}>
+            🎲 Play out the tournament
+          </button>
+          {playout != null && <span className="cal-note">Champion: {a.field.find((t) => t.id === champ)?.name ?? "?"}</span>}
+        </div>
+      </div>
+      <div className="cal-note">
+        Pot {fmt$(pot)}
+        {done ? "" : ` so far (projected final ${fmt$(finalPot)})`}. "Fair" uses the same ratings the bots started from (before their noise), at the {done ? "final" : "projected"} pot. EV and P(profit) are from {sim.sims.toLocaleString()} simulated tournaments.
+      </div>
+      <table className="cal-table">
+        <thead>
+          <tr>
+            <th>Bidder</th>
+            <th className="r">Teams</th>
+            <th className="r">Spent</th>
+            <th className="r">Fair value bought</th>
+            <th className="r">Paid / fair</th>
+            <th className="r">EV</th>
+            <th className="r">P(profit)</th>
+            {playout != null && <th className="r">This playout</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.p.id} style={r.p.id === meId ? { fontWeight: 700 } : undefined}>
+              <td style={{ color: r.p.color }}>
+                {r.p.bot ? "🤖 " : "⭐ "}
+                {r.p.name}
+              </td>
+              <td className="r">{r.won}</td>
+              <td className="r">{fmt$(r.spent)}</td>
+              <td className="r">{fmt$(r.fair)}</td>
+              <td className={`r ${r.spent && r.fair ? (r.spent / r.fair > 1 ? "bad" : "good") : ""}`}>{r.spent && r.fair ? `${Math.round((r.spent / r.fair) * 100)}%` : "—"}</td>
+              <td className={`r ${r.port.ev >= r.port.cost ? "good" : "bad"}`}>{fmt$(r.port.ev)}</td>
+              <td className="r">{r.won ? `${Math.round(r.port.pProfit * 100)}%` : "—"}</td>
+              {playout != null && <td className={`r ${(r.payout ?? 0) >= r.spent ? "good" : "bad"}`}>{fmt$(r.payout, 0)}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 }

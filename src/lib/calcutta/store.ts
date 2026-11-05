@@ -85,7 +85,8 @@ export function writeAuction(a: CalcuttaAuction, opts: { cloud?: boolean } = {})
   const ids = listLocalIds();
   if (!ids.includes(a.id)) writeJson(INDEX_KEY, [...ids, a.id]);
   notify();
-  if (opts.cloud !== false) scheduleCloudSave(a.id);
+  // Practice auctions stay on this computer.
+  if (opts.cloud !== false && !a.practice?.enabled) scheduleCloudSave(a.id);
 }
 
 export function deleteLocalAuction(id: string) {

@@ -40,8 +40,7 @@ interface DeskState {
   meId: string | null;
 }
 
-const ratingsKey = (sport: Sport) => (sport === "nfl" ? "calcutta:nfl-ratings-text" : `calcutta:${sport}-ratings-text`);
-const deskKey = (id: string) => `calcutta:desk:${id}`;
+import { deskKey, ratingsKey } from "../lib/calcutta/deskStorage";
 
 function loadDesk(id: string, a: CalcuttaAuction): DeskState {
   const def = formatDef(a.format);

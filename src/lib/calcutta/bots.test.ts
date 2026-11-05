@@ -1,0 +1,101 @@
+import { describe, expect, it } from "vitest";
+import { NFL_COMPOSITE_WEEK9_TEXT } from "../../data/nflCompositeRatings";
+import { addParticipant, lotsFromField, newAuction, openLot, passCurrent, placeBid, potTotal, sellCurrent, startClock, tick, highBid } from "./engine";
+import { emptyNflSeedSlots, nflFieldFromSlots } from "./formats";
+import { parseRatings } from "./ratings";
+import { addBots, botBaseRatings, botMax, chooseBotBid, practiceCopy, resetForReplay } from "./bots";
+import type { CalcuttaAuction } from "./types";
+
+const AFC = ["BUF", "JAX", "NE", "KC", "CIN", "DEN", "HOU"];
+const NFC = ["LAR", "CHI", "SEA", "DET", "SF", "MIN", "DAL"];
+
+function base(): CalcuttaAuction {
+  let a = newAuction("Real", "nfl_playoffs", 0);
+  const slots = emptyNflSeedSlots().map((s) => ({ ...s, abbr: (s.conf === "AFC" ? AFC : NFC)[s.seed - 1] }));
+  a = { ...a, field: nflFieldFromSlots(slots) };
+  a = { ...a, lots: lotsFromField(a.field, "seed") };
+  a = addParticipant(a, "Chris", 0).auction;
+  return a;
+}
+
+function practice(): CalcuttaAuction {
+  let a = practiceCopy(base(), "Chris", 0);
+  a = { ...a, practice: { enabled: true, autoAdvance: true, expectedPot: 1000 } };
+  return addBots(a, 6, botBaseRatings(a, parseRatings(NFL_COMPOSITE_WEEK9_TEXT).ratings), 0).auction;
+}
+
+describe("practice bots", () => {
+  it("makes a practice copy with just you, fast clock, nothing sold", () => {
+    const a = practiceCopy(base(), "Chris", 0);
+    expect(a.participants.map((p) => p.name)).toEqual(["Chris"]);
+    expect(a.practice?.enabled).toBe(true);
+    expect(a.settings.timerStart).toBe(15);
+    expect(a.lots.every((l) => l.status === "pending")).toBe(true);
+  });
+
+  it("adds one bot per personality, each with its own valuation", () => {
+    const a = practice();
+    const bots = a.participants.filter((p) => p.bot);
+    expect(bots.map((b) => b.bot!.style)).toEqual(["balanced", "aggressive", "bargain", "fan", "longshot", "budget"]);
+    for (const b of bots) expect(Object.values(b.bot!.values).reduce((s, v) => s + v, 0)).toBeCloseTo(100, 0);
+    expect(bots[0].bot!.values.LAR).not.toBe(bots[1].bot!.values.LAR); // they disagree
+    expect(new Set(a.participants.map((p) => p.hotkey)).size).toBe(7);
+  });
+
+  it("personalities change the price: bargain < balanced, fan way over on pets", () => {
+    const a = practice();
+    const by = (s: string) => a.participants.find((p) => p.bot?.style === s)!;
+    const lot = a.lots[0];
+    expect(botMax(a, by("bargain"), lot)).toBeLessThan(botMax(a, by("balanced"), lot) * 1.05);
+    const fan = by("fan");
+    const pet = a.lots.find((l) => fan.bot!.favorites.includes(l.teamIds[0]))!;
+    const petMax = botMax(a, fan, pet);
+    const fair = (fan.bot!.values[pet.teamIds[0]] / 100) * fan.bot!.potGuess;
+    expect(petMax).toBeGreaterThan(fair * 1.4);
+  });
+
+  it("bots run a whole auction by themselves and the pot lands near the expected pot", () => {
+    let a = practice();
+    let now = 0;
+    for (let guard = 0; guard < 20000 && a.status !== "complete"; guard++) {
+      if (a.live.phase === "idle" || a.live.phase === "sold") {
+        const r = openLot(a, null, now);
+        if (r.error) break;
+        a = startClock(r.auction, now).auction;
+        continue;
+      }
+      if (a.live.phase === "expired") {
+        a = highBid(a, a.live.lotId) ? sellCurrent(a, now).auction : passCurrent(a, now).auction;
+        continue;
+      }
+      const lastTs = a.bids.filter((b) => b.lotId === a.live.lotId && !b.voided).slice(-1)[0]?.ts;
+      const since = now - (lastTs ?? now - 5000);
+      const bid = chooseBotBid(a, now, since, () => 0.5);
+      if (bid) a = placeBid(a, bid.participantId, bid.amount, now).auction;
+      now += 250;
+      a = tick(a, now).auction;
+    }
+    const sold = a.lots.filter((l) => l.status === "sold").length;
+    expect(sold).toBeGreaterThanOrEqual(12);
+    expect(potTotal(a)).toBeGreaterThan(500);
+    expect(potTotal(a)).toBeLessThan(2000);
+    // budget bot respects its cap
+    const betty = a.participants.find((p) => p.bot?.style === "budget")!;
+    const bettySpent = a.lots.filter((l) => l.winnerId === betty.id).reduce((s, l) => s + (l.price ?? 0), 0);
+    expect(bettySpent).toBeLessThanOrEqual(betty.bot!.budget! + 1);
+    // replay keeps the bots, clears everything else
+    const r = resetForReplay(a, now);
+    expect(r.bids.length).toBe(0);
+    expect(r.lots.every((l) => l.status === "pending")).toBe(true);
+    expect(r.participants.filter((p) => p.bot).length).toBe(6);
+  });
+
+  it("a bot never outbids itself or bids above its max", () => {
+    let a = practice();
+    a = openLot(a, null, 0).auction;
+    a = startClock(a, 0).auction;
+    const human = a.participants.find((p) => !p.bot)!;
+    a = placeBid(a, human.id, 100000, 0).auction; // way above everyone
+    expect(chooseBotBid(a, 1000, 10000)).toBeNull();
+  });
+});

@@ -276,3 +276,6 @@
 .cal-whatif-head { display: flex; align-items: center; gap: 10px; }
 .cal-whatif-grid { display: grid; grid-template-columns: repeat(5, max-content 1fr); gap: 4px 10px; font-variant-numeric: tabular-nums; font-size: 13px; }
 @media (max-width: 1300px) { .cal-whatif-grid { grid-template-columns: repeat(3, max-content 1fr); } }
+.cal-practice-tag { margin-left: 0.8em; padding: 0.1em 0.6em; border-radius: 999px; background: var(--s-warn); color: #1a1400; letter-spacing: 0.08em; }
+.cal-steps { margin: 0.4rem 0 0.8rem; padding-left: 1.2rem; font-size: 0.86rem; line-height: 1.6; color: var(--a-ink-2, inherit); }
+.cal-bidder-name { padding-right: 1.4em; }

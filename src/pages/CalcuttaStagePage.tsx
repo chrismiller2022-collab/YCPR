@@ -28,7 +28,8 @@ import {
   type Result,
 } from "../lib/calcutta/engine";
 import { formatDef, roundSlots } from "../lib/calcutta/formats";
-import { dispatch as storeDispatch, fetchCloudAuction, useAuction, useSyncState, writeAuction } from "../lib/calcutta/store";
+import { dispatch as storeDispatch, fetchCloudAuction, readAuction, useAuction, useSyncState, writeAuction } from "../lib/calcutta/store";
+import { chooseBotBid } from "../lib/calcutta/bots";
 import type { CalcuttaAuction } from "../lib/calcutta/types";
 import { LotLogos, TeamBadge, fmt$, fmtPayout, seedLabel } from "../lib/calcutta/ui";
 
@@ -252,7 +253,9 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
     <div className={`cal-stage ${controls ? "" : "clean"}`}>
       <header className="cal-stage-top">
         <div className="cal-stage-name">
-          <div className="cal-stage-eyebrow">{formatDef(a.format).label} Calcutta</div>
+          <div className="cal-stage-eyebrow">
+            {formatDef(a.format).label} Calcutta{a.practice?.enabled && <span className="cal-practice-tag">Practice</span>}
+          </div>
           <div className="cal-stage-title">{a.name}</div>
         </div>
         <div className="cal-stage-pot">
@@ -407,7 +410,10 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
               disabled={!lot || phase === "idle" || phase === "sold"}
             >
               {controls && <span className="cal-bidder-key">{p.hotkey.toUpperCase()}</span>}
-              <span className="cal-bidder-name">{p.name}</span>
+              <span className="cal-bidder-name">
+                {p.bot ? "🤖 " : ""}
+                {p.name}
+              </span>
               <span className="cal-bidder-meta">
                 {s?.owed ? fmt$(s.owed) : "$0"} · {s?.lots.length ?? 0} {s?.lots.length === 1 ? "team" : "teams"}
               </span>
@@ -468,6 +474,7 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
       )}
 
       {flash && <div className={`cal-flash ${flash.kind}`}>{flash.text}</div>}
+      {a.practice?.enabled && <PracticeDriver a={a} now={now} />}
     </div>
   );
 }
@@ -559,4 +566,43 @@ function BoardView({ a, summaries }: { a: CalcuttaAuction; summaries: ReturnType
       </aside>
     </main>
   );
+}
+
+/**
+ * Practice mode: makes the bots bid, and (with auto-advance) starts the clock,
+ * sells or passes at 0:00 and opens the next lot, so you only have to bid.
+ * Space still pauses everything. Press Enter once to open the first lot.
+ */
+function PracticeDriver({ a, now }: { a: CalcuttaAuction; now: number }) {
+  const phaseKey = `${a.live.lotId}:${a.live.phase}`;
+  const since = useRef<{ key: string; at: number }>({ key: phaseKey, at: now });
+  if (since.current.key !== phaseKey) since.current = { key: phaseKey, at: now };
+  const lastBotAt = useRef(0);
+  const started = a.lots.some((l) => l.status !== "pending");
+
+  useEffect(() => {
+    const cur = readAuction(a.id);
+    if (!cur?.practice?.enabled) return;
+    const inPhase = now - since.current.at;
+    const auto = cur.practice.autoAdvance;
+    const phase = cur.live.phase;
+    if (phase === "running") {
+      if (now - lastBotAt.current < 350) return;
+      const lastBid = cur.bids.filter((b) => b.lotId === cur.live.lotId && !b.voided).slice(-1)[0];
+      const sinceLast = now - Math.max(lastBid?.ts ?? 0, since.current.at);
+      const pick = chooseBotBid(cur, now, sinceLast);
+      if (pick) {
+        lastBotAt.current = now;
+        storeDispatch(a.id, (x, t) => placeBid(x, pick.participantId, pick.amount, t));
+      }
+      return;
+    }
+    if (!auto) return;
+    if (phase === "ready" && inPhase > 1200) storeDispatch(a.id, startClock);
+    else if (phase === "expired" && inPhase > 1000) storeDispatch(a.id, (x, t) => (highBid(x, x.live.lotId) ? sellCurrent(x, t) : passCurrent(x, t)));
+    else if (phase === "sold" && inPhase > 2500) storeDispatch(a.id, (x, t) => openLot(x, null, t));
+    else if (phase === "idle" && started && cur.status !== "complete" && inPhase > 2000) storeDispatch(a.id, (x, t) => openLot(x, null, t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now]);
+  return null;
 }
