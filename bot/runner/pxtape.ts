@@ -6,12 +6,14 @@
 // Read-only market data; never places orders. Logs counts only.
 
 import { oddsToProb, prophetxAdapter, prophetxClient } from "../venues/prophetx";
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
+import { isQuietHours } from "./quietHours";
 
 const MODE = "pxtape";
 const iso = () => new Date().toISOString();
 
 export interface TapeTotals {
+  quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   trades: number;
   unmatched: number;
   frames: number;
@@ -69,6 +71,7 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
   const totals: TapeTotals = { trades: 0, unmatched: 0, frames: 0, channels: 0, tournaments: 0, strikes: 0, samples: [] };
   const client = prophetxClient();
   if (!client.available()) return totals;
+  if (isQuietHours()) return { ...totals, quiet: true }; // overnight: no listening, no database calls
   const recent = await db.select("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
@@ -187,7 +190,7 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
     try {
       (ws as WebSocket | null)?.close();
     } catch {}
-    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.strikes ? 1 : 0, fills: totals.trades, error: totals.error ?? null, summary: totals }).catch(() => {});
+    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.strikes ? 1 : 0, fills: totals.trades, error: totals.error ?? null, summary: withEgress(totals) }).catch(() => {});
     console.log(`pxtape: trades ${totals.trades}, unmatched ${totals.unmatched}, frames ${totals.frames}, channels ${totals.channels}`);
   }
   return totals;

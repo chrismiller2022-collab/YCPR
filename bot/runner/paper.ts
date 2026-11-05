@@ -17,7 +17,8 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
 import { diffOrders, paperFills, type Trade } from "./paperFills";
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
+import { isQuietHours } from "./quietHours";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -132,6 +133,7 @@ interface Book {
 }
 
 export interface CycleTotals {
+  quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -266,6 +268,12 @@ export async function runCycle(): Promise<CycleTotals> {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
       return totals;
+    }
+    // Overnight: nothing rests or trades (ESPN finals above still run, so late games get graded).
+    if (isQuietHours()) {
+      totals.cancelled += await cancelAll();
+      console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
+      return { ...totals, quiet: true };
     }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
@@ -658,7 +666,7 @@ export async function runCycle(): Promise<CycleTotals> {
     throw err;
   } finally {
     await db.update("bot_runs", `id=eq.${run.id}`, {
-      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: totals,
+      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: withEgress(totals),
     }).catch(() => {});
     const perVenue = Object.entries(totals.venues).map(([v, x]) => `${v} ${x!.ladders}/${x!.fills}`).join(" ");
     console.log(`games ${totals.games}, skipped ${totals.skipped}, no-edge ${totals.noEdge}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}, lab fills ${totals.labFills}, venues(ladders/fills) ${perVenue}`);

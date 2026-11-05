@@ -7,7 +7,7 @@
 import { runMarkouts } from "../analysis/markouts";
 import { runReport } from "../analysis/report";
 import { shrinkFrom } from "../fairPrice/shrink";
-import { db, RUN_HOST } from "../runner/io";
+import { db, RUN_HOST, withEgress } from "../runner/io";
 import { makeAdapters, type VenueId } from "../venues";
 import {
   advance, annotateSteps, builtinMethods, emptyState, methodHash, strategyMethod, summarize, VENUE_SETS,
@@ -180,7 +180,7 @@ export async function runHypo(budgetMs = 200e3): Promise<HypoTotals> {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(e).slice(0, 2000) });
     throw e;
   } finally {
-    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: totals }).catch(() => {});
+    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: withEgress(totals) }).catch(() => {});
     console.log(`hypo: games ${totals.games}, combos ${totals.combos}, steps ${totals.steps}, restarted ${totals.restarted}`);
   }
   return totals;

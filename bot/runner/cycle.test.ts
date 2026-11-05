@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   process.env.SUPABASE_URL = "http://sb.test";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test";
+  process.env.BOT_QUIET_HOURS = "off"; // these tests trade whatever the time of day; the quiet-hours test turns it on
 });
 
 import { marginPmf } from "../fairPrice/marginDistribution";
@@ -269,5 +270,21 @@ describe("paused games", () => {
     await runCycle();
     expect(db.bot_fills.find((f) => f.id === 901)?.result).toBe(1); // home won by 10 > 3.5
     expect(stub.calls.some((c) => c.startsWith("bot_fills?") && c.includes("game_id=eq.G3"))).toBe(false);
+  });
+});
+
+describe("quiet hours", () => {
+  it("places nothing and cancels resting orders overnight", async () => {
+    db.bot_orders.push({ id: 77, mode: "paper", game_id: "G1", venue: "kalshi", ticker: "K-H3.5", side: "home", strike: 3.5, price: 0.4, count: 1, status: "resting" });
+    process.env.BOT_QUIET_HOURS = "0-24";
+    try {
+      const { runCycle } = await import("./paper");
+      const t = await runCycle();
+      expect(t.quiet).toBe(true);
+      expect(t.placed).toBe(0);
+      expect(db.bot_fills.length).toBe(0);
+    } finally {
+      process.env.BOT_QUIET_HOURS = "off";
+    }
   });
 });

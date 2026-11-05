@@ -4,14 +4,36 @@
 const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Supabase bills egress (response bytes sent to us); request bodies are free. Every response is counted per table so
+// each job can save what it downloaded in its bot_runs summary (see withEgress) and usage can be checked per job.
+const egress = new Map<string, { requests: number; bytes: number }>();
+
+/** A job's summary with what this process has downloaded from Supabase so far, in total and per table. */
+export function withEgress<T extends object>(summary: T): T & { egress: { requests: number; bytes: number; byTable: Record<string, { requests: number; bytes: number }> } } {
+  let requests = 0;
+  let bytes = 0;
+  const byTable: Record<string, { requests: number; bytes: number }> = {};
+  for (const [table, e] of egress) {
+    requests += e.requests;
+    bytes += e.bytes;
+    byTable[table] = { ...e };
+  }
+  return { ...summary, egress: { requests, bytes, byTable } };
+}
+
 async function sb(path: string, init: RequestInit = {}): Promise<any> {
   if (!SB_URL || !SB_KEY) throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
     ...init,
     headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=representation", ...(init.headers ?? {}) },
   });
-  if (!res.ok) throw new Error(`Supabase ${res.status} on ${path.split("?")[0]}: ${await res.text()}`);
   const text = await res.text();
+  const table = path.split("?")[0];
+  const e = egress.get(table) ?? { requests: 0, bytes: 0 };
+  e.requests += 1;
+  e.bytes += Buffer.byteLength(text);
+  egress.set(table, e);
+  if (!res.ok) throw new Error(`Supabase ${res.status} on ${table}: ${text}`);
   return text ? JSON.parse(text) : null;
 }
 
