@@ -65,7 +65,9 @@ Byes don't pay as a win by default (toggle). Rules & Payouts shows each team's r
 
 Desk ratings: NFL paste (composite format); CFB uses the site's latest power ratings and each team's home field (or a paste); March Madness paste — one "Team rating" per line, KenPom/Torvik rows work (records are skipped; tick "per 100 possessions" to scale AdjEM × 0.68).
 
-Auto-scoring works for every format from the Games card; ESPN sync is NFL-only so far (others: add games by hand).
+Auto-scoring works for every format from the Games card, and **Sync from ESPN** works for all of them: NFL playoff weeks; every College Football Playoff game (ESPN's postseason "week 999"); every NCAA tournament game (one request per game day from the First Four Tuesday — guessed as the Tuesday between March 15–21, or set it). Teams match by ESPN id (CFB ids come from the site's logos), then name; rounds come from ESPN's game notes ("Sweet 16", "Quarterfinal"), else from each team's earlier games. March Madness also has **Fill bracket from ESPN** on Field & Lots once the bracket is out (seeds, regions, First Four pairs, logos and the Final Four pairing).
+
+CFB Desk ratings come from the site: the latest saved week's power rating (`weekly_team_stats.rating`, lower = better, flipped) and the site's Team HFA blend from `team_hfa` (same as the Conferences page; `weekly_team_stats.hfa` is empty). Practice bots use the same numbers.
 
 ## Practice mode (bots)
 Any auction → **Practice** tab → "Create practice auction with N bots" makes a separate copy (same rules, payouts, field, lots; just you + bots, a 15s/8s clock). Practice auctions never go to the cloud or into bidding history.
@@ -75,5 +77,5 @@ Any auction → **Practice** tab → "Create practice auction with N bots" makes
 - Practice tab: replay with the same bots, new bots, peek at bot secrets, and a report (spent vs fair, EV, P(profit), and "play out the tournament" for one simulated result).
 
 ## Roadmap
-1. ESPN sync for March Madness and the CFP; NFL and CFB regular-season formats.
+1. NFL and CFB regular-season formats.
 2. Postponed: futures-based market prior, read-only phone link (4-digit code), per-bidder price model from attendee history.

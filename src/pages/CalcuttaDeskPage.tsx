@@ -6,7 +6,7 @@ import { restorePasskeySession } from "../lib/adminAuth";
 import { buyInLeft, currentLot, highBid, lotName, lotTeams, minNextBid, participantById, remainingMs } from "../lib/calcutta/engine";
 import type { Lot } from "../lib/calcutta/types";
 import { formatDef, propKind, type Sport } from "../lib/calcutta/formats";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
+import { useSiteCfb } from "../lib/calcutta/siteCfb";
 import { scored } from "../lib/calcutta/scoring";
 import { DEFAULT_SIM, fairShares, payoutMatrix, simulateBracket, validateField, type SimOutput, type SimPropKind } from "../lib/calcutta/bracketSim";
 import { RATINGS_IMAGE_PROMPT, parseFieldRatings, parseRatings, type ParseResult } from "../lib/calcutta/ratings";
@@ -109,7 +109,6 @@ export default function CalcuttaDeskPage() {
 function Desk({ a }: { a: CalcuttaAuction }) {
   const def = formatDef(a.format);
   const [st, setSt] = useState<DeskState>(() => loadDesk(a.id, a));
-  const { byTeam: siteByTeam, resolvedWeek } = useWeeklyStats(def.sport === "cfb" ? "latest" : "none");
   const [showInputs, setShowInputs] = useState(false);
   const now = useNow(250);
   const set = (p: Partial<DeskState>) =>
@@ -130,19 +129,9 @@ function Desk({ a }: { a: CalcuttaAuction }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [st.ratingsText, st.lowerIsBetter, st.scale, fieldKey, def.sport],
   );
-  // CFB: the site's own power ratings (spread-style, lower = better) + each team's home field.
-  const site = useMemo(() => {
-    if (def.sport !== "cfb" || st.ratingSource !== "site") return null;
-    const ratings: Record<string, { rating: number; sd: number | null }> = {};
-    const hfaByTeam: Record<string, number> = {};
-    for (const t of a.field) {
-      const row: any = (siteByTeam as any)?.[t.name];
-      if (row?.rating != null) ratings[t.id] = { rating: -Number(row.rating), sd: null };
-      if (row?.hfa != null) hfaByTeam[t.id] = Number(row.hfa);
-    }
-    return { ratings, hfaByTeam };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def.sport, st.ratingSource, siteByTeam, fieldKey]);
+  // CFB: the site's own power ratings (spread-style, lower = better, flipped) + its Team HFA blend.
+  const siteCfb = useSiteCfb(a.field, def.sport === "cfb");
+  const site = def.sport === "cfb" && st.ratingSource === "site" ? siteCfb : null;
   const parsed: ParseResult = site ? { ratings: Object.fromEntries(Object.entries({ ...pasted.ratings, ...site.ratings }).map(([k, v]) => [k, { abbr: k, line: 0, ...v }])) as any, unmatched: [], duplicates: [] } : pasted;
   const fieldErr = validateField(a.format, a.field, a.regions);
   const effResults = scored(a).results;
@@ -288,8 +277,9 @@ function Desk({ a }: { a: CalcuttaAuction }) {
             {st.useSourceSd ? " + source SD" : ""}
           </span>
         </div>
-        {(sim.warnings.length > 0 || customProps.length > 0 || parsed.unmatched.length > 0 || parsed.duplicates.length > 0) && (
+        {(sim.warnings.length > 0 || !!site?.error || customProps.length > 0 || parsed.unmatched.length > 0 || parsed.duplicates.length > 0) && (
           <div className="cal-desk-warn">
+            {site?.error && <div>⚠ Couldn't load the YCPR power ratings ({site.error}) — switch to pasted ratings or try again.</div>}
             {sim.warnings.map((w) => (
               <div key={w}>⚠ {w}</div>
             ))}
@@ -314,7 +304,7 @@ function Desk({ a }: { a: CalcuttaAuction }) {
               {def.sport === "cfb" && (
                 <div className="cal-row tight">
                   <label className="cal-toggle">
-                    <input type="radio" checked={st.ratingSource === "site"} onChange={() => set({ ratingSource: "site" })} /> YCPR power ratings ({resolvedWeek ?? "loading"}) + each team's home field
+                    <input type="radio" checked={st.ratingSource === "site"} onChange={() => set({ ratingSource: "site" })} /> YCPR power ratings ({siteCfb.week ?? (siteCfb.loading ? "loading" : "none found")}) + the site's Team HFA
                   </label>
                   <label className="cal-toggle">
                     <input type="radio" checked={st.ratingSource === "paste"} onChange={() => set({ ratingSource: "paste" })} /> Pasted ratings
@@ -380,7 +370,7 @@ function Desk({ a }: { a: CalcuttaAuction }) {
               <div className="cal-desk-note" style={{ gridColumn: "1 / -1" }}>
                 {def.sport === "cbb" ? "Every game neutral." : def.sport === "cfb" ? (a.format === "cfb_playoff12" ? "First round on campus, then neutral bowls." : "Higher seed hosts until a neutral title game.") : "Super Bowl neutral."} Results entered on the Owners &amp; Results tab (or auto-scored games) are locked in.
               </div>
-              <RatingsCheck a={a} ratings={parsed.ratings} />
+              <RatingsCheck a={a} ratings={parsed.ratings} hfa={site?.hfaByTeam} />
             </div>
           </div>
         )}
@@ -610,7 +600,7 @@ function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]
   );
 }
 
-function RatingsCheck({ a, ratings }: { a: CalcuttaAuction; ratings: Record<string, { rating: number; sd: number | null }> }) {
+function RatingsCheck({ a, ratings, hfa }: { a: CalcuttaAuction; ratings: Record<string, { rating: number; sd: number | null }>; hfa?: Record<string, number> }) {
   return (
     <div style={{ gridColumn: "1 / -1" }}>
       <div className="cal-stage-eyebrow" style={{ marginTop: 8 }}>
@@ -625,6 +615,7 @@ function RatingsCheck({ a, ratings }: { a: CalcuttaAuction; ratings: Record<stri
               <span key={t.id} className={`cal-desk-chip ${r ? "" : "bad"}`}>
                 {seedLabel(t)} {t.abbr} {r ? (r.rating > 0 ? "+" : "") + r.rating.toFixed(1) : "missing"}
                 {r?.sd != null ? ` ±${r.sd}` : ""}
+                {hfa?.[t.id] != null ? ` · HFA ${hfa[t.id].toFixed(1)}` : ""}
               </span>
             );
           })}

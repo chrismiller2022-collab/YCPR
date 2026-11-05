@@ -81,6 +81,8 @@ export interface FieldTeam {
   group: string; // AFC / NFC, region; "" when seeds are one list (CFP)
   /** Extra display info (a CFB team's conference). */
   note?: string | null;
+  /** ESPN team id, when known (exact matching for ESPN sync). */
+  espnId?: string | null;
   seed: number | null;
   bye: boolean;
   logo: string | null;

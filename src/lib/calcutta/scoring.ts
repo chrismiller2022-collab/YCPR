@@ -1,5 +1,7 @@
+import { espnTeamIdToName } from "../espnTeamId";
 import { formatDef, propKind } from "./formats";
-import type { CalcuttaAuction, FieldTeam, PlayoffGame, PropEvent, TeamResult } from "./types";
+import { norm } from "./ratings";
+import type { CalcuttaAuction, FieldTeam, FormatKey, PlayoffGame, PropEvent, TeamResult } from "./types";
 
 // Works out results and the built-in side prizes from the game log, so the
 // owners board updates itself as games go final (ESPN sync or typed in).
@@ -194,58 +196,140 @@ export function scored(a: CalcuttaAuction): CalcuttaAuction {
 /** ESPN postseason week → our round. Week 4 is the Pro Bowl. */
 export const NFL_ESPN_WEEK_ROUND: Record<number, number> = { 1: 0, 2: 1, 3: 2, 5: 3 };
 
+export interface EspnSide {
+  espnId?: string | null;
+  abbrev: string | null;
+  name?: string | null;
+  location?: string | null;
+  displayName?: string | null;
+  score: number | null;
+  /** ESPN's curated rank — in the NCAA tournament feed, the team's seed. */
+  rank?: number | null;
+}
+
 export interface EspnGameLite {
   id: string;
   start: string;
   state: "pre" | "in" | "post";
-  home: { abbrev: string | null; score: number | null };
-  away: { abbrev: string | null; score: number | null };
+  note?: string | null;
+  neutral?: boolean;
+  home: EspnSide;
+  away: EspnSide;
   odds?: { homeSpread: number | null } | null;
 }
 
-/**
- * Merge ESPN games for one round into the log. Matches by ESPN id, else by
- * the two teams. Scores/final always refresh; the line refreshes only until
- * kickoff (that's the closing line) and never over a hand-typed one.
- */
-export function mergeEspnGames(a: CalcuttaAuction, round: number, list: EspnGameLite[], neutral: boolean): { games: PlayoffGame[]; added: number; updated: number } {
+/** Field team id for an ESPN competitor: ESPN id first, then abbreviation (NFL) or name. */
+export function espnTeamResolver(a: CalcuttaAuction): (side: EspnSide) => string | null {
   const ids = new Set(a.field.map((t) => t.id));
-  const norm = (x: string | null) => (x === "WAS" ? "WSH" : x ?? "");
+  const byEspn = new Map(a.field.filter((t) => t.espnId).map((t) => [String(t.espnId), t.id]));
+  const byName = new Map<string, string>();
+  for (const t of a.field) {
+    byName.set(norm(t.name), t.id);
+    if (a.format !== "nfl_playoffs" && t.abbr.length >= 3) byName.set(norm(t.abbr), t.id);
+  }
+  return (side) => {
+    if (a.format === "nfl_playoffs") {
+      const ab = side.abbrev === "WAS" ? "WSH" : side.abbrev ?? "";
+      return ids.has(ab) ? ab : null;
+    }
+    if (side.espnId) {
+      const hit = byEspn.get(String(side.espnId));
+      if (hit) return hit;
+      if (formatDef(a.format).sport === "cfb") {
+        const name = espnTeamIdToName(String(side.espnId));
+        if (name && ids.has(name)) return name;
+      }
+    }
+    for (const n of [side.location, side.displayName, side.name, side.abbrev]) {
+      if (!n) continue;
+      const hit = byName.get(norm(n));
+      if (hit) return hit;
+    }
+    return null;
+  };
+}
+
+/** Round from ESPN's game note, when it says ("Sweet 16", "Quarterfinal"…). null = can't tell. */
+export function roundFromNote(format: FormatKey, note: string | null | undefined): number | null {
+  if (!note) return null;
+  const n = note.toLowerCase();
+  if (format === "march_madness") {
+    if (n.includes("first four")) return -1;
+    if (n.includes("1st round") || n.includes("first round")) return 0;
+    if (n.includes("2nd round") || n.includes("second round")) return 1;
+    if (n.includes("sweet 16") || n.includes("sweet sixteen")) return 2;
+    if (n.includes("elite 8") || n.includes("elite eight")) return 3;
+    if (n.includes("final four")) return 4;
+    if (n.includes("national championship")) return 5;
+    return null;
+  }
+  if (format === "cfb_playoff12" || format === "cfb_playoff24") {
+    const off = format === "cfb_playoff24" ? 1 : 0;
+    if (n.includes("first round")) return 0;
+    if (n.includes("second round")) return format === "cfb_playoff24" ? 1 : null;
+    if (n.includes("quarterfinal")) return 1 + off;
+    if (n.includes("semifinal")) return 2 + off;
+    if (n.includes("national championship")) return 3 + off;
+  }
+  return null;
+}
+
+/** Whether a round is played on a neutral field by the format's rules (null = ask ESPN). */
+function formatNeutral(format: FormatKey, round: number): boolean | null {
+  if (format === "march_madness") return true;
+  if (format === "cfb_playoff12") return round >= 1;
+  if (format === "cfb_playoff24") return round >= formatDef(format).rounds.length - 1;
+  return null;
+}
+
+/** Round by how many games each team already has in the log before this one (plus a bye). */
+function inferRound(a: CalcuttaAuction, games: PlayoffGame[], h: string, w: string, start: string | null): number {
+  const field = new Map(a.field.map((t) => [t.id, t]));
+  const th = field.get(h);
+  const tw = field.get(w);
+  if (a.format === "march_madness" && th && tw && th.group === tw.group && th.seed === tw.seed) return -1;
+  const prior = (id: string) =>
+    (field.get(id)?.bye ? 1 : 0) + games.filter((g) => g.round >= 0 && (g.homeId === id || g.awayId === id) && (g.start ?? "") < (start ?? "~")).length;
+  return Math.max(prior(h), prior(w));
+}
+
+/**
+ * Merge ESPN games into the log. Matches by ESPN id, else by the two teams.
+ * Scores/final always refresh; the line refreshes only until kickoff (that's
+ * the closing line) and never over a hand-typed one. `round` null = work it
+ * out from ESPN's note, else from each team's earlier games.
+ */
+export function mergeEspnGames(a: CalcuttaAuction, round: number | null, list: EspnGameLite[], neutral: boolean | null): { games: PlayoffGame[]; added: number; updated: number; skipped: number } {
+  const resolve = espnTeamResolver(a);
   const games = [...(a.games ?? [])];
   let added = 0;
   let updated = 0;
-  for (const e of list) {
-    const h = norm(e.home.abbrev);
-    const w = norm(e.away.abbrev);
-    if (!ids.has(h) || !ids.has(w)) continue;
+  let skipped = 0;
+  for (const e of [...list].sort((x, y) => x.start.localeCompare(y.start))) {
+    const h = resolve(e.home);
+    const w = resolve(e.away);
+    if (!h || !w) {
+      skipped++;
+      continue;
+    }
     const i = games.findIndex((g) => g.espnId === e.id || (g.homeId === h && g.awayId === w) || (g.homeId === w && g.awayId === h));
+    const r = round ?? roundFromNote(a.format, e.note) ?? inferRound(a, i >= 0 ? games.filter((_, j) => j !== i) : games, h, w, e.start);
     const preGame = e.state === "pre";
     const line = e.odds?.homeSpread ?? null;
+    const isNeutral = neutral ?? formatNeutral(a.format, r) ?? !!e.neutral;
     if (i < 0) {
-      games.push({
-        id: `g_${e.id}`,
-        round,
-        homeId: h,
-        awayId: w,
-        homeScore: e.home.score,
-        awayScore: e.away.score,
-        final: e.state === "post",
-        homeSpread: line,
-        neutral,
-        start: e.start,
-        espnId: e.id,
-        lineManual: false,
-      });
+      games.push({ id: `g_${e.id}`, round: r, homeId: h, awayId: w, homeScore: e.home.score, awayScore: e.away.score, final: e.state === "post", homeSpread: line, neutral: isNeutral, start: e.start, espnId: e.id, lineManual: false });
       added++;
     } else {
       const g = games[i];
       const next: PlayoffGame = {
         ...g,
         espnId: e.id,
-        round,
+        round: r,
         homeId: h,
         awayId: w,
         start: e.start,
+        neutral: isNeutral,
         homeScore: e.home.score ?? g.homeScore,
         awayScore: e.away.score ?? g.awayScore,
         final: e.state === "post",
@@ -255,5 +339,22 @@ export function mergeEspnGames(a: CalcuttaAuction, round: number, list: EspnGame
       games[i] = next;
     }
   }
-  return { games, added, updated };
+  return { games, added, updated, skipped };
+}
+
+/** The NCAA tournament's game days from the First Four Tuesday: FF, R64, R32, S16, E8, Final Four, title. */
+export function madnessGameDays(firstFour: Date): string[] {
+  return [0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 18, 20].map((off) => {
+    const d = new Date(Date.UTC(firstFour.getUTCFullYear(), firstFour.getUTCMonth(), firstFour.getUTCDate() + off));
+    return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+  });
+}
+
+/** First Four Tuesday guess for a tournament year: the Tuesday between March 15 and 21. */
+export function guessFirstFour(year: number): Date {
+  for (let d = 15; d <= 21; d++) {
+    const x = new Date(Date.UTC(year, 2, d));
+    if (x.getUTCDay() === 2) return x;
+  }
+  return new Date(Date.UTC(year, 2, 18));
 }

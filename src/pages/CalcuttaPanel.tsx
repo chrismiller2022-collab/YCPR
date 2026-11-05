@@ -40,13 +40,13 @@ import {
   type CloudAuctionMeta,
 } from "../lib/calcutta/store";
 import type { CalcuttaAuction, CalcuttaSettings, FormatKey, Participant, PayoutRules } from "../lib/calcutta/types";
-import { NFL_ESPN_WEEK_ROUND, deriveFromGames, mergeEspnGames, scored } from "../lib/calcutta/scoring";
+import { NFL_ESPN_WEEK_ROUND, deriveFromGames, guessFirstFour, madnessGameDays, mergeEspnGames, scored } from "../lib/calcutta/scoring";
 import { validateField, regionOrder, simulateBracket, payoutMatrix, fairShares } from "../lib/calcutta/bracketSim";
 import { BOT_STYLES, addBots, botBaseRatings, practiceCopy, resetForReplay } from "../lib/calcutta/bots";
 import { savedRatings } from "../lib/calcutta/deskStorage";
 import { lotShare, portfolio, projectPot } from "../lib/calcutta/value";
-import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { cfbFieldFromSeeds, madnessFieldToText, parseMadnessField, seedNamesFromField } from "../lib/calcutta/fields";
+import { useSiteCfb } from "../lib/calcutta/siteCfb";
+import { cfbFieldFromSeeds, madnessFieldFromEspn, madnessFieldToText, parseMadnessField, seedNamesFromField } from "../lib/calcutta/fields";
 import { TEAMS } from "../data/teams";
 import { deriveBracketSeeds } from "../lib/bracketSeeds";
 import { fetchMonteCarloRun, fetchMonteCarloRuns } from "../lib/api/monteCarlo";
@@ -1327,7 +1327,8 @@ function LogTab({ a }: { a: CalcuttaAuction }) {
 function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
   const roundLabels = [...(a.format === "march_madness" ? ["First Four"] : []), ...formatDef(a.format).rounds.map((r) => r.game)];
   const roundOffset = a.format === "march_madness" ? 1 : 0; // First Four is round −1
-  const espn = a.format === "nfl_playoffs";
+  const espn = true;
+  const [firstFour, setFirstFour] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(false);
@@ -1344,18 +1345,31 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
     try {
       let added = 0;
       let updated = 0;
+      let skipped = 0;
       const extra = /^\d{4}$/.test(season.trim()) ? `&season=${season.trim()}` : "";
-      for (const [week, round] of Object.entries(NFL_ESPN_WEEK_ROUND)) {
-        const { games: list } = await fetchScoreboard(`league=nfl&seasontype=3&week=${week}${extra}`);
+      const merge = (list: any[], round: number | null, neutral: boolean | null) => {
         let res: ReturnType<typeof mergeEspnGames> | null = null;
         patch((x) => {
-          res = mergeEspnGames(x, round, list, round === 3);
+          res = mergeEspnGames(x, round, list, neutral);
           return { games: res.games, autoScore: x.autoScore ?? true };
         });
         added += res?.added ?? 0;
         updated += res?.updated ?? 0;
+        skipped += res?.skipped ?? 0;
+      };
+      if (a.format === "nfl_playoffs") {
+        for (const [week, round] of Object.entries(NFL_ESPN_WEEK_ROUND)) {
+          const { games: list } = await fetchScoreboard(`league=nfl&seasontype=3&week=${week}${extra}`);
+          merge(list, round, round === 3);
+        }
+      } else if (a.format === "march_madness") {
+        const { games: list } = await fetchScoreboard(`league=cbb&dates=${madnessDays(season, firstFour).join(",")}`);
+        merge(list, null, null);
+      } else {
+        const { games: list } = await fetchScoreboard(`league=cfbpost${extra}`);
+        merge(list, null, null);
       }
-      setMsg(`ESPN: ${added} new, ${updated} updated · ${new Date().toLocaleTimeString()}`);
+      setMsg(`ESPN: ${added} new, ${updated} updated${skipped ? `, ${skipped} not in this field` : ""} · ${new Date().toLocaleTimeString()}`);
     } catch (e: any) {
       setMsg(`ESPN sync failed: ${e?.message ?? e}`);
     } finally {
@@ -1393,17 +1407,31 @@ function GamesCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
         </div>
       </div>
       {espn ? <div className="cal-row">
-        <button className="cal-btn primary" onClick={sync} disabled={busy || a.field.length < 14}>
+        <button className="cal-btn primary" onClick={sync} disabled={busy || !!validateField(a.format, a.field, a.regions)}>
           {busy ? "Syncing…" : "Sync from ESPN"}
         </button>
         <label className="cal-toggle">
           <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} /> every 2 min while this page is open
         </label>
-        <input className="cal-input" placeholder="Season (blank = current)" value={season} onChange={(e) => setSeason(e.target.value)} style={{ width: 170 }} />
+        <input
+          className="cal-input"
+          placeholder={a.format === "march_madness" ? "Tournament year (blank = next/this March)" : "Season it started (blank = current)"}
+          value={season}
+          onChange={(e) => setSeason(e.target.value)}
+          style={{ width: 250 }}
+        />
+        {a.format === "march_madness" && (
+          <input className="cal-input" type="date" title="First Four Tuesday (blank = the Tuesday between March 15–21)" value={firstFour} onChange={(e) => setFirstFour(e.target.value)} />
+        )}
         {msg && <span className="cal-note">{msg}</span>}
-      </div> : <div className="cal-note">Add games as they're played (ESPN sync is NFL-only for now). With auto-score on, results and side prizes fill in from final games.</div>}
+      </div> : null}
       <div className="cal-note">
-        {espn && "ESPN fills in scores and finals. Its line (DraftKings) is kept from before kickoff as the closing line — ESPN drops it once a game ends, so sync at least once before each game, or type the line in. "}
+        {a.format === "march_madness"
+          ? "ESPN fills in every tournament game (First Four through the title) with scores, finals and rounds. "
+          : a.format === "nfl_playoffs"
+            ? "ESPN fills in scores and finals. "
+            : "ESPN fills in every College Football Playoff game with scores, finals and rounds. "}
+        Its line (when ESPN has one) is kept from before kickoff as the closing line — ESPN drops it once a game ends, so sync at least once before each game, or type the line in.
         A typed line is never overwritten.
         {missingLines > 0 && <b className="bad"> {missingLines} final game{missingLines === 1 ? "" : "s"} missing a line — Best ATS can't settle.</b>}
       </div>
@@ -1586,6 +1614,31 @@ function MadnessFieldEditor({ a, patch, started }: { a: CalcuttaAuction; patch: 
   const problem = validateField("march_madness", parsed.field, parsed.regions);
   const playIns = parsed.field.filter((t) => parsed.field.filter((x) => x.group === t.group && x.seed === t.seed).length === 2).length / 2;
   const apply = () => patch(() => ({ field: parsed.field, regions: parsed.regions }));
+  const [espnBusy, setEspnBusy] = useState(false);
+  const [espnMsg, setEspnMsg] = useState<string | null>(null);
+  const [espnYear, setEspnYear] = useState("");
+  // After Selection Sunday ESPN lists every First Four and Round of 64 game with
+  // seeds and regions, so the whole bracket (with ESPN ids and logos) comes from there.
+  const fillFromEspn = async () => {
+    setEspnBusy(true);
+    setEspnMsg(null);
+    try {
+      const days = madnessDays(espnYear, "").slice(0, 6); // First Four + Round of 64 (+ R32 to catch play-in winners)
+      const { games } = await fetchScoreboard(`league=cbb&dates=${days.join(",")}`);
+      const built = madnessFieldFromEspn(games as any);
+      if (!built.field.length) {
+        setEspnMsg("ESPN doesn't have that tournament's games yet — the bracket comes out on Selection Sunday.");
+        return;
+      }
+      patch(() => ({ field: built.field, regions: built.regions }));
+      setText(madnessFieldToText(built.field, built.regions));
+      setEspnMsg(`Loaded ${built.field.length} teams from ESPN.${built.errors.length ? " " + built.errors.join(" ") : ""} Check the Final Four pairing.`);
+    } catch (e: any) {
+      setEspnMsg(`ESPN failed: ${e?.message ?? e}`);
+    } finally {
+      setEspnBusy(false);
+    }
+  };
   const moveRegion = (i: number, d: -1 | 1) => {
     const next = [...regions];
     const j = i + d;
@@ -1611,7 +1664,12 @@ function MadnessFieldEditor({ a, patch, started }: { a: CalcuttaAuction; patch: 
             <button className="cal-btn primary" onClick={apply} disabled={parsed.field.length === 0}>
               Use this bracket ({parsed.field.length} teams, {playIns} First Four)
             </button>
+            <button className="cal-btn" onClick={fillFromEspn} disabled={espnBusy || started}>
+              {espnBusy ? "Loading ESPN…" : "Fill bracket from ESPN"}
+            </button>
+            <input className="cal-input" placeholder="Year (blank = upcoming)" value={espnYear} onChange={(e) => setEspnYear(e.target.value)} style={{ width: 150 }} />
           </div>
+          {espnMsg && <div className="cal-note">{espnMsg}</div>}
         </div>
         <div>
           <div className="cal-note">
@@ -1660,23 +1718,23 @@ function PracticeTab({ a, act, patch, onOpen }: { a: CalcuttaAuction; act: Act; 
   const [secrets, setSecrets] = useState(false);
   const [busy, setBusy] = useState(false);
   const sport = formatDef(a.format).sport;
-  const { byTeam } = useWeeklyStats(sport === "cfb" ? "latest" : "none");
+  const siteCfb = useSiteCfb(a.field, sport === "cfb");
 
-  // The bots (and the report) start from YOUR ratings: the Desk's pasted ones,
-  // the site's power ratings for CFB, or typical-by-seed if you have none.
+  // The bots (and the report) start from YOUR ratings: the site's power ratings
+  // for CFB, the Desk's pasted ones otherwise, or typical-by-seed if you have none.
   const yours = useMemo(() => {
-    if (sport === "cfb") {
-      const out: Record<string, { rating: number }> = {};
-      for (const t of a.field) {
-        const row: any = (byTeam as any)?.[t.name];
-        if (row?.rating != null) out[t.id] = { rating: -Number(row.rating) };
-      }
-      if (Object.keys(out).length) return out;
-    }
+    if (sport === "cfb" && Object.keys(siteCfb.ratings).length) return siteCfb.ratings;
     return savedRatings(a);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.id, a.field, byTeam, sport]);
-  const ratingSource = yours ? (sport === "cfb" && Object.keys(yours).length && !savedRatings(a) ? "the site's power ratings" : "your Desk ratings") : "typical ratings by seed (no ratings found)";
+  }, [a.id, a.field, siteCfb.ratings, sport]);
+  const ratingSource =
+    sport === "cfb" && Object.keys(siteCfb.ratings).length
+      ? `the site's power ratings (${siteCfb.week ?? "latest"})`
+      : yours
+        ? "your Desk ratings"
+        : sport === "cfb" && siteCfb.loading
+          ? "the site's power ratings (loading…)"
+          : "typical ratings by seed (no ratings found)";
 
   if (!a.practice?.enabled) {
     return (
@@ -1915,4 +1973,12 @@ function PracticeReport({ a, meId, yours }: { a: CalcuttaAuction; meId: string |
       </table>
     </section>
   );
+}
+
+/** The tournament's game days: from a First Four date, or the usual Tuesday of the given (or upcoming) March. */
+function madnessDays(season: string, firstFour: string): string[] {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(firstFour)) return madnessGameDays(new Date(`${firstFour}T00:00:00Z`));
+  const now = new Date();
+  const year = /^\d{4}$/.test(season.trim()) ? Number(season.trim()) : now.getMonth() >= 7 ? now.getFullYear() + 1 : now.getFullYear();
+  return madnessGameDays(guessFirstFour(year));
 }

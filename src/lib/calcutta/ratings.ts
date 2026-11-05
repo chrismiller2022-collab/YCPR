@@ -94,7 +94,7 @@ Use the Composite and Std Dev columns only, keep minus signs, include all 32 tea
 
 // ---- any field (CFB, March Madness) ----------------------------------------
 
-const norm = (s: string) =>
+export const norm = (s: string) =>
   s
     .toLowerCase()
     .replace(/&/g, " and ")

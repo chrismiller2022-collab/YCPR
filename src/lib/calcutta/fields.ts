@@ -45,6 +45,7 @@ export function cfbFieldFromSeeds(format: FormatKey, names: (string | null)[]): 
       seed,
       bye: seed <= byes,
       logo: logoFor(name!),
+      espnId: /\/(\d+)\.png$/.exec(logoFor(name!) ?? "")?.[1] ?? null,
     }));
 }
 
@@ -112,4 +113,52 @@ export function madnessFieldToText(field: FieldTeam[], regions: string[]): strin
   return regions
     .map((r) => [r, ...field.filter((t) => t.group === r).sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0)).map((t) => `${t.seed} ${t.name}`)].join("\n"))
     .join("\n\n");
+}
+
+/**
+ * March Madness field straight from ESPN's tournament games (First Four +
+ * Round of 64; ESPN's rank on those games is the seed, the note names the
+ * region). Teams not decided yet ("TBD") are skipped. Region order comes from
+ * the Final Four games when they exist, else ESPN's listing order.
+ */
+export function madnessFieldFromEspn(list: import("./scoring").EspnGameLite[]): MadnessParse {
+  const field: FieldTeam[] = [];
+  const regions: string[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  const regionOf = (note: string | null | undefined) => /-\s*([A-Za-z ]+?)\s+Region\s*-/i.exec(note ?? "")?.[1]?.trim() ?? null;
+  for (const e of [...list].sort((x, y) => x.start.localeCompare(y.start))) {
+    const note = (e.note ?? "").toLowerCase();
+    if (!note.includes("first four") && !note.includes("1st round") && !note.includes("first round")) continue;
+    const region = regionOf(e.note);
+    if (!region) continue;
+    if (!regions.includes(region)) regions.push(region);
+    for (const t of [e.home, e.away]) {
+      const name = t.location || t.name || "";
+      if (!name || /^tbd$/i.test(name) || !t.rank) continue;
+      const key = t.espnId ? `espn:${t.espnId}` : slug(name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      field.push({
+        id: slug(name),
+        name,
+        abbr: t.abbrev || shortName(name),
+        group: region,
+        note: null,
+        seed: t.rank,
+        bye: false,
+        logo: t.espnId ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${t.espnId}.png` : logoFor(name),
+        espnId: t.espnId ?? null,
+      });
+    }
+  }
+  // Final Four pairing, if ESPN already has those games: [A, B] semi and [C, D] semi.
+  const f4 = list.filter((e) => (e.note ?? "").toLowerCase().includes("final four"));
+  if (f4.length === 2) {
+    const regionOfTeam = (s: import("./scoring").EspnSide) => field.find((t) => t.espnId && t.espnId === s.espnId)?.group;
+    const order = f4.flatMap((e) => [regionOfTeam(e.home), regionOfTeam(e.away)]).filter(Boolean) as string[];
+    if (order.length === 4 && new Set(order).size === 4) regions.splice(0, regions.length, ...order);
+  }
+  if (field.length < 68) errors.push(`ESPN has ${field.length} of 68 teams so far — run it again once the bracket is out (Selection Sunday).`);
+  return { field, regions, errors };
 }

@@ -43,10 +43,13 @@ describe("practice bots", () => {
   });
 
   it("personalities change the price: bargain < balanced, fan way over on pets", () => {
-    const a = practice();
+    let a = practice();
+    // Same valuation and pot guess for the two being compared, so only personality differs.
+    const bal = a.participants.find((p) => p.bot?.style === "balanced")!;
+    a = { ...a, participants: a.participants.map((p) => (p.bot?.style === "bargain" ? { ...p, bot: { ...p.bot, values: bal.bot!.values, potGuess: bal.bot!.potGuess, seed: bal.bot!.seed } } : p)) };
     const by = (s: string) => a.participants.find((p) => p.bot?.style === s)!;
     const lot = a.lots[0];
-    expect(botMax(a, by("bargain"), lot)).toBeLessThan(botMax(a, by("balanced"), lot) * 1.05);
+    expect(botMax(a, by("bargain"), lot)).toBeLessThan(botMax(a, by("balanced"), lot) * 0.85);
     const fan = by("fan");
     const pet = a.lots.find((l) => fan.bot!.favorites.includes(l.teamIds[0]))!;
     const petMax = botMax(a, fan, pet);
