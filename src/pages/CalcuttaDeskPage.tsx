@@ -160,6 +160,25 @@ function Desk({ a }: { a: CalcuttaAuction }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const matrix = useMemo(() => (sim ? payoutMatrix(sim, a) : null), [sim, payoutKey]);
   const shares = useMemo(() => (sim && matrix ? fairShares(sim, matrix) : {}), [sim, matrix]);
+  // The recap judges prices at auction time: a second run that ignores any results already in.
+  const hasResults = Object.keys(effResults).length > 0;
+  const preShares = useMemo(() => {
+    if (!hasResults || fieldErr) return null;
+    const pre = simulateBracket({
+      format: a.format,
+      field: a.field,
+      regions: a.regions,
+      ratings: parsed.ratings,
+      hfa: st.hfa,
+      hfaByTeam: site?.hfaByTeam,
+      marginSd: st.marginSd,
+      ratingNoise: st.ratingNoise,
+      useSourceSd: st.useSourceSd,
+      sims: Math.min(st.sims, 20000),
+    });
+    return fairShares(pre, payoutMatrix(pre, a));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasResults, fieldKey, ratingsKeyStr, st.hfa, st.marginSd, st.ratingNoise, st.useSourceSd, st.sims, payoutKey]);
 
   if (fieldErr || !sim || !matrix) return <div className="cal-desk cal-desk-empty">Finish the playoff field on the Calcutta page first ({fieldErr}).</div>;
 
@@ -174,6 +193,20 @@ function Desk({ a }: { a: CalcuttaAuction }) {
   const lot = currentLot(a);
   const live = lot ? valueById.get(lot.id) ?? null : null;
   const high = highBid(a, lot?.id);
+  const ratingsLabel = site
+    ? `YCPR power ratings (${siteCfb.week ?? "loading"})`
+    : def.sport === "nfl"
+      ? st.ratingsText.split(/\r?\n/).find((l) => l.trim() && !/^\d/.test(l.trim()))?.trim() || "Pasted ratings"
+      : "Pasted ratings";
+  const missingRatings = a.field.filter((t) => !parsed.ratings[t.id]);
+  const openRatings = () => {
+    setShowInputs(true);
+    setTimeout(() => document.getElementById("cal-desk-inputs")?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
+  const fmtRating = (id: string) => {
+    const r = parsed.ratings[id]?.rating;
+    return r == null ? "—" : `${r > 0 ? "+" : ""}${r.toFixed(1)}`;
+  };
   const myPort = me ? portfolio(a, sim, matrix, me.id, netPot) : null;
   const customProps = a.payouts.props.filter((p) => propKind(p) === "custom" && p.pct > 0);
   const tracker = roomTracker(a, values);
@@ -188,6 +221,11 @@ function Desk({ a }: { a: CalcuttaAuction }) {
           <div className="cal-desk-title">{a.name}</div>
         </div>
         <div className="cal-desk-kpis">
+          <button className="cal-kpi cal-kpi-btn" onClick={openRatings} title="Edit ratings & model settings">
+            <div className="cal-stage-eyebrow">Ratings ✎</div>
+            <div className="cal-kpi-v">{Object.keys(parsed.ratings).filter((id) => a.field.some((t) => t.id === id)).length}/{a.field.length}</div>
+            <div className="cal-kpi-sub">{ratingsLabel}</div>
+          </button>
           <Kpi label="Sold" value={fmt$(pot.sold)} sub={`${pct(pot.soldShare, 0)} of value`} />
           <Kpi label="Projected pot" value={fmt$(pot.projected)} sub={pot.roomPace ? `room pace ${fmt$(pot.roomPace)}` : `prior ${fmt$(prior)}`} big />
           <Kpi label="Room vs fair" value={pot.soldShare > 0 ? `${Math.round(mk.overall * 100)}%` : "—"} sub={(["fav", "mid", "long"] as const).map((t) => `${TIER_LABEL[t].split(" ")[0]} ${mk.byTier[t].n ? Math.round(mk.byTier[t].markup * 100) + "%" : "—"}`).join(" · ")} />
@@ -210,8 +248,14 @@ function Desk({ a }: { a: CalcuttaAuction }) {
         </div>
       </header>
 
+      {missingRatings.length > 0 && (
+        <button className="cal-desk-banner" onClick={openRatings}>
+          ⚠ No rating for {missingRatings.length} team{missingRatings.length === 1 ? "" : "s"} ({missingRatings.slice(0, 6).map((t) => t.name).join(", ")}
+          {missingRatings.length > 6 ? "…" : ""}) — they're treated as an average team. Click to add ratings.
+        </button>
+      )}
       <div className="cal-desk-grid">
-        <LiveCard a={a} live={live} high={high} meId={st.meId} now={now} sim={sim} matrix={matrix} netPot={netPot} edgePct={st.edgePct} />
+        <LiveCard a={a} live={live} high={high} meId={st.meId} now={now} sim={sim} matrix={matrix} netPot={netPot} edgePct={st.edgePct} fmtRating={fmtRating} />
         <PortfolioCard a={a} port={myPort} me={me?.name ?? null} />
       </div>
 
@@ -256,9 +300,13 @@ function Desk({ a }: { a: CalcuttaAuction }) {
         </section>
       </div>
 
-      <ValueTable a={a} values={values} sim={sim} />
+      <ValueTable a={a} values={values} sim={sim} fmtRating={fmtRating} />
 
-      <section className="cal-dcard">
+      {a.lots.some((l) => l.status === "sold") && (
+        <RecapCard a={a} values={preShares ? lotValues(a, preShares, netPot, st.edgePct) : values} meId={st.meId} preTournament={!!preShares} />
+      )}
+
+      <section className="cal-dcard" id="cal-desk-inputs">
         <div className="cal-dcard-head">
           <h3>Model inputs</h3>
           <button className="cal-cbtn" onClick={() => setShowInputs((x) => !x)}>
@@ -399,7 +447,9 @@ function LiveCard({
   matrix,
   netPot,
   edgePct,
+  fmtRating,
 }: {
+  fmtRating: (id: string) => string;
   a: CalcuttaAuction;
   live: LotValue | null;
   high: ReturnType<typeof highBid>;
@@ -450,7 +500,7 @@ function LiveCard({
         <LotLogos auction={a} lot={lot} size={54} />
         <div className="grow">
           <div className="cal-stage-eyebrow">
-            On the block · {teams.map(seedLabel).join(" · ")} · {TIER_LABEL[live.tier]}
+            On the block · {teams.map(seedLabel).join(" · ")} · {TIER_LABEL[live.tier]} · rating {teams.map((t) => fmtRating(t.id)).join(" / ")}
           </div>
           <div className="cal-live-name">{lotName(a, lot)}</div>
         </div>
@@ -545,7 +595,7 @@ function PortfolioCard({ a, port, me }: { a: CalcuttaAuction; port: ReturnType<t
   );
 }
 
-function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]; sim: SimOutput }) {
+function ValueTable({ a, values, sim, fmtRating }: { a: CalcuttaAuction; values: LotValue[]; sim: SimOutput; fmtRating: (id: string) => string }) {
   const curId = a.live.lotId;
   return (
     <section className="cal-dcard">
@@ -559,6 +609,7 @@ function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]
             <th>#</th>
             <th>Lot</th>
             <th>Seed</th>
+            <th className="r">Rating</th>
             <th className="r">{formatDef(a.format).rounds.slice(-1)[0]?.short ?? "Title"}</th>
             <th className="r">Share</th>
             <th className="r">Fair</th>
@@ -583,6 +634,7 @@ function ValueTable({ a, values, sim }: { a: CalcuttaAuction; values: LotValue[]
                   </span>
                 </td>
                 <td className="dim">{teams.map(seedLabel).join(", ")}</td>
+                <td className="r">{teams.map((t) => fmtRating(t.id)).join(" / ")}</td>
                 <td className="r">{pct(sb)}</td>
                 <td className="r">{v.share.toFixed(2)}%</td>
                 <td className="r money">{fmt$(v.fair)}</td>
@@ -702,5 +754,107 @@ function WhatIf({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * After the fact: every sold team against YOUR fair value — who got steals,
+ * who overpaid, who they beat, and your own top bid on it.
+ */
+function RecapCard({ a, values, meId, preTournament }: { a: CalcuttaAuction; values: LotValue[]; meId: string | null; preTournament: boolean }) {
+  const [sort, setSort] = useState<"value" | "order">("value");
+  const sold = values.filter((v) => v.lot.status === "sold");
+  const rows = sold.map((v) => {
+    const bids = a.bids.filter((b) => b.lotId === v.lot.id && !b.voided);
+    const runner = [...bids].reverse().find((b) => b.participantId !== v.lot.winnerId);
+    const mine = meId ? Math.max(0, ...bids.filter((b) => b.participantId === meId).map((b) => b.amount)) : 0;
+    return { v, price: v.lot.price ?? 0, diff: v.fair - (v.lot.price ?? 0), runner, mine, bids: bids.length };
+  });
+  rows.sort((x, y) => (sort === "value" ? y.diff - x.diff : x.v.lot.order - y.v.lot.order));
+  const paid = rows.reduce((s, r) => s + r.price, 0);
+  const fair = rows.reduce((s, r) => s + r.v.fair, 0);
+  const csv = () => {
+    const lines = [["Lot", "Team", "Winner", "Price", "My fair", "Fair - price", "Paid/fair", "Runner-up", "Runner-up bid", "My top bid", "Bids"]];
+    for (const r of rows)
+      lines.push([
+        String(r.v.lot.order),
+        lotName(a, r.v.lot),
+        participantById(a, r.v.lot.winnerId)?.name ?? "",
+        String(r.price),
+        r.v.fair.toFixed(2),
+        r.diff.toFixed(2),
+        r.v.paidRatio != null ? r.v.paidRatio.toFixed(2) : "",
+        participantById(a, r.runner?.participantId)?.name ?? "",
+        r.runner ? String(r.runner.amount) : "",
+        r.mine ? String(r.mine) : "",
+        String(r.bids),
+      ]);
+    const blob = new Blob([lines.map((l) => l.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",")).join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement("a");
+    el.href = url;
+    el.download = `${a.name}-recap.csv`;
+    el.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <section className="cal-dcard">
+      <div className="cal-dcard-head">
+        <h3>Recap vs your fair{preTournament ? " (before any games)" : ""}</h3>
+        <span className="cal-row tight">
+          <span className="dim">
+            {sold.length} sold · room paid {fmt$(paid)} for {fmt$(fair)} of your fair value ({fair ? `${Math.round((paid / fair) * 100)}%` : "—"})
+          </span>
+          <select className="cal-dinput" value={sort} onChange={(e) => setSort(e.target.value as "value" | "order")}>
+            <option value="value">Best buys first</option>
+            <option value="order">Auction order</option>
+          </select>
+          <button className="cal-cbtn" onClick={csv}>
+            CSV
+          </button>
+        </span>
+      </div>
+      <table className="cal-dtable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Team</th>
+            <th>Winner</th>
+            <th className="r">Price</th>
+            <th className="r">My fair</th>
+            <th className="r">Fair − price</th>
+            <th className="r">Paid/fair</th>
+            <th>Beat</th>
+            <th className="r">My top bid</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const w = participantById(a, r.v.lot.winnerId);
+            const ru = participantById(a, r.runner?.participantId);
+            return (
+              <tr key={r.v.lot.id}>
+                <td>{r.v.lot.order}</td>
+                <td>
+                  <span className="cal-row tight">
+                    <LotLogos auction={a} lot={r.v.lot} size={18} /> {lotName(a, r.v.lot)}
+                  </span>
+                </td>
+                <td style={{ color: w?.color, fontWeight: 700 }}>{w?.id === meId ? `⭐ ${w?.name}` : w?.name}</td>
+                <td className="r">{fmt$(r.price)}</td>
+                <td className="r money">{fmt$(r.v.fair)}</td>
+                <td className={`r ${r.diff >= 0 ? "good" : "bad"}`}>
+                  {r.diff >= 0 ? "+" : ""}
+                  {fmt$(r.diff)}
+                </td>
+                <td className={`r ${r.v.paidRatio == null ? "" : r.v.paidRatio > 1 ? "bad" : "good"}`}>{r.v.paidRatio == null ? "" : `${Math.round(r.v.paidRatio * 100)}%`}</td>
+                <td className="dim">{ru ? `${ru.name} ${fmt$(r.runner!.amount)}` : "no other bids"}</td>
+                <td className="r">{r.mine ? fmt$(r.mine) : ""}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }

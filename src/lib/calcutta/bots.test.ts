@@ -3,7 +3,8 @@ import { NFL_COMPOSITE_WEEK9_TEXT } from "../../data/nflCompositeRatings";
 import { addParticipant, lotsFromField, newAuction, openLot, passCurrent, placeBid, potTotal, sellCurrent, startClock, tick, highBid } from "./engine";
 import { emptyNflSeedSlots, nflFieldFromSlots } from "./formats";
 import { parseRatings } from "./ratings";
-import { addBots, botBaseRatings, botMax, chooseBotBid, practiceCopy, resetForReplay } from "./bots";
+import { addBots, botBaseRatings, botMax, chooseBotBid, practiceCopy, resetForReplay, simulatePlayoffGames } from "./bots";
+import { deriveFromGames } from "./scoring";
 import type { CalcuttaAuction } from "./types";
 
 const AFC = ["BUF", "JAX", "NE", "KC", "CIN", "DEN", "HOU"];
@@ -101,4 +102,23 @@ describe("practice bots", () => {
     a = placeBid(a, human.id, 100000, 0).auction; // way above everyone
     expect(chooseBotBid(a, 1000, 10000)).toBeNull();
   });
+
+  it("sims the playoffs round by round into real-looking games that settle everything", () => {
+    let a = practice();
+    const base = botBaseRatings(a, parseRatings(NFL_COMPOSITE_WEEK9_TEXT).ratings);
+    a = simulatePlayoffGames(a, base, "round", 0).auction;
+    expect(a.games!.length).toBe(6); // Wild Card weekend
+    expect(a.games!.every((g) => g.final && g.homeScore !== g.awayScore && g.homeSpread != null)).toBe(true);
+    a = simulatePlayoffGames(a, base, "round", 1).auction;
+    expect(a.games!.length).toBe(10);
+    a = simulatePlayoffGames(a, base, "rest", 2).auction;
+    expect(a.games!.length).toBe(13);
+    expect(simulatePlayoffGames(a, base, "rest", 3).error).toMatch(/Every game/);
+    const d = deriveFromGames(a);
+    expect(d.championId).not.toBeNull();
+    expect(Object.values(d.props).every((p) => p.final)).toBe(true);
+    // the 1 seeds played only from the Divisional round on
+    expect(a.games!.filter((g) => g.round === 0 && (g.homeId === "BUF" || g.awayId === "BUF")).length).toBe(0);
+  });
 });
+

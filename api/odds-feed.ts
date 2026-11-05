@@ -339,6 +339,40 @@ async function handleEspnScoreboard(req: any, res: any) {
   res.status(200).json({ games, week });
 }
 
+// NFL standings as ESPN has them right now, with each team's current
+// playoff seed (1–7 per conference, ESPN's tiebreakers) — for filling a
+// Calcutta field before the bracket is final. mode=standings[&season=YYYY].
+async function handleNflStandings(req: any, res: any) {
+  const season = /^\d{4}$/.test(String(req.query?.season ?? "")) ? `&season=${req.query.season}` : "";
+  const r = await fetch(`https://site.api.espn.com/apis/v2/sports/football/nfl/standings?seasontype=2&level=3${season}`);
+  if (!r.ok) throw new Error(`ESPN standings request failed (${r.status})`);
+  const body = await r.json();
+  const teams: any[] = [];
+  const walk = (n: any) => {
+    for (const e of n?.standings?.entries ?? []) {
+      const stat = (name: string) => (e.stats ?? []).find((s: any) => s.name === name);
+      const num = (name: string) => {
+        const s = stat(name);
+        const v = typeof s?.value === "number" ? s.value : parseFloat(s?.displayValue ?? "");
+        return Number.isFinite(v) ? v : null;
+      };
+      teams.push({
+        abbr: e.team?.abbreviation ?? null,
+        group: n.name ?? null,
+        seed: num("playoffSeed"),
+        wins: num("wins"),
+        losses: num("losses"),
+        ties: num("ties"),
+        clincher: stat("clincher")?.displayValue ?? null,
+      });
+    }
+    for (const c of n?.children ?? []) walk(c);
+  };
+  walk(body);
+  res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=60");
+  res.status(200).json({ season: body.seasons?.[0]?.year ?? null, teams });
+}
+
 // Sleeper's full player list is ~15 MB — far too much for the TV to pull.
 // Trimmed here to what the fantasy view draws (name, NFL team, position,
 // injury tag) for players on an NFL team plus team defenses, and edge-cached
@@ -692,6 +726,11 @@ export default async function handler(req: any, res: any) {
 
     if (req.query?.mode === "scoreboard") {
       await handleEspnScoreboard(req, res);
+      return;
+    }
+
+    if (req.query?.mode === "standings") {
+      await handleNflStandings(req, res);
       return;
     }
 

@@ -279,3 +279,23 @@
 .cal-practice-tag { margin-left: 0.8em; padding: 0.1em 0.6em; border-radius: 999px; background: var(--s-warn); color: #1a1400; letter-spacing: 0.08em; }
 .cal-steps { margin: 0.4rem 0 0.8rem; padding-left: 1.2rem; font-size: 0.86rem; line-height: 1.6; color: var(--a-ink-2, inherit); }
 .cal-bidder-name { padding-right: 1.4em; }
+
+/* bow out + practice call-outs */
+.cal-bidder.out { opacity: 0.35; filter: grayscale(0.8); border-top-color: var(--s-line); }
+.cal-bidder-out { position: absolute; bottom: 0.6vh; right: 0.6vw; font-size: clamp(10px, 0.8vw, 13px); font-weight: 900; letter-spacing: 0.1em; color: var(--s-danger); }
+.cal-bidder-x { position: absolute; top: 0.6vh; right: 2.4vw; font-size: clamp(10px, 0.85vw, 14px); color: var(--s-dim); border: 1px solid var(--s-line); border-radius: 5px; padding: 0 0.35em; cursor: pointer; }
+.cal-bidder-x:hover { color: var(--s-ink); border-color: var(--s-dim); }
+.cal-bidder.calling { animation: cal-call 0.6s ease-in-out infinite alternate; border-color: var(--pc); }
+@keyframes cal-call { to { box-shadow: 0 0 28px color-mix(in srgb, var(--pc) 70%, transparent); } }
+.cal-callout { --pc: #888; position: fixed; left: 50%; bottom: 22vh; transform: translateX(-50%); background: var(--s-panel-2); border: 3px solid var(--pc); border-radius: 18px; padding: 1.2vh 1.6vw 1.6vh; display: grid; grid-template-columns: auto auto auto; gap: 0.2vh 1vw; align-items: baseline; box-shadow: 0 20px 60px rgba(0,0,0,0.6); animation: cal-pop 0.2s ease-out; }
+.cal-callout-hand { font-size: clamp(26px, 2.6vw, 44px); }
+.cal-callout-name { font-size: clamp(22px, 2.4vw, 42px); font-weight: 900; color: var(--pc); }
+.cal-callout-amt { font-size: clamp(26px, 3vw, 52px); font-weight: 900; font-variant-numeric: tabular-nums; }
+.cal-callout-key { grid-column: 1 / -1; font-size: clamp(12px, 1vw, 17px); color: var(--s-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+.cal-callout-bar { grid-column: 1 / -1; height: 6px; background: var(--s-line); border-radius: 999px; overflow: hidden; }
+.cal-callout-bar > div { height: 100%; background: var(--pc); }
+.cal-practice-stats { position: fixed; left: 1.6vw; top: 1vh; font-size: 12px; color: var(--s-dim); }
+.cal-owner-won { color: var(--s-ok); }
+.cal-kpi-btn { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.cal-kpi-btn:hover { border-color: var(--s-dim); }
+.cal-desk-banner { font: inherit; text-align: left; cursor: pointer; background: rgba(255, 176, 32, 0.12); border: 1px solid var(--s-warn); color: var(--s-warn); border-radius: 10px; padding: 8px 12px; font-weight: 700; }

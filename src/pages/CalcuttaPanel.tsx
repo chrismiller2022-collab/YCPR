@@ -4,6 +4,8 @@ import { NFL_TEAMS } from "../data/nflTeams";
 import {
   addParticipant,
   addTransfer,
+  HOTKEY_RE,
+  rebindHotkeys,
   bundleBySeed,
   bundleLots,
   lotHoldings,
@@ -42,7 +44,7 @@ import {
 import type { CalcuttaAuction, CalcuttaSettings, FormatKey, Participant, PayoutRules } from "../lib/calcutta/types";
 import { NFL_ESPN_WEEK_ROUND, deriveFromGames, guessFirstFour, madnessGameDays, mergeEspnGames, scored } from "../lib/calcutta/scoring";
 import { validateField, regionOrder, simulateBracket, payoutMatrix, fairShares } from "../lib/calcutta/bracketSim";
-import { BOT_STYLES, addBots, botBaseRatings, practiceCopy, resetForReplay } from "../lib/calcutta/bots";
+import { BOT_STYLES, addBots, botBaseRatings, practiceCopy, resetForReplay, simulatePlayoffGames } from "../lib/calcutta/bots";
 import { savedRatings } from "../lib/calcutta/deskStorage";
 import { lotShare, portfolio, projectPot } from "../lib/calcutta/value";
 import { useSiteCfb } from "../lib/calcutta/siteCfb";
@@ -576,7 +578,7 @@ function AttendeesTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: 
   const update = (id: string, p: Partial<Participant>) => patch((x) => ({ participants: x.participants.map((q) => (q.id === id ? { ...q, ...p } : q)) }));
   const setHotkey = (id: string, raw: string) => {
     const k = raw.slice(-1).toLowerCase();
-    if (!/^[a-z]$/.test(k)) return;
+    if (!HOTKEY_RE.test(k)) return;
     patch((x) => ({
       // Swap with whoever had that key so keys stay unique.
       participants: x.participants.map((q) => (q.id === id ? { ...q, hotkey: k } : q.hotkey === k ? { ...q, hotkey: x.participants.find((z) => z.id === id)!.hotkey } : q)),
@@ -610,7 +612,19 @@ function AttendeesTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: 
           </button>
         ))}
       </div>
-      <div className="cal-note">The hotkey is the letter you press on the Stage to bid for that person. Use the same name each year so bidding history lines up.</div>
+      <div className="cal-row">
+        <span className="cal-note">Bid keys (the key you press on the Stage to bid for someone — any letter or number):</span>
+        <button className="cal-btn sm" onClick={() => act((x, now) => rebindHotkeys(x, "letters", now))}>
+          Letters from names
+        </button>
+        <button className="cal-btn sm" onClick={() => act((x, now) => rebindHotkeys(x, "numbers", now))}>
+          Numbers 1–9, 0
+        </button>
+      </div>
+      <div className="cal-note">
+        Click a key box and press a new key to change it (keys swap if taken). With number keys, hold <b>Shift</b> while typing a jump amount on the Stage. Use the same name each year so bidding
+        history lines up.
+      </div>
       <table className="cal-table">
         <thead>
           <tr>
@@ -677,6 +691,43 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
   const started = a.lots.some((l) => l.status !== "pending") || a.bids.length > 0;
   const slots = slotsFromField(a);
 
+  const [standingsBusy, setStandingsBusy] = useState(false);
+  const [standingsMsg, setStandingsMsg] = useState<string | null>(null);
+  // ESPN's current playoff seeds (1–7 per conference, with its tiebreakers).
+  const fillFromStandings = async () => {
+    setStandingsBusy(true);
+    setStandingsMsg(null);
+    try {
+      const res = await fetch("/api/odds-feed?mode=standings");
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      const teams: { abbr: string; seed: number | null; wins: number | null; losses: number | null; ties: number | null; clincher: string | null }[] = body.teams ?? [];
+      const next = emptyNflSeedSlots().map((s) => {
+        const t = teams.find((x) => {
+          const team = NFL_TEAMS.find((n) => n.abbr === (x.abbr === "WAS" ? "WSH" : x.abbr));
+          return team?.conf === s.conf && x.seed === s.seed;
+        });
+        return { ...s, abbr: t ? (t.abbr === "WAS" ? "WSH" : t.abbr) : null };
+      });
+      const found = next.filter((s) => s.abbr).length;
+      if (!found) throw new Error("ESPN didn't return playoff seeds");
+      patch(() => ({ field: nflFieldFromSlots(next) }));
+      const rec = (abbr: string) => {
+        const t = teams.find((x) => (x.abbr === "WAS" ? "WSH" : x.abbr) === abbr);
+        return t ? `${t.wins}-${t.losses}${t.ties ? `-${t.ties}` : ""}${t.clincher ? ` ${t.clincher}` : ""}` : "";
+      };
+      setStandingsMsg(
+        `Filled ${found}/14 seeds from ESPN's standings as of today (${body.season ?? "current"} season): ` +
+          next.map((s) => `${s.conf} ${s.seed} ${s.abbr ?? "?"} ${s.abbr ? rec(s.abbr) : ""}`.trim()).join(" · ") +
+          ". Re-run after Week 18 for the final bracket.",
+      );
+    } catch (e: any) {
+      setStandingsMsg(`Couldn't load standings: ${e?.message ?? e}`);
+    } finally {
+      setStandingsBusy(false);
+    }
+  };
+
   const setSlot = (conf: "AFC" | "NFC", seed: number, abbr: string | null) => {
     const next = slots.map((s) => (s.conf === conf && s.seed === seed ? { ...s, abbr } : s.abbr === abbr && abbr ? { ...s, abbr: null } : s));
     patch(() => ({ field: nflFieldFromSlots(next) }));
@@ -697,7 +748,13 @@ function FieldTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patc
     <>
       {a.format === "nfl_playoffs" && (
         <section className="cal-card">
-          <h2>Playoff field</h2>
+          <div className="cal-row" style={{ justifyContent: "space-between" }}>
+            <h2>Playoff field</h2>
+            <button className="cal-btn" onClick={fillFromStandings} disabled={standingsBusy || started}>
+              {standingsBusy ? "Loading…" : "Fill from current NFL standings"}
+            </button>
+          </div>
+          {standingsMsg && <div className="cal-note">{standingsMsg}</div>}
           {started && <div className="cal-note warn">Bidding has started — changing the field now won't touch lots already sold.</div>}
           <div className="cal-grid2">
             {(["AFC", "NFC"] as const).map((conf) => (
@@ -1809,12 +1866,46 @@ function PracticeTab({ a, act, patch, onOpen }: { a: CalcuttaAuction; act: Act; 
         <ol className="cal-steps">
           <li>Open the Stage and the Desk (pick yourself under "Me" on the Desk).</li>
           <li>
-            Press <b>Enter</b> on the Stage to open the first lot. Bid with your key ({human?.hotkey.toUpperCase()}) — the bots bid on their own.
+            Press <b>Enter</b> on the Stage to open the first lot. Bid for yourself with your key ({human?.hotkey.toUpperCase()}).
           </li>
-          <li>With auto-advance on, the clock starts, lots sell and the next one opens by itself. Space pauses.</li>
+          <li>
+            {(a.practice.botMode ?? "call") === "call"
+              ? "Bots call out their bids (on screen and out loud) — enter each one with that bot's key, typing the amount first if they jump. Miss the window and it's logged."
+              : "Bots place their own bids."}{" "}
+            {a.practice.autoAdvance ? "Auto-advance starts the clock, sells and opens the next lot for you." : "You start (Space), sell (Enter) and open the next lot (Enter) yourself."}
+          </li>
           <li>When it's done, the report below shows who overpaid and how your portfolio would do.</li>
         </ol>
         <div className="cal-form" style={{ maxWidth: 640 }}>
+          <label>Bots</label>
+          <span className="cal-row tight">
+            <select className="cal-input" value={a.practice.botMode ?? "call"} onChange={(e) => patch((x) => ({ practice: { ...x.practice!, botMode: e.target.value as "call" | "auto" } }))}>
+              <option value="call">Call out bids — I enter them (auctioneer practice)</option>
+              <option value="auto">Bid by themselves (bidding practice)</option>
+            </select>
+            {(a.practice.botMode ?? "call") === "call" && (
+              <>
+                <label className="cal-toggle">
+                  <input type="checkbox" checked={a.practice.speak !== false} onChange={(e) => patch((x) => ({ practice: { ...x.practice!, speak: e.target.checked } }))} /> Say bids out loud
+                </label>
+                <span className="cal-note">window</span>
+                <NumField value={a.practice.callWindow ?? 4} onCommit={(v) => patch((x) => ({ practice: { ...x.practice!, callWindow: Math.max(1, Math.min(15, v)) } }))} suffix="sec" width={56} />
+              </>
+            )}
+          </span>
+          {a.practice.stats && (
+            <>
+              <label>Your entry</label>
+              <span>
+                {a.practice.stats.entered}/{a.practice.stats.calls} called bids entered · avg{" "}
+                {a.practice.stats.entered ? (a.practice.stats.reactionMsTotal / a.practice.stats.entered / 1000).toFixed(1) : "—"}s · {a.practice.stats.wrongAmount} wrong amount ·{" "}
+                {a.practice.stats.wrongBidder} wrong bidder · {a.practice.stats.missed} missed{" "}
+                <button className="cal-btn sm" onClick={() => patch((x) => ({ practice: { ...x.practice!, stats: undefined } }))}>
+                  Reset
+                </button>
+              </span>
+            </>
+          )}
           <label>Auto-advance</label>
           <label className="cal-toggle">
             <input type="checkbox" checked={a.practice.autoAdvance} onChange={(e) => patch((x) => ({ practice: { ...x.practice!, autoAdvance: e.target.checked } }))} /> Start clock, sell at 0:00 and open the next lot automatically
@@ -1877,6 +1968,7 @@ function PracticeTab({ a, act, patch, onOpen }: { a: CalcuttaAuction; act: Act; 
         </table>
       </section>
 
+      {a.lots.some((l) => l.status === "sold") && <SimPlayoffsCard a={a} act={act} patch={patch} yours={yours} meId={meId} />}
       {a.lots.some((l) => l.status === "sold") && <PracticeReport a={a} meId={meId} yours={yours} />}
     </>
   );
@@ -1981,4 +2073,85 @@ function madnessDays(season: string, firstFour: string): string[] {
   const now = new Date();
   const year = /^\d{4}$/.test(season.trim()) ? Number(season.trim()) : now.getMonth() >= 7 ? now.getFullYear() + 1 : now.getFullYear();
   return madnessGameDays(guessFirstFour(year));
+}
+
+/** Practice: play the tournament out round by round and watch the payouts land. */
+function SimPlayoffsCard({ a, act, patch, yours, meId }: { a: CalcuttaAuction; act: Act; patch: Patch; yours: Record<string, { rating: number }> | null; meId: string | null }) {
+  const def = formatDef(a.format);
+  const d = deriveFromGames({ ...a, autoScore: true });
+  const games = a.games ?? [];
+  const played = games.filter((g) => g.final).length;
+  const champ = a.field.find((t) => t.id === d.championId);
+  const rows = ownerSummaries(a)
+    .filter((s) => s.owed || s.lots.length)
+    .sort((x, y) => y.net - x.net);
+  const nextRound = (() => {
+    for (let r = a.format === "march_madness" ? -1 : 0; r < def.rounds.length; r++) {
+      const label = r < 0 ? "First Four" : def.rounds[r].game;
+      const done = games.filter((g) => g.round === r && g.final).length;
+      const need = r < 0 ? a.field.filter((t) => a.field.filter((x) => x.group === t.group && x.seed === t.seed).length === 2).length / 2 : def.rounds[r].slots;
+      if (done < need) return label;
+    }
+    return null;
+  })();
+  const sim = (mode: "round" | "rest") => act((x, now) => simulatePlayoffGames(x, botBaseRatings(x, yours), mode, now));
+  return (
+    <section className="cal-card">
+      <div className="cal-row" style={{ justifyContent: "space-between" }}>
+        <h2>Sim the playoffs</h2>
+        <div className="cal-row tight">
+          <button className="cal-btn primary" disabled={!nextRound} onClick={() => sim("round")}>
+            {nextRound ? `Sim ${nextRound}` : "All played"}
+          </button>
+          <button className="cal-btn" disabled={!nextRound} onClick={() => sim("rest")}>
+            Sim the rest
+          </button>
+          <button className="cal-btn" disabled={!games.length} onClick={() => window.confirm("Clear the simulated games?") && patch(() => ({ games: [], results: {} }))}>
+            Clear games
+          </button>
+        </div>
+      </div>
+      <div className="cal-note">
+        Plays games out from the same ratings the bots used, with scores and closing lines, into the game log (auto-scoring on) — so Owners &amp; Results, the Stage board (press /) and
+        the payouts below update like the real playoffs. {played ? `${played} games played.` : ""} {champ ? `🏆 ${champ.name} won it all.` : ""}
+      </div>
+      {played > 0 && (
+        <table className="cal-table">
+          <thead>
+            <tr>
+              <th>Owner</th>
+              <th>Teams</th>
+              <th className="r">Paid</th>
+              <th className="r">Won so far</th>
+              <th className="r">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.participant.id} style={s.participant.id === meId ? { fontWeight: 700 } : undefined}>
+                <td style={{ color: s.participant.color }}>
+                  {s.participant.bot ? "🤖 " : "⭐ "}
+                  {s.participant.name}
+                </td>
+                <td>
+                  {s.lots.map((x) => {
+                    const out = lotTeams(a, x.lot).every((t) => d.results[t.id]?.eliminated);
+                    return (
+                      <span key={x.lot.id} className="cal-chip" style={out ? { opacity: 0.45, textDecoration: "line-through" } : undefined}>
+                        <LotLogos auction={a} lot={x.lot} size={16} /> {lotName(a, x.lot)}
+                        {x.earned > 0 ? ` ${fmt$(x.earned, 2)}` : ""}
+                      </span>
+                    );
+                  })}
+                </td>
+                <td className="r">{fmt$(s.cost)}</td>
+                <td className="r">{fmt$(s.earned, 2)}</td>
+                <td className={`r ${s.net >= 0 ? "good" : "bad"}`}>{fmt$(s.net, 2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
 }

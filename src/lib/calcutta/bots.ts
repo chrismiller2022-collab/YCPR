@@ -1,4 +1,5 @@
-import { simulateBracket, fairShares, payoutMatrix, validateField } from "./bracketSim";
+import { simulateBracket, fairShares, payoutMatrix, validateField, type SimGameRecord } from "./bracketSim";
+import { deriveFromGames } from "./scoring";
 import { PARTICIPANT_COLORS, autoHotkey, currentLot, highBid, incrementFor, lotBids, minNextBid, remainingMs, sortedLots, uid, type Result } from "./engine";
 import { formatDef } from "./formats";
 import { lotShare, lotTiers, projectPot } from "./value";
@@ -160,7 +161,7 @@ export function botMax(a: CalcuttaAuction, p: Participant, lot: Lot): number {
   else {
     // Soft spending limit: past ~its share of the room it cools off, then stops.
     const share = bot.potGuess / Math.max(2, a.participants.length);
-    const target = share * (bot.style === "aggressive" ? 1.8 : bot.style === "bargain" ? 1.1 : 1.4);
+    const target = share * (bot.style === "aggressive" ? 1.5 : bot.style === "bargain" ? 1.1 : 1.3);
     if (done > target) max *= Math.max(0, 1 - (done - target) / (0.6 * target));
   }
   return Math.floor(max);
@@ -185,7 +186,7 @@ export function chooseBotBid(a: CalcuttaAuction, now: number, sinceLastMs: numbe
   const n = lotBids(a, lot.id).length;
   let best: { p: Participant; wait: number; max: number } | null = null;
   for (const p of a.participants) {
-    if (!p.bot || high?.participantId === p.id) continue;
+    if (!p.bot || high?.participantId === p.id || a.live.outIds?.includes(p.id)) continue;
     const max = botMax(a, p, lot);
     if (max < min) continue;
     // Reaction time for this bot on this bid number: 0.6–3.2s, faster when the clock is low.
@@ -213,6 +214,7 @@ export function resetForReplay(a: CalcuttaAuction, now: number): CalcuttaAuction
     games: [],
     lots: sortedLots(a).map((l, i) => ({ ...l, status: "pending", winnerId: null, price: null, soldAt: null, passCount: 0, order: i + 1 })),
     participants: a.participants.map((p) => ({ ...p, paid: 0 })),
+    practice: a.practice ? { ...a.practice, stats: undefined } : a.practice,
     live: { lotId: null, phase: "idle", endsAt: null, remainingMs: null },
     updatedAt: now,
   };
@@ -228,9 +230,69 @@ export function practiceCopy(a: CalcuttaAuction, meName: string, now: number): C
       name: `${a.name} (practice)`,
       createdAt: now,
       participants: [me],
-      practice: { enabled: true, autoAdvance: true, expectedPot: Math.max(200, 8 * 150) },
+      // You run the room: bots call out bids for you to enter, and you open/sell each lot yourself.
+      practice: { enabled: true, autoAdvance: false, botMode: "call", speak: true, callWindow: 4, expectedPot: Math.max(200, 8 * 150) },
       settings: { ...a.settings, timerStart: 15, timerReset: 8, goingOnceAt: 5, goingTwiceAt: 3, autoSell: false },
     },
     now,
   );
+}
+
+const TYPICAL_TOTAL: Record<string, number> = { nfl_playoffs: 45, cfb_playoff12: 54, cfb_playoff24: 54, march_madness: 140 };
+
+/**
+ * Practice: play out the next round (or everything left) as real-looking
+ * games — scores, finals and closing lines — added to the game log with
+ * auto-scoring on, so payouts, side prizes and the owners board fill in
+ * exactly like the real thing. Games already in the log are kept and locked
+ * in; the rest of the bracket is simulated around them.
+ */
+export function simulatePlayoffGames(a: CalcuttaAuction, base: Record<string, { rating: number; sd: null }>, mode: "round" | "rest", now: number): Result {
+  const bad = validateField(a.format, a.field, a.regions);
+  if (bad) return { auction: a, error: bad };
+  const def = formatDef(a.format);
+  const known = deriveFromGames({ ...a, autoScore: true });
+  const sim = simulateBracket({
+    format: a.format,
+    field: a.field,
+    regions: a.regions,
+    ratings: base,
+    hfa: def.sim.hfa,
+    marginSd: def.sim.marginSd,
+    ratingNoise: def.sim.ratingNoise,
+    useSourceSd: false,
+    sims: 1,
+    seed: Math.floor(Math.random() * 2 ** 31),
+    results: (a.games ?? []).length ? known.results : undefined,
+    recordFirst: true,
+  });
+  const existing = a.games ?? [];
+  const have = (g: SimGameRecord) => existing.some((x) => (x.homeId === g.homeId && x.awayId === g.awayId) || (x.homeId === g.awayId && x.awayId === g.homeId));
+  const fresh = (sim.firstGames ?? []).filter((g) => !have(g));
+  if (!fresh.length) return { auction: a, error: "Every game has been played" };
+  const next = Math.min(...fresh.map((g) => g.round));
+  const pick = mode === "round" ? fresh.filter((g) => g.round === next) : fresh;
+  const total = TYPICAL_TOTAL[a.format] ?? 50;
+  const rand = mulberry32(Math.floor(Math.random() * 2 ** 31));
+  const games = pick.map((g, i) => {
+    const t = total + Math.round((rand() - 0.5) * total * 0.3);
+    let home = Math.max(0, Math.round((t + g.margin) / 2));
+    let away = Math.max(0, home - g.margin);
+    if (home === away) home += 1;
+    return {
+      id: uid("g_"),
+      round: g.round,
+      homeId: g.homeId,
+      awayId: g.awayId,
+      homeScore: home,
+      awayScore: away,
+      final: true,
+      homeSpread: -Math.round(g.expected * 2) / 2 || -0.5,
+      neutral: g.neutral,
+      start: new Date(now + i * 1000).toISOString(),
+      espnId: null,
+      lineManual: true,
+    };
+  });
+  return { auction: { ...a, games: [...existing, ...games], autoScore: true, updatedAt: now } };
 }

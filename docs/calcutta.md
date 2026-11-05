@@ -9,6 +9,8 @@ Admin → Pools → **Calcutta**. Set the auction up there, then **Open Stage wi
 - Undone bids are kept (flagged `voided`), so the bid log is a full history per attendee.
 
 ## Stage keys
+Bid keys are any letter or number per attendee (Attendees tab: click the key box and press a key, or "Letters from names" / "Numbers 1–9, 0"). With number keys, hold **Shift** to type a jump amount. **Alt/Option + an attendee's key** (or the ✕ on their card) bows them out of the current team — greyed until the next lot; when only the high bidder is left, Enter sells.
+
 | Key | Action |
 |---|---|
 | attendee's letter | bid for them: next minimum, or the typed amount |
@@ -48,13 +50,15 @@ Calcutta page → **Open Desk ↗** (admin sign-in required; keep it on the moni
 - **Sim:** 20k playoffs by default (`src/lib/calcutta/nflPlayoffSim.ts`): margin ~ Normal(rating diff + HFA 1.5, SD 13.5), per-sim rating noise 1.5 pts (optionally + source SD), reseeded bracket, all four side prizes. Results entered on Owners & Results are locked in.
 - **Fair** = team's expected share of the net pot × projected pot. **Max** = fair less your required edge. **Projected pot** starts at your expected pot and shifts to the room's pace as value sells.
 - **Room expects** = fair × the room's paid-to-fair ratio for that tier (favorites / middle / long shots), shrunk toward 1 until a few lots per tier sell.
+- **Ratings** button (top) shows how many field teams have a rating and opens the editor; the value board and the team on the block show each rating; a banner warns about teams without one.
+- **Recap vs your fair** (once anything sells): every sold team's price vs your fair value at auction time, who they beat, your top bid; CSV export.
 - **Portfolio** = your holdings after splits, with EV, P(profit) and 10th/50th/90th percentile payouts from the same sims.
 - Desk settings and ratings stay in this browser only — never in the (public-readable) auction doc.
 
 ## Formats
 | Format | Field entry | Bracket (sim) | Default payouts |
 |---|---|---|---|
-| NFL Playoffs | AFC/NFC seeds 1–7 | 2v7/3v6/4v5, 1 seed hosts lowest left, Super Bowl neutral | 3/5/10/17 per win + 25% side prizes |
+| NFL Playoffs | AFC/NFC seeds 1–7, or **Fill from current NFL standings** (ESPN's playoff seeds as of today) | 2v7/3v6/4v5, 1 seed hosts lowest left, Super Bowl neutral | 3/5/10/17 per win + 25% side prizes |
 | March Madness | paste "Region" then "seed team" lines (two on one seed line = First Four pair, sold as one lot); Final Four region order | First Four, fixed 1v16 … 2v15 regions, all neutral | Each team's total by how far it goes: win 1 game 0.75%, lose in S16 2.25%, E8 5%, F4 9%, title game 12.5%, champion 17.5% (stored per win: 0.75/1.5/2.75/4/3.5/5 = 98%) + biggest blowout victim, biggest upset, lowest Final Four seed at 0.67% each |
 | CFB 12-team | seeds 1–12 (or fill from the latest Monte Carlo projection) | byes 1–4, first round on campus, then neutral bowls, fixed bracket | 4/6/10/15 per win + 25% (Cinderella = 9–12) |
 | CFB 24-team | seeds 1–24 (or fill from projection) | byes 1–8, 9v24 … 16v17 on campus, reseeded each round, higher seed hosts, neutral title | 2/3/5/6/8 per win + 20% (Cinderella = 17–24) |
@@ -73,6 +77,8 @@ CFB Desk ratings come from the site: the latest saved week's power rating (`week
 Any auction → **Practice** tab → "Create practice auction with N bots" makes a separate copy (same rules, payouts, field, lots; just you + bots, a 15s/8s clock). Practice auctions never go to the cloud or into bidding history.
 
 - Each bot values teams from your Desk ratings (CFB: site power ratings; none → typical by seed) plus its own noise, so bots disagree. Personalities: Steady Eddie (≈fair), Big Spender (overpays favorites, jumps bids), Bargain Bill (discounts only, bids late), Homer Hank (two pet teams), Longshot Lou (low seeds/bundles), Budget Betty (hard cap). Each guesses the pot ±25% around "room size" and half-follows the room's pace; non-budget bots cool off past their share of the room.
+- Default bot mode is **call out**: each bot's bid pops up (and is read aloud) and you enter it with that bot's key, typing the amount first if they jumped; your entry speed, wrong amounts, wrong bidders and misses are tracked. "Bid by themselves" is the other mode. Auto-advance is off by default (you start, sell and open lots).
+- **Sim the playoffs** (Practice tab, after anything sells): sim the next round or the rest, as real-looking games with scores and lines in the game log, so Owners & Results, the Stage board and payouts update like the real thing.
 - On the Stage, press Enter once; bots bid by themselves (one at a time, 0.6–3s reactions, faster near 0:00) and auto-advance starts the clock, sells at 0:00 and opens the next lot. Space pauses. The Desk works as normal.
 - Practice tab: replay with the same bots, new bots, peek at bot secrets, and a report (spent vs fair, EV, P(profit), and "play out the tournament" for one simulated result).
 

@@ -28,12 +28,14 @@ import {
   tick,
   togglePause,
   undoLastBid,
+  toggleOut,
+  onlyHighBidderLeft,
   type Result,
 } from "../lib/calcutta/engine";
 import { formatDef, roundSlots } from "../lib/calcutta/formats";
 import { dispatch as storeDispatch, fetchCloudAuction, readAuction, useAuction, useSyncState, writeAuction } from "../lib/calcutta/store";
-import { chooseBotBid } from "../lib/calcutta/bots";
-import type { CalcuttaAuction } from "../lib/calcutta/types";
+import { botMax, chooseBotBid } from "../lib/calcutta/bots";
+import type { CalcuttaAuction, PracticeStats } from "../lib/calcutta/types";
 import { LotLogos, TeamBadge, fmt$, fmtPayout, seedLabel } from "../lib/calcutta/ui";
 
 // The screen-shared auction window (/calcutta/stage/:id). Everything on it
@@ -165,13 +167,50 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
     prev.current = { secs, phase, bids: bidsOnLot };
   }, [secs, phase, bidsOnLot, a.settings]);
 
+  // ---- practice "call" mode: bots call out bids, you enter them ----
+  const callMode = !!a.practice?.enabled && (a.practice.botMode ?? "call") === "call";
+  const [call, setCall] = useState<BotCall | null>(null);
+  useEffect(() => setCall(null), [lot?.id]);
+  const bumpStats = (p: Partial<PracticeStats>) =>
+    storeDispatch(a.id, (x, t) => {
+      const st = { calls: 0, entered: 0, wrongAmount: 0, wrongBidder: 0, missed: 0, reactionMsTotal: 0, ...(x.practice?.stats ?? {}) };
+      for (const [k, v] of Object.entries(p)) (st as any)[k] += v as number;
+      return { auction: { ...x, practice: { ...x.practice!, stats: st }, updatedAt: t } };
+    });
+
+  // Bots that can't go higher count as out (greyed) in practice.
+  const autoOut = useMemo(() => {
+    if (!a.practice?.enabled || !lot || lot.status !== "live" || phase === "sold") return [] as string[];
+    return a.participants.filter((p) => p.bot && high?.participantId !== p.id && botMax(a, p, lot) < minNext).map((p) => p.id);
+  }, [a, lot, phase, high?.participantId, minNext]);
+  const outSet = new Set([...(a.live.outIds ?? []), ...autoOut]);
+  const lastOneIn = phase === "running" && onlyHighBidderLeft(a, autoOut);
+
   const bidFor = (participantId: string) => {
+    const p = participantById(a, participantId);
+    if (callMode && p?.bot) {
+      if (!call || call.participantId !== participantId) {
+        bumpStats({ wrongBidder: 1 });
+        setFlash({ text: call ? `Wrong bidder — that was ${participantById(a, call.participantId)?.name}` : `${p.name} didn't bid`, kind: "err", at: Date.now() });
+        return;
+      }
+      const amount = typedAmount ?? minNext;
+      if (act((x, t) => placeBid(x, participantId, typedAmount, t))) {
+        setTyped("");
+        const wrong = amount !== call.amount;
+        bumpStats({ entered: 1, reactionMsTotal: Date.now() - call.at, wrongAmount: wrong ? 1 : 0 });
+        if (wrong) setFlash({ text: `${p.name} said ${fmt$(call.amount)} — you entered ${fmt$(amount)}`, kind: "err", at: Date.now() });
+        setCall(null);
+      }
+      return;
+    }
     if (act((x, t) => placeBid(x, participantId, typedAmount, t))) setTyped("");
   };
 
   const enter = () => {
     if (phase === "idle" || phase === "sold") return act((x, t) => openLot(x, null, t));
     if (phase === "expired") return high ? act(sellCurrent) : act(passCurrent);
+    if (lastOneIn) return act(sellCurrent);
     if (phase === "ready" && !high) return act(startClock);
     setFlash({ text: high ? "Clock still running — use Sell now to close early" : "No bids yet", kind: "info", at: Date.now() });
   };
@@ -182,14 +221,31 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
     const target = e.target as HTMLElement;
     if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) return;
     const k = e.key;
-    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") {
+    // The physical key, so Shift/Option don't change it ("!" is still 1, "å" is still a).
+    const code = e.code || "";
+    const keyChar = code.startsWith("Key") ? code.slice(3).toLowerCase() : code.startsWith("Digit") ? code.slice(5) : /^Numpad\d$/.test(code) ? code.slice(6) : /^[a-z0-9]$/i.test(k) ? k.toLowerCase() : null;
+    const byKey = (ch: string | null) => (ch ? a.participants.find((x) => x.hotkey === ch) : undefined);
+    if ((e.ctrlKey || e.metaKey) && keyChar === "z") {
       e.preventDefault();
       act(undoLastBid);
       return;
     }
+    // Alt/Option + an attendee's key: bow them out of this lot (again to bring them back).
+    if (e.altKey && byKey(keyChar)) {
+      e.preventDefault();
+      act((x, t) => toggleOut(x, byKey(keyChar)!.id, t));
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (/^[0-9]$/.test(k)) {
-      setTyped((t) => (t + k).replace(/^0+/, "").slice(0, 7));
+    if (keyChar && /^\d$/.test(keyChar)) {
+      const digitsBound = a.participants.some((x) => /^\d$/.test(x.hotkey));
+      if (digitsBound && !e.shiftKey) {
+        const p = byKey(keyChar);
+        if (p) bidFor(p.id);
+        return;
+      }
+      e.preventDefault();
+      setTyped((t) => (t + keyChar).replace(/^0+/, "").slice(0, 7));
       return;
     }
     if (k === "Backspace") {
@@ -223,8 +279,8 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
       setControls((c) => !c);
       return;
     }
-    if (/^[a-zA-Z]$/.test(k)) {
-      const p = a.participants.find((x) => x.hotkey === k.toLowerCase());
+    if (keyChar && /^[a-z]$/.test(keyChar)) {
+      const p = byKey(keyChar);
       if (p) bidFor(p.id);
     }
   };
@@ -404,15 +460,31 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
         {a.participants.map((p) => {
           const s = summaries.find((x) => x.participant.id === p.id);
           const isHigh = high?.participantId === p.id && phase !== "sold";
+          const isOut = outSet.has(p.id) && phase !== "sold" && phase !== "idle";
+          const calling = call?.participantId === p.id;
           return (
             <button
               key={p.id}
-              className={`cal-bidder ${isHigh ? "high" : ""}`}
+              className={`cal-bidder ${isHigh ? "high" : ""} ${isOut ? "out" : ""} ${calling ? "calling" : ""}`}
               style={{ ["--pc" as any]: p.color }}
-              onClick={() => bidFor(p.id)}
+              onClick={() => (isOut ? undefined : bidFor(p.id))}
               disabled={!lot || phase === "idle" || phase === "sold"}
             >
               {controls && <span className="cal-bidder-key">{p.hotkey.toUpperCase()}</span>}
+              {isOut && <span className="cal-bidder-out">OUT</span>}
+              {controls && !isHigh && lot && phase !== "sold" && phase !== "idle" && !(p.bot && a.practice?.enabled) && (
+                <span
+                  className="cal-bidder-x"
+                  role="button"
+                  title={isOut ? "Back in (Alt/Option + key)" : "Bow out of this team (Alt/Option + key)"}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    act((x, t) => toggleOut(x, p.id, t));
+                  }}
+                >
+                  {isOut ? "↩" : "✕"}
+                </span>
+              )}
               <span className="cal-bidder-name">
                 {p.bot ? "🤖 " : ""}
                 {p.name}
@@ -478,7 +550,30 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
       )}
 
       {flash && <div className={`cal-flash ${flash.kind}`}>{flash.text}</div>}
-      {a.practice?.enabled && <PracticeDriver a={a} now={now} />}
+      {lastOneIn && !flash && <div className="cal-flash info">Everyone else is out — Enter to sell</div>}
+      {call && (
+        <div className="cal-callout" style={{ ["--pc" as any]: participantById(a, call.participantId)?.color }}>
+          <span className="cal-callout-hand">🙋</span>
+          <span className="cal-callout-name">{participantById(a, call.participantId)?.name}</span>
+          <span className="cal-callout-amt">{fmt$(call.amount)}</span>
+          <span className="cal-callout-key">
+            {call.amount > minNext ? `type ${call.amount} then ` : "press "}
+            {participantById(a, call.participantId)?.hotkey.toUpperCase()}
+          </span>
+          <div className="cal-callout-bar">
+            <div style={{ width: `${Math.max(0, 100 - ((now - call.at) / ((a.practice?.callWindow ?? 4) * 1000)) * 100)}%` }} />
+          </div>
+        </div>
+      )}
+      {callMode && a.practice?.stats && (
+        <div className="cal-practice-stats">
+          {(() => {
+            const s = a.practice!.stats!;
+            return `Entered ${s.entered}/${s.calls} called bids · avg ${s.entered ? (s.reactionMsTotal / s.entered / 1000).toFixed(1) : "—"}s · ${s.wrongAmount} wrong amount · ${s.wrongBidder} wrong bidder · ${s.missed} missed`;
+          })()}
+        </div>
+      )}
+      {a.practice?.enabled && <PracticeDriver a={a} now={now} call={call} setCall={setCall} bumpStats={bumpStats} />}
     </div>
   );
 }
@@ -511,7 +606,10 @@ function BoardView({ a, summaries }: { a: CalcuttaAuction; summaries: ReturnType
           <div key={s.participant.id} className="cal-owner" style={{ ["--pc" as any]: s.participant.color }}>
             <div className="cal-owner-head">
               <span className="cal-owner-name">{s.participant.name}</span>
-              <span className="money">{fmt$(s.owed)}</span>
+              <span className="money">
+                {fmt$(s.owed)}
+                {s.earned > 0 ? <span className="cal-owner-won"> · won {fmt$(s.earned, 0)}</span> : null}
+              </span>
             </div>
             {s.lots.length === 0 && <div className="dim">—</div>}
             {s.lots.map((x) => (
@@ -572,12 +670,44 @@ function BoardView({ a, summaries }: { a: CalcuttaAuction; summaries: ReturnType
   );
 }
 
+interface BotCall {
+  participantId: string;
+  amount: number;
+  at: number;
+}
+
+function speak(text: string) {
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.15;
+    window.speechSynthesis?.cancel();
+    window.speechSynthesis?.speak(u);
+  } catch {
+    // no speech available
+  }
+}
+
 /**
- * Practice mode: makes the bots bid, and (with auto-advance) starts the clock,
- * sells or passes at 0:00 and opens the next lot, so you only have to bid.
+ * Practice mode. "call" (default): a bot calls out its bid ("Big Spender,
+ * forty-five!") and YOU enter it — the bid only counts once you press that
+ * bot's key (typing the amount first if it jumped); miss the window and it's
+ * logged as missed. "auto": bots place their own bids. With auto-advance on,
+ * it also starts the clock, sells or passes at 0:00 and opens the next lot.
  * Space still pauses everything. Press Enter once to open the first lot.
  */
-function PracticeDriver({ a, now }: { a: CalcuttaAuction; now: number }) {
+function PracticeDriver({
+  a,
+  now,
+  call,
+  setCall,
+  bumpStats,
+}: {
+  a: CalcuttaAuction;
+  now: number;
+  call: BotCall | null;
+  setCall: (c: BotCall | null) => void;
+  bumpStats: (p: Partial<PracticeStats>) => void;
+}) {
   const phaseKey = `${a.live.lotId}:${a.live.phase}`;
   const since = useRef<{ key: string; at: number }>({ key: phaseKey, at: now });
   if (since.current.key !== phaseKey) since.current = { key: phaseKey, at: now };
@@ -590,15 +720,30 @@ function PracticeDriver({ a, now }: { a: CalcuttaAuction; now: number }) {
     const inPhase = now - since.current.at;
     const auto = cur.practice.autoAdvance;
     const phase = cur.live.phase;
+    const callMode = (cur.practice.botMode ?? "call") === "call";
+    if (callMode && call) {
+      // A call is out: wait for you, cancel it if the price moved past it, or log a miss.
+      if (phase !== "running" && phase !== "expired") return setCall(null);
+      if (call.amount < minNextBid(cur)) return setCall(null);
+      if (now - call.at > (cur.practice.callWindow ?? 4) * 1000) {
+        bumpStats({ missed: 1 });
+        setCall(null);
+        lastBotAt.current = now;
+      }
+      return;
+    }
     if (phase === "running") {
-      if (now - lastBotAt.current < 350) return;
+      if (now - lastBotAt.current < (callMode ? 900 : 350)) return;
       const lastBid = cur.bids.filter((b) => b.lotId === cur.live.lotId && !b.voided).slice(-1)[0];
       const sinceLast = now - Math.max(lastBid?.ts ?? 0, since.current.at);
       const pick = chooseBotBid(cur, now, sinceLast);
-      if (pick) {
-        lastBotAt.current = now;
-        storeDispatch(a.id, (x, t) => placeBid(x, pick.participantId, pick.amount, t));
-      }
+      if (!pick || cur.live.outIds?.includes(pick.participantId)) return;
+      lastBotAt.current = now;
+      if (callMode) {
+        setCall({ participantId: pick.participantId, amount: pick.amount, at: now });
+        bumpStats({ calls: 1 });
+        if (cur.practice.speak !== false) speak(`${participantById(cur, pick.participantId)?.name}, ${pick.amount}`);
+      } else storeDispatch(a.id, (x, t) => placeBid(x, pick.participantId, pick.amount, t));
       return;
     }
     if (!auto) return;

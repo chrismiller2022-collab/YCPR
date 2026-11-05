@@ -65,10 +65,26 @@ export interface BotProfile {
   seed: number;
 }
 
+export interface PracticeStats {
+  calls: number;
+  entered: number;
+  wrongAmount: number;
+  wrongBidder: number;
+  missed: number;
+  reactionMsTotal: number;
+}
+
 export interface PracticeSettings {
   enabled: boolean;
   /** Stage opens/starts/sells lots by itself. */
   autoAdvance: boolean;
+  /** "call": bots call out bids and YOU enter them (auctioneer practice). "auto": bots bid by themselves. */
+  botMode?: "call" | "auto";
+  /** Read each called bid out loud. */
+  speak?: boolean;
+  /** Seconds you have to enter a called bid before it's missed. */
+  callWindow?: number;
+  stats?: PracticeStats;
   /** The pot the bots are guessing around. */
   expectedPot: number;
 }
@@ -189,6 +205,8 @@ export interface LiveState {
   endsAt: number | null;
   /** ms left on the clock while ready/paused. */
   remainingMs: number | null;
+  /** Attendees who bowed out of the lot on the block (cleared when the next lot opens). */
+  outIds?: string[];
 }
 
 export interface CalcuttaAuction {

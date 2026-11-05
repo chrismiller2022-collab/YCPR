@@ -44,6 +44,19 @@ export interface SimInputs {
   results?: Record<string, TeamResult>;
   /** March Madness region order. */
   regions?: string[];
+  /** Keep every game of the first simulated tournament (for "sim the playoffs" in practice). */
+  recordFirst?: boolean;
+}
+
+export interface SimGameRecord {
+  round: number;
+  homeId: string;
+  awayId: string;
+  /** Home margin (negative = away won). */
+  margin: number;
+  /** Model spread, home perspective (points the home team is expected to win by). */
+  expected: number;
+  neutral: boolean;
 }
 
 export interface SimOutput {
@@ -62,6 +75,8 @@ export interface SimOutput {
   propProb: Record<SimPropKind, Record<string, number>>;
   warnings: string[];
   ms: number;
+  /** With recordFirst: the first tournament's games in play order. */
+  firstGames?: SimGameRecord[];
 }
 
 export const DEFAULT_SIM = { hfa: 1.5, marginSd: 13.5, ratingNoise: 1.5, useSourceSd: false, sims: 20000 };
@@ -180,6 +195,8 @@ export function simulateBracket(inp: SimInputs): SimOutput {
   const cleared = new Uint8Array(T);
   const ot = inp.format === "march_madness" ? 2 : 3;
   let games: Game[] = [];
+  let record: SimGameRecord[] | null = null;
+  let firstGames: SimGameRecord[] | undefined;
 
   /** Plays one game; `h` hosts unless neutral (for neutral games pass the better seed first). */
   const play = (h: number, a: number, round: number, neutral: boolean): number => {
@@ -191,6 +208,7 @@ export function simulateBracket(inp: SimInputs): SimOutput {
     if (kh === 1 || ka === -1) m = Math.abs(m);
     else if (kh === -1 || ka === 1) m = -Math.abs(m);
     const w = m > 0 ? h : a;
+    if (record) record.push({ round, homeId: ids[h], awayId: ids[a], margin: m, expected: d, neutral });
     if (round >= 0) {
       const cov = m - d;
       if (Math.abs(cov) > 1e-9) {
@@ -284,7 +302,9 @@ export function simulateBracket(inp: SimInputs): SimOutput {
       cleared[i] = 0;
     }
     games = [];
+    record = inp.recordFirst && s === 0 ? [] : null;
     const champ = run();
+    if (record) firstGames = record;
     const off = s * T;
     for (let i = 0; i < T; i++) rc[off + i] = cleared[i];
 
@@ -365,7 +385,7 @@ export function simulateBracket(inp: SimInputs): SimOutput {
     for (const k of SIM_PROP_KINDS) propProb[k][ids[i]] = pp[k] / N;
   }
   const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
-  return { format: inp.format, teamIds: ids, sims: N, rounds: R_, rc, props, reach, playInWin, propProb, warnings, ms: t1 - t0 };
+  return { format: inp.format, teamIds: ids, sims: N, rounds: R_, rc, props, reach, playInWin, propProb, warnings, ms: t1 - t0, firstGames };
 }
 
 /**

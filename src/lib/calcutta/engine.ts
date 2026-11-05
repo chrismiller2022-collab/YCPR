@@ -70,6 +70,41 @@ const touch = (a: CalcuttaAuction, now: number, patch: Partial<CalcuttaAuction>)
 // ---- participants ----------------------------------------------------------
 
 /** First free letter of the name, else the first free letter of the alphabet. */
+/** Keys an attendee can be bound to: a letter or a digit. */
+export const HOTKEY_RE = /^[a-z0-9]$/;
+
+/** Bow an attendee out of (or back into) the lot on the block. The high bidder can't bow out. */
+export function toggleOut(a: CalcuttaAuction, participantId: string, now: number): Result {
+  const lot = currentLot(a);
+  if (!lot || lot.status !== "live" || a.live.phase === "sold") return fail(a, "No lot is open");
+  const p = participantById(a, participantId);
+  if (!p) return fail(a, "Unknown bidder");
+  const out = a.live.outIds ?? [];
+  if (out.includes(participantId)) return ok(touch(a, now, { live: { ...a.live, outIds: out.filter((x) => x !== participantId) } }));
+  if (highBid(a, lot.id)?.participantId === participantId) return fail(a, `${p.name} has the high bid — undo it first`);
+  return ok(touch(a, now, { live: { ...a.live, outIds: [...out, participantId] } }));
+}
+
+/** True when nobody but the high bidder is still in (everyone else bowed out). */
+export function onlyHighBidderLeft(a: CalcuttaAuction, extraOut: string[] = []): boolean {
+  const high = highBid(a, a.live.lotId);
+  if (!high) return false;
+  const out = new Set([...(a.live.outIds ?? []), ...extraOut]);
+  return a.participants.every((p) => p.id === high.participantId || out.has(p.id));
+}
+
+/** Rebind every attendee: letters from their names, or 1–9 then 0 in list order. */
+export function rebindHotkeys(a: CalcuttaAuction, mode: "letters" | "numbers", now: number): Result {
+  const taken: string[] = [];
+  const digits = "1234567890";
+  const participants = a.participants.map((p, i) => {
+    const key = mode === "numbers" ? digits[i] ?? autoHotkey(p.name, taken) : autoHotkey(p.name, taken);
+    taken.push(key);
+    return { ...p, hotkey: key };
+  });
+  return ok(touch(a, now, { participants }));
+}
+
 export function autoHotkey(name: string, taken: string[]): string {
   const used = new Set(taken.map((k) => k.toLowerCase()));
   for (const ch of name.toLowerCase()) if (/[a-z]/.test(ch) && !used.has(ch)) return ch;
@@ -255,6 +290,7 @@ export function placeBid(a: CalcuttaAuction, participantId: string, amount: numb
   if (!p) return fail(a, "Unknown bidder");
   const high = highBid(a, lot.id);
   if (high && high.participantId === participantId) return fail(a, `${p.name} already has the high bid`);
+  if (a.live.outIds?.includes(participantId)) return fail(a, `${p.name} bowed out of this one`);
   const min = minNextBid(a);
   const value = amount ?? min;
   if (!Number.isFinite(value) || value < min) return fail(a, `Minimum bid is $${min}`);
@@ -291,7 +327,7 @@ export function openLot(a: CalcuttaAuction, lotId: string | null, now: number): 
     touch(a, now, {
       lots,
       status: "live",
-      live: { lotId: lot.id, phase: "ready", endsAt: null, remainingMs: a.settings.timerStart * 1000 },
+      live: { lotId: lot.id, phase: "ready", endsAt: null, remainingMs: a.settings.timerStart * 1000, outIds: [] },
     }),
   );
 }
