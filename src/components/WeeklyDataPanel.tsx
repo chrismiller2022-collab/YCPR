@@ -85,6 +85,9 @@ export default function WeeklyDataPanel() {
       setLog([
         `Vegas lines: ${r.oddsGames} games from the odds feed, ${r.matched} matched and saved as the median across books.` +
           (r.unmatched.length ? ` Not matched (${r.unmatched.length}): ${r.unmatched.slice(0, 8).join(", ")}${r.unmatched.length > 8 ? "…" : ""}` : ""),
+        `Exchange lines (games the sportsbook feed doesn't carry, mostly FCS): ${r.exchange.saved} of ${r.exchange.needed} priced from Kalshi/Novig` +
+          ` (Kalshi ${r.exchange.fromKalshi}, Novig ${r.exchange.fromNovig}; averaged when both).` +
+          (r.exchange.errors.length ? ` Issues: ${r.exchange.errors.join("; ")}` : ""),
       ]);
     } catch (e: any) {
       setError(e.message ?? "Refreshing lines failed");
@@ -119,7 +122,7 @@ export default function WeeklyDataPanel() {
         <button onClick={() => runSteps(gaps, "gaps")} disabled={busy != null || !coverage} style={{ fontWeight: 600 }} title={gaps.map((g) => `Week ${g.week} · ${STEP_LABEL[g.step]}`).join("\n") || "Nothing missing"}>
           {busy === "gaps" ? "Filling…" : `Fill gaps (${gaps.length})`}
         </button>
-        <button onClick={handleRefreshLines} disabled={busy != null} style={{ fontWeight: 600 }} title="Median spread, total and moneyline across sportsbooks (The Odds API, 1 request). Opening lines are kept.">
+        <button onClick={handleRefreshLines} disabled={busy != null} style={{ fontWeight: 600 }} title="Median spread, total and moneyline across sportsbooks (The Odds API, 1 request), then Kalshi/Novig implied spreads and moneylines for games the sportsbooks don't list (mostly FCS). Opening lines are kept.">
           {busy === "lines" ? "Refreshing…" : "Refresh Vegas lines"}
         </button>
         <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>Vegas lines updated {fmtWhen(linesAt)}</span>

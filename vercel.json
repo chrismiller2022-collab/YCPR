@@ -12,6 +12,9 @@
   "functions": {
     "api/cfbd-sync.ts": {
       "maxDuration": 60
+    },
+    "api/kalshi-markets.ts": {
+      "maxDuration": 60
     }
   }
 }

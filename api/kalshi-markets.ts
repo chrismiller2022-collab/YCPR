@@ -15,6 +15,7 @@
 // the site's read-only external-API pattern.
 
 const KALSHI_BASE = "https://external-api.kalshi.com/trade-api/v2";
+const NOVIG_BASE = "https://api.novig.com/v3/public";
 
 async function kalshiFetch(path: string) {
   const res = await fetch(`${KALSHI_BASE}${path}`);
@@ -61,7 +62,75 @@ export default async function handler(req: any, res: any) {
 
   const mode = req.query?.mode === "futures" ? "futures" : req.query?.mode === "discover" ? "discover" : "game";
 
+  // Exchange spread ladders for "Refresh Vegas lines" (games the sportsbook feed doesn't carry, mostly FCS):
+  //   mode=spreads          Kalshi KXNCAAFSPREAD events with their nested markets (every strike, both sides)
+  //   mode=novig-events     Novig's NCAAF event list (public catalog, no key)
+  //   mode=novig-markets&events=id,id,...  Novig SPREAD markets for those events (at most 40 per call)
+  // Same public data the bot reads; the client turns each ladder into one implied spread (bot/ladder/engine.ts).
+  const rawMode = String(req.query?.mode ?? "");
   try {
+    if (rawMode === "spreads") {
+      const events: any[] = [];
+      let cursor = "";
+      for (let page = 0; page < 20; page++) {
+        const d = await kalshiFetch(`/events?series_ticker=KXNCAAFSPREAD&status=open&with_nested_markets=true&limit=200${cursor ? `&cursor=${cursor}` : ""}`);
+        for (const e of d.events ?? []) {
+          events.push({
+            event_ticker: e.event_ticker,
+            title: e.title,
+            markets: (e.markets ?? []).map((m: any) => ({
+              ticker: m.ticker,
+              yes_sub_title: m.yes_sub_title,
+              floor_strike: m.floor_strike,
+              yes_bid_dollars: m.yes_bid_dollars,
+              yes_ask_dollars: m.yes_ask_dollars,
+              status: m.status,
+            })),
+          });
+        }
+        cursor = d.cursor ?? "";
+        if (!cursor) break;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ events });
+      return;
+    }
+    if (rawMode === "novig-events") {
+      const r = await fetch(`${NOVIG_BASE}/catalog/events?league=NCAAF&limit=200`, { headers: { "User-Agent": "ycpr" } });
+      if (!r.ok) throw new Error(`Novig events failed (${r.status})`);
+      const d = await r.json();
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ events: (d.items ?? []).map((e: any) => ({ eventId: e.eventId, description: e.description, startsTs: e.startsTs, status: e.status })) });
+      return;
+    }
+    if (rawMode === "novig-markets") {
+      const ids = String(req.query?.events ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => /^[\w-]+$/.test(x))
+        .slice(0, 40);
+      const out: Record<string, any[]> = {};
+      // Novig rate-limits bursts: four at a time, with a short retry on 429.
+      const queue = [...ids];
+      async function worker() {
+        for (let id = queue.shift(); id; id = queue.shift()) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const r = await fetch(`${NOVIG_BASE}/catalog/markets?event=${id}&marketType=SPREAD&limit=200`, { headers: { "User-Agent": "ycpr" } });
+            if (r.status === 429 || r.status >= 500) {
+              await new Promise((ok) => setTimeout(ok, 600 * (attempt + 1)));
+              continue;
+            }
+            if (r.ok) out[id] = ((await r.json()).items ?? []).filter((m: any) => m.eventId === id);
+            break;
+          }
+        }
+      }
+      await Promise.all([worker(), worker(), worker(), worker()]);
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json({ markets: out });
+      return;
+    }
+
     if (mode === "discover") {
       // Auto-discovers every NCAAF-prefixed series (conference championships
       // especially — Chris only had to hand us a handful of example links,

@@ -291,6 +291,13 @@ export default async function handler(req: any, res: any) {
     // overwritten after that.
     if (action === "saveMarketLines") {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      // market_median = sportsbook median (The Odds API); exchange_implied = Kalshi/Novig ladder fit (games the
+      // sportsbook feed doesn't carry). Anything else is refused.
+      const provider = req.body?.provider === "exchange_implied" ? "exchange_implied" : "market_median";
+      if (req.body?.provider != null && req.body.provider !== provider) {
+        res.status(400).json({ error: "Unknown provider" });
+        return;
+      }
       if (rows.length === 0) {
         res.status(200).json({ saved: 0 });
         return;
@@ -305,7 +312,7 @@ export default async function handler(req: any, res: any) {
       // this first median.
       const openByGame = new Map<string, { opening_spread: number | null; opening_over_under: number | null }>();
       for (const e of (existing ?? []).filter((x: any) => x.provider === "consensus")) openByGame.set(String(e.game_id), e);
-      for (const e of (existing ?? []).filter((x: any) => x.provider === "market_median")) {
+      for (const e of (existing ?? []).filter((x: any) => x.provider === provider)) {
         const cfbd = openByGame.get(String(e.game_id));
         openByGame.set(String(e.game_id), {
           opening_spread: e.opening_spread ?? cfbd?.opening_spread ?? null,
@@ -319,7 +326,7 @@ export default async function handler(req: any, res: any) {
           game_id: String(r.game_id),
           season: r.season,
           week: r.week,
-          provider: "market_median",
+          provider,
           spread: r.spread ?? null,
           over_under: r.over_under ?? null,
           home_moneyline: r.home_moneyline ?? null,
