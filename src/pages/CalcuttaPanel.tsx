@@ -32,6 +32,7 @@ import {
   deleteCloudAuction,
   deleteLocalAuction,
   dispatch as storeDispatch,
+  readAuction,
   fetchCloudAuction,
   listCloudAuctions,
   saveToCloud,
@@ -48,6 +49,7 @@ import { BOT_STYLES, addBots, botBaseRatings, practiceCopy, resetForReplay, simu
 import { savedRatings } from "../lib/calcutta/deskStorage";
 import { lotShare, portfolio, projectPot } from "../lib/calcutta/value";
 import { useSiteCfb } from "../lib/calcutta/siteCfb";
+import { buildLiveState, fetchRoomMembers, publishLive, resetRoomPin } from "../lib/calcutta/room";
 import { cfbFieldFromSeeds, madnessFieldFromEspn, madnessFieldToText, parseMadnessField, seedNamesFromField } from "../lib/calcutta/fields";
 import { TEAMS } from "../data/teams";
 import { deriveBracketSeeds } from "../lib/bracketSeeds";
@@ -598,6 +600,8 @@ function AttendeesTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: 
   };
 
   return (
+    <>
+    <LiveRoomCard a={a} patch={patch} />
     <section className="cal-card">
       <h2>Attendees</h2>
       <div className="cal-row">
@@ -686,6 +690,7 @@ function AttendeesTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: 
         </tbody>
       </table>
     </section>
+    </>
   );
 }
 
@@ -2183,4 +2188,95 @@ function SimPlayoffsSection({ a, act, patch }: { a: CalcuttaAuction; act: Act; p
   }, [a.id, a.field, siteCfb.ratings, sport]);
   const meId = a.participants.find((p) => !p.bot)?.id ?? null;
   return <SimPlayoffsCard a={a} act={act} patch={patch} yours={yours} meId={meId} />;
+}
+
+// ---------------------------------------------------------------------------
+// Live room (attendees bid from their own devices)
+// ---------------------------------------------------------------------------
+
+function LiveRoomCard({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
+  const enabled = !!a.room?.enabled;
+  const link = `${window.location.origin}/calcutta/room/${a.id}`;
+  const [members, setMembers] = useState<{ participant_id: string; locked_until: string | null }[] | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () =>
+    fetchRoomMembers(a.id)
+      .then((r) => setMembers(r.members))
+      .catch((e) => setMsg(e?.message ?? "Couldn't load who's joined"));
+  useEffect(() => {
+    if (!enabled) return;
+    load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, a.id]);
+  const toggle = (on: boolean) => {
+    patch((x) => ({ room: { enabled: on, lastRequestId: x.room?.lastRequestId ?? 0 } }));
+    // Tell room pages right away (the Stage keeps it updated while the room is open).
+    setTimeout(() => {
+      const cur = readAuction(a.id);
+      if (cur) publishLive(a.id, buildLiveState(cur, [], Date.now())).catch((e) => setMsg(`Couldn't open the room: ${e?.message ?? e}`));
+    }, 50);
+  };
+  const humans = a.participants.filter((p) => !p.bot);
+  const joined = new Set((members ?? []).map((m) => m.participant_id));
+  return (
+    <section className="cal-card">
+      <div className="cal-row" style={{ justifyContent: "space-between" }}>
+        <h2>Live room</h2>
+        <label className="cal-toggle">
+          <input type="checkbox" checked={enabled} onChange={(e) => toggle(e.target.checked)} disabled={!!a.practice?.enabled} /> Let attendees bid from their own devices
+        </label>
+      </div>
+      {a.practice?.enabled ? (
+        <div className="cal-note">Not available in practice auctions.</div>
+      ) : !enabled ? (
+        <div className="cal-note">
+          Turn this on to share one link. Everyone opens it, taps their name, and sets their own 4-digit PIN the first time. Then they bid with a big BID button or the spacebar. Bids go
+          to your Stage, which takes them in the order they arrive and applies every rule. You can still enter bids for anyone from the keyboard.
+        </div>
+      ) : (
+        <>
+          <div className="cal-row">
+            <input className="cal-input" readOnly value={link} style={{ minWidth: 380 }} onFocus={(e) => e.target.select()} />
+            <button className="cal-btn primary" onClick={() => navigator.clipboard?.writeText(link).then(() => setMsg("Link copied"))}>
+              Copy link
+            </button>
+            <button className="cal-btn" onClick={() => window.open(link, "_blank")}>
+              Open ↗
+            </button>
+          </div>
+          <div className="cal-note">
+            Keep the <b>Stage window open</b> during the auction — it's what accepts room bids. Attendees must be on the list below to join; add anyone missing first.
+          </div>
+          {msg && <div className="cal-note">{msg}</div>}
+          <table className="cal-table">
+            <tbody>
+              {humans.map((p) => (
+                <tr key={p.id}>
+                  <td style={{ color: p.color, fontWeight: 700 }}>{p.name}</td>
+                  <td>{joined.has(p.id) ? <span className="good">✓ joined</span> : <span className="cal-note">not yet</span>}</td>
+                  <td className="r">
+                    {joined.has(p.id) && (
+                      <button
+                        className="cal-btn sm"
+                        onClick={() =>
+                          window.confirm(`Reset ${p.name}'s PIN? They'll set a new one next time they open the link.`) &&
+                          resetRoomPin(a.id, p.id)
+                            .then(load)
+                            .catch((e) => setMsg(e?.message ?? "Reset failed"))
+                        }
+                      >
+                        Reset PIN
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
+  );
 }

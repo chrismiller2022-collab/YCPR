@@ -300,3 +300,54 @@
 .cal-kpi-btn:hover { border-color: var(--s-dim); }
 .cal-desk-banner { font: inherit; text-align: left; cursor: pointer; background: rgba(255, 176, 32, 0.12); border: 1px solid var(--s-warn); color: var(--s-warn); border-radius: 10px; padding: 8px 12px; font-weight: 700; }
 .cal-nav { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
+.cal-room-tag { position: fixed; right: 1.6vw; top: 1vh; font-size: 12px; color: var(--s-ok); font-weight: 700; }
+
+/* ---------------------------------------------------------------------
+   Live room — attendees' own devices (phone first)
+   --------------------------------------------------------------------- */
+.cal-room {
+  --s-bg: #0b0d17; --s-panel: #141729; --s-panel-2: #1b1f38; --s-line: #283057; --s-ink: #eef0fa; --s-dim: #8b91b8;
+  --s-gold: #ffc857; --s-ok: #3ddc84; --s-warn: #ffb020; --s-danger: #ff5d6c;
+  min-height: 100vh; background: var(--s-bg); color: var(--s-ink); font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 14px 16px 40px; max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; font-size: 15px;
+}
+.cal-room .dim { color: var(--s-dim); font-size: 13px; }
+.cal-room .money { color: var(--s-gold); font-weight: 800; font-variant-numeric: tabular-nums; }
+.cal-room-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; min-height: 40vh; }
+.cal-room-big { font-size: 22px; font-weight: 900; }
+.cal-room-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+.cal-room-title { font-size: 22px; font-weight: 900; }
+.cal-room-me { font-size: 20px; font-weight: 900; }
+.cal-room-link { background: none; border: 0; color: var(--s-dim); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+.cal-room-pot { text-align: right; font-size: 22px; }
+.cal-room-card { background: var(--s-panel); border: 1px solid var(--s-line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.cal-room-h { font-size: 18px; font-weight: 900; }
+.cal-room-names { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.cal-room-name { --pc: #888; background: var(--s-panel-2); color: var(--s-ink); border: 2px solid var(--s-line); border-top: 5px solid var(--pc); border-radius: 12px; padding: 12px; font: inherit; font-weight: 800; font-size: 16px; text-align: left; display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
+.cal-room-pin { background: var(--s-panel-2); color: var(--s-ink); border: 1px solid var(--s-line); border-radius: 10px; padding: 12px; font: inherit; font-size: 28px; letter-spacing: 0.4em; text-align: center; width: 100%; box-sizing: border-box; }
+.cal-room-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cal-room-btn { background: var(--s-panel-2); color: var(--s-ink); border: 1px solid var(--s-line); border-radius: 10px; padding: 10px 14px; font: inherit; font-weight: 800; cursor: pointer; }
+.cal-room-btn.primary { background: var(--s-gold); color: #1a1400; border-color: var(--s-gold); }
+.cal-room-err { color: var(--s-danger); font-weight: 700; }
+.cal-room-lot.sold { border-color: var(--s-gold); }
+.cal-room-lothead { display: flex; gap: 12px; align-items: center; }
+.cal-room-lotname { font-size: 24px; font-weight: 900; line-height: 1.1; }
+.cal-room-bidrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.cal-room-amt { font-size: 52px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+.cal-room-who { font-size: 20px; font-weight: 900; }
+.cal-room-clock { text-align: center; background: var(--s-panel-2); border: 2px solid var(--s-line); border-radius: 12px; padding: 8px 14px; min-width: 86px; }
+.cal-room-secs { font-size: 40px; font-weight: 900; color: var(--s-ok); font-variant-numeric: tabular-nums; line-height: 1; }
+.cal-room-clock.warn { border-color: var(--s-warn); }
+.cal-room-clock.warn .cal-room-secs { color: var(--s-warn); }
+.cal-room-clock.danger { border-color: var(--s-danger); }
+.cal-room-clock.danger .cal-room-secs { color: var(--s-danger); }
+.cal-room-trail { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cal-room-bid { width: 100%; min-height: 96px; border: 0; border-radius: 18px; background: var(--s-ok); color: #04210f; font: inherit; font-size: 30px; font-weight: 900; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; box-shadow: 0 10px 30px rgba(61, 220, 132, 0.25); touch-action: manipulation; }
+.cal-room-bid:active:not(:disabled) { transform: scale(0.98); }
+.cal-room-bid.off { background: var(--s-panel-2); color: var(--s-dim); box-shadow: none; font-size: 20px; cursor: default; }
+.cal-room-bidhint { font-size: 12px; font-weight: 700; opacity: 0.7; }
+.cal-room-amtin { background: var(--s-panel-2); color: var(--s-ink); border: 1px solid var(--s-line); border-radius: 10px; padding: 10px; font: inherit; width: 110px; }
+.cal-room-flash { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 12px 20px; border-radius: 999px; font-weight: 900; box-shadow: 0 10px 40px rgba(0,0,0,0.5); max-width: 90vw; text-align: center; }
+.cal-room-flash.ok { background: var(--s-ok); color: #04210f; }
+.cal-room-flash.bad { background: var(--s-danger); color: #fff; }
+.cal-room-line { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; font-size: 14px; align-items: center; }

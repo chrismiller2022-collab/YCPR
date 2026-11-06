@@ -75,6 +75,11 @@ Auto-scoring works for every format from the Games card, and **Sync from ESPN** 
 
 CFB Desk ratings come from the site: the latest saved week's power rating (`weekly_team_stats.rating`, lower = better, flipped) and the site's Team HFA blend from `team_hfa` (same as the Conferences page; `weekly_team_stats.hfa` is empty). Practice bots use the same numbers.
 
+## Live room (everyone bids from their own device)
+Attendees tab → **Live room** → turn on → copy the one link and share it (Zoom chat). Each person opens it, taps their name and sets their own 4-digit PIN the first time (enters it on later visits / other devices; this device stays signed in 30 days). They see the team on the block, the bid, the clock and their own spend/teams, and bid with the big **BID** button or the **spacebar** (+jump buttons, custom amount, "I'm out").
+
+How it works: a bid goes to `/api/pool-save` (`pool: "calcutta-room"`, signed room token) → a row in `calcutta_bid_requests`. The **Stage** (keep it open) picks new requests up via Realtime + a 1s poll, applies each in arrival order with the same rules as a keyboard bid (min raise, max teams, can't outbid yourself, bowed out), and publishes a compact state to `calcutta_live`, which room pages watch (Realtime + 2s poll). A bid that loses a race gets "too late, the next bid is $X". PINs are stored hashed server-side (`calcutta_room_members`, no public read); 5 wrong PINs lock that name for 5 minutes; **Reset PIN** in the Live room card signs their old device out. You can still key in bids for anyone. Migration: `supabase/migrations/create_calcutta_room.sql`.
+
 ## Practice mode (bots)
 Any auction → **Practice** tab → "Create practice auction with N bots" makes a separate copy (same rules, payouts, field, lots; just you + bots, a 15s/8s clock). Practice auctions never go to the cloud or into bidding history.
 
@@ -86,4 +91,4 @@ Any auction → **Practice** tab → "Create practice auction with N bots" makes
 
 ## Roadmap
 1. NFL and CFB regular-season formats.
-2. Postponed: futures-based market prior, read-only phone link (4-digit code), per-bidder price model from attendee history.
+2. Postponed: futures-based market prior, per-bidder price model from attendee history.

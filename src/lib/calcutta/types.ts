@@ -231,6 +231,8 @@ export interface CalcuttaAuction {
   autoScore?: boolean;
   /** March Madness region order: Final Four is [0] vs [1], [2] vs [3]. */
   regions?: string[];
+  /** Live room: attendees bid from their own devices through one shared link. */
+  room?: { enabled: boolean; lastRequestId: number } | null;
   /** Practice auction against bots (kept out of bidding history and the cloud). */
   practice?: PracticeSettings | null;
   live: LiveState;
