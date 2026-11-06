@@ -1,3 +1,4 @@
+import { T2_MOVE_CUT_TOP10 } from "../lib/totals2/frozen";
 import { fetchPlacedBets, type PlacedBetRow } from "../lib/api/placedBets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -15,8 +16,7 @@ import {
   computeTeamPerformanceBreakdown,
   TOTAL_BET_THRESHOLD_STDDEV,
   type TeamSplitBetRow,
-  type PerformanceSegment,
-} from "../lib/gameTotalsEngine";
+  type PerformanceSegment, teamSplitSpread } from "../lib/gameTotalsEngine";
 import { filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { splitTeamTotal, gradeActualTotal, gradeBetCall, type BetGrade } from "../lib/gameTotals";
 import { buildMlRowsFromLiveRatingsBillR, type MlGameRow } from "../lib/moneylineBetHistory";
@@ -210,7 +210,15 @@ interface TotalBetRow {
   homeScore: number | null;
   stdDevOff: number;
   call: "Over" | "Under";
+  // Totals v2: the bet is a ★ line-move bet — take the OPENING total in the direction the line should move. v2Move is
+  // that expected move (points); vegasTotal is then the opening total. Null for a game with no stored v2 number (the
+  // archived v1 std-dev rule applies).
+  v2Move?: number | null;
 }
+
+// Sort weight: v2 ★ edges (points of expected line move) and v1 std devs on one scale — a ★ at the cutoff ≈ the 1.5 SD bar.
+const totalBetStrength = (r: { v2Move?: number | null; stdDevOff: number }) =>
+  r.v2Move != null ? (Math.abs(r.v2Move) / T2_MOVE_CUT_TOP10) * TOTAL_BET_THRESHOLD_STDDEV : Math.abs(r.stdDevOff);
 
 interface TotalWatchRow {
   game: GameWithLines;
@@ -884,9 +892,10 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       .map((g) => {
         const vegasTotal = totalsEngineRows.find((r) => r.game.week === week && r.game.homeTeam === g.home_team && r.game.awayTeam === g.away_team)?.odds
           .vegasTotal;
+        const engineRow = totalsEngineRows.find((r) => r.game.week === week && r.game.homeTeam === g.home_team && r.game.awayTeam === g.away_team);
         const myTotal = projTotalByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
         const stdDevOff = myTotal != null && vegasTotal != null && fbsTotalPoolStd !== 0 ? (myTotal - vegasTotal) / fbsTotalPoolStd : null;
-        return { game: g, vegasTotal: vegasTotal ?? null, myTotal, stdDevOff };
+        return { game: g, vegasTotal: vegasTotal ?? null, myTotal, stdDevOff, v2: engineRow?.v2 ?? null };
       })
       .filter((r) => r.vegasTotal != null && r.myTotal != null && r.stdDevOff != null);
   }, [divisionFilteredGames, totalsEngineRows, projTotalByGame, week, fbsTotalPoolStd, showTotals]);
@@ -894,24 +903,27 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const totalBetsAll: TotalBetRow[] = useMemo(
     () =>
       totalGames
-        .filter((r) => Math.abs(r.stdDevOff!) >= TOTAL_BET_THRESHOLD_STDDEV)
+        // Totals v2 games: a bet = a ★ (top-10% expected line move). Games without a v2 number keep the v1 std-dev bar.
+        .filter((r) => (r.v2 ? !!r.v2.star && r.v2.move != null : Math.abs(r.stdDevOff!) >= TOTAL_BET_THRESHOLD_STDDEV))
         .map((r) => {
           const spread = computedGames.find((c) => c.game.id === r.game.id)?.computed.projAwaySpread ?? null;
           const split = projScoreSplit(r.myTotal, spread);
+          const v2Move = r.v2 ? r.v2.move : null;
           return {
             game: r.game,
-            vegasTotal: r.vegasTotal!,
+            vegasTotal: v2Move != null ? (r.v2!.open_total ?? r.vegasTotal!) : r.vegasTotal!,
             myTotal: r.myTotal!,
             awayScore: split.awayScore,
             homeScore: split.homeScore,
             stdDevOff: r.stdDevOff!,
-            call: r.stdDevOff! > 0 ? ("Over" as const) : ("Under" as const),
+            call: (v2Move != null ? v2Move > 0 : r.stdDevOff! > 0) ? ("Over" as const) : ("Under" as const),
+            v2Move,
           };
         }),
     [totalGames, computedGames]
   );
-  const totalBetsOver = useMemo(() => totalBetsAll.filter((r) => r.call === "Over").sort((a, b) => Math.abs(b.stdDevOff) - Math.abs(a.stdDevOff)), [totalBetsAll]);
-  const totalBetsUnder = useMemo(() => totalBetsAll.filter((r) => r.call === "Under").sort((a, b) => Math.abs(b.stdDevOff) - Math.abs(a.stdDevOff)), [totalBetsAll]);
+  const totalBetsOver = useMemo(() => totalBetsAll.filter((r) => r.call === "Over").sort((a, b) => totalBetStrength(b) - totalBetStrength(a)), [totalBetsAll]);
+  const totalBetsUnder = useMemo(() => totalBetsAll.filter((r) => r.call === "Under").sort((a, b) => totalBetStrength(b) - totalBetStrength(a)), [totalBetsAll]);
 
   const totalWatch: TotalWatchRow[] = useMemo(
     () =>
@@ -923,6 +935,8 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         // dev off were showing up as "close" when they were nowhere near it.
         .filter(
           (r) =>
+            // The watch list is the v1 std-dev rule; v2 games are either a ★ bet or not (see the Totals page for the full list).
+            !r.v2 &&
             Math.abs(r.stdDevOff!) >= TOTAL_BET_THRESHOLD_STDDEV - TOTAL_WATCH_MARGIN_STDDEV && Math.abs(r.stdDevOff!) < TOTAL_BET_THRESHOLD_STDDEV
         )
         .map((r) => {
@@ -983,7 +997,10 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
   const teamTotalBetsAllRaw = useMemo(
     () =>
       teamTotalRowsInDivision
-        .filter((r) => r.isFiltered && (effectiveHideCompleted ? !r.row.game.completed : true))
+        // Totals v2 games: team-total bets follow the ★ line-move signal (both teams, in the move direction); games without
+        // a v2 number keep the v1 std-dev filter.
+        .filter((r) => (r.row.v2 ? !!r.row.v2.star && r.row.v2.move != null : r.isFiltered) && (effectiveHideCompleted ? !r.row.game.completed : true))
+        .map((r) => (r.row.v2?.move != null ? { ...r, call: r.row.v2.move > 0 ? ("Over" as const) : ("Under" as const) } : r))
         .map((r) => {
           // Split the GAME total (not this team's own total — that was
           // the bug: re-splitting a single team's ~34-point total as if
@@ -992,7 +1009,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           // split; deriving both sides from the same game total/spread
           // keeps them consistent with each other and with the Totals
           // section's own proj score for this same game.
-          const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
+          const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, teamSplitSpread(r.row));
           return { ...r, awayScore: split.away, homeScore: split.home };
         }),
     [teamTotalRowsInDivision, effectiveHideCompleted]
@@ -1010,6 +1027,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
     return teamTotalRowsInDivision
       .filter(
         (r) =>
+          !r.row.v2 &&
           (effectiveHideCompleted ? !r.row.game.completed : true) &&
           r.stdDevOff != null &&
           // Same fix as the game-Totals watch filter above — the floor is
@@ -1023,7 +1041,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
         const vegasTtNeeded = poolStd != null ? r.myTeamTotal! - dir * TOTAL_BET_THRESHOLD_STDDEV * poolStd : null;
         // Same fix as teamTotalBetsAllRaw above — split the game total,
         // not this team's own total.
-        const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, r.row.myHomeSpread);
+        const split = splitTeamTotal(r.row.projection?.projectedTotal ?? null, teamSplitSpread(r.row));
         // The line actually being graded against (myTeamTotal minus the
         // already-computed amountOff), not necessarily r.vegasTeamTotal —
         // team totals can grade against a real synced market line instead
@@ -1233,7 +1251,9 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                                 <th className="th th-right">My Total</th>
                                 <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
                                 <th className="th">Bet</th>
-                                <th className="th th-right">Std Dev Off</th>
+                                <th className="th th-right" title="★ = Totals v2 line-move bet: expected points the total moves after it opens. Otherwise std devs off (v1).">
+                                  Edge
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1251,8 +1271,12 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
                                   <td style={centerCellStyle}>
                                     <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.awayScore} homeScore={r.homeScore} />
                                   </td>
-                                  <td style={{ ...cellStyle, fontWeight: 700 }}>{r.call} {fmtTotal(r.vegasTotal)}</td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff.toFixed(2)}</td>
+                                  <td style={{ ...cellStyle, fontWeight: 700 }}>
+                                    {r.v2Move != null ? "★ " : ""}
+                                    {r.call} {fmtTotal(r.vegasTotal)}
+                                    {r.v2Move != null ? <span style={{ fontWeight: 400, color: "var(--chalk-dim)", fontSize: "0.72rem" }}> (open)</span> : null}
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.v2Move != null ? `${r.v2Move > 0 ? "+" : ""}${r.v2Move.toFixed(2)} pts` : `${r.stdDevOff.toFixed(2)} SD`}</td>
                                 </tr>
                               ))}
                             </tbody>

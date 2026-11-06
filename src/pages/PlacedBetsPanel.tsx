@@ -27,7 +27,7 @@ import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { pickLine } from "../lib/matchupsCompute";
 import { moneylineToImpliedWinPct } from "../lib/odds";
 import { fetchPoolBalanceSummary, type PoolBalanceSummary } from "../lib/api/poolBalanceSummary";
-import { useGameTotalsEngine, type EnrichedGameRow } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, type EnrichedGameRow, teamSplitSpread } from "../lib/gameTotalsEngine";
 import { splitTeamTotal } from "../lib/gameTotals";
 import { addBetToRecord, betProfit, betProfitForResult, emptyRecord, roi, type BetRecord } from "../lib/betRecord";
 
@@ -448,7 +448,7 @@ function GamePredictions({ enriched }: { enriched: EnrichedGameRow | undefined }
   if (!enriched) return <p style={{ fontSize: "0.76rem", color: "var(--chalk-dim)", margin: "0 0 0.5rem" }}>No model projection for this game yet.</p>;
   const myTotal = enriched.projection?.projectedTotal ?? null;
   const myHomeSpread = enriched.myHomeSpread;
-  const myTeamTotals = splitTeamTotal(myTotal, myHomeSpread);
+  const myTeamTotals = splitTeamTotal(myTotal, teamSplitSpread(enriched));
   const vegasTotal = enriched.odds.vegasTotal;
   const vegasHomeSpread = enriched.game.homeSpread;
   const vegasTeamTotals = splitTeamTotal(vegasTotal, vegasHomeSpread);

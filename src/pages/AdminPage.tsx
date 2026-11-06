@@ -513,8 +513,8 @@ function AdminDashboard({ betSummary, onNavigate }: AdminDashboardProps) {
               <button onClick={() => onNavigate("drogba")}>
                 DROGBA <span>spreads model →</span>
               </button>
-              <button onClick={() => onNavigate("gametotals")}>
-                Totals <span>totals model →</span>
+              <button onClick={() => onNavigate("totals2")}>
+                Totals <span>this week's bets →</span>
               </button>
               <button onClick={() => onNavigate("matchups")}>
                 Matchups <span>this week →</span>
@@ -571,12 +571,12 @@ const NAV_GROUPS: NavGroup[] = [
       },
       { key: "drogba", label: "DROGBA" },
       {
-        key: "gametotals",
+        key: "totals2",
         label: "Totals",
         tabs: [
-          { key: "gametotals", label: "Model" },
+          { key: "totals2", label: "Model" },
           { key: "totalshistory", label: "History" },
-          { key: "totals2", label: "Model v2" },
+          { key: "gametotals", label: "v1 (archived)" },
         ],
       },
       { key: "montecarlo", label: "Monte Carlo" },

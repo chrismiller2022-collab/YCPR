@@ -684,7 +684,8 @@ export function useMatchupHandicap(season: number, week: number, awayTeam: strin
     const myTotal = currentLock?.my_total ?? currentTotalsRow?.projection?.projectedTotal ?? null;
     const vegasTotal = currentTotalsRow?.odds.vegasTotal ?? null;
     const myHomeSpreadForTotals = currentLock?.my_away_spread != null ? -currentLock.my_away_spread : currentTotalsRow?.myHomeSpread ?? null;
-    const mySplit = splitTeamTotal(myTotal, myHomeSpreadForTotals);
+    // Team totals: v2's rule — split by the market spread (fallback: mine when no market spread is posted).
+    const mySplit = splitTeamTotal(myTotal, currentTotalsRow?.game.homeSpread ?? myHomeSpreadForTotals);
     const vegasSplit = splitTeamTotal(vegasTotal, currentTotalsRow?.game.homeSpread ?? null);
     const totalAmountOff = myTotal != null && vegasTotal != null ? myTotal - vegasTotal : null;
     const totalCall: "Over" | "Under" | null = totalAmountOff == null || totalAmountOff === 0 ? null : totalAmountOff > 0 ? "Over" : "Under";

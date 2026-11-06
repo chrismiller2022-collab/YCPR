@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import { splitTeamTotal } from "../lib/gameTotals";
-import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows, type EnrichedGameRow } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows, type EnrichedGameRow, teamSplitSpread } from "../lib/gameTotalsEngine";
 import { SeasonPicker, DivisionPicker, filterRowsByDivision } from "./GameTotalsAdminPanel";
 import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./PerformanceView";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -48,7 +48,7 @@ function buildPredRows(rows: EnrichedGameRow[]): PredRow[] {
   return rows.map((row) => {
     const myTotal = row.projection?.projectedTotal ?? null;
     const vegasTotal = row.odds.vegasTotal;
-    const mySplit = splitTeamTotal(myTotal, row.myHomeSpread ?? 0);
+    const mySplit = splitTeamTotal(myTotal, teamSplitSpread(row));
     const vegasSplit = splitTeamTotal(vegasTotal, row.game.homeSpread);
     return {
       game: row,

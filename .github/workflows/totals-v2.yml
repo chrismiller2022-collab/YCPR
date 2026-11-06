@@ -1,0 +1,36 @@
+# Totals v2: recompute the current season every 3 hours and store it (totals2_projections), and auto-log each upcoming
+# game the first time it has a line (totals2_picks, first save wins). Pages read the stored numbers, so nothing has to
+# be rebuilt in the browser and no week goes unlogged if nobody presses Save. See scripts/totals_v2/project.ts.
+# Uses the repo secrets SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (same as the bot workflows). Logs counts only.
+name: Totals v2
+
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: totals-v2
+  cancel-in-progress: false
+
+jobs:
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: bun scripts/totals_v2/project.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
