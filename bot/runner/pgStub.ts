@@ -3,7 +3,7 @@ const FK: Record<string, { table: string; col: string }> = { "bot_fills.bot_orde
 
 /**
  * Just enough PostgREST for the hub's API files in tests: GET with select (aliases, ->, one embed), eq/in/gt/gte/lt/
- * is/not.is filters, or=(), order, limit and Range; PATCH (filters, returns the changed rows); POST (insert, or upsert
+ * is/not.is filters, or=(), order, limit and Range; PATCH (filters and select, returns the changed rows); POST (insert, or upsert
  * with on_conflict + resolution=merge-duplicates).
  */
 export function pgStub(db: Record<string, Row[]>) {
@@ -47,10 +47,13 @@ export function pgStub(db: Record<string, Row[]>) {
     }
     let rows = [...(db[table] ?? [])];
     if (method === "PATCH") {
-      for (const [k, v] of u.searchParams) rows = rows.filter((r) => test(r, k, v));
+      for (const [k, v] of u.searchParams) if (k !== "select") rows = rows.filter((r) => test(r, k, v));
       const patch = JSON.parse(init.body);
       for (const r of rows) Object.assign(r, patch);
-      return { ok: true, status: 200, text: async () => JSON.stringify(rows) };
+      // select= on a PATCH limits the returned columns (plain column names only).
+      const cols = u.searchParams.get("select")?.split(",");
+      const out = cols ? rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]]))) : rows;
+      return { ok: true, status: 200, text: async () => JSON.stringify(out) };
     }
     let select = "*", order = "", limit = Infinity;
     for (const [k, v] of u.searchParams) {

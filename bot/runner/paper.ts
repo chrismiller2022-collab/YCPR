@@ -183,7 +183,8 @@ function positionsFrom(fills: FillRow[]): { positions: Position[]; rungs: Pick<R
 }
 
 async function cancelAll(gameId?: string): Promise<number> {
-  const rows = await db.update("bot_orders", `mode=eq.${MODE}&status=eq.resting${gameId ? `&game_id=eq.${gameId}` : ""}`, { status: "cancelled", closed_at: iso() });
+  // Only the ids come back: the full rows are egress, and a cancel-all at the start of quiet hours can touch thousands.
+  const rows = await db.update("bot_orders", `mode=eq.${MODE}&status=eq.resting${gameId ? `&game_id=eq.${gameId}` : ""}&select=id`, { status: "cancelled", closed_at: iso() });
   return rows.length;
 }
 
@@ -272,8 +273,9 @@ export async function runCycle(): Promise<CycleTotals> {
     // Overnight: nothing rests or trades (ESPN finals above still run, so late games get graded).
     if (isQuietHours()) {
       totals.cancelled += await cancelAll();
+      totals.quiet = true;
       console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
-      return { ...totals, quiet: true };
+      return totals;
     }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
