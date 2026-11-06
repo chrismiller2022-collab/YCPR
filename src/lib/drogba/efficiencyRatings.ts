@@ -151,7 +151,7 @@ function seasonObs(games: Map<string, DGame>, teamGames: TeamGameAdv[], season: 
   return { obs, teams };
 }
 
-function solveOD(obs: Obs[], teams: Set<string>, lambdaVal: number, priorOf: (t: string) => EffPrior, muFallback = 0) {
+function solveOD(obs: Obs[], teams: Set<string>, lambdaVal: number, priorOf: (t: string) => EffPrior, muFallback = 0, lambdaMult?: (t: string) => number) {
   const list = [FCS, ...Array.from(teams).sort()];
   const idx = new Map(list.map((t, i) => [t, i]));
   const m = list.length;
@@ -166,6 +166,14 @@ function solveOD(obs: Obs[], teams: Set<string>, lambdaVal: number, priorOf: (t:
     prior[di(t)] = p.def;
   }
   const lambda = new Array(n).fill(lambdaVal);
+  if (lambdaMult) {
+    for (const t of list) {
+      if (t === FCS) continue;
+      const k = lambdaMult(t);
+      lambda[oi(t)] = lambdaVal * k;
+      lambda[di(t)] = lambdaVal * k;
+    }
+  }
   lambda[0] = 30;
   lambda[oi(FCS)] = 0.5;
   lambda[di(FCS)] = 0.5;
@@ -188,12 +196,25 @@ function solveOD(obs: Obs[], teams: Set<string>, lambdaVal: number, priorOf: (t:
   return { off, def, hfa: theta[0], mu: mu + mo + md, rawMu };
 }
 
+// Optional per-team controls (used by Totals v2; DROGBA passes none and behaves exactly as before):
+//  - lambdaMult(season, team): multiplies the metric's ridge strength for that team — below 1 = the prior gives way
+//    to this season's games faster (e.g. a roster that turned over), above 1 = slower.
+//  - rhoFor(season, team): share of last season's final rating carried into this one, replacing cfg.rho.
+//  - weeklyFrom: seasons before this only get their end-of-season snapshot (all a later season's prior needs), which
+//    skips most of the solves when only the current season's week-by-week ratings are wanted.
+export interface EffTeamOptions {
+  lambdaMult?: (season: number, team: string) => number;
+  rhoFor?: (season: number, team: string) => number;
+  weeklyFrom?: number;
+}
+
 export function buildEffSnapshots(
   games: DGame[],
   teamGames: TeamGameAdv[],
   metric: EffMetric,
   cfg: EffConfig = DEFAULT_EFF_CONFIG,
-  priorFn?: EffPriorFn
+  priorFn?: EffPriorFn,
+  teamOpts: EffTeamOptions = {}
 ): Map<EffKey, EffSnapshot> {
   const out = new Map<EffKey, EffSnapshot>();
   const gameById = new Map(games.map((g) => [g.id, g]));
@@ -205,13 +226,16 @@ export function buildEffSnapshots(
   for (const season of seasons) {
     const { obs, teams } = seasonObs(gameById, teamGames, season, metric);
     if (obs.length === 0) continue;
-    const priorOf = (t: string): EffPrior => priorFn?.(season, t) ?? { off: cfg.rho * (prevOff.get(t) ?? 0), def: cfg.rho * (prevDef.get(t) ?? 0) };
+    const rhoOf = (t: string) => teamOpts.rhoFor?.(season, t) ?? cfg.rho;
+    const priorOf = (t: string): EffPrior => priorFn?.(season, t) ?? { off: rhoOf(t) * (prevOff.get(t) ?? 0), def: rhoOf(t) * (prevDef.get(t) ?? 0) };
+    const lm = teamOpts.lambdaMult ? (t: string) => teamOpts.lambdaMult!(season, t) : undefined;
     const maxWeek = Math.max(...obs.map((o) => o.week), 1);
     if (Number.isNaN(lastMu)) lastMu = obs.reduce((s, o) => s + o.y, 0) / obs.length;
-    for (let w = 1; w <= maxWeek + 1; w++) {
+    const firstWeek = teamOpts.weeklyFrom != null && season < teamOpts.weeklyFrom ? maxWeek + 1 : 1;
+    for (let w = firstWeek; w <= maxWeek + 1; w++) {
       const use = obs.filter((o) => o.week < w);
       // Before there are enough games this season to estimate the league average, reuse the last one.
-      const r = solveOD(use, teams, lambdaFor(cfg, metric), priorOf, lastMu);
+      const r = solveOD(use, teams, lambdaFor(cfg, metric), priorOf, lastMu, lm);
       out.set(`${season}|${w}`, { off: r.off, def: r.def, hfa: r.hfa, mu: r.mu });
       if (!Number.isNaN(r.rawMu)) lastMu = r.rawMu;
     }

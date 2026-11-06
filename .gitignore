@@ -8,3 +8,4 @@ vite.config.ts.timestamp-*.mjs
 bot/backtest/.cache/
 hub/api/_bot.mjs
 hub/live/score.js
+scripts/totals_v2/data/

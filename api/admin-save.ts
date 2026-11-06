@@ -317,6 +317,67 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // Totals v2 log (Models → Totals → Model v2). Same rules as the DROGBA log: first save wins; overwrite replaces only
+  // games that have not kicked off.
+  if (action === "saveTotals2Picks") {
+    const { picks, overwrite } = req.body ?? {};
+    if (!Array.isArray(picks) || picks.length === 0) {
+      res.status(400).json({ error: "No picks to save" });
+      return;
+    }
+    const n = (v: any) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    const rows = picks.map((p: any) => ({
+      game_id: String(p.game_id),
+      season: Number(p.season),
+      week: Number(p.week),
+      home_team: String(p.home_team),
+      away_team: String(p.away_team),
+      model_version: p.model_version ?? null,
+      market_total: n(p.market_total),
+      market_home_spread: n(p.market_home_spread),
+      market_provider: p.market_provider ?? null,
+      proj_total: n(p.proj_total),
+      proj_home_pts: n(p.proj_home_pts),
+      proj_away_pts: n(p.proj_away_pts),
+      stats_home_pts: n(p.stats_home_pts),
+      stats_away_pts: n(p.stats_away_pts),
+      yc_home_spread: n(p.yc_home_spread),
+      open_total: n(p.open_total),
+      proj_move: n(p.proj_move),
+      weather: p.weather && typeof p.weather === "object" ? p.weather : null,
+    }));
+    if (rows.some((r: any) => !r.game_id || !Number.isFinite(r.season) || !Number.isFinite(r.week) || r.proj_total == null)) {
+      res.status(400).json({ error: "Every pick needs game_id, season, week and proj_total" });
+      return;
+    }
+    try {
+      const existing = new Set<string>();
+      const started = new Set<string>();
+      for (let i = 0; i < rows.length; i += 200) {
+        const ids = rows.slice(i, i + 200).map((r: any) => r.game_id);
+        const { data, error } = await supabaseAdmin.from("totals2_picks").select("game_id").in("game_id", ids);
+        if (error) throw error;
+        for (const d of data ?? []) existing.add(d.game_id);
+        const { data: gs, error: ge } = await supabaseAdmin.from("games").select("id, start_date").in("id", ids);
+        if (ge) throw ge;
+        for (const g of gs ?? []) if (g.start_date && Date.parse(g.start_date) <= Date.now()) started.add(String(g.id));
+      }
+      // A game that has kicked off is never written — not even the first time — so nothing is logged after the fact.
+      const toWrite = rows.filter((r: any) => !started.has(r.game_id) && (!existing.has(r.game_id) || overwrite));
+      if (toWrite.length > 0) {
+        const { error } = await supabaseAdmin
+          .from("totals2_picks")
+          .upsert(toWrite.map((r: any) => ({ ...r, created_at: new Date().toISOString() })), { onConflict: "game_id" });
+        if (error) throw error;
+      }
+      const overwritten = toWrite.filter((r: any) => existing.has(r.game_id)).length;
+      res.status(200).json({ ok: true, saved: toWrite.length - overwritten, overwritten, skippedExisting: rows.filter((r: any) => existing.has(r.game_id) && !overwrite).length, skippedStarted: rows.filter((r: any) => started.has(r.game_id)).length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message ?? "Save failed" });
+    }
+    return;
+  }
+
   // DROGBA picks log. The point of the log is a record of what the model said while the line was
   // open, so by default a game that is already logged is left alone (first save wins); the caller must
   // pass overwrite: true — the page asks for confirmation first — to replace existing rows.

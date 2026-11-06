@@ -71,11 +71,11 @@ export function computeCoverage(games: DGame[], adv: RawAdvRow[], preseason: Raw
 // no PPA on special-teams plays, and punt/kickoff yardage on those plays isn't kick distance, so the net spot is taken
 // from where the receiving offense started its next drive). A yard of field position is worth about 0.05 points.
 const PTS_PER_YARD = 0.05;
-interface KickAverages {
+export interface KickAverages {
   punt: number;
   ko: number;
 }
-function kickAverages(plays: RawPlayAggRow[]): KickAverages {
+export function kickAverages(plays: RawPlayAggRow[]): KickAverages {
   let ps = 0, pn = 0, ks = 0, kn = 0;
   for (const p of plays) {
     ps += Number(p.st_punt_net_yds ?? 0);
@@ -85,7 +85,7 @@ function kickAverages(plays: RawPlayAggRow[]): KickAverages {
   }
   return { punt: pn >= 300 ? ps / pn : NaN, ko: kn >= 300 ? ks / kn : NaN };
 }
-function stValue(p: RawPlayAggRow, avg: KickAverages): number | null {
+export function stValue(p: RawPlayAggRow, avg: KickAverages): number | null {
   if (p.st_n == null && p.st_fg_att == null) return null;
   let v = (p.st_fg_pts_over ?? 0) + (p.st_ppa_sum ?? 0);
   const pn = Number(p.st_punt_net_n ?? 0);
@@ -95,7 +95,7 @@ function stValue(p: RawPlayAggRow, avg: KickAverages): number | null {
   return v;
 }
 
-const ST_CONFIG: MarginRatingConfig = { lambda: 6, rho: 0.5, cap: 10, hfa: 0, newTeamPrior: 0 };
+export const ST_CONFIG: MarginRatingConfig = { lambda: 6, rho: 0.5, cap: 10, hfa: 0, newTeamPrior: 0 };
 
 export function buildEngine(inp: EngineInputs, opts: EngineOptions = {}): Engine {
   const coverage = computeCoverage(inp.games, inp.adv, inp.preseason, inp.plays);
