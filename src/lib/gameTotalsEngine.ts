@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { hfaFor } from "./odds";
 import { useWeeklyStats } from "./api/weeklyStats";
 import { fetchGameProjectionLocks, type GameProjectionLockRow } from "./api/gameProjectionLocks";
+import { fetchTotals2ProjectionMap, type Totals2ProjectionRow } from "./api/totals2Projections";
 import {
   fetchTeamSeasonInputs,
   fetchGamesForTotals,
@@ -48,6 +49,15 @@ export interface EnrichedGameRow {
   odds: GameOdds;
   actualTotal: number | null;
   myHomeSpread: number | null;
+  // Totals v2 (the site's totals model): the stored row this game's projected total came from. null = no v2 row yet,
+  // and the total is the archived v1 model's.
+  v2?: Totals2ProjectionRow | null;
+}
+
+// Team totals split the game total by the MARKET spread (Totals v2's rule: the model says whether there are more or
+// fewer points, the market decides how they divide). Falls back to my spread only when no market spread is posted.
+export function teamSplitSpread(row: EnrichedGameRow): number {
+  return row.game.homeSpread ?? row.myHomeSpread ?? 0;
 }
 
 // A saved settings row from before the ground-up rewrite would have
@@ -100,7 +110,8 @@ function computeEnrichedRows(
   teamInputs: Record<string, TeamSeasonInputs>,
   league: LeagueAverages,
   liveByTeam: Record<string, any>,
-  restDaysByGame: Map<string, number>
+  restDaysByGame: Map<string, number>,
+  v2Map: Map<string, Totals2ProjectionRow> = new Map()
 ): EnrichedGameRow[] {
   return games.map((game) => {
     const home = teamInputs[game.homeTeam] ?? null;
@@ -114,8 +125,9 @@ function computeEnrichedRows(
     const myHomeSpread =
       homeRating != null && awayRating != null ? homeRating - awayRating - (game.neutralSite ? 0 : hfaFor(game.homeTeam, liveByTeam)) : null;
 
+    const v2 = v2Map.get(game.id) ?? null;
     if (!home || !away) {
-      return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread };
+      return { game, home, away, homeEfficiencyInputs: null, awayEfficiencyInputs: null, projection: null, odds, actualTotal, myHomeSpread, v2 };
     }
 
     const context = {
@@ -124,6 +136,12 @@ function computeEnrichedRows(
       awayRestDays: restDaysByGame.get(`${game.awayTeam}|${game.id}`) ?? 7,
     };
     const projection = computeGameProjection(home, away, league, odds, context);
+    // Totals v2 is the site's totals model: the projected total is the CURRENT line plus v2's expected residual (the
+    // market carries a weight of exactly 1). The v1 Ridge number above is kept only for the archived v1 pages.
+    if (v2 && v2.resid_total != null) {
+      const base = odds.vegasTotal ?? v2.line_total;
+      if (base != null) projection.projectedTotal = base + v2.resid_total;
+    }
 
     return {
       game,
@@ -135,12 +153,13 @@ function computeEnrichedRows(
       odds,
       actualTotal,
       myHomeSpread,
+      v2,
     };
   });
 }
 
 export function useGameTotalsEngine(season: number) {
-  const [rawRows, setRawRows] = useState<{ teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[] } | null>(null);
+  const [rawRows, setRawRows] = useState<{ teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[]; v2: Map<string, Totals2ProjectionRow> } | null>(null);
   const [settings, setSettingsState] = useState<GameTotalsSettings>(DEFAULT_GAME_TOTALS_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -149,9 +168,9 @@ export function useGameTotalsEngine(season: number) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchTeamSeasonInputs(season), fetchGamesForTotals(season), fetchGameTotalsSettings(season)])
-      .then(([teamInputs, games, savedSettings]) => {
-        setRawRows({ teamInputs, games });
+    Promise.all([fetchTeamSeasonInputs(season), fetchGamesForTotals(season), fetchGameTotalsSettings(season), fetchTotals2ProjectionMap(season)])
+      .then(([teamInputs, games, savedSettings, v2]) => {
+        setRawRows({ teamInputs, games, v2 });
         if (savedSettings) {
           setSettingsState({ ...DEFAULT_GAME_TOTALS_SETTINGS, ...savedSettings, weights: normalizeWeights(savedSettings.weights) });
         }
@@ -169,7 +188,7 @@ export function useGameTotalsEngine(season: number) {
 
   const rows: EnrichedGameRow[] = useMemo(() => {
     if (!rawRows || !league) return [];
-    return computeEnrichedRows(rawRows.games, rawRows.teamInputs, league, liveByTeam, restDaysByGame);
+    return computeEnrichedRows(rawRows.games, rawRows.teamInputs, league, liveByTeam, restDaysByGame, rawRows.v2);
   }, [rawRows, league, liveByTeam, settings, restDaysByGame]);
 
   return { rows, settings, setSettings: setSettingsState, loading, error };
@@ -193,7 +212,7 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
   // affect the (cheap, client-side) enrichment step, same as
   // useGameTotalsEngine's own rows useMemo does.
   const [perSeasonRaw, setPerSeasonRaw] = useState<
-    { season: number; teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[]; locks: Record<string, GameProjectionLockRow> }[]
+    { season: number; teamInputs: Record<string, TeamSeasonInputs>; games: GameForTotals[]; locks: Record<string, GameProjectionLockRow>; v2: Map<string, Totals2ProjectionRow> }[]
   >([]);
   const [settings, setSettings] = useState<GameTotalsSettings>(DEFAULT_GAME_TOTALS_SETTINGS);
   const [loading, setLoading] = useState(true);
@@ -222,15 +241,15 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
             // what let the same "Week 1" query show different numbers
             // moments apart (team_season_stats had just been touched).
             const weekNumbers = Array.from(new Set(games.map((g) => g.week)));
-            const locks = await fetchGameProjectionLocks(season, weekNumbers);
-            return { season, teamInputs, games, savedSettings, locks };
+            const [locks, v2] = await Promise.all([fetchGameProjectionLocks(season, weekNumbers), fetchTotals2ProjectionMap(season)]);
+            return { season, teamInputs, games, savedSettings, locks, v2 };
           }
         )
       )
     )
       .then((perSeason) => {
         if (cancelled) return;
-        setPerSeasonRaw(perSeason.map(({ season, teamInputs, games, locks }) => ({ season, teamInputs, games, locks })));
+        setPerSeasonRaw(perSeason.map(({ season, teamInputs, games, locks, v2 }) => ({ season, teamInputs, games, locks, v2 })));
         const savedSettings = perSeason[0]?.savedSettings;
         setSettings(
           savedSettings
@@ -251,10 +270,10 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
 
   const rows: EnrichedGameRow[] = useMemo(() => {
     const allRows: EnrichedGameRow[] = [];
-    for (const { games, teamInputs, locks } of perSeasonRaw) {
+    for (const { games, teamInputs, locks, v2 } of perSeasonRaw) {
       const league = computeLeagueAverages(Object.values(teamInputs));
       const restDaysByGame = computeRestDaysByGame(games);
-      const enriched = computeEnrichedRows(games, teamInputs, league, liveByTeam, restDaysByGame);
+      const enriched = computeEnrichedRows(games, teamInputs, league, liveByTeam, restDaysByGame, v2);
 
       // Keyed by week|home|away only (no season) — safe here since each
       // season's locks are only ever applied to that same season's own
@@ -600,7 +619,7 @@ export function buildTeamSplitBetRows(
     actualVegasTeamTotal: number | null;
   }[] = [];
   for (const row of rows) {
-    const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
+    const mySplit = splitTeamTotal(projectedTotal(row), teamSplitSpread(row));
     const vegasSplit = splitTeamTotal(row.odds.vegasTotal, row.game.homeSpread);
     const homeIsFavorite = row.myHomeSpread == null ? null : row.myHomeSpread < 0;
     perTeamRows.push({
@@ -625,7 +644,7 @@ export function buildTeamSplitBetRows(
 
   const diffs: number[] = [];
   for (const row of poolRows) {
-    const mySplit = splitTeamTotal(projectedTotal(row), row.myHomeSpread ?? 0);
+    const mySplit = splitTeamTotal(projectedTotal(row), teamSplitSpread(row));
     const vegasSplit = splitTeamTotal(row.odds.vegasTotal, row.game.homeSpread);
     const sides = [
       { team: row.game.homeTeam, my: mySplit.home, vegas: vegasSplit.home },

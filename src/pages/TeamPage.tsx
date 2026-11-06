@@ -14,7 +14,7 @@ import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import { computeBestWorst, type BestWorstCandidate } from "../lib/bestWorst";
 import { computeHomeRoadSplits, type SplitRecord } from "../lib/homeRoadSplits";
-import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows } from "../lib/gameTotalsEngine";
+import { useGameTotalsEngine, applyLockedTotals, applyLockedSpreadToRows, teamSplitSpread } from "../lib/gameTotalsEngine";
 import { useGameProjectionLocks, type GameProjectionLockRow } from "../lib/api/gameProjectionLocks";
 import { splitTeamTotal } from "../lib/gameTotals";
 import ExportPngButton from "../components/ExportPngButton";
@@ -65,7 +65,7 @@ function ScheduleRow({ game, team, liveByTeam, projRow, lock, onNavigateTeam }: 
   // rating spread split into a home/away score), not recomputed here.
   const split =
     projRow?.projection?.projectedTotal != null
-      ? splitTeamTotal(projRow.projection.projectedTotal, projRow.myHomeSpread)
+      ? splitTeamTotal(projRow.projection.projectedTotal, teamSplitSpread(projRow))
       : null;
   const teamProjScore = split ? (isHome ? split.home : split.away) : null;
   const oppProjScore = split ? (isHome ? split.away : split.home) : null;

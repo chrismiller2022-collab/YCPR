@@ -168,7 +168,8 @@ export function useTotalsPopupData(season: number, week: number, awayTeam: strin
   const amountOff = myTotal != null && vegasUsed != null ? myTotal - vegasUsed : null;
   const stdDevOff = amountOff != null && poolStd > 0 ? amountOff / poolStd : null;
   const call: "Over" | "Under" | null = amountOff == null || amountOff === 0 ? null : amountOff > 0 ? "Over" : "Under";
-  const mySplit = splitTeamTotal(myTotal, myHomeSpread);
+  // Team totals: v2's rule — split by the market spread (fallback: mine when no market spread is posted).
+  const mySplit = splitTeamTotal(myTotal, row?.game.homeSpread ?? myHomeSpread);
   const vegasSplit = splitTeamTotal(vegasUsed, row?.game.homeSpread ?? null);
 
   const gameBets = useMemo(

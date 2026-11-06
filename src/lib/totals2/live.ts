@@ -17,6 +17,7 @@ export interface Totals2State {
   error: string | null;
   weatherNote: string | null;
   tempoNote: string | null; // set when this season has no tempo rows yet (plays pull not re-run since tempo was added)
+  freshness?: { lastCompletedWeek: number; advCoverage: number }; // share of last week's games with per-game stats pulled
   games: DGame[]; // this season's games
   markets: Map<string, Market>;
   preds: SidePred[];
@@ -28,7 +29,7 @@ export interface Totals2State {
   reload: () => void;
 }
 
-async function seasonWeather(season: number, games: DGame[]): Promise<{ map: Map<string, GameWeatherInputs>; note: string | null }> {
+async function seasonWeather(season: number, games: DGame[], sinceMs?: number): Promise<{ map: Map<string, GameWeatherInputs>; note: string | null }> {
   const [venues, teamVenues] = await Promise.all([fetchSeasonGameVenues(season), fetchTeamVenues()]);
   const byId = await fetchVenuesByIds(venues.map((v) => v.venue_id).filter((v): v is number => v != null));
   const fbsIds = new Set(games.filter((g) => g.homeFbs && g.awayFbs).map((g) => g.id));
@@ -36,6 +37,7 @@ async function seasonWeather(season: number, games: DGame[]): Promise<{ map: Map
   const reqs: WeatherRequest[] = [];
   for (const v of venues) {
     if (!fbsIds.has(v.id) || !v.start_date || v.start_time_tbd) continue;
+    if (sinceMs != null && Date.parse(v.start_date) < sinceMs) continue;
     const loc = gameLocation(v, byId as any, teamVenues as any);
     if (!loc) continue;
     if (loc.dome) map.set(v.id, { dome: true, avgWind: null, maxGust: null, precip: null, snow: null, temp: null });
@@ -57,7 +59,11 @@ async function seasonWeather(season: number, games: DGame[]): Promise<{ map: Map
 export type Totals2Data = Omit<Totals2State, "reload" | "loading" | "error">;
 
 /** Everything the page shows, for one season (also runnable outside React, e.g. from a bun check script). */
-export async function loadTotals2(season: number): Promise<Totals2Data> {
+export interface LoadOptions {
+  weatherSinceMs?: number; // only fetch weather for games kicking off after this (the scheduled job only needs upcoming games)
+}
+
+export async function loadTotals2(season: number, opts: LoadOptions = {}): Promise<Totals2Data> {
   const [raw, adv, plays, preseason, locks, picks, ttLines, tempo] = await Promise.all([
     fetchDrogbaRaw(),
     fetchTotals2Adv(),
@@ -71,7 +77,7 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
   const all = buildGames(raw.games, raw.lines);
   const games = all.filter((g) => g.season === season);
   const markets = buildMarkets(raw.lines);
-  const wx = await seasonWeather(season, games);
+  const wx = await seasonWeather(season, games, opts.weatherSinceMs);
   // Ratings are ~1-2s of solves; yield so the loading message paints first.
   await new Promise((r) => setTimeout(r, 20));
   const ratings = buildT2Ratings({ games: all.filter((g) => g.season <= season), adv, plays, preseason, tempo }, T2_CONFIG, season);
@@ -86,12 +92,18 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
   }));
   applyMarketSplit(preds);
   const ids = new Set(games.map((g) => g.id));
+  // Are last week's per-game stats in? (the auto-log waits for them, so a logged number isn't built on stale ratings)
+  const done = games.filter((g) => g.completed && g.homeFbs && g.awayFbs);
+  const lastCompletedWeek = done.length ? Math.max(...done.map((g) => g.week)) : 0;
+  const advBy = new Set(adv.filter((a) => a.off_ppa != null).map((a) => `${a.game_id}|${a.team}`));
+  const lastWeekGames = done.filter((g) => g.week === lastCompletedWeek);
+  const advCoverage = lastWeekGames.length ? lastWeekGames.filter((g) => advBy.has(`${g.id}|${g.home}`) && advBy.has(`${g.id}|${g.away}`)).length / lastWeekGames.length : 1;
   const seasonTempo = tempo.filter((t) => ids.has(t.game_id)).length;
   const tempoNote =
     seasonTempo === 0
       ? `No tempo data for ${season} yet — re-run the plays pull for this season (DROGBA → Data) so the pace input isn't read as league-average for every team.`
       : null;
-  return { weatherNote: wx.note, tempoNote, games, markets, preds, gps: pairGames(preds), weather: wx.map, locks, picks, ttLines };
+  return { weatherNote: wx.note, tempoNote, freshness: { lastCompletedWeek, advCoverage }, games, markets, preds, gps: pairGames(preds), weather: wx.map, locks, picks, ttLines };
 }
 
 export function useTotals2(season: number): Totals2State {
