@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   process.env.SUPABASE_URL = "http://sb.test";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test";
+  process.env.BOT_QUIET_HOURS = "off"; // these tests trade whatever the time of day; the quiet-hours test turns it on
 });
 
 import { marginPmf } from "../fairPrice/marginDistribution";
@@ -245,5 +246,45 @@ describe("Polymarket modes", () => {
     await runCycle();
     expect(db.bot_watchlist[0].ro_margins).toEqual({});
     expect(Object.keys(db.bot_watchlist[0].venue_margins)).not.toContain("polymarket");
+  });
+});
+
+describe("paused games", () => {
+  it("grades a played game that still has an open fill, and doesn't query fully graded ones one by one", async () => {
+    const past = new Date(Date.now() - 48 * 3600e3).toISOString();
+    db.bot_watchlist.push(
+      { ...watch(), id: 2, game_id: "G2", kickoff: past, enabled: false },
+      { ...watch(), id: 3, game_id: "G3", kickoff: past, enabled: false }
+    );
+    db.games.push(
+      { id: "G2", season: 2026, week: 8, home_team: "Utah", away_team: "BYU", completed: true, home_points: 30, away_points: 20, start_date: past },
+      { id: "G3", season: 2026, week: 8, home_team: "Iowa", away_team: "Wisconsin", completed: true, home_points: 10, away_points: 7, start_date: past }
+    );
+    db.bot_fills.push(
+      { id: 901, mode: "paper", game_id: "G2", venue: "kalshi", ticker: "K-H3.5", side: "home", strike: 3.5, result: null, close_mid: 0.5 },
+      { id: 902, mode: "paper", game_id: "G3", venue: "kalshi", ticker: "K-H1.5", side: "home", strike: 1.5, result: 1, close_mid: 0.6 }
+    );
+    const stub = pgStub(db);
+    vi.stubGlobal("fetch", stub.fetchStub);
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    expect(db.bot_fills.find((f) => f.id === 901)?.result).toBe(1); // home won by 10 > 3.5
+    expect(stub.calls.some((c) => c.startsWith("bot_fills?") && c.includes("game_id=eq.G3"))).toBe(false);
+  });
+});
+
+describe("quiet hours", () => {
+  it("places nothing and cancels resting orders overnight", async () => {
+    db.bot_orders.push({ id: 77, mode: "paper", game_id: "G1", venue: "kalshi", ticker: "K-H3.5", side: "home", strike: 3.5, price: 0.4, count: 1, status: "resting" });
+    process.env.BOT_QUIET_HOURS = "0-24";
+    try {
+      const { runCycle } = await import("./paper");
+      const t = await runCycle();
+      expect(t.quiet).toBe(true);
+      expect(t.placed).toBe(0);
+      expect(db.bot_fills.length).toBe(0);
+    } finally {
+      process.env.BOT_QUIET_HOURS = "off";
+    }
   });
 });

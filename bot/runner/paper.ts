@@ -17,7 +17,8 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
 import { diffOrders, paperFills, type Trade } from "./paperFills";
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
+import { isQuietHours } from "./quietHours";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -132,6 +133,7 @@ interface Book {
 }
 
 export interface CycleTotals {
+  quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -201,6 +203,17 @@ async function snapshot(gameId: string, venue: VenueId, rungs: Rung[], fairOf: (
   if (rows.length) await db.insert("bot_snapshots", rows);
 }
 
+/** Which of these games still have a fill without a result or a closing mid. */
+async function gamesWithOpenFills(gameIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < gameIds.length; i += 80) {
+    const ids = gameIds.slice(i, i + 80).join(",");
+    const rows = await db.select<{ game_id: string }>("bot_fills", `select=game_id&mode=eq.${MODE}&game_id=in.(${ids})&or=(result.is.null,close_mid.is.null)`);
+    for (const r of rows) out.add(String(r.game_id));
+  }
+  return out;
+}
+
 /**
  * After the game: grade every fill from the final score (works for any venue: a rung's YES
  * is "side wins by over strike") and record the last pregame mid on its venue for CLV.
@@ -256,6 +269,12 @@ export async function runCycle(): Promise<CycleTotals> {
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
       return totals;
     }
+    // Overnight: nothing rests or trades (ESPN finals above still run, so late games get graded).
+    if (isQuietHours()) {
+      totals.cancelled += await cancelAll();
+      console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
+      return { ...totals, quiet: true };
+    }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
       return totals;
@@ -263,8 +282,11 @@ export async function runCycle(): Promise<CycleTotals> {
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
     const strategies = await db.select<Strategy>("bot_strategies", "select=*&enabled=is.true&order=id");
-    // Paused or removed games aren't traded, but still get graded once they've kicked off.
-    for (const w of await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`)) {
+    // Paused or removed games aren't traded, but still get graded once they've kicked off. One query finds which of
+    // them still have an ungraded fill, so fully graded games (nearly all of them) cost nothing per cycle.
+    const paused = await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`);
+    const toSettle = await gamesWithOpenFills(paused.map((w) => String(w.game_id)));
+    for (const w of paused.filter((p) => toSettle.has(String(p.game_id)))) {
       try {
         await settle(w);
       } catch (err) {
@@ -644,7 +666,7 @@ export async function runCycle(): Promise<CycleTotals> {
     throw err;
   } finally {
     await db.update("bot_runs", `id=eq.${run.id}`, {
-      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: totals,
+      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: withEgress(totals),
     }).catch(() => {});
     const perVenue = Object.entries(totals.venues).map(([v, x]) => `${v} ${x!.ladders}/${x!.fills}`).join(" ");
     console.log(`games ${totals.games}, skipped ${totals.skipped}, no-edge ${totals.noEdge}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}, lab fills ${totals.labFills}, venues(ladders/fills) ${perVenue}`);

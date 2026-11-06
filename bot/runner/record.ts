@@ -7,7 +7,8 @@
 
 import { impliedHomeMargin, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueId } from "../venues";
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
+import { isQuietHours } from "./quietHours";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 
 const MODE = "record";
@@ -27,6 +28,7 @@ interface Last {
 }
 
 export interface RecordTotals {
+  quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   games: number;
   ladders: Partial<Record<VenueId, number>>;
   snaps: number;
@@ -46,6 +48,7 @@ async function pool<T>(items: T[], n: number, fn: (x: T) => Promise<void>) {
 export async function runRecord(): Promise<RecordTotals> {
   const started = Date.now();
   const totals: RecordTotals = { games: 0, ladders: {}, snaps: 0, trades: 0 };
+  if (isQuietHours()) return { ...totals, quiet: true }; // overnight: no recording, no database calls
   const recent = await db.select("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 4 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
@@ -165,7 +168,7 @@ export async function runRecord(): Promise<RecordTotals> {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(e).slice(0, 2000) });
     throw e;
   } finally {
-    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: totals }).catch(() => {});
+    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: withEgress(totals) }).catch(() => {});
     console.log(`record: games ${totals.games}, snaps ${totals.snaps}, trades ${totals.trades}, ladders ${JSON.stringify(totals.ladders)}`);
   }
   return totals;
