@@ -5,11 +5,23 @@ import { useTotals2Fast, type Totals2Fast } from "../lib/totals2/fastData";
 import { impliedPoints } from "../lib/totals2/model";
 import { BREAK_EVEN } from "../lib/totals2/report";
 import { latestTeamLines } from "../lib/totals2/ttCompare";
-import { T2_ATS, T2_BACKTEST, T2_CONFIG, T2_MOVE_CUT_TOP10, T2_TRAINED_THROUGH, T2_VERSION } from "../lib/totals2/frozen";
+import { T2_BUCKETS, T2_ATS, T2_BACKTEST, T2_CONFIG, T2_MOVE_CUT_TOP10, T2_TRAINED_THROUGH, T2_VERSION } from "../lib/totals2/frozen";
 import { saveTotals2Picks, type Totals2PickRow } from "../lib/api/totals2Data";
 import { syncTeamTotalsNow } from "../lib/api/teamTotalLines";
 import { splitTeamTotal } from "../lib/gameTotals";
 import type { Totals2ProjectionRow } from "../lib/api/totals2Projections";
+import {
+  APPROACH_LABEL,
+  BUCKET_FRACTIONS,
+  BUCKET_FRACTION_LABEL,
+  KEY_NUMBERS_USED,
+  gameBuckets,
+  strongest,
+  teamBuckets,
+  type Approach,
+  type BetObs,
+  type BucketRow,
+} from "../lib/totals2/buckets";
 import { CELL, DIM, H3, NUM, P, f1, sgn, pct } from "../components/drogba/shared";
 
 const HEAD: CSSProperties = { ...NUM, color: "var(--chalk-dim)", fontWeight: 600, cursor: "pointer", userSelect: "none" };
@@ -533,6 +545,7 @@ function RecordTab({ s, views }: { s: Totals2Fast; views: GameView[] }) {
           </div>
         </>
       )}
+      <LiveBreakdowns s={s} />
       <TTCompare s={s} views={views} />
     </div>
   );
@@ -638,6 +651,179 @@ function TTCompare({ s, views }: { s: Totals2Fast; views: GameView[] }) {
   );
 }
 
+// ------------------------------------------------------------------ Breakdowns (buckets)
+function Seg<T extends string | number>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
+      {options.map(([v, label]) => (
+        <button key={String(v)} className={`mode-btn ${value === v ? "mode-btn-active" : ""}`} onClick={() => onChange(v)} style={{ fontSize: "0.75rem" }}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BucketTable({ rows, columns }: { rows: BucketRow[][]; columns: string[] }) {
+  // rows[c] = the buckets for column c (same labels, same order)
+  const base = rows[0] ?? [];
+  let lastGroup = "";
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style={{ ...HEADL, cursor: "default" }}>Bucket</th>
+            {columns.map((c) => (
+              <th key={c} style={{ ...HEAD, cursor: "default" }}>
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {base.map((r, i) => {
+            const header = r.group !== lastGroup && r.group !== "All";
+            lastGroup = r.group;
+            return [
+              header ? (
+                <tr key={`h${i}`}>
+                  <td colSpan={columns.length + 1} style={{ ...CELL, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--chalk-dim)", paddingTop: "0.7rem" }}>
+                    {r.group}
+                  </td>
+                </tr>
+              ) : null,
+              <tr key={r.label} style={r.group === "All" ? { fontWeight: 600 } : undefined}>
+                <td style={CELL}>{r.label}</td>
+                {rows.map((col, c) => {
+                  const x = col[i];
+                  if (!x || x.w + x.l === 0) return <td key={c} style={{ ...NUM, color: "var(--chalk-dim)" }}>–</td>;
+                  const p = (100 * x.w) / (x.w + x.l);
+                  return (
+                    <td key={c} style={NUM}>
+                      <span style={winStyle(p, x.w + x.l)}>
+                        {x.w}-{x.l} · {pct(p)}
+                      </span>
+                      <span style={{ fontSize: "0.7rem", color: leanColor(x.units), marginLeft: "0.4rem" }}>
+                        {x.units >= 0 ? "+" : ""}
+                        {x.units}u
+                      </span>
+                      {x.clv != null && <span style={{ fontSize: "0.7rem", color: leanColor(x.clv), marginLeft: "0.4rem" }}>clv {sgn(x.clv, 2)}</span>}
+                    </td>
+                  );
+                })}
+              </tr>,
+            ];
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const BUCKET_INTRO = (
+  <>
+    Game totals split by over/under and by where the line sits relative to the key numbers ({KEY_NUMBERS_USED.slice().sort((a, b) => a - b).join(", ")}); team totals by
+    home/away, favorite/underdog (by the spread) and over/under, every combination. <strong>Amount off</strong> keeps only the strongest share of bets by how far the
+    model is from the line. Small buckets (faded italic) and buckets that only work in one period are usually luck — a pattern worth acting on should hold in both
+    the tuning and the holdout seasons.
+  </>
+);
+
+function BacktestBreakdowns() {
+  const [scope, setScope] = useState<"game" | "team">("game");
+  const [approach, setApproach] = useState<Approach>("move");
+  const [frac, setFrac] = useState(0.1);
+  const PERIODS: [string, string][] = [
+    ["2023+2024", "Tuning 2023–24"],
+    ["2025+2026", "Holdout 2025–26"],
+    ["2023+2024+2025+2026", "All 2023–26"],
+  ];
+  const pick = (seasons: string) => T2_BUCKETS.find((b) => b.seasons === seasons && b.approach === approach && b.scope === scope && b.frac === frac);
+  const cols = PERIODS.map(([k]) => pick(k));
+  const minEdge = cols[2]?.minEdge;
+  return (
+    <>
+      <h2 style={{ ...H3, fontSize: "1.1rem" }}>Breakdowns</h2>
+      <p style={{ ...DIM, marginTop: 0 }}>{BUCKET_INTRO}</p>
+      <div style={{ display: "grid", gap: "0.4rem", margin: "0.5rem 0 0.8rem" }}>
+        <Seg<"game" | "team"> value={scope} onChange={setScope} options={[["game", "Game totals"], ["team", "Team totals"]]} />
+        <Seg<Approach> value={approach} onChange={setApproach} options={(["move", "open", "close"] as Approach[]).map((a) => [a, APPROACH_LABEL[a]] as [Approach, string])} />
+        <Seg<number> value={frac} onChange={setFrac} options={BUCKET_FRACTIONS.map((f) => [f, `Amount off: ${BUCKET_FRACTION_LABEL[f]}`] as [number, string])} />
+      </div>
+      {frac < 1 && minEdge != null && <p style={{ ...DIM, marginTop: 0 }}>At this level the amount off is at least {minEdge} points (all 2023–26).</p>}
+      <BucketTable rows={cols.map((c) => c?.rows ?? [])} columns={PERIODS.map(([, l]) => l)} />
+    </>
+  );
+}
+
+// Live breakdowns from the log: each logged game's line-move lean, graded at the opening total it was logged with.
+function liveBetObs(s: Totals2Fast): { game: BetObs[]; team: BetObs[] } {
+  const game: BetObs[] = [];
+  const team: BetObs[] = [];
+  for (const p of s.picks) {
+    const g = s.games.get(p.game_id);
+    const m = s.markets.get(p.game_id);
+    if (!g?.completed || g.home_points == null || g.away_points == null || p.proj_move == null || p.proj_move === 0) continue;
+    const open = p.open_total ?? p.market_total;
+    if (open == null) continue;
+    const dir: 1 | -1 = p.proj_move > 0 ? 1 : -1;
+    game.push({ kind: "game", dir, edge: p.proj_move, res: g.home_points + g.away_points - open, line: open, clv: m?.closeTotal != null ? dir * (m.closeTotal - open) : null });
+    const spread = m?.openSpread ?? p.market_home_spread;
+    if (spread == null) continue;
+    for (const side of ["home", "away"] as const) {
+      const line = impliedPoints(open, spread, side);
+      const closeImp = m?.closeTotal != null && m.closeSpread != null ? impliedPoints(m.closeTotal, m.closeSpread, side) : null;
+      const sideSpread = side === "home" ? spread : -spread;
+      team.push({
+        kind: "team",
+        dir,
+        edge: p.proj_move / 2, // team numbers share the game's lean evenly (market split)
+        res: (side === "home" ? g.home_points : g.away_points) - line,
+        line,
+        clv: closeImp != null ? dir * (closeImp - line) : null,
+        home: side === "home",
+        fav: sideSpread === 0 ? null : sideSpread < 0,
+      });
+    }
+  }
+  return { game, team };
+}
+
+function LiveBreakdowns({ s }: { s: Totals2Fast }) {
+  const [scope, setScope] = useState<"game" | "team">("game");
+  const [cut, setCut] = useState<"star" | "all">("star");
+  const obs = useMemo(() => liveBetObs(s), [s]);
+  const list = scope === "game" ? obs.game : obs.team;
+  const thr = scope === "game" ? T2_MOVE_CUT_TOP10 : T2_MOVE_CUT_TOP10 / 2;
+  const kept = cut === "star" ? list.filter((x) => Math.abs(x.edge) >= thr) : list;
+  const fracRows = (f: number) => {
+    const k = strongest(list, f).obs;
+    return scope === "game" ? gameBuckets(k) : teamBuckets(k);
+  };
+  return (
+    <>
+      <h3 style={H3}>Breakdowns — this season, from the log</h3>
+      <p style={{ ...DIM, marginTop: 0 }}>
+        Same buckets as the Backtest tab, for the games logged this season. Team totals take the game's lean (both teams the same way, graded at each team's share
+        of the opening total). Expect small samples for a while.
+      </p>
+      <div style={{ display: "grid", gap: "0.4rem", margin: "0.5rem 0 0.8rem" }}>
+        <Seg<"game" | "team"> value={scope} onChange={setScope} options={[["game", "Game totals"], ["team", "Team totals"]]} />
+        <Seg<"star" | "all"> value={cut} onChange={setCut} options={[["star", `Amount off: ★ only (≥ ${thr.toFixed(2)})`], ["all", "Amount off: every bet"]]} />
+      </div>
+      {list.length === 0 ? (
+        <p style={DIM}>No logged games have been played yet.</p>
+      ) : (
+        <BucketTable
+          rows={[scope === "game" ? gameBuckets(kept) : teamBuckets(kept), fracRows(0.5), fracRows(0.25)]}
+          columns={[cut === "star" ? "★ bets" : "Every bet", "Strongest 50%", "Strongest 25%"]}
+        />
+      )}
+    </>
+  );
+}
+
 // ------------------------------------------------------------------ Backtest
 const APPROACHES: { scope: "game" | "team"; market: (typeof T2_ATS)[number]["market"]; name: string; what: string; verdict: string }[] = [
   {
@@ -710,6 +896,8 @@ function BacktestTab() {
           </button>
         ))}
       </div>
+      <BacktestBreakdowns />
+      <h2 style={{ ...H3, fontSize: "1.1rem", marginTop: "2rem" }}>Overall record by approach</h2>
       {(["game", "team"] as const).map((scope) => (
         <div key={scope}>
           <h3 style={H3}>{scope === "game" ? "Game totals" : "Team totals"}</h3>
