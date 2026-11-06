@@ -8,6 +8,7 @@
 import { oddsToProb, prophetxAdapter, prophetxClient } from "../venues/prophetx";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
+import { errorLines, notifyErrors, notifyFailure } from "./notify";
 
 const MODE = "pxtape";
 const iso = () => new Date().toISOString();
@@ -191,12 +192,14 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
       (ws as WebSocket | null)?.close();
     } catch {}
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.strikes ? 1 : 0, fills: totals.trades, error: totals.error ?? null, summary: withEgress(totals) }).catch(() => {});
+    await notifyErrors("ProphetX tape", errorLines(totals));
     console.log(`pxtape: trades ${totals.trades}, unmatched ${totals.unmatched}, frames ${totals.frames}, channels ${totals.channels}`);
   }
   return totals;
 }
 
-if (process.argv[1]?.endsWith("pxtape.ts")) runPxTape(Number(process.env.BOT_TAPE_BUDGET_MS) || 280e3).catch((e) => {
+if (process.argv[1]?.endsWith("pxtape.ts")) runPxTape(Number(process.env.BOT_TAPE_BUDGET_MS) || 280e3).catch(async (e) => {
   console.error(e instanceof Error ? e.message.split(":")[0] : "tape failed");
+  await notifyFailure("ProphetX tape", e);
   process.exit(1);
 });

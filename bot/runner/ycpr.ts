@@ -9,12 +9,10 @@
 // Returned as the AWAY spread (negative = away favored), which is also the
 // projected home margin (home − away) used by the bot internally.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { computeRow } from "../../src/lib/matchupsCompute";
 import { DEFAULT_CUSTOM_PARAMS } from "../../src/lib/betHistory";
 import { db } from "./io";
+import { readState, writeState } from "./localState";
 
 export interface YcprGame {
   id: string | number;
@@ -40,7 +38,6 @@ const labelNumber = (w: string) => (w === "preseason" ? 0 : /^week(\d+)$/.test(w
 // update.
 // ---------------------------------------------------------------------
 const MAX_AGE_MS = 6 * 3600_000;
-const CACHE_DIR = process.env.BOT_CACHE_DIR || join(tmpdir(), "ycpr-bot-cache");
 
 interface RatingsCache {
   token: string; // newest updated_at of season_weekly_ratings (this season) | weekly_team_stats
@@ -51,26 +48,15 @@ interface RatingsCache {
 }
 
 const memory = new Map<number, RatingsCache>();
-const cacheFile = (season: number) => join(CACHE_DIR, `ratings-${season}.json`);
+const cacheFile = (season: number) => `ratings-${season}.json`;
 
 function readCache(season: number): RatingsCache | null {
-  const m = memory.get(season);
-  if (m) return m;
-  try {
-    return JSON.parse(readFileSync(cacheFile(season), "utf8")) as RatingsCache;
-  } catch {
-    return null;
-  }
+  return memory.get(season) ?? readState<RatingsCache>(cacheFile(season));
 }
 
 function writeCache(season: number, c: RatingsCache) {
   memory.set(season, c);
-  try {
-    mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(cacheFile(season), JSON.stringify(c));
-  } catch {
-    // read-only or no disk: the in-memory copy still saves repeat reads within this process
-  }
+  writeState(cacheFile(season), c);
 }
 
 async function freshnessToken(season: number): Promise<string> {

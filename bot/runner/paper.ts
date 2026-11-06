@@ -19,6 +19,7 @@ import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder
 import { diffOrders, paperFills, type Trade } from "./paperFills";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
+import { errorLines, maybeUsageReport, notifyErrors, notifyFailure } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -265,6 +266,8 @@ export async function runCycle(): Promise<CycleTotals> {
     } catch (err) {
       (totals.gameErrors ??= []).push(`ESPN finals: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
     }
+    // Yesterday's usage to #usage, once a day after 9am Eastern (skips itself otherwise).
+    await maybeUsageReport().catch((err) => (totals.gameErrors ??= []).push(`usage report: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`));
     if (state?.kill_switch) {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
@@ -670,13 +673,15 @@ export async function runCycle(): Promise<CycleTotals> {
     await db.update("bot_runs", `id=eq.${run.id}`, {
       finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: withEgress(totals),
     }).catch(() => {});
+    await notifyErrors("paper", errorLines(totals));
     const perVenue = Object.entries(totals.venues).map(([v, x]) => `${v} ${x!.ladders}/${x!.fills}`).join(" ");
     console.log(`games ${totals.games}, skipped ${totals.skipped}, no-edge ${totals.noEdge}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}, lab fills ${totals.labFills}, venues(ladders/fills) ${perVenue}`);
   }
   return totals;
 }
 
-if (process.argv[1]?.endsWith("paper.ts")) runCycle().catch((err) => {
+if (process.argv[1]?.endsWith("paper.ts")) runCycle().catch(async (err) => {
   console.error(err instanceof Error ? err.message.split(":")[0] : "run failed");
+  await notifyFailure("paper", err);
   process.exit(1);
 });
