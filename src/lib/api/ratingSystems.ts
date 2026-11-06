@@ -289,6 +289,24 @@ export function saveRatingWeek(season: number, week: number, rows: RatingSaveRow
   return authedPost("weekSave", { season, week, rows });
 }
 
+/** Save the standardized YC history (system_key "yc_std") for any number of weeks. Admin only. */
+export function saveStdHistory(season: number, rows: { week: number; team: string; division?: string | null; conference?: string | null; value: number }[]) {
+  return authedPost("stdHistorySave", { season, rows });
+}
+
+/** The saved standardized YC history for a season (system_key "yc_std" only — a few thousand rows). */
+export async function fetchStdHistory(season: number): Promise<WeeklyPowerRatingRow[]> {
+  return fetchAllRows<WeeklyPowerRatingRow>((from, to) =>
+    supabase
+      .from("weekly_power_ratings")
+      .select("season, week, team, division, conference, system_key, value")
+      .eq("season", season)
+      .eq("system_key", "yc_std")
+      .order("id")
+      .range(from, to)
+  );
+}
+
 export interface WeeklyPowerRatingRow {
   season: number;
   week: number;

@@ -85,7 +85,13 @@ export function useBetHistoryRecords(hfaMode: HfaMode = "team", lineMode: LineMo
   // What the page grades: the standardized backtest once it's loaded, else as rated.
   const records = standardizedRecords ?? asRatedRecords;
   const recordsLocked = standardizedRecords ?? asRatedRecordsLocked;
-  const loading = LIVE_SEASONS.length > 0 && Object.keys(liveGamesBySeason).length === 0;
+  // Still loading until the games AND each live season's week-by-week ratings are in — otherwise the first render
+  // grades every game on the static fallback ratings and the numbers visibly jump a few seconds later.
+  const ratingsLoading =
+    (LIVE_SEASONS.includes(BET_HISTORY_SEASONS[0]) && seasonRatings0.loading) ||
+    (LIVE_SEASONS.includes(BET_HISTORY_SEASONS[1]) && seasonRatings1.loading) ||
+    (LIVE_SEASONS.includes(BET_HISTORY_SEASONS[2]) && seasonRatings2.loading);
+  const loading = (LIVE_SEASONS.length > 0 && Object.keys(liveGamesBySeason).length === 0) || ratingsLoading || stdLoading;
 
   return {
     records,
@@ -100,6 +106,5 @@ export function useBetHistoryRecords(hfaMode: HfaMode = "team", lineMode: LineMo
     standardizedSeason: currentSeason,
     standardizedLoading: stdLoading,
     standardizedError: stdError,
-    standardizedMultiplier: stdYc?.multiplier ?? null,
   };
 }

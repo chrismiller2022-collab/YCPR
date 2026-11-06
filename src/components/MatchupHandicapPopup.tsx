@@ -1,11 +1,11 @@
+import { fetchStandardizedSnapshotAtOrBefore } from "../lib/standardizedYc";
 import TeamLogo from "./TeamLogo";
 import { useMatchupHandicap, type RankInfo, type RecordSplit, type TeamHandicap, type SpreadCallCategoryInfo, type QuadrantInfo } from "../lib/handicapping";
 import { CATEGORY_LABELS, winPctOf, type CategoryTally } from "../lib/spreadCategoryStats";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { fetchCoachGameLog, fmtRec, tallyCoachRows, type LogRow, type SplitKey } from "../lib/coachRecords";
-import { fetchSavedRatingsAtOrBefore } from "../lib/api/ratingSystems";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
-import { buildRatingsByTeam, computeMultiSystemRow, type MultiSystemGameRow } from "../lib/multiRatingMatchups";
+import { computeMultiSystemRow, type MultiSystemGameRow } from "../lib/multiRatingMatchups";
 import { RATING_SYSTEMS } from "../lib/ratingSystems";
 import { computeDomain, SpreadChartHeader, SpreadChartRow } from "./SystemSpreadChart";
 import type { GameWithLines } from "../lib/api/gamesLines";
@@ -672,9 +672,10 @@ function SystemScatterSection({ season, week, game }: { season: number; week: nu
   useEffect(() => {
     let cancelled = false;
     setSnapshot(null);
-    fetchSavedRatingsAtOrBefore(season, week)
-      .then(({ week: usedWeek, rows }) => {
-        if (!cancelled) setSnapshot({ week: usedWeek, byTeam: buildRatingsByTeam(rows) });
+    // Standardized: every system as SDs from its FBS average × points per SD (same scale as YC).
+    fetchStandardizedSnapshotAtOrBefore(season, week)
+      .then((snap) => {
+        if (!cancelled) setSnapshot(snap);
       })
       .catch(() => {
         if (!cancelled) setSnapshot({ week: null, byTeam: {} });

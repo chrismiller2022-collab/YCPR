@@ -1,12 +1,12 @@
+import { fetchStandardizedSnapshotAtOrBefore } from "./standardizedYc";
 import { useEffect, useMemo, useState } from "react";
 import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
 import { computeRow, classOf, pickLine } from "./matchupsCompute";
 import { useWeekAccurateRatings } from "./weekAccurateRatings";
 import { useGameProjectionLocks } from "./api/gameProjectionLocks";
 import { useGameTotalsEngine } from "./gameTotalsEngine";
-import { fetchSavedRatingsAtOrBefore } from "./api/ratingSystems";
 import { useWeeklyStats } from "./api/weeklyStats";
-import { buildRatingsByTeam, computeMultiSystemRow } from "./multiRatingMatchups";
+import { computeMultiSystemRow } from "./multiRatingMatchups";
 import { DEFAULT_CUSTOM_PARAMS } from "./betHistory";
 import { buildPoolReport, buildSeasonStats, type ReportGame, type ReportGameInput, type SeasonGame } from "./poolReport";
 
@@ -45,8 +45,9 @@ export function usePoolReport(season: number, week: number, slate: PoolSlateGame
   useEffect(() => {
     let cancelled = false;
     setSystems(null);
-    fetchSavedRatingsAtOrBefore(season, week)
-      .then(({ week: usedWeek, rows }) => !cancelled && setSystems({ week: usedWeek, byTeam: buildRatingsByTeam(rows) }))
+    // Standardized: every system as SDs from its FBS average × points per SD (same scale as YC).
+    fetchStandardizedSnapshotAtOrBefore(season, week)
+      .then((snap) => !cancelled && setSystems(snap))
       .catch(() => !cancelled && setSystems({ week: null, byTeam: {} }));
     return () => {
       cancelled = true;

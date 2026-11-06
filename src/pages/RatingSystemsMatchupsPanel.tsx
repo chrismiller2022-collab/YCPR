@@ -640,14 +640,15 @@ function SingleSystemTab({
 // shared multiplier. Applies to every tab; the multiplier is remembered per
 // browser.
 // ---------------------------------------------------------------------
-const STD_PREFS_KEY = "ratingSystemsMatchups.std";
+// v2: standardized became the default (the old key remembered "raw" for everyone who'd opened the page).
+const STD_PREFS_KEY = "ratingSystemsMatchups.std.v2";
 function loadStdPrefs(): { mode: "raw" | "std"; multiplier: number; scaleStat: ScaleStat } {
-  const fallback = { mode: "raw" as const, multiplier: DEFAULT_STD_MULTIPLIER, scaleStat: "sd" as ScaleStat };
+  const fallback = { mode: "std" as const, multiplier: DEFAULT_STD_MULTIPLIER, scaleStat: "sd" as ScaleStat };
   try {
     const saved = JSON.parse(localStorage.getItem(STD_PREFS_KEY) ?? "null");
     if (!saved) return fallback;
     return {
-      mode: saved.mode === "std" ? "std" : "raw",
+      mode: saved.mode === "raw" ? "raw" : "std",
       multiplier: Number.isFinite(saved.multiplier) && saved.multiplier > 0 ? saved.multiplier : DEFAULT_STD_MULTIPLIER,
       scaleStat: saved.scaleStat === "mad" ? "mad" : "sd",
     };
