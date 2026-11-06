@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDefaultToAdminWeek } from "../lib/adminWeek";
 import TeamLink from "../components/TeamLink";
 import { TEAMS_BY_NAME, CONFERENCES } from "../data/teams";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
-import { fetchWeeklyPowerRatings, type WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
+import { fetchRatingWeights, fetchWeeklyPowerRatings, type WeeklyPowerRatingRow } from "../lib/api/ratingSystems";
+import { DEFAULT_STD_MULTIPLIER, standardizeWeeks, type ScaleStat } from "../lib/ratingStandardize";
+import StandardizedStudyTab from "../components/StandardizedStudyTab";
+import StdDevsTab from "../components/StdDevsTab";
 import { RATING_SYSTEMS } from "../lib/ratingSystems";
 import {
   buildRatingsByTeam,
@@ -632,13 +635,87 @@ function SingleSystemTab({
 }
 
 // ---------------------------------------------------------------------
+// Raw / Standardized switch. Standardized = each system's saved value as
+// SDs from that week's FBS average (see lib/ratingStandardize.ts), times one
+// shared multiplier. Applies to every tab; the multiplier is remembered per
+// browser.
+// ---------------------------------------------------------------------
+const STD_PREFS_KEY = "ratingSystemsMatchups.std";
+function loadStdPrefs(): { mode: "raw" | "std"; multiplier: number; scaleStat: ScaleStat } {
+  const fallback = { mode: "raw" as const, multiplier: DEFAULT_STD_MULTIPLIER, scaleStat: "sd" as ScaleStat };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STD_PREFS_KEY) ?? "null");
+    if (!saved) return fallback;
+    return {
+      mode: saved.mode === "std" ? "std" : "raw",
+      multiplier: Number.isFinite(saved.multiplier) && saved.multiplier > 0 ? saved.multiplier : DEFAULT_STD_MULTIPLIER,
+      scaleStat: saved.scaleStat === "mad" ? "mad" : "sd",
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function StdControls({ mode, setMode, multiplier, setMultiplier, scaleStat, setScaleStat }: any) {
+  const [draft, setDraft] = useState(String(multiplier));
+  useEffect(() => setDraft(String(multiplier)), [multiplier]);
+  const commit = () => {
+    const v = parseFloat(draft);
+    if (Number.isFinite(v) && v > 0) setMultiplier(v);
+    else setDraft(String(multiplier));
+  };
+  return (
+    <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1rem", fontSize: "0.85rem" }}>
+      <span>Ratings:</span>
+      <button className={`mode-btn ${mode === "raw" ? "mode-btn-active" : ""}`} onClick={() => setMode("raw")}>
+        Raw (as saved)
+      </button>
+      <button className={`mode-btn ${mode === "std" ? "mode-btn-active" : ""}`} onClick={() => setMode("std")}>
+        Standardized
+      </button>
+      <label title="Points per standard deviation, applied to every system">
+        Multiplier ×{" "}
+        <input
+          type="number"
+          step={0.5}
+          min={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === "Enter" && commit()}
+          style={{ width: 70 }}
+        />
+      </label>
+      <select value={scaleStat} onChange={(e) => setScaleStat(e.target.value as ScaleStat)} title="How each system's spread is measured">
+        <option value="sd">Std dev</option>
+        <option value="mad">Robust (MAD)</option>
+      </select>
+      <span style={{ color: "var(--chalk-dim)", fontSize: "0.78rem" }}>
+        {mode === "std"
+          ? `Every tab is using standardized ratings: SDs from the FBS average × ${multiplier}. The SD values themselves are on the Std Devs tab.`
+          : "Std Study and Std Devs work regardless of this switch."}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Top-level panel.
 // ---------------------------------------------------------------------
 export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => void }) {
   const [season, setSeason] = useState(new Date().getFullYear());
   const [week, setWeek] = useState<"all" | number>("all");
   useDefaultToAdminWeek(setWeek);
-  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results" | "system">("spreads");
+  const [tab, setTab] = useState<"spreads" | "spreadchart" | "amountoff" | "cover" | "filtered" | "nwfb" | "results" | "system" | "stdstudy" | "stddevs">("spreads");
+  const [stdPrefs, setStdPrefs] = useState(loadStdPrefs);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STD_PREFS_KEY, JSON.stringify(stdPrefs));
+    } catch {
+      // storage unavailable — the switch still works for this visit
+    }
+  }, [stdPrefs]);
+  const [weights, setWeights] = useState<Record<string, number> | null>(null);
   const [systemKey, setSystemKey] = useState("yc");
   const [divFilter, setDivFilter] = useState<"all" | "FBS" | "FCS">("FBS");
   const [confFilter, setConfFilter] = useState("");
@@ -652,10 +729,11 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([fetchGamesWithLines(season), fetchWeeklyPowerRatings(season)])
-      .then(([g, w]) => {
+    Promise.all([fetchGamesWithLines(season), fetchWeeklyPowerRatings(season), fetchRatingWeights().catch(() => null)])
+      .then(([g, w, wt]) => {
         setGames(g);
         setWeekly(w);
+        setWeights(wt);
       })
       .catch((err) => setError(err.message ?? "Failed to load"))
       .finally(() => setLoading(false));
@@ -666,7 +744,7 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
   // Group ratings by week so each game is graded against ITS OWN week's
   // saved snapshot — ratings move week to week, so a season-wide grade
   // has to use whichever week's numbers were actually live for that game.
-  const ratingsByWeek = useMemo(() => {
+  const rawRatingsByWeek = useMemo(() => {
     const byWeek = new Map<number, WeeklyPowerRatingRow[]>();
     for (const r of weekly) {
       const list = byWeek.get(r.week) ?? [];
@@ -678,13 +756,26 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
     return out;
   }, [weekly]);
 
-  const passesFilters = (g: GameWithLines) => {
-    const home = TEAMS_BY_NAME[g.home_team];
-    if (!home) return false;
-    if (divFilter !== "all" && home.div !== divFilter) return false;
-    if (confFilter && home.conf !== confFilter) return false;
-    return true;
-  };
+  // Standardized view of the same snapshots (nothing saved — a lens over them).
+  const stdRatingsByWeek = useMemo(() => {
+    if (stdPrefs.mode !== "std") return null;
+    const std = standardizeWeeks(rawRatingsByWeek, { multiplier: stdPrefs.multiplier, scaleStat: stdPrefs.scaleStat, weights });
+    const out = new Map<number, Record<string, Record<string, number>>>();
+    for (const [wk, s] of std) out.set(wk, s.byTeam);
+    return out;
+  }, [rawRatingsByWeek, stdPrefs, weights]);
+  const ratingsByWeek = stdRatingsByWeek ?? rawRatingsByWeek;
+
+  const passesFilters = useCallback(
+    (g: GameWithLines) => {
+      const home = TEAMS_BY_NAME[g.home_team];
+      if (!home) return false;
+      if (divFilter !== "all" && home.div !== divFilter) return false;
+      if (confFilter && home.conf !== confFilter) return false;
+      return true;
+    },
+    [divFilter, confFilter]
+  );
 
   // Only games in a week that actually has a saved ratings snapshot can be
   // graded at all — this is expected: performance tracking builds up from
@@ -771,7 +862,22 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
         <button className={`mode-btn ${tab === "system" ? "mode-btn-active" : ""}`} onClick={() => setTab("system")}>
           Single System
         </button>
+        <button className={`mode-btn ${tab === "stdstudy" ? "mode-btn-active" : ""}`} onClick={() => setTab("stdstudy")}>
+          Std Study
+        </button>
+        <button className={`mode-btn ${tab === "stddevs" ? "mode-btn-active" : ""}`} onClick={() => setTab("stddevs")}>
+          Std Devs
+        </button>
       </div>
+
+      <StdControls
+        mode={stdPrefs.mode}
+        setMode={(mode: "raw" | "std") => setStdPrefs((p) => ({ ...p, mode }))}
+        multiplier={stdPrefs.multiplier}
+        setMultiplier={(multiplier: number) => setStdPrefs((p) => ({ ...p, multiplier }))}
+        scaleStat={stdPrefs.scaleStat}
+        setScaleStat={(scaleStat: ScaleStat) => setStdPrefs((p) => ({ ...p, scaleStat }))}
+      />
 
       <FilterBar
         season={season}
@@ -818,6 +924,28 @@ export default function RatingSystemsMatchupsPanel({ onBack }: { onBack: () => v
               systemKey={systemKey}
               setSystemKey={setSystemKey}
               weekLabel={week === "all" ? "Season" : `Week ${week}`}
+            />
+          )}
+          {tab === "stddevs" && (
+            <StdDevsTab
+              ratingsByWeek={rawRatingsByWeek}
+              weeks={savedWeeks}
+              initialWeek={typeof week === "number" && savedWeeks.includes(week) ? week : null}
+              weights={weights}
+              scaleStat={stdPrefs.scaleStat}
+              divFilter={divFilter}
+              confFilter={confFilter}
+            />
+          )}
+          {tab === "stdstudy" && (
+            <StandardizedStudyTab
+              games={games}
+              ratingsByWeek={rawRatingsByWeek}
+              liveByTeam={liveByTeam}
+              weights={weights}
+              multiplier={stdPrefs.multiplier}
+              scaleStat={stdPrefs.scaleStat}
+              include={passesFilters}
             />
           )}
         </>

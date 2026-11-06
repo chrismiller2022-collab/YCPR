@@ -4,6 +4,7 @@ import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
+import RatingMethodToggle, { useRatingMethodPref } from "../components/RatingMethodToggle";
 import { useBetHistoryRecords, BET_HISTORY_SEASONS } from "../lib/useBetHistoryRecords";
 import {
   aggregatePlain,
@@ -1323,7 +1324,18 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   // static BET_HISTORY upload only ever carried the closing line, so
   // 2024/2025 always grades against close regardless of this toggle.
   const [lineMode, setLineMode] = useState<LineMode>("close");
-  const { records: allRecords, recordsLocked: allRecordsLocked } = useBetHistoryRecords(hfaMode, lineMode);
+  // As rated (the real record) or the standardized-YC backtest — applies to every tab below.
+  const [ratingMethod, setRatingMethod] = useRatingMethodPref();
+  const {
+    records: allRecords,
+    recordsLocked: allRecordsLocked,
+    asRatedRecords,
+    standardizedRecords,
+    standardizedSeason,
+    standardizedLoading,
+    standardizedError,
+    standardizedMultiplier,
+  } = useBetHistoryRecords(hfaMode, lineMode, ratingMethod);
 
   function toggleYear(y: number) {
     setYears((prev) => {
@@ -1369,6 +1381,15 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const keyNumberStudy = useMemo(() => computeKeyNumberStudy(filtered), [filtered]);
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
   const customAgg = useMemo(() => aggregateCustom(filtered, params), [filtered, params]);
+  // Side-by-side when the standardized backtest is on: same filters, same parameters, both ways.
+  const methodCompare = useMemo(() => {
+    if (!standardizedRecords) return null;
+    return {
+      asRated: aggregateCustom(filterRecords(asRatedRecords, filters), params).overall,
+      std: aggregateCustom(filterRecords(standardizedRecords, filters), params).overall,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asRatedRecords, standardizedRecords, params, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]);
   const plainGameRows: GameTableRow[] = useMemo(
     () =>
       filtered.map((r) => ({
@@ -1491,6 +1512,48 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
             Live seasons only ({LIVE_SEASONS.join(", ")}) — {SEASONS.filter((s) => !LIVE_SEASONS.includes(s)).join("/")} keeps using
             the uploaded historical prediction (closing line only, no HFA recompute possible there).
           </span>
+        </div>
+      )}
+
+      <RatingMethodToggle
+        method={ratingMethod}
+        setMethod={setRatingMethod}
+        season={standardizedSeason}
+        loading={standardizedLoading}
+        error={standardizedError}
+        multiplier={standardizedMultiplier}
+      />
+      {methodCompare && (
+        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", border: "1px solid var(--hash)", borderRadius: 8, padding: "0.6rem 0.9rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
+          {(
+            [
+              ["everyBet", "Every Bet"],
+              ["filteredBet", "Filtered"],
+              ["weightedFilteredBet", "WFB"],
+              ["nwfb", "NWFB"],
+            ] as const
+          ).map(([k, label]) => {
+            const a = methodCompare.asRated[k];
+            const b = methodCompare.std[k];
+            const d = a.w + a.l > 0 && b.w + b.l > 0 ? winPct(b) - winPct(a) : null;
+            return (
+              <div key={k}>
+                <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+                <div>
+                  As rated <b>{fmtRecord(a)}</b> ({fmtPct(a)}) → Standardized <b>{fmtRecord(b)}</b> ({fmtPct(b)})
+                  {d != null && (
+                    <span style={{ marginLeft: "0.35rem", fontWeight: 700, color: d > 0 ? "var(--c-ok)" : d < 0 ? "var(--c-err)" : undefined }}>
+                      {d > 0 ? "+" : ""}
+                      {d.toFixed(1)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", alignSelf: "center" }}>
+            Current filters and Custom parameters. As rated here re-projects every game from that week's ratings (no locks), so only the method differs.
+          </div>
         </div>
       )}
 

@@ -20,6 +20,19 @@ export function buildRatingsByTeam(weekly: WeeklyPowerRatingRow[]): Record<strin
     entry[r.system_key] = r.value;
     out[r.team] = entry;
   }
+  // Weeks saved before YC/Consensus switched to the standardized build have no
+  // yc_legacy / consensus_legacy rows — their yc / consensus ARE the old
+  // method, so the old-method series reads them (in memory only, nothing is
+  // written). Decided per week (any legacy row present = saved after the
+  // switch), never per team, so a new week's missing value isn't backfilled
+  // with the new method's number.
+  const hasLegacy = weekly.some((r) => r.system_key === "yc_legacy" || r.system_key === "consensus_legacy");
+  if (!hasLegacy) {
+    for (const entry of Object.values(out)) {
+      if (entry.yc != null) entry.yc_legacy = entry.yc;
+      if (entry.consensus != null) entry.consensus_legacy = entry.consensus;
+    }
+  }
   return out;
 }
 
@@ -71,7 +84,8 @@ function computeSystemResult(
 export function computeMultiSystemRow(
   game: GameWithLines,
   ratingsByTeam: Record<string, Record<string, number>>,
-  liveByTeam: Record<string, any>
+  liveByTeam: Record<string, any>,
+  systemKeys: string[] = RATING_SYSTEMS.map((s) => s.key)
 ): MultiSystemGameRow {
   const line = pickLine(game.lines);
   const vegasAwaySpread = line?.spread != null ? -line.spread : null;
@@ -80,11 +94,11 @@ export function computeMultiSystemRow(
   const homeRatings = ratingsByTeam[game.home_team] ?? {};
 
   const systems: Record<string, SystemGameResult> = {};
-  for (const s of RATING_SYSTEMS) {
-    systems[s.key] = computeSystemResult(
-      s.key,
-      awayRatings[s.key] ?? null,
-      homeRatings[s.key] ?? null,
+  for (const key of systemKeys) {
+    systems[key] = computeSystemResult(
+      key,
+      awayRatings[key] ?? null,
+      homeRatings[key] ?? null,
       game.home_team,
       liveByTeam,
       vegasAwaySpread,
@@ -113,7 +127,7 @@ export interface SystemRecord {
   push: number;
 }
 
-function emptyRecord(): SystemRecord {
+export function emptyRecord(): SystemRecord {
   return { w: 0, l: 0, push: 0 };
 }
 
@@ -128,7 +142,7 @@ export interface SystemPerformance {
   nwfb: SystemRecord;
 }
 
-function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home" | "push" | null, into: SystemRecord) {
+export function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home" | "push" | null, into: SystemRecord) {
   if (pickedTeam == null || actCoverTeam == null) return;
   if (actCoverTeam === "push") into.push++;
   else if (pickedTeam === actCoverTeam) into.w++;
@@ -136,19 +150,22 @@ function grade(pickedTeam: "away" | "home" | null, actCoverTeam: "away" | "home"
 }
 
 /** Per-system performance across a set of already-computed rows (typically one week or a full season's worth). */
-export function aggregateSystemPerformance(rows: MultiSystemGameRow[]): Record<string, SystemPerformance> {
+export function aggregateSystemPerformance(
+  rows: MultiSystemGameRow[],
+  systemKeys: string[] = RATING_SYSTEMS.map((s) => s.key)
+): Record<string, SystemPerformance> {
   const out: Record<string, SystemPerformance> = {};
-  for (const s of RATING_SYSTEMS) {
-    out[s.key] = { everyBet: emptyRecord(), filteredBet: emptyRecord(), nwfb: emptyRecord() };
+  for (const key of systemKeys) {
+    out[key] = { everyBet: emptyRecord(), filteredBet: emptyRecord(), nwfb: emptyRecord() };
   }
   for (const row of rows) {
     if (row.actCoverTeam == null) continue; // game not completed / no line yet
-    for (const s of RATING_SYSTEMS) {
-      const sys = row.systems[s.key];
+    for (const key of systemKeys) {
+      const sys = row.systems[key];
       if (!sys) continue;
-      grade(sys.projCoverTeam, row.actCoverTeam, out[s.key].everyBet);
-      grade(sys.filteredBetTeam, row.actCoverTeam, out[s.key].filteredBet);
-      grade(sys.nwfbTeam, row.actCoverTeam, out[s.key].nwfb);
+      grade(sys.projCoverTeam, row.actCoverTeam, out[key].everyBet);
+      grade(sys.filteredBetTeam, row.actCoverTeam, out[key].filteredBet);
+      grade(sys.nwfbTeam, row.actCoverTeam, out[key].nwfb);
     }
   }
   return out;

@@ -6,6 +6,7 @@ import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import MatchupHandicapPopup from "../components/MatchupHandicapPopup";
 import KeyCrossSlot from "../components/KeyCrossSlot";
+import { keyNumbersBetween, keyCrossLabel } from "../lib/keyNumberCross";
 import { spreadColor } from "../lib/odds";
 import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchWestgateWeek, fetchWestgateSeasonRows, gradeWestgatePick, westgatePoints, WESTGATE_PICK_LIMIT, type WestgateRow } from "../lib/api/westgatePool";
@@ -533,14 +534,20 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
     }
   }
 
+  // Biggest-first is the useful default for these two (same as Matchups' Amount Off / Key columns).
+  const DESC_FIRST = new Set(["westgateVsMine", "key"]);
   function handleSort(key: string) {
     setSortMode("time");
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      setSortDir("asc");
+      setSortDir(DESC_FIRST.has(key) ? "desc" : "asc");
     }
+  }
+  /** Key numbers (3, 7) my line and the Westgate line are on opposite sides of — same rule as Matchups' Key column. */
+  function keysThrough(r: WestgateRow): number[] {
+    return keyNumbersBetween(r.myProjAwaySpread, r.westgate_line);
   }
 
   function myVsVegas(r: WestgateRow): number | null {
@@ -581,6 +588,13 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
         return westgateVsVegasLive(r);
       case "wfb":
         return (r.wfbTeam ? 1000 : 0) + (r.wfbRelativeOff ?? 0);
+      case "key": {
+        // Games through a key first (two keys ahead of one), ties broken by amount off; none = null (always last).
+        const n = keysThrough(r).length;
+        if (n === 0) return null;
+        const off = westgateVsMineLive(r);
+        return n * 1000 + (off != null ? Math.abs(off) : 0);
+      }
       default:
         return null;
     }
@@ -679,7 +693,29 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
           Best Bets
         </button>
         <button
-          className={`mode-btn ${sortMode === "time" ? "mode-btn-active" : ""}`}
+          className={`mode-btn ${sortMode === "time" && sortKey === "westgateVsMine" ? "mode-btn-active" : ""}`}
+          title="Biggest gap between my line and the Westgate line first"
+          onClick={() => {
+            setSortMode("time");
+            setSortKey("westgateVsMine");
+            setSortDir("desc");
+          }}
+        >
+          Amount Off
+        </button>
+        <button
+          className={`mode-btn ${sortMode === "time" && sortKey === "key" ? "mode-btn-active" : ""}`}
+          title="Games where my line and the Westgate line are on opposite sides of 3 or 7 first, then by amount off"
+          onClick={() => {
+            setSortMode("time");
+            setSortKey("key");
+            setSortDir("desc");
+          }}
+        >
+          Through Key
+        </button>
+        <button
+          className={`mode-btn ${sortMode === "time" && !DESC_FIRST.has(sortKey) ? "mode-btn-active" : ""}`}
           onClick={() => {
             setSortMode("time");
             setSortKey("start_date");
@@ -751,13 +787,14 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                     align="right"
                   />
                   <SortHeader
-                    label="Westgate vs Mine"
+                    label="Amount Off"
                     sortKey="westgateVsMine"
                     active={sortKey === "westgateVsMine"}
                     dir={sortDir}
                     onClick={handleSort}
                     align="right"
                   />
+                  <SortHeader label="Key" sortKey="key" active={sortKey === "key"} dir={sortDir} onClick={handleSort} />
                   <SortHeader
                     label="Westgate vs Vegas"
                     sortKey="westgateVsVegas"
@@ -817,7 +854,18 @@ function PicksTab({ season, week, onWeekChange }: { season: number; week: number
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.vegasAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(r.openingAwaySpread)}</td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(myVsVegas(r))}</td>
-                      <td style={{ ...cellStyle, textAlign: "right" }}>{fmtAbs(westgateVsMineLive(r))}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }} title="My line vs the Westgate line">
+                        {fmtAbs(westgateVsMineLive(r))}
+                      </td>
+                      <td
+                        style={{ ...cellStyle, color: "var(--gold, #d4af37)", fontWeight: 700, whiteSpace: "nowrap" }}
+                        title="My line and the Westgate line are on opposite sides of these key numbers (3 and 7)"
+                      >
+                        {(() => {
+                          const keys = keysThrough(r);
+                          return keys.length ? `🔑${keyCrossLabel(keys)}` : "";
+                        })()}
+                      </td>
                       <td style={{ ...cellStyle, textAlign: "right" }}>{fmt(westgateVsVegasLive(r), 2)}</td>
                       <td style={{ ...cellStyle, textAlign: "center" }}>
                         {r.projCoverTeam === "away" ? (

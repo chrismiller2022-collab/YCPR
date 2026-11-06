@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import SortHeader from "../components/SortHeader";
+import RatingMethodToggle, { useRatingMethodPref } from "../components/RatingMethodToggle";
+import { overlayStandardizedRatings, useStandardizedYc, type RatingMethod } from "../lib/standardizedYc";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { classOf } from "../lib/matchupsCompute";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
@@ -31,23 +33,41 @@ const SEASONS = [2024, 2025, 2026] as const;
 // so it stays a fixed number of hook calls regardless of how many
 // seasons are actually selected). Lets multi-season selection combine
 // results from any subset of the 3 without conditionally calling hooks.
-function useSeasonMlRows(season: number, conversionMethod: "old" | "billR", billRDivisor: number, hfaMode: "team" | "flat", currentSeason: number) {
+// `method` "standardized" (current season only — older seasons have no saved
+// rating systems): each week's ratings become the standardized YC build's,
+// and projection locks are ignored, since they froze the as-rated numbers.
+const NO_LOCKS: Record<string, number | null> = {};
+function useSeasonMlRows(
+  season: number,
+  conversionMethod: "old" | "billR",
+  billRDivisor: number,
+  hfaMode: "team" | "flat",
+  currentSeason: number,
+  method: RatingMethod = "asRated"
+) {
   const [games, setGames] = useState<GameWithLines[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const weekNumbersInView = useMemo(() => Array.from(new Set(games.map((g) => g.week))), [games]);
-  const { byWeek: ratingsByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const { byWeek: asRatedByWeek } = useWeekAccurateRatings(season, weekNumbersInView, currentSeason);
+  const standardizing = method === "standardized" && season === currentSeason;
+  const { data: stdYc, loading: stdLoading, error: stdError } = useStandardizedYc(season, standardizing);
+  const ratingsByWeek = useMemo(
+    () => (standardizing && stdYc ? overlayStandardizedRatings(asRatedByWeek, stdYc) : asRatedByWeek),
+    [asRatedByWeek, standardizing, stdYc]
+  );
   const hasRatingsForSeason = useMemo(() => Object.values(ratingsByWeek).some((m) => Object.keys(m).length > 0), [ratingsByWeek]);
   const { locks } = useGameProjectionLocks(season, weekNumbersInView);
   const lockedWinPctByGameId = useMemo(() => {
+    if (standardizing) return NO_LOCKS;
     const map: Record<string, number | null> = {};
     for (const g of games) {
       const v = locks[g.id]?.my_away_win_pct;
       if (v != null) map[g.id] = v;
     }
     return map;
-  }, [games, locks]);
+  }, [games, locks, standardizing]);
 
   useEffect(() => {
     setLoading(true);
@@ -74,7 +94,18 @@ function useSeasonMlRows(season: number, conversionMethod: "old" | "billR", bill
     return { allRows: buildMlRowsFromLiveRatings(games, ratingsByWeek, hfaMode, lockedWinPctByGameId), unmatchedCount: 0 };
   }, [season, games, hasBetHistoryForSeason, ratingsByWeek, hasRatingsForSeason, conversionMethod, billRDivisor, hfaMode, lockedWinPctByGameId]);
 
-  return { games, loading, error, allRows, unmatchedCount, hasBetHistoryForSeason, hasRatingsForSeason };
+  return {
+    games,
+    loading: loading || stdLoading,
+    error,
+    allRows,
+    unmatchedCount,
+    hasBetHistoryForSeason,
+    hasRatingsForSeason,
+    stdLoading,
+    stdError,
+    stdMultiplier: stdYc?.multiplier ?? null,
+  };
 }
 
 function fmtSpread(v: number | null) {
@@ -345,9 +376,12 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   // Fixed, unconditional calls — one per SEASONS entry, regardless of
   // selection (see useSeasonMlRows's doc comment for why this has to
   // be a fixed count rather than looping over selectedSeasons).
-  const season2024 = useSeasonMlRows(2024, conversionMethod, billRDivisor, hfaMode, currentSeason);
-  const season2025 = useSeasonMlRows(2025, conversionMethod, billRDivisor, hfaMode, currentSeason);
-  const season2026 = useSeasonMlRows(2026, conversionMethod, billRDivisor, hfaMode, currentSeason);
+  // As rated (the real record) or the standardized-YC backtest — one setting shared with Spread History.
+  const [ratingMethod, setRatingMethod] = useRatingMethodPref();
+  const season2024 = useSeasonMlRows(2024, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
+  const season2025 = useSeasonMlRows(2025, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
+  const season2026 = useSeasonMlRows(2026, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
+  const currentSeasonData = currentSeason === 2024 ? season2024 : currentSeason === 2025 ? season2025 : season2026;
   const bySeasonData: Record<number, ReturnType<typeof useSeasonMlRows>> = {
     2024: season2024,
     2025: season2025,
@@ -692,6 +726,15 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
           </span>
         )}
       </div>
+
+      <RatingMethodToggle
+        method={ratingMethod}
+        setMethod={setRatingMethod}
+        season={currentSeason}
+        loading={currentSeasonData.stdLoading}
+        error={currentSeasonData.stdError}
+        multiplier={currentSeasonData.stdMultiplier}
+      />
 
       {!hasBetHistoryForSeason && conversionMethod === "old" && (
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
