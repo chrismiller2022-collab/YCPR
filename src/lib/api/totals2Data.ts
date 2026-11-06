@@ -5,6 +5,7 @@ import { fetchAllRows } from "./fetchAll";
 import { cachedFetch, invalidateCacheKey } from "./cache";
 import { DROGBA_FIRST_SEASON } from "./drogbaData";
 import type { RawAdvRowT2 } from "../totals2/model";
+import type { TempoAgg } from "../totals2/tempo";
 
 export async function fetchTotals2Adv(): Promise<RawAdvRowT2[]> {
   return cachedFetch("totals2-adv", () =>
@@ -116,4 +117,21 @@ export async function saveTotals2Picks(picks: Omit<Totals2PickRow, "created_at">
 
 export function invalidateTotals2Cache() {
   invalidateCacheKey("totals2-", true);
+}
+
+/** Per team-game offensive tempo (Totals v2 pace input); rows only where CFBD recorded the game clock. */
+export async function fetchTotals2Tempo(): Promise<TempoAgg[]> {
+  return cachedFetch("totals2-tempo", async () => {
+    const rows = await fetchAllRows<TempoAgg>((from, to) =>
+      supabase
+        .from("team_game_play_agg")
+        .select("game_id, team, tempo_sec_sum, tempo_n")
+        .gte("season", DROGBA_FIRST_SEASON)
+        .not("tempo_n", "is", null)
+        .order("game_id")
+        .order("team")
+        .range(from, to)
+    );
+    return rows.map((r) => ({ ...r, tempo_sec_sum: Number(r.tempo_sec_sum), tempo_n: Number(r.tempo_n) }));
+  });
 }

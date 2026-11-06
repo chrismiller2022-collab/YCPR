@@ -368,6 +368,97 @@ export function aggregatePlays(plays: PlayLike[]): { rows: PlayAgg[]; diag: Play
   return { rows: Array.from(by.values()), diag };
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Offensive tempo (Totals v2): game-clock seconds per snap. A COPY of src/lib/totals2/tempo.ts — kept inline because
+// these serverless functions don't import project modules. scripts/totals_v2/tempo_parity.ts checks the two agree.
+export interface TempoPlay {
+  gameId?: number | string;
+  offense?: string;
+  driveNumber?: number | null;
+  playNumber?: number | null;
+  id?: number | string;
+  period?: number | null;
+  clock?: { minutes?: number | null; seconds?: number | null } | null;
+  offenseScore?: number | null;
+  defenseScore?: number | null;
+  down?: number | null;
+  playType?: string | null;
+  playText?: string | null;
+}
+
+export interface TempoAgg {
+  game_id: string;
+  team: string;
+  tempo_sec_sum: number;
+  tempo_n: number;
+}
+
+const TEMPO_MAX_INTERVAL = 45;
+
+function tempoGarbage(period: number, a: number, b: number): boolean {
+  const m = Math.abs(a - b);
+  return period === 1 ? m > 43 : period === 2 ? m > 37 : period === 3 ? m > 27 : period === 4 ? m > 22 : false;
+}
+const tn = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? null : Number(v));
+
+export function aggregateTempo(plays: TempoPlay[]): TempoAgg[] {
+  const order = (p: TempoPlay) => {
+    const d = tn(p.driveNumber);
+    const k = tn(p.playNumber);
+    return d != null && k != null ? d * 1000 + k : Number(p.id ?? 0) % 1e9;
+  };
+  const byGame = new Map<string, TempoPlay[]>();
+  for (const p of plays) {
+    if (p.gameId == null || !p.offense) continue;
+    const k = String(p.gameId);
+    (byGame.get(k) ?? byGame.set(k, []).get(k)!).push(p);
+  }
+  const out = new Map<string, TempoAgg>();
+  for (const [gameId, list] of byGame) {
+    list.sort((a, b) => order(a) - order(b));
+    const gameOut = new Map<string, TempoAgg>();
+    let zeros = 0, pairs = 0;
+    let prev: { off: string; drive: number | null; period: number; secs: number } | null = null;
+    for (const p of list) {
+      const type = String(p.playType ?? "");
+      const text = String(p.playText ?? "");
+      const isSnap = SCRIMMAGE.test(type) && !NON_SCRIMMAGE.test(type) && tn(p.down) != null && !/kneel|spike|victory formation/i.test(text);
+      if (!isSnap) continue;
+      const period = tn(p.period) ?? 0;
+      const secs = p.clock ? (tn(p.clock.minutes) ?? NaN) * 60 + (tn(p.clock.seconds) ?? NaN) : NaN;
+      const drive = tn(p.driveNumber);
+      const cur = { off: p.offense!, drive, period, secs };
+      if (
+        prev &&
+        Number.isFinite(secs) &&
+        Number.isFinite(prev.secs) &&
+        prev.off === cur.off &&
+        prev.drive === drive &&
+        prev.period === period &&
+        period >= 1 &&
+        period <= 4 &&
+        !((period === 2 || period === 4) && prev.secs <= 120) &&
+        !tempoGarbage(period, tn(p.offenseScore) ?? 0, tn(p.defenseScore) ?? 0)
+      ) {
+        const dt = prev.secs - secs;
+        pairs++;
+        if (dt === 0) zeros++;
+        if (dt >= 0 && dt <= TEMPO_MAX_INTERVAL) {
+          const k = `${gameId}|${cur.off}`;
+          const a = gameOut.get(k) ?? { game_id: gameId, team: cur.off, tempo_sec_sum: 0, tempo_n: 0 };
+          a.tempo_sec_sum += dt;
+          a.tempo_n++;
+          gameOut.set(k, a);
+        }
+      }
+      prev = cur;
+    }
+    if (pairs >= 40 && zeros / pairs < 0.2) for (const [k, v] of gameOut) out.set(k, v);
+  }
+  return Array.from(out.values());
+}
+
 const CFBD_BASE = "https://api.collegefootballdata.com";
 const PREDICTIONS_BASE = "https://predictionsapi.collegefootballdata.com/api";
 
@@ -879,8 +970,12 @@ async function syncDrogba(year: number, week: number | null, part: string) {
       plays = await cfbdFetch(base);
     }
     const { rows: aggRows, diag } = aggregatePlays(plays ?? []);
+    const tempoBy = new Map(aggregateTempo(plays ?? []).map((t) => [`${t.game_id}|${t.team}`, t]));
     const now = new Date().toISOString();
-    const rows = aggRows.map((r) => ({ ...r, season: year, week, updated_at: now }));
+    const rows = aggRows.map((r) => {
+      const t = tempoBy.get(`${r.game_id}|${r.team}`);
+      return { ...r, tempo_sec_sum: t?.tempo_sec_sum ?? null, tempo_n: t?.tempo_n ?? null, season: year, week, updated_at: now };
+    });
     let saved = 0;
     for (let i = 0; i < rows.length; i += 300) {
       const { error, count } = await supabaseAdmin
