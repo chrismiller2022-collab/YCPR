@@ -6,6 +6,7 @@ import TeamLink from "../components/TeamLink";
 import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
 import type { RatingMethod } from "../lib/standardizedYc";
 import { useBetHistoryRecords, BET_HISTORY_SEASONS } from "../lib/useBetHistoryRecords";
+import { winPctColor, isSmallSample } from "../lib/winPctColor";
 import {
   aggregatePlain,
   aggregateCustom,
@@ -55,6 +56,20 @@ function fmtRecord(t: RecordTally) {
 }
 function fmtPct(t: RecordTally) {
   return `${winPct(t).toFixed(1)}%`;
+}
+/** A win % colored on the site-wide scale (yellow at the -110 breakeven, green above, red below); under 30 decided bets it's muted. */
+function Pct({ t }: { t: RecordTally }) {
+  const decided = t.w + t.l;
+  if (decided === 0) return <span style={{ color: "var(--chalk-dim)" }}>{fmtPct(t)}</span>;
+  const small = isSmallSample(decided);
+  return (
+    <span
+      style={{ color: winPctColor(winPct(t) / 100), fontWeight: 700, opacity: small ? 0.6 : 1, fontStyle: small ? "italic" : undefined }}
+      title={small ? `Small sample (${decided} decided bets)` : undefined}
+    >
+      {fmtPct(t)}
+    </span>
+  );
 }
 
 function fmtSpreadLine(n: number): string {
@@ -155,7 +170,7 @@ function KeyNumbersSection({ study }: { study: KeyNumberStudy }) {
                     {fmtRecord(r.bucket.tally)}
                   </td>
                   <td style={{ padding: "0.4rem 0.7rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                    {fmtPct(r.bucket.tally)}
+                    <Pct t={r.bucket.tally} />
                   </td>
                 </tr>
                 {isOpen && (
@@ -310,7 +325,7 @@ function StatsBlock({
             <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Record</div>
           </div>
           <div>
-            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(safeOverall)}</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 800, lineHeight: 1 }}><Pct t={safeOverall} /></div>
             <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", marginTop: "0.15rem" }}>Win %</div>
           </div>
         </div>
@@ -333,7 +348,7 @@ function StatsBlock({
                       <tr key={w}>
                         <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
                         <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(t)}</td>
-                        <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(t)}</td>
+                        <td style={{ padding: "0.3rem 0.5rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}><Pct t={t} /></td>
                       </tr>
                     );
                   })}
@@ -374,7 +389,7 @@ function StatsBlock({
             <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Record</div>
           </div>
           <div>
-            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(safeOverall)}</div>
+            <div style={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1 }}><Pct t={safeOverall} /></div>
             <div style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", marginTop: "0.2rem" }}>Win %</div>
           </div>
         </div>
@@ -401,7 +416,7 @@ function StatsBlock({
                     <tr key={w}>
                       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)" }}>Week {w}</td>
                       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtRecord(t)}</td>
-                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>{fmtPct(t)}</td>
+                      <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}><Pct t={t} /></td>
                     </tr>
                   );
                 })}
@@ -539,12 +554,12 @@ function BreakdownTable({
                       <TeamLink team={g} />
                     </td>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
-                      {fmtRecord(eb)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(eb)})</span>
+                      {fmtRecord(eb)} <span style={{ color: "var(--chalk-dim)" }}>(<Pct t={eb} />)</span>
                     </td>
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {fb.w + fb.l + fb.push > 0 ? (
                         <>
-                          {fmtRecord(fb)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(fb)})</span>
+                          {fmtRecord(fb)} <span style={{ color: "var(--chalk-dim)" }}>(<Pct t={fb} />)</span>
                         </>
                       ) : (
                         <span style={{ color: "var(--chalk-dim)" }}>–</span>
@@ -553,7 +568,7 @@ function BreakdownTable({
                     <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                       {wfb.w + wfb.l + wfb.push > 0 ? (
                         <>
-                          {fmtRecord(wfb)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(wfb)})</span>
+                          {fmtRecord(wfb)} <span style={{ color: "var(--chalk-dim)" }}>(<Pct t={wfb} />)</span>
                         </>
                       ) : (
                         <span style={{ color: "var(--chalk-dim)" }}>–</span>
@@ -563,7 +578,7 @@ function BreakdownTable({
                       <td style={{ padding: "0.35rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
                         {mr.w + mr.l + mr.push > 0 ? (
                           <>
-                            {fmtRecord(mr)} <span style={{ color: "var(--chalk-dim)" }}>({fmtPct(mr)})</span>
+                            {fmtRecord(mr)} <span style={{ color: "var(--chalk-dim)" }}>(<Pct t={mr} />)</span>
                           </>
                         ) : (
                           <span style={{ color: "var(--chalk-dim)" }}>–</span>
@@ -692,7 +707,7 @@ function SplitCell({ t }: { t: RecordTally }) {
   return (
     <td style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--hash)", textAlign: "right" }}>
       <div>{fmtRecord(t)}</div>
-      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}>{fmtPct(t)}</div>
+      <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)" }}><Pct t={t} /></div>
     </td>
   );
 }
@@ -911,7 +926,7 @@ function AmountOffMatrixSection({ points }: { points: AmountOffPoint[] }) {
             <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>Record</div>
           </div>
           <div>
-            <div style={{ fontSize: "1.2rem", fontWeight: 800, lineHeight: 1 }}>{fmtPct(customTally)}</div>
+            <div style={{ fontSize: "1.2rem", fontWeight: 800, lineHeight: 1 }}><Pct t={customTally} /></div>
             <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>Win %</div>
           </div>
         </div>
