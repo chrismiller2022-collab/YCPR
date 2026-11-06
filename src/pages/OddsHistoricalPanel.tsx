@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import TeamLink from "../components/TeamLink";
+import OddsBackfill from "../components/OddsBackfill";
 import { fetchGamesWithLines, type GameWithLines } from "../lib/api/gamesLines";
 import {
   fetchHistoricalEventOdds,
@@ -210,6 +211,7 @@ export default function OddsHistoricalPanel({ onBack }: { onBack: () => void }) 
   return (
     <div>
       <h2 style={{ marginTop: 0 }}>Historical Odds Pull</h2>
+      <OddsBackfill />
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         Manual, one-time pull of PAST games' game-level team totals and 1H/2H/quarter markets from The Odds API's historical endpoint.
         Costs 10 credits per market per game (+1 for the event lookup); a game already saved is disabled so it can't be pulled twice.
