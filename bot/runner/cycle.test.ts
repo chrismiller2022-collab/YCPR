@@ -282,6 +282,8 @@ describe("quiet hours", () => {
       const t = await runCycle();
       expect(t.quiet).toBe(true);
       expect(t.placed).toBe(0);
+      expect(t.cancelled).toBe(1);
+      expect(db.bot_orders.find((o) => o.id === 77)?.status).toBe("cancelled");
       expect(db.bot_fills.length).toBe(0);
     } finally {
       process.env.BOT_QUIET_HOURS = "off";
