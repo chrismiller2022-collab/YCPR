@@ -61,6 +61,7 @@ export default function Totals2Panel() {
       </div>
       {s.error && <p style={{ color: "crimson" }}>{s.error}</p>}
       {s.weatherNote && <p style={{ ...DIM, color: "var(--c-warn, #e8c66a)" }}>{s.weatherNote}</p>}
+      {s.tempoNote && <p style={{ ...DIM, color: "var(--c-warn, #e8c66a)" }}>{s.tempoNote}</p>}
       {tab === "how" ? (
         <HowItWorks />
       ) : tab === "ats" ? (
@@ -690,8 +691,10 @@ function HowItWorks() {
           success rate and isolated explosiveness from the play-by-play pull; scoring (points, points per drive).
         </li>
         <li>
-          <strong>Pace</strong>: opponent-adjusted drives and plays per game for both teams. (Seconds per play needs per-game possession time, which isn't pulled
-          yet.)
+          <strong>Pace</strong>: opponent-adjusted drives and plays per game for both teams, and <strong>tempo</strong> — game-clock seconds between an
+          offense's snaps from CFBD play-by-play (garbage time, the last 2:00 of each half, overtime, kneels and spikes left out). CFBD records the clock for only
+          part of its games (about 35–45% before 2024, most since), so tempo uses those games and falls back to the prior for the rest. Adding it improved the
+          walk-forward record (line-move top 10%: 54.4% → 57.2%; residual R² and CLV up).
         </li>
         <li>
           <strong>Special teams / field position</strong>: field goals over expected plus net punt and kickoff field position, rated head-to-head.

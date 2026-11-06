@@ -33,13 +33,21 @@ const lines = load("lines");
 const adv = load("adv");
 const plays = load("plays");
 const preseason = load("preseason");
+// Optional: per team-game tempo from pull_tempo.ts (flattened from its per-week map).
+const tempo = (() => {
+  try {
+    return Object.values(load("tempo") as Record<string, any[]>).flat();
+  } catch {
+    return [];
+  }
+})();
 const weatherObj: Record<string, GameWeatherInputs> = load("weather");
 const weather = new Map(Object.entries(weatherObj));
 const games = buildGames(rawGames, lines);
 const markets = buildMarkets(lines);
 
 function rowsFor(cfg: T2Config): SideRow[] {
-  const ratings = buildT2Ratings({ games, adv, plays, preseason }, cfg);
+  const ratings = buildT2Ratings({ games, adv, plays, preseason, tempo }, cfg);
   return buildSideRows(games, ratings, markets, weather);
 }
 

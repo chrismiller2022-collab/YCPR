@@ -10,6 +10,7 @@ const t0 = Date.now();
 const d = await loadTotals2(season);
 console.log(`loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${d.games.length} games, ${d.gps.length} FBS pairs, weather ${d.weather.size}, locks ${Object.keys(d.locks).length}, picks ${d.picks.length}, tt lines ${d.ttLines.length}`);
 if (d.weatherNote) console.log(d.weatherNote);
+if (d.tempoNote) console.log(d.tempoNote);
 const g = scoreGames(d.gps, "close", [0, 1]);
 const go = scoreGames(d.gps, "open", [0, 1]);
 const t = scoreTeams(d.preds, "close", [0, 1]);

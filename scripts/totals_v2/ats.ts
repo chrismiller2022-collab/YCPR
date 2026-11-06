@@ -9,7 +9,7 @@ const DIR = new URL("./data/", import.meta.url).pathname;
 const load = (n: string) => JSON.parse(readFileSync(`${DIR}${n}.json`, "utf8"));
 const lines = load("lines");
 const games = buildGames(load("games"), lines);
-const rows = buildSideRows(games, buildT2Ratings({ games, adv: load("adv"), plays: load("plays"), preseason: load("preseason") }, DEFAULT_T2_CONFIG), buildMarkets(lines), new Map(Object.entries(load("weather"))));
+const rows = buildSideRows(games, buildT2Ratings({ games, adv: load("adv"), plays: load("plays"), preseason: load("preseason"), tempo: (() => { try { return Object.values(load("tempo") as Record<string, any[]>).flat(); } catch { return []; } })() }, DEFAULT_T2_CONFIG), buildMarkets(lines), new Map(Object.entries(load("weather"))));
 const wf = walkForward(rows, DEFAULT_T2_CONFIG);
 const MARKETS: AtsMarket[] = ["game-move", "game-open", "game-close", "team-move", "team-open", "team-close"];
 for (const m of MARKETS) {

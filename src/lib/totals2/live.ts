@@ -3,7 +3,7 @@
 // so every number for this season is out-of-sample).
 import { useCallback, useEffect, useState } from "react";
 import { fetchDrogbaPlays, fetchDrogbaPreseason, fetchDrogbaRaw, invalidateDrogbaCache } from "../api/drogbaData";
-import { fetchSeasonGameVenues, fetchSeasonTeamTotalLines, fetchTotals2Adv, fetchTotals2Picks, invalidateTotals2Cache, type TeamTotalLineLite, type Totals2PickRow } from "../api/totals2Data";
+import { fetchSeasonGameVenues, fetchSeasonTeamTotalLines, fetchTotals2Adv, fetchTotals2Picks, fetchTotals2Tempo, invalidateTotals2Cache, type TeamTotalLineLite, type Totals2PickRow } from "../api/totals2Data";
 import { fetchTeamVenues, fetchVenuesByIds } from "../api/gameWeather";
 import { fetchGameProjectionLocks, type GameProjectionLockRow } from "../api/gameProjectionLocks";
 import { fetchWeatherForKickoffs, summarizeGameWeather, type WeatherRequest } from "../weather";
@@ -16,6 +16,7 @@ export interface Totals2State {
   loading: boolean;
   error: string | null;
   weatherNote: string | null;
+  tempoNote: string | null; // set when this season has no tempo rows yet (plays pull not re-run since tempo was added)
   games: DGame[]; // this season's games
   markets: Map<string, Market>;
   preds: SidePred[];
@@ -57,7 +58,7 @@ export type Totals2Data = Omit<Totals2State, "reload" | "loading" | "error">;
 
 /** Everything the page shows, for one season (also runnable outside React, e.g. from a bun check script). */
 export async function loadTotals2(season: number): Promise<Totals2Data> {
-  const [raw, adv, plays, preseason, locks, picks, ttLines] = await Promise.all([
+  const [raw, adv, plays, preseason, locks, picks, ttLines, tempo] = await Promise.all([
     fetchDrogbaRaw(),
     fetchTotals2Adv(),
     fetchDrogbaPlays(),
@@ -65,6 +66,7 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
     fetchGameProjectionLocks(season, Array.from({ length: 17 }, (_, i) => i + 1)),
     fetchTotals2Picks(season).catch(() => [] as Totals2PickRow[]),
     fetchSeasonTeamTotalLines(season).catch(() => [] as TeamTotalLineLite[]),
+    fetchTotals2Tempo().catch(() => []),
   ]);
   const all = buildGames(raw.games, raw.lines);
   const games = all.filter((g) => g.season === season);
@@ -72,7 +74,7 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
   const wx = await seasonWeather(season, games);
   // Ratings are ~1-2s of solves; yield so the loading message paints first.
   await new Promise((r) => setTimeout(r, 20));
-  const ratings = buildT2Ratings({ games: all.filter((g) => g.season <= season), adv, plays, preseason }, T2_CONFIG, season);
+  const ratings = buildT2Ratings({ games: all.filter((g) => g.season <= season), adv, plays, preseason, tempo }, T2_CONFIG, season);
   const rows = buildSideRows(games, ratings, markets, wx.map);
   const l1 = new Map(rows.map((r) => [r, predictLayer1(T2_LAYER1, r)] as const));
   const slates = slateMeans(rows, (r) => l1.get(r));
@@ -83,7 +85,13 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
     move: predictLayer2(T2_LAYER2_MOVE, r, l1.get(r)!, slates),
   }));
   applyMarketSplit(preds);
-  return { weatherNote: wx.note, games, markets, preds, gps: pairGames(preds), weather: wx.map, locks, picks, ttLines };
+  const ids = new Set(games.map((g) => g.id));
+  const seasonTempo = tempo.filter((t) => ids.has(t.game_id)).length;
+  const tempoNote =
+    seasonTempo === 0
+      ? `No tempo data for ${season} yet — re-run the plays pull for this season (DROGBA → Data) so the pace input isn't read as league-average for every team.`
+      : null;
+  return { weatherNote: wx.note, tempoNote, games, markets, preds, gps: pairGames(preds), weather: wx.map, locks, picks, ttLines };
 }
 
 export function useTotals2(season: number): Totals2State {
@@ -91,6 +99,7 @@ export function useTotals2(season: number): Totals2State {
     loading: true,
     error: null,
     weatherNote: null,
+    tempoNote: null,
     games: [],
     markets: new Map(),
     preds: [],

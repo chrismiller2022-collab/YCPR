@@ -24,3 +24,7 @@ create policy "Public read access to team_game_play_agg" on team_game_play_agg f
 alter table team_game_play_agg
   add column if not exists st_punt_net_yds numeric, add column if not exists st_punt_net_n int,
   add column if not exists st_ko_net_yds numeric, add column if not exists st_ko_net_n int;
+
+-- Totals v2 tempo (added later): game-clock seconds between an offense's snaps, summed, and how many intervals.
+-- Seconds per snap = tempo_sec_sum / tempo_n. Null when CFBD didn't record that game's clock. See src/lib/totals2/tempo.ts.
+alter table team_game_play_agg add column if not exists tempo_sec_sum numeric, add column if not exists tempo_n int;
