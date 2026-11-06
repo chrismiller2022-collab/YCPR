@@ -4,6 +4,7 @@ import { fetchGamesWithLines, type GameWithLines } from "./api/gamesLines";
 import { useWeekAccurateRatings } from "./weekAccurateRatings";
 import { useGameProjectionLocks } from "./api/gameProjectionLocks";
 import { buildLiveBetHistoryRecords, type HfaMode, type LineMode } from "./betHistory";
+import { overlayStandardizedRatings, useStandardizedYc, type RatingMethod } from "./standardizedYc";
 
 export const BET_HISTORY_SEASONS = [2024, 2025, 2026];
 
@@ -14,8 +15,12 @@ const LIVE_SEASONS = BET_HISTORY_SEASONS.filter((s) => !BET_HISTORY.some((r) => 
  * Every bet-history game record: the static upload for past seasons plus live seasons rebuilt from games and each
  * week's own ratings. `records` uses live projections; `recordsLocked` uses frozen pregame projections where a game
  * was locked. Shared by Bet History and the admin Teams page so both grade the same games the same way.
+ *
+ * `method` "standardized" re-grades the current season as the standardized YC build would have rated it (each
+ * week's saved rating-system snapshot, current weights and points per SD) and ignores projection locks, which froze
+ * the old method's numbers. Seasons without saved snapshots are unaffected (see standardizedSeason).
  */
-export function useBetHistoryRecords(hfaMode: HfaMode = "team", lineMode: LineMode = "close") {
+export function useBetHistoryRecords(hfaMode: HfaMode = "team", lineMode: LineMode = "close", method: RatingMethod = "asRated") {
   const [liveGamesBySeason, setLiveGamesBySeason] = useState<Record<number, GameWithLines[]>>({});
 
   useEffect(() => {
@@ -34,37 +39,67 @@ export function useBetHistoryRecords(hfaMode: HfaMode = "team", lineMode: LineMo
   const seasonRatings0 = useWeekAccurateRatings(BET_HISTORY_SEASONS[0], weekNumbersBySeason[BET_HISTORY_SEASONS[0]] ?? [], currentSeason);
   const seasonRatings1 = useWeekAccurateRatings(BET_HISTORY_SEASONS[1], weekNumbersBySeason[BET_HISTORY_SEASONS[1]] ?? [], currentSeason);
   const seasonRatings2 = useWeekAccurateRatings(BET_HISTORY_SEASONS[2], weekNumbersBySeason[BET_HISTORY_SEASONS[2]] ?? [], currentSeason);
+  const standardizing = method === "standardized";
+  const { data: stdYc, loading: stdLoading, error: stdError } = useStandardizedYc(currentSeason, standardizing);
   const ratingsBySeasonThenWeek = useMemo(
-    () => ({
+    (): Record<number, Record<number, Record<string, any>>> => ({
       [BET_HISTORY_SEASONS[0]]: seasonRatings0.byWeek,
       [BET_HISTORY_SEASONS[1]]: seasonRatings1.byWeek,
       [BET_HISTORY_SEASONS[2]]: seasonRatings2.byWeek,
     }),
     [seasonRatings0.byWeek, seasonRatings1.byWeek, seasonRatings2.byWeek]
   );
+  // Same, with the current season's ratings swapped for the standardized YC build.
+  const stdRatingsBySeasonThenWeek = useMemo(
+    () =>
+      standardizing && stdYc
+        ? { ...ratingsBySeasonThenWeek, [currentSeason]: overlayStandardizedRatings(ratingsBySeasonThenWeek[currentSeason] ?? {}, stdYc) }
+        : null,
+    [ratingsBySeasonThenWeek, standardizing, stdYc, currentSeason]
+  );
 
   const { locks: liveLocks } = useGameProjectionLocks(currentSeason, weekNumbersBySeason[currentSeason] ?? []);
 
-  const liveRecords = useMemo(() => {
+  function build(ratings: Record<number, Record<number, Record<string, any>>>, locks?: Record<string, any>) {
     const all: BetHistoryRecord[] = [];
-    for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode));
-    }
+    for (const s of LIVE_SEASONS) all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratings[s] ?? {}, hfaMode, lineMode, locks));
     return all;
-  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]);
-
-  const liveRecordsLocked = useMemo(() => {
-    const all: BetHistoryRecord[] = [];
-    for (const s of LIVE_SEASONS) {
-      all.push(...buildLiveBetHistoryRecords(liveGamesBySeason[s] ?? [], ratingsBySeasonThenWeek[s] ?? {}, hfaMode, lineMode, liveLocks));
-    }
-    return all;
-  }, [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode, liveLocks]);
+  }
+  const liveRecords = useMemo(() => build(ratingsBySeasonThenWeek), [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const liveRecordsLocked = useMemo(
+    () => build(ratingsBySeasonThenWeek, liveLocks),
+    [liveGamesBySeason, ratingsBySeasonThenWeek, hfaMode, lineMode, liveLocks] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  // Standardized backtest: no locks (they froze the as-rated projection), so "locked" = live here.
+  const stdLiveRecords = useMemo(
+    () => (stdRatingsBySeasonThenWeek ? build(stdRatingsBySeasonThenWeek) : null),
+    [liveGamesBySeason, stdRatingsBySeasonThenWeek, hfaMode, lineMode] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // The static upload only carries closing lines, so "open" mode is live seasons only.
-  const records = useMemo(() => (lineMode === "open" ? liveRecords : [...BET_HISTORY, ...liveRecords]), [liveRecords, lineMode]);
-  const recordsLocked = useMemo(() => (lineMode === "open" ? liveRecordsLocked : [...BET_HISTORY, ...liveRecordsLocked]), [liveRecordsLocked, lineMode]);
+  const withStatic = (live: BetHistoryRecord[]) => (lineMode === "open" ? live : [...BET_HISTORY, ...live]);
+  const asRatedRecords = useMemo(() => withStatic(liveRecords), [liveRecords, lineMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const asRatedRecordsLocked = useMemo(() => withStatic(liveRecordsLocked), [liveRecordsLocked, lineMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const standardizedRecords = useMemo(() => (stdLiveRecords ? withStatic(stdLiveRecords) : null), [stdLiveRecords, lineMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // What the page grades: the standardized backtest once it's loaded, else as rated.
+  const records = standardizedRecords ?? asRatedRecords;
+  const recordsLocked = standardizedRecords ?? asRatedRecordsLocked;
   const loading = LIVE_SEASONS.length > 0 && Object.keys(liveGamesBySeason).length === 0;
 
-  return { records, recordsLocked, loading };
+  return {
+    records,
+    recordsLocked,
+    loading,
+    /** Always the real record (locks applied in recordsLocked's as-rated twin). */
+    asRatedRecords,
+    asRatedRecordsLocked,
+    /** Null unless method is "standardized" and the snapshots have loaded. */
+    standardizedRecords,
+    /** The season the standardized method applies to (others always grade as rated). */
+    standardizedSeason: currentSeason,
+    standardizedLoading: stdLoading,
+    standardizedError: stdError,
+    standardizedMultiplier: stdYc?.multiplier ?? null,
+  };
 }
