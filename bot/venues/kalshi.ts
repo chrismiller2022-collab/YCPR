@@ -21,9 +21,17 @@ export function kalshiRungs(game: Pick<VenueGame, "home_team" | "away_team">, ev
   return rungs;
 }
 
+// "A vs B" is split on "vs" when there is one, so a name containing "at" ("University at Albany vs Bryant") stays whole;
+// only a title without "vs" falls back to "A at B" / "A @ B".
+export function eventTeams(title: string): string[] {
+  const t = title.replace(/:\s*Spread$/i, "");
+  const byVs = t.split(/\s+vs\.?\s+/i);
+  return byVs.length === 2 ? byVs : t.split(/\s+(?:at|@)\s+/i);
+}
+
 export function findKalshiEvent(game: Pick<VenueGame, "home_team" | "away_team">, events: LiveEvent[]): LiveEvent | null {
   for (const e of events) {
-    const names = e.title.replace(/:\s*Spread$/i, "").split(/\s+(?:vs\.?|at|@)\s+/i).map(canon);
+    const names = eventTeams(e.title).map(canon);
     if (names.length === 2 && names.includes(game.home_team) && names.includes(game.away_team)) return e;
   }
   return null;

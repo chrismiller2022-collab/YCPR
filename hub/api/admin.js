@@ -109,6 +109,7 @@ export default async function handler(req, res) {
         const week = Math.round(Number(body.week));
         if (!Number.isFinite(season) || !Number.isFinite(week)) throw new Error("season and week are required");
         await requireNewRunner();
+        // Games with an FBS team only: FCS vs FCS games are added one at a time, not by the weekly workflow.
         const games = await sb(
           `games?select=id,season,week,start_date,home_team,away_team,neutral_site&season=eq.${season}&week=eq.${week}&season_type=eq.regular&or=(home_classification.eq.fbs,away_classification.eq.fbs)&order=start_date.asc&limit=400`
         );

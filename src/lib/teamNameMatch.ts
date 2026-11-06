@@ -192,6 +192,7 @@ const ALIASES: Record<string, string> = {
   "ut rio grande valley": "UT Rio Grande Valley",
   "suny albany": "UAlbany",
   "albany": "UAlbany",
+  "university at albany": "UAlbany", // Kalshi's name
   "citadel": "The Citadel",
   "the citadel": "The Citadel",
   "william and mary": "William & Mary",
