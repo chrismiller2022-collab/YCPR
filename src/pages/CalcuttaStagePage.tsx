@@ -30,6 +30,7 @@ import {
   undoLastBid,
   toggleOut,
   onlyHighBidderLeft,
+  atTeamCap,
   type Result,
 } from "../lib/calcutta/engine";
 import { formatDef, roundSlots } from "../lib/calcutta/formats";
@@ -183,8 +184,10 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
     if (!a.practice?.enabled || !lot || lot.status !== "live" || phase === "sold") return [] as string[];
     return a.participants.filter((p) => p.bot && high?.participantId !== p.id && botMax(a, p, lot) < minNext).map((p) => p.id);
   }, [a, lot, phase, high?.participantId, minNext]);
-  const outSet = new Set([...(a.live.outIds ?? []), ...autoOut]);
-  const lastOneIn = phase === "running" && onlyHighBidderLeft(a, autoOut);
+  // Anyone at the max-teams rule is out of every remaining lot.
+  const capped = a.participants.filter((p) => high?.participantId !== p.id && atTeamCap(a, p.id)).map((p) => p.id);
+  const outSet = new Set([...(a.live.outIds ?? []), ...autoOut, ...capped]);
+  const lastOneIn = phase === "running" && onlyHighBidderLeft(a, [...autoOut, ...capped]);
 
   const bidFor = (participantId: string) => {
     const p = participantById(a, participantId);
@@ -471,7 +474,7 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
               disabled={!lot || phase === "idle" || phase === "sold"}
             >
               {controls && <span className="cal-bidder-key">{p.hotkey.toUpperCase()}</span>}
-              {isOut && <span className="cal-bidder-out">OUT</span>}
+              {isOut && <span className="cal-bidder-out">{capped.includes(p.id) ? "MAX" : "OUT"}</span>}
               {controls && !isHigh && lot && phase !== "sold" && phase !== "idle" && !(p.bot && a.practice?.enabled) && (
                 <span
                   className="cal-bidder-x"

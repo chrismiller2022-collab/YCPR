@@ -454,6 +454,11 @@ function SetupTab({ a, patch }: { a: CalcuttaAuction; patch: Patch }) {
             <NumField value={s.minBuyIn ?? 0} onCommit={(v) => set({ minBuyIn: Math.max(0, v) })} suffix="$ each" />
             <span className="cal-note"> 0 = off. Spend less and the difference goes into the pot anyway.</span>
           </span>
+          <label>Max teams per person</label>
+          <span>
+            <NumField value={s.maxTeams ?? 0} onCommit={(v) => set({ maxTeams: Math.max(0, Math.round(v)) })} suffix="teams" />
+            <span className="cal-note"> 0 = no limit. A bundle counts as one. Bidders at the max grey out.</span>
+          </span>
           <label>Rake (host cut)</label>
           <NumField value={s.rakePct} onCommit={(v) => set({ rakePct: Math.min(100, Math.max(0, v)) })} suffix="%" />
           <label>Stage sounds</label>

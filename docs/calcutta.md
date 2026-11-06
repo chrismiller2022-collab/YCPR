@@ -65,6 +65,8 @@ Calcutta page → **Open Desk ↗** (admin sign-in required; keep it on the moni
 
 Byes don't pay as a win by default (toggle). Rules & Payouts shows each team's running total by round.
 
+**Max teams per person** (Rules & Payouts, 0 = off): nobody can win more lots than this (a bundle counts as one); anyone at the max greys out with "MAX" on the Stage. Applies to practice bots too.
+
 **Minimum buy-in** (Rules & Payouts, 0 = off): everyone owes at least this; spend less and the difference goes into the pot. The pot starts at attendees × minimum; owners, the Stage and payouts include top-ups. The Desk treats your unused buy-in as free money (your max bid rises by it), and bots spend theirs as lots run out. "Bundle long shots" groups every team at or below a seed into one lot per region (or per seed line in March Madness).
 
 Desk ratings: NFL paste (composite format); CFB uses the site's latest power ratings and each team's home field (or a paste); March Madness paste — one "Team rating" per line, KenPom/Torvik rows work (records are skipped; tick "per 100 possessions" to scale AdjEM × 0.68).
@@ -76,7 +78,7 @@ CFB Desk ratings come from the site: the latest saved week's power rating (`week
 ## Practice mode (bots)
 Any auction → **Practice** tab → "Create practice auction with N bots" makes a separate copy (same rules, payouts, field, lots; just you + bots, a 15s/8s clock). Practice auctions never go to the cloud or into bidding history.
 
-- Each bot values teams from your Desk ratings (CFB: site power ratings; none → typical by seed) plus its own noise, so bots disagree. Personalities: Steady Eddie (≈fair), Big Spender (overpays favorites, jumps bids), Bargain Bill (discounts only, bids late), Homer Hank (two pet teams), Longshot Lou (low seeds/bundles), Budget Betty (hard cap). Each guesses the pot ±25% around "room size" and half-follows the room's pace; non-budget bots cool off past their share of the room.
+- Each bot values teams from your Desk ratings (CFB: site power ratings; none → typical by seed) plus its own noise, so bots disagree. Personalities: Steady Eddie (≈fair), Big Spender (overpays favorites, jumps bids), Bargain Bill (discounts only, bids late), Homer Hank (two pet teams), Longshot Lou (low seeds/bundles), Budget Betty (hard cap). Each guesses the pot ±25% around "room size" and half-follows the room's pace; non-budget bots cool off past their share of the room, and every team a bot already owns cuts its appetite 15%. Big Spender overpays only for favorites (slightly under fair on the rest).
 - Default bot mode is **call out**: each bot's bid pops up (and is read aloud) and you enter it with that bot's key, typing the amount first if they jumped; your entry speed, wrong amounts, wrong bidders and misses are tracked. "Bid by themselves" is the other mode. Auto-advance is off by default (you start, sell and open lots).
 - **Sim the playoffs** (Practice tab, after anything sells): sim the next round or the rest, as real-looking games with scores and lines in the game log, so Owners & Results, the Stage board and payouts update like the real thing.
 - On the Stage, press Enter once; bots bid by themselves (one at a time, 0.6–3s reactions, faster near 0:00) and auto-advance starts the clock, sells at 0:00 and opens the next lot. Space pauses. The Desk works as normal.

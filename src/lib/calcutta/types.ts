@@ -34,6 +34,8 @@ export interface CalcuttaSettings {
   rakePct: number;
   /** Everyone owes at least this; if their winning bids total less, the difference goes into the pot. 0 = off. */
   minBuyIn?: number;
+  /** Most lots one attendee can win (a bundle counts as one). 0 / unset = no limit. */
+  maxTeams?: number;
   sound: boolean;
 }
 
