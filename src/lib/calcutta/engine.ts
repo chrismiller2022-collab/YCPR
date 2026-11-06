@@ -53,7 +53,7 @@ export function newAuction(name: string, format: FormatKey, now: number): Calcut
     status: "setup",
     createdAt: now,
     updatedAt: now,
-    settings: { ...DEFAULT_SETTINGS, increments: DEFAULT_SETTINGS.increments.map((t) => ({ ...t })) },
+    settings: { ...DEFAULT_SETTINGS, increments: DEFAULT_SETTINGS.increments.map((t) => ({ ...t })), maxTeams: def.defaultMaxTeams ?? 0 },
     payouts: { ...def.defaultPayouts, roundPct: { ...def.defaultPayouts.roundPct }, props: def.defaultPayouts.props.map((p) => ({ ...p, id: uid("prop_"), teamIds: [] })) },
     participants: [],
     field: [],

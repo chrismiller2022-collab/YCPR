@@ -299,3 +299,4 @@
 .cal-kpi-btn { font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .cal-kpi-btn:hover { border-color: var(--s-dim); }
 .cal-desk-banner { font: inherit; text-align: left; cursor: pointer; background: rgba(255, 176, 32, 0.12); border: 1px solid var(--s-warn); color: var(--s-warn); border-radius: 10px; padding: 8px 12px; font-weight: 700; }
+.cal-nav { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }

@@ -93,9 +93,16 @@ export default function CalcuttaPanel({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="cal-admin">
-      <button className="back-link" onClick={auction ? () => select(null) : onBack}>
-        ‹ {auction ? "All auctions" : "Pools"}
-      </button>
+      <div className="cal-nav">
+        <button className="cal-btn sm" onClick={onBack}>
+          ‹ Pools
+        </button>
+        {auction && (
+          <button className="cal-btn sm" onClick={() => select(null)}>
+            ‹ All Calcutta auctions
+          </button>
+        )}
+      </div>
       {auction ? <AuctionEditor auction={auction} onOpen={select} /> : <AuctionList onOpen={select} />}
     </div>
   );
@@ -1042,6 +1049,8 @@ function OwnersTab({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Pat
 
       <SplitsCard a={a} act={act} />
 
+      {a.practice?.enabled && a.lots.some((l) => l.status === "sold") && <SimPlayoffsSection a={a} act={act} patch={patch} />}
+
       <GamesCard a={a} patch={patch} />
 
       <section className="cal-card">
@@ -1973,7 +1982,9 @@ function PracticeTab({ a, act, patch, onOpen }: { a: CalcuttaAuction; act: Act; 
         </table>
       </section>
 
-      {a.lots.some((l) => l.status === "sold") && <SimPlayoffsCard a={a} act={act} patch={patch} yours={yours} meId={meId} />}
+      {a.lots.some((l) => l.status === "sold") && (
+        <div className="cal-note">🎲 To play the playoffs out and watch the payouts land, use <b>Sim the playoffs</b> on the Owners &amp; Results tab.</div>
+      )}
       {a.lots.some((l) => l.status === "sold") && <PracticeReport a={a} meId={meId} yours={yours} />}
     </>
   );
@@ -2159,4 +2170,17 @@ function SimPlayoffsCard({ a, act, patch, yours, meId }: { a: CalcuttaAuction; a
       )}
     </section>
   );
+}
+
+/** Owners & Results (practice auctions): the playoff sim, using the same ratings the bots started from. */
+function SimPlayoffsSection({ a, act, patch }: { a: CalcuttaAuction; act: Act; patch: Patch }) {
+  const sport = formatDef(a.format).sport;
+  const siteCfb = useSiteCfb(a.field, sport === "cfb");
+  const yours = useMemo(() => {
+    if (sport === "cfb" && Object.keys(siteCfb.ratings).length) return siteCfb.ratings;
+    return savedRatings(a);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a.id, a.field, siteCfb.ratings, sport]);
+  const meId = a.participants.find((p) => !p.bot)?.id ?? null;
+  return <SimPlayoffsCard a={a} act={act} patch={patch} yours={yours} meId={meId} />;
 }
