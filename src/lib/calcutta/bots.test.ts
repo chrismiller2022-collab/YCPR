@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NFL_COMPOSITE_WEEK9_TEXT } from "../../data/nflCompositeRatings";
 import { addParticipant, lotsFromField, newAuction, openLot, passCurrent, placeBid, potTotal, sellCurrent, startClock, tick, highBid } from "./engine";
 import { emptyNflSeedSlots, nflFieldFromSlots } from "./formats";
+import { cfbFieldFromSeeds } from "./fields";
 import { parseRatings } from "./ratings";
 import { addBots, botBaseRatings, botMax, chooseBotBid, practiceCopy, resetForReplay, simulatePlayoffGames } from "./bots";
 import { deriveFromGames } from "./scoring";
@@ -120,5 +121,64 @@ describe("practice bots", () => {
     // the 1 seeds played only from the Divisional round on
     expect(a.games!.filter((g) => g.round === 0 && (g.homeId === "BUF" || g.awayId === "BUF")).length).toBe(0);
   });
+
+  it("no bot hogs the field: 20 bots-only auctions per format, NFL and CFB 12", () => {
+    const worst: number[] = [];
+    for (const fmt of ["nfl", "cfb"] as const) {
+      for (let run = 0; run < 20; run++) {
+        let a: CalcuttaAuction;
+        if (fmt === "nfl") a = practice();
+        else {
+          let b = newAuction("CFB", "cfb_playoff12", 0);
+          const field = cfbFieldFromSeeds("cfb_playoff12", ["Indiana", "Ohio State", "Georgia", "Texas Tech", "Oregon", "Ole Miss", "Texas A&M", "Oklahoma", "Alabama", "Miami", "Tulane", "James Madison"]);
+          b = { ...b, field, lots: lotsFromField(field, "seed") };
+          b = addParticipant(b, "Chris", 0).auction;
+          b = practiceCopy(b, "Chris", 0);
+          b = { ...b, practice: { ...b.practice!, expectedPot: 1000 } };
+          a = addBots(b, 6, botBaseRatings(b, null), 0).auction;
+        }
+        a = runBotsOnly(a);
+        const counts = a.participants.map((p) => a.lots.filter((l) => l.winnerId === p.id).length);
+        worst.push(Math.max(...counts) / a.lots.length);
+      }
+    }
+    worst.sort((x, y) => y - x);
+    // Real rooms have a big buyer, but nobody should take half the field.
+    expect(worst[0]).toBeLessThan(0.5);
+  });
+
+  it("max teams per person is enforced for people and bots", () => {
+    let a = practice();
+    a = { ...a, settings: { ...a.settings, maxTeams: 2 } };
+    a = runBotsOnly(a);
+    for (const p of a.participants) expect(a.lots.filter((l) => l.winnerId === p.id).length).toBeLessThanOrEqual(2);
+    let b = openLot({ ...practice(), settings: { ...practice().settings, maxTeams: 1 } }, null, 0).auction;
+    const me = b.participants.find((p) => !p.bot)!;
+    b = sellCurrent(placeBid(b, me.id, 50, 0).auction, 0).auction;
+    b = openLot(b, null, 0).auction;
+    expect(placeBid(b, me.id, 50, 0).error).toMatch(/max 1 teams/);
+  });
 });
+
+function runBotsOnly(a: CalcuttaAuction): CalcuttaAuction {
+  let now = 0;
+  for (let guard = 0; guard < 40000 && a.status !== "complete"; guard++) {
+    if (a.live.phase === "idle" || a.live.phase === "sold") {
+      const r = openLot(a, null, now);
+      if (r.error) break;
+      a = startClock(r.auction, now).auction;
+      continue;
+    }
+    if (a.live.phase === "expired") {
+      a = highBid(a, a.live.lotId) ? sellCurrent(a, now).auction : passCurrent(a, now).auction;
+      continue;
+    }
+    const lastTs = a.bids.filter((b) => b.lotId === a.live.lotId && !b.voided).slice(-1)[0]?.ts;
+    const bid = chooseBotBid(a, now, now - (lastTs ?? now - 5000));
+    if (bid) a = placeBid(a, bid.participantId, bid.amount, now).auction;
+    now += 250;
+    a = tick(a, now).auction;
+  }
+  return a;
+}
 

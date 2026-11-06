@@ -70,6 +70,17 @@ const touch = (a: CalcuttaAuction, now: number, patch: Partial<CalcuttaAuction>)
 // ---- participants ----------------------------------------------------------
 
 /** First free letter of the name, else the first free letter of the alphabet. */
+/** Lots this attendee has won so far (a bundle counts as one). */
+export function teamsWon(a: CalcuttaAuction, participantId: string): number {
+  return a.lots.filter((l) => l.status === "sold" && l.winnerId === participantId).length;
+}
+
+/** True once an attendee has hit the max-teams rule (if one is set). */
+export function atTeamCap(a: CalcuttaAuction, participantId: string): boolean {
+  const cap = a.settings.maxTeams || 0;
+  return cap > 0 && teamsWon(a, participantId) >= cap;
+}
+
 /** Keys an attendee can be bound to: a letter or a digit. */
 export const HOTKEY_RE = /^[a-z0-9]$/;
 
@@ -291,6 +302,7 @@ export function placeBid(a: CalcuttaAuction, participantId: string, amount: numb
   const high = highBid(a, lot.id);
   if (high && high.participantId === participantId) return fail(a, `${p.name} already has the high bid`);
   if (a.live.outIds?.includes(participantId)) return fail(a, `${p.name} bowed out of this one`);
+  if (atTeamCap(a, participantId)) return fail(a, `${p.name} already has the max ${a.settings.maxTeams} teams`);
   const min = minNextBid(a);
   const value = amount ?? min;
   if (!Number.isFinite(value) || value < min) return fail(a, `Minimum bid is $${min}`);

@@ -1,6 +1,6 @@
 import { simulateBracket, fairShares, payoutMatrix, validateField, type SimGameRecord } from "./bracketSim";
 import { deriveFromGames } from "./scoring";
-import { PARTICIPANT_COLORS, autoHotkey, currentLot, highBid, incrementFor, lotBids, minNextBid, remainingMs, sortedLots, uid, type Result } from "./engine";
+import { PARTICIPANT_COLORS, atTeamCap, autoHotkey, currentLot, highBid, incrementFor, lotBids, minNextBid, remainingMs, sortedLots, uid, type Result } from "./engine";
 import { formatDef } from "./formats";
 import { lotShare, lotTiers, projectPot } from "./value";
 import type { BotProfile, BotStyle, CalcuttaAuction, FieldTeam, Lot, Participant } from "./types";
@@ -134,7 +134,7 @@ export function botMax(a: CalcuttaAuction, p: Participant, lot: Lot): number {
       mult = 0.97;
       break;
     case "aggressive":
-      mult = tier === "fav" ? 1.3 : 1.05;
+      mult = tier === "fav" ? 1.3 : 0.95;
       break;
     case "bargain":
       mult = 0.72;
@@ -157,6 +157,10 @@ export function botMax(a: CalcuttaAuction, p: Participant, lot: Lot): number {
     const sold = a.lots.filter((l) => l.status === "sold").length;
     max += left * (sold / Math.max(1, a.lots.length));
   }
+  // Appetite fades with every team it already owns (real bidders get full).
+  const owned = a.lots.filter((l) => l.status === "sold" && l.winnerId === p.id).length;
+  if (bot.style !== "budget") max *= Math.pow(0.85, owned);
+  if (atTeamCap(a, p.id)) return 0;
   if (bot.budget != null) max = Math.min(max, Math.max(0, bot.budget - done));
   else {
     // Soft spending limit: past ~its share of the room it cools off, then stops.
