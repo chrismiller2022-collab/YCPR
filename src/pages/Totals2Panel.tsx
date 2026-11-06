@@ -3,10 +3,10 @@
 // total split by the market spread vs split by the YCPR spread vs the current site's numbers).
 import { useMemo, useState, type CSSProperties } from "react";
 import { useTotals2 } from "../lib/totals2/live";
-import { impliedPoints, lineOf, projectedTotal, type GamePred } from "../lib/totals2/model";
-import { scoreGames, scoreTeams, BREAK_EVEN, type ScoreSummary } from "../lib/totals2/report";
+import { impliedPoints, lineOf, predictedMove, projectedTotal, type GamePred } from "../lib/totals2/model";
+import { scoreGames, scoreGameMoves, scoreTeams, BREAK_EVEN, ATS_MARKET_LABEL, type ScoreSummary, type AtsMarket } from "../lib/totals2/report";
 import { buildTTSides, latestTeamLines, ttArmStat, TT_ARMS, TT_ARM_LABEL, TT_DIFFS } from "../lib/totals2/ttCompare";
-import { T2_BACKTEST, T2_CONFIG, T2_TRAINED_THROUGH, T2_VERSION } from "../lib/totals2/frozen";
+import { T2_ATS, T2_BACKTEST, T2_CONFIG, T2_MOVE_CUT_TOP10, T2_TRAINED_THROUGH, T2_VERSION } from "../lib/totals2/frozen";
 import { saveTotals2Picks, type Totals2PickRow } from "../lib/api/totals2Data";
 import { syncTeamTotalsNow } from "../lib/api/teamTotalLines";
 import { splitTeamTotal } from "../lib/gameTotals";
@@ -25,9 +25,10 @@ function winColor(p: number | null, n: number): CSSProperties {
 }
 const leanColor = (v: number | null | undefined) => (v == null ? undefined : v > 0 ? OVER : v < 0 ? UNDER : undefined);
 
-type Tab = "week" | "season" | "tt" | "log" | "how";
+type Tab = "week" | "ats" | "season" | "tt" | "log" | "how";
 const TABS: [Tab, string][] = [
   ["week", "This week"],
+  ["ats", "Backtest O/U record"],
   ["tt", "Team totals: compare"],
   ["season", "Season so far"],
   ["log", "Saved log"],
@@ -62,6 +63,8 @@ export default function Totals2Panel() {
       {s.weatherNote && <p style={{ ...DIM, color: "var(--c-warn, #e8c66a)" }}>{s.weatherNote}</p>}
       {tab === "how" ? (
         <HowItWorks />
+      ) : tab === "ats" ? (
+        <AtsTab />
       ) : s.loading ? (
         <div className="empty">Loading games, lines and stats, building ratings and pulling weather…</div>
       ) : (
@@ -119,6 +122,8 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
           stats_home_pts: gp.home.l1,
           stats_away_pts: gp.away.l1,
           yc_home_spread: ycHome(gp),
+          open_total: gp.mkt.openTotal,
+          proj_move: predictedMove(gp),
           weather: (s.weather.get(gp.g.id) as any) ?? null,
         });
       }
@@ -176,7 +181,8 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
       </div>
       {msg && <p style={DIM}>{msg}</p>}
       <p style={DIM}>
-        "Now" = the current line (the closing line once a game is played). "v2 vs open" = the opening-line model, the number to bet into when lines first post (its
+        <strong>The bet:</strong> ★ in Move lean = the line-move model's top-10% games — take the OPENING total in that direction (best before the line moves; hover
+        to see how much it already has). {moveTop10Line()} "Now" = the current line (the closing line once a game is played). "v2 vs open" = the opening-line model, the number to bet into when lines first post (its
         record is graded by closing-line value). Team rows: the market's own team number (total split by spread), a real team-total line when one has been pulled,
         then v2's team number and the v2 total split by the YCPR spread and by the market spread. Edges are small by design — the model is heavily shrunk toward the
         market, so a 1-point lean is a strong one here.
@@ -188,6 +194,9 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
               <th style={HEADL}>Game / team</th>
               <th style={HEAD}>Weather</th>
               <th style={HEAD}>Open → now</th>
+              <th style={HEAD} title={`Line-move model: where it expects the total to go from the open. ★ = top 10% of games in the backtest (|move| ≥ ${T2_MOVE_CUT_TOP10}) — the bet: take the OPENING total in that direction.`}>
+                Move lean
+              </th>
               <th style={HEAD}>v2 vs open</th>
               <th style={HEAD}>v2 vs now</th>
               <th style={HEAD}>Lean</th>
@@ -207,6 +216,9 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
               const vClose = projectedTotal(gp, "close");
               const vOpen = projectedTotal(gp, "open");
               const lean = vClose != null && now ? vClose - now.total : null;
+              const mv = predictedMove(gp);
+              const star = mv != null && Math.abs(mv) >= T2_MOVE_CUT_TOP10;
+              const moved = open && now ? now.total - open.total : null;
               const wx = s.weather.get(g.id);
               const wf = weatherFeatureVector(wx);
               const lock = s.locks[g.id];
@@ -227,6 +239,12 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
                   </td>
                   <td style={NUM}>
                     {f1(open?.total)} → {f1(now?.total)}
+                  </td>
+                  <td
+                    style={{ ...NUM, color: leanColor(mv), fontWeight: star ? 700 : 400 }}
+                    title={moved != null && mv != null ? `Already moved ${sgn(moved)} (${Math.sign(moved) === Math.sign(mv) ? "with" : moved === 0 ? "—" : "against"} the lean)` : undefined}
+                  >
+                    {mv == null ? "–" : `${star ? "★ " : ""}${mv > 0 ? "O" : "U"} ${sgn(mv, 2)}`}
                   </td>
                   <td style={{ ...NUM, color: leanColor(vOpen != null && open ? vOpen - open.total : null) }}>{f1(vOpen)}</td>
                   <td style={NUM}>{f1(vClose)}</td>
@@ -257,6 +275,7 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
                       <td style={NUM} />
                       <td style={NUM} />
                       <td style={NUM} />
+                      <td style={NUM} />
                       <td style={{ ...NUM, color: leanColor(ttLean) }}>{ttLean == null ? "" : `${ttLean > 0 ? "O" : "U"} ${sgn(ttLean)}`}</td>
                       <td style={NUM}>{f1(real)}</td>
                       <td style={{ ...NUM, fontWeight: 600 }}>{f1(mine)}</td>
@@ -269,6 +288,90 @@ function WeekTab({ s, season }: { s: ReturnType<typeof useTotals2>; season: numb
                 }),
               ];
             })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ O/U backtest
+const MARKET_ORDER: AtsMarket[] = ["game-move", "game-open", "game-close", "team-move", "team-open", "team-close"];
+const SEASON_LABEL: Record<string, string> = {
+  "2023": "2023",
+  "2024": "2024",
+  "2025": "2025 (holdout)",
+  "2026": "2026 (holdout, so far)",
+  "2023+2024": "2023–24 (tuning seasons)",
+  "2025+2026": "2025–26 (holdout)",
+  "2023+2024+2025+2026": "All 2023–26",
+};
+
+function moveTop10Line(): string {
+  const b = T2_ATS.find((r) => r.seasons === "2023+2024+2025+2026" && r.market === "game-move")?.buckets.find((x) => x.frac === 0.1);
+  if (!b) return "";
+  return `Backtest 2023–26: top 10% went ${b.w}-${b.l} (${((100 * b.w) / (b.w + b.l)).toFixed(1)}%), ${b.units >= 0 ? "+" : ""}${b.units}u, line moved the model's way ${sgn(b.clv, 2)} points on average.`;
+}
+
+function AtsTab() {
+  const [market, setMarket] = useState<AtsMarket>("game-move");
+  const rows = T2_ATS.filter((r) => r.market === market);
+  const fracs = rows[0]?.buckets.map((b) => b.frac) ?? [];
+  return (
+    <div>
+      <p style={DIM}>
+        Walk-forward over/under record: every season is predicted by a model fit only on earlier seasons, so nothing here was seen in training. Settings were tuned on
+        2023–24; 2025–26 is the holdout. Columns rank games (or team sides) by how strongly the model leans and take the top share — the model is shrunk hard toward the
+        market, so its leans are small in points and the ranking is what matters. Flat 1-unit bets at −110 (a win +1, a loss −1.1). Win % colored against the 52.4%
+        break-even; faded italic = under {SMALL} decided bets (a 100-bet sample is ±5% of pure luck). CLV = how far the line moved toward the bet, open → close —
+        the steadier read of whether a model is right, since it needs far fewer bets to show.
+      </p>
+      <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", margin: "0.5rem 0" }}>
+        {MARKET_ORDER.map((m) => (
+          <button key={m} className={`mode-btn ${market === m ? "mode-btn-active" : ""}`} onClick={() => setMarket(m)} style={{ fontSize: "0.75rem" }}>
+            {ATS_MARKET_LABEL[m]}
+          </button>
+        ))}
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style={HEADL}>Seasons</th>
+              {fracs.map((f) => (
+                <th key={f} style={HEAD}>
+                  {f === 1 ? "Every bet" : `Top ${Math.round(f * 100)}%`}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.seasons} style={r.seasons.includes("+") ? { borderTop: "1px solid var(--hash)" } : undefined}>
+                <td style={{ ...CELL, fontWeight: r.seasons.includes("+") ? 600 : 400 }}>{SEASON_LABEL[r.seasons] ?? r.seasons}</td>
+                {r.buckets.map((b) => {
+                  const p = b.w + b.l ? (100 * b.w) / (b.w + b.l) : null;
+                  return (
+                    <td key={b.frac} style={{ ...NUM, ...winColor(p, b.w + b.l) }} title={`lean ≥ ${b.minEdge} pts`}>
+                      {b.w}-{b.l}
+                      {b.p ? `-${b.p}` : ""} · {pct(p)}
+                      <div style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}>
+                        <span style={{ color: leanColor(b.units) }}>
+                          {b.units >= 0 ? "+" : ""}
+                          {b.units}u
+                        </span>
+                        {b.clv != null && (
+                          <span style={{ color: leanColor(b.clv) }}>
+                            {" "}
+                            · CLV {sgn(b.clv, 2)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -347,6 +450,7 @@ function SeasonTab({ gps, preds }: { gps: GamePred[]; preds: ReturnType<typeof u
           ["Opening line (open model)", scoreGames(sg, "open", SEASON_EDGES)],
         ]}
       />
+      <ScoreTable title="Game totals — line-move model, bet at the open (the ★ bets)" rows={[["Opening line", scoreGameMoves(sg, [0, 0.2, 0.3, T2_MOVE_CUT_TOP10, 0.6])]]} />
       <ScoreTable
         title="Team totals (vs the market's own team number: total split by spread)"
         rows={[
@@ -427,6 +531,15 @@ function LogTab({ picks, gps }: { picks: Totals2PickRow[]; gps: GamePred[] }) {
       return { p, gp, actual, edge, res, clv };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
+  const moveGraded = picks
+    .map((p) => {
+      const gp = byId.get(p.game_id);
+      if (!gp || !gp.g.completed || p.proj_move == null || p.open_total == null || p.proj_move === 0) return null;
+      const actual = (gp.g.homePts ?? 0) + (gp.g.awayPts ?? 0);
+      const sgnMv = Math.sign(p.proj_move);
+      return { star: Math.abs(p.proj_move) >= T2_MOVE_CUT_TOP10, res: sgnMv * (actual - p.open_total), clv: gp.mkt.closeTotal != null ? sgnMv * (gp.mkt.closeTotal - p.open_total) : null };
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
   const tally = (min: number) => {
     const sub = graded.filter((x) => Math.abs(x.edge) >= min && x.edge !== 0);
     const w = sub.filter((x) => x.res > 0).length;
@@ -463,6 +576,37 @@ function LogTab({ picks, gps }: { picks: Totals2PickRow[]; gps: GamePred[] }) {
                   </td>
                   <td style={{ ...NUM, ...winColor(t.pct, t.w + t.l) }}>{pct(t.pct)}</td>
                   <td style={{ ...NUM, color: leanColor(t.clv) }}>{sgn(t.clv, 2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <h3 style={H3}>Line-move bets (logged move lean, graded at the opening total)</h3>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style={HEADL}>Set</th>
+              <th style={HEAD}>W-L</th>
+              <th style={HEAD}>Win %</th>
+              <th style={HEAD}>Avg CLV</th>
+            </tr>
+          </thead>
+          <tbody>
+            {([["★ bets (top 10%)", moveGraded.filter((x) => x.star)], ["Every logged game", moveGraded]] as const).map(([label, set]) => {
+              const w = set.filter((x) => x.res > 0).length;
+              const l = set.filter((x) => x.res < 0).length;
+              const c = set.filter((x) => x.clv != null);
+              const pc = w + l ? (100 * w) / (w + l) : null;
+              return (
+                <tr key={label}>
+                  <td style={CELL}>{label}</td>
+                  <td style={NUM}>
+                    {w}-{l}
+                  </td>
+                  <td style={{ ...NUM, ...winColor(pc, w + l) }}>{pct(pc)}</td>
+                  <td style={{ ...NUM, color: leanColor(c.length ? c.reduce((a, x) => a + x.clv!, 0) / c.length : null) }}>{sgn(c.length ? c.reduce((a, x) => a + x.clv!, 0) / c.length : null, 2)}</td>
                 </tr>
               );
             })}
@@ -619,8 +763,13 @@ function HowItWorks() {
       <ul style={{ ...P, paddingLeft: "1.2rem" }}>
         <li>Against the closing total the model finds almost nothing (R² ≈ 0–0.6%, ≈ 0 on the holdout). The close is efficient; that is the expected result.</li>
         <li>
-          Against the opener there is a small, steady signal: layer 1's disagreement is worth ~0.1 points per point, and the line tends to move toward the model (CLV
-          positive in most seasons). The edge, if there is one, is in betting early — and team totals, which books move less carefully, are the natural place for it.
+          Against the opener there is a small, steady signal. The <strong>line-move model</strong> — trained to predict where the total goes after it opens, not the
+          final score — moved the line its way in every season (see Backtest O/U record), and its top 10% is the bet. Line moves are about 6× less noisy than final
+          scores, so this target needs far less data to learn.
+        </li>
+        <li>
+          Team numbers take the game's residual split evenly; the market decides how points divide between the teams. Letting the model split them was effectively
+          a spread opinion, and it lost in every season (47–49%).
         </li>
         <li>
           The one input stable across every fit: high team totals land slightly under (≈ −0.04 points per point above 28). Observed weather is fully priced by the close.

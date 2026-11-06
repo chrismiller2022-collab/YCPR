@@ -20,7 +20,7 @@ import {
   type T2Config,
   type SideRow,
 } from "../../src/lib/totals2/model";
-import { scoreGames, scoreTeams, fmtNum, fmtPct, type ScoreSummary } from "../../src/lib/totals2/report";
+import { scoreGames, scoreTeams, fmtNum, fmtPct, atsObs, gameMoveObs, topBuckets, type ScoreSummary, type AtsMarket } from "../../src/lib/totals2/report";
 import type { GameWeatherInputs } from "../../src/lib/totals2/weatherFeatures";
 
 const DIR = new URL("./data/", import.meta.url).pathname;
@@ -154,6 +154,26 @@ if (args.includes("--export")) {
   const train = rows.filter((r) => r.g.season < current && l1Pred.has(r));
   const l2close = fitLayer2(train, l1Pred, "close", cfg.alpha2, cfg.edgeCap, wf.slates)!;
   const l2open = fitLayer2(train, l1Pred, "open", cfg.alpha2, cfg.edgeCap, wf.slates)!;
+  const l2move = fitLayer2(train, l1Pred, "open", cfg.alpha2, cfg.edgeCap, wf.slates, "move")!;
+  // Over/under record by strength of lean, per season and pooled, every market.
+  const ats: any[] = [];
+  const MARKETS: AtsMarket[] = ["game-move", "game-open", "game-close", "team-move", "team-open", "team-close"];
+  for (const seasons of [[2023], [2024], [2025], [2026], [2023, 2024], [2025, 2026], [2023, 2024, 2025, 2026]]) {
+    const preds = wf.preds.filter((p) => seasons.includes(p.row.g.season));
+    const gps = pairGames(preds);
+    for (const market of MARKETS) {
+      const b = topBuckets(atsObs(market, gps, preds));
+      ats.push({
+        seasons: seasons.join("+"),
+        market,
+        buckets: b.map((x) => ({ frac: x.frac, minEdge: Math.round(x.minEdge * 100) / 100, w: x.w, l: x.l, p: x.p, units: Math.round(x.units * 10) / 10, clv: x.clv == null ? null : Math.round(x.clv * 100) / 100 })),
+      });
+    }
+  }
+  // The live "bet" flag: the line-move lean that made the top 10% of games in the walk-forward seasons.
+  const allMoves = wf.preds.filter((p) => p.row.g.season >= 2023);
+  const mvAbs = gameMoveObs(pairGames(allMoves)).map((o) => Math.abs(o.model - o.line)).sort((a, b) => b - a);
+  const moveCutTop10 = Math.round(mvAbs[Math.floor(mvAbs.length * 0.1)] * 100) / 100;
   void predictLayer1;
   const version = `t2-${current}-n${train.length}`;
   const backtest: any[] = [];
@@ -171,12 +191,18 @@ if (args.includes("--export")) {
 // backfill) by re-running pull.ts, weather_meteostat.ts and train.ts --export.
 // Trained on seasons before ${current}: layer 1 on every finished season, layer 2 on layer 1's walk-forward predictions.
 import type { Layer1Fit, Layer2Fit, T2Config } from "./model";
+import type { AtsMarket } from "./report";
 export const T2_VERSION = ${JSON.stringify(version)};
 export const T2_TRAINED_THROUGH = ${current - 1};
 export const T2_CONFIG: T2Config = ${JSON.stringify(cfg)};
 export const T2_LAYER1: Layer1Fit = ${JSON.stringify(l1)};
 export const T2_LAYER2_CLOSE: Layer2Fit = ${JSON.stringify(l2close)};
 export const T2_LAYER2_OPEN: Layer2Fit = ${JSON.stringify(l2open)};
+export const T2_LAYER2_MOVE: Layer2Fit = ${JSON.stringify(l2move)};
+// Smallest predicted open→close move of a game total that ranked in the top 10% of 2023-26 walk-forward games.
+export const T2_MOVE_CUT_TOP10 = ${moveCutTop10};
+export interface T2AtsBucket { frac: number; minEdge: number; w: number; l: number; p: number; units: number; clv: number | null }
+export const T2_ATS: { seasons: string; market: AtsMarket; buckets: T2AtsBucket[] }[] = ${JSON.stringify(ats)};
 // Walk-forward backtest (each season predicted by fits on earlier seasons only). r2 = residual R² in %, win = % of
 // every game/team side picked in the model's direction, clv = avg points the line moved our way open → close.
 export interface T2BacktestRow { season: number; scope: "game" | "team"; line: "close" | "open"; n: number; r2: number | null; corr: number | null; win: number | null; clv: number | null }

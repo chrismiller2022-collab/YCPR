@@ -25,3 +25,6 @@ create table if not exists totals2_picks (
 create index if not exists totals2_picks_season_week on totals2_picks (season, week);
 alter table totals2_picks enable row level security;
 create policy "Public read access to totals2_picks" on totals2_picks for select using (true);
+
+-- Added with the line-move model: the opening total at save time and the model's expected open → close move.
+alter table totals2_picks add column if not exists open_total numeric, add column if not exists proj_move numeric;

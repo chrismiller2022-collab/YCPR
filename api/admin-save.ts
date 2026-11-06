@@ -342,6 +342,8 @@ export default async function handler(req: any, res: any) {
       stats_home_pts: n(p.stats_home_pts),
       stats_away_pts: n(p.stats_away_pts),
       yc_home_spread: n(p.yc_home_spread),
+      open_total: n(p.open_total),
+      proj_move: n(p.proj_move),
       weather: p.weather && typeof p.weather === "object" ? p.weather : null,
     }));
     if (rows.some((r: any) => !r.game_id || !Number.isFinite(r.season) || !Number.isFinite(r.week) || r.proj_total == null)) {

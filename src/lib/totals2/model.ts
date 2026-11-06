@@ -253,6 +253,10 @@ export const MARKET_CENTER = 28;
 
 export interface Layer2Fit {
   line: LineKind;
+  // "result": actual points − the line's implied number. "move": closing implied − opening implied, i.e. where the
+  // line goes after it opens (only with line = "open"). Line moves are far less noisy than final scores (~1.5 vs
+  // ~9 points per team), which is why the move model is the one to bet from: it is the most stable signal found.
+  target?: "result" | "move";
   features: string[];
   intercept: number;
   coef: number[];
@@ -305,7 +309,15 @@ function l2Row(r: SideRow, l1Pred: number, implied: number, cap: number, slate: 
   return [r.late ? e : 0, r.late ? 0 : e, ...w, implied - MARKET_CENTER];
 }
 
-export function fitLayer2(rows: SideRow[], l1Pred: Map<SideRow, number>, line: LineKind, alpha: number, cap: number, slates: SlateMeans): Layer2Fit | null {
+export function fitLayer2(
+  rows: SideRow[],
+  l1Pred: Map<SideRow, number>,
+  line: LineKind,
+  alpha: number,
+  cap: number,
+  slates: SlateMeans,
+  target: "result" | "move" = "result"
+): Layer2Fit | null {
   const X: number[][] = [];
   const y: number[] = [];
   for (const r of rows) {
@@ -314,7 +326,14 @@ export function fitLayer2(rows: SideRow[], l1Pred: Map<SideRow, number>, line: L
     const imp = sideImplied(r, line);
     if (p == null || imp == null) continue;
     X.push(l2Row(r, p, imp, cap, slates.get(slateKey(r.g.season, r.g.week, line)) ?? 0, line));
-    y.push(r.pts - imp);
+    if (target === "move") {
+      const c = sideImplied(r, "close");
+      if (c == null) {
+        X.pop();
+        continue;
+      }
+      y.push(c - imp);
+    } else y.push(r.pts - imp);
   }
   if (X.length < 400) return null;
   // No free intercept: a fitted constant would just learn whether earlier seasons happened to run over or under the
@@ -325,7 +344,7 @@ export function fitLayer2(rows: SideRow[], l1Pred: Map<SideRow, number>, line: L
     new Array(p).fill(alpha),
     new Array(p).fill(0)
   );
-  return { line, features: [...L2_FEATURES], intercept: 0, coef: theta, edgeCap: cap };
+  return { line, target, features: [...L2_FEATURES], intercept: 0, coef: theta, edgeCap: cap };
 }
 
 /** Expected points this side scores above the market's implied number. */
@@ -340,13 +359,15 @@ export function predictLayer2(m: Layer2Fit, r: SideRow, l1PredValue: number, sla
 export interface SidePred {
   row: SideRow;
   l1: number; // market-blind team points
-  resid: Record<LineKind, number | null>; // expected points over the market's implied number, per line
+  resid: Record<LineKind, number | null>; // expected points over the market's implied number, per line (market split — see applyMarketSplit)
+  move: number | null; // expected move of this side's implied number, open → close (the line-move model)
+  ownResid?: Record<LineKind, number | null>; // the side's own residual before the market split, for reference
 }
 
 export interface WalkForward {
   preds: SidePred[];
   l1Fits: Map<number, Layer1Fit>; // per predicted season
-  l2Fits: Map<number, Record<LineKind, Layer2Fit | null>>;
+  l2Fits: Map<number, Record<LineKind | "move", Layer2Fit | null>>;
   slates: SlateMeans;
 }
 
@@ -362,13 +383,14 @@ export function walkForward(rows: SideRow[], cfg: T2Config, firstL1Train = 2021)
     for (const r of rows) if (r.g.season === S) l1Pred.set(r, predictLayer1(fit, r));
   }
   const preds: SidePred[] = [];
-  const l2Fits = new Map<number, Record<LineKind, Layer2Fit | null>>();
+  const l2Fits = new Map<number, Record<LineKind | "move", Layer2Fit | null>>();
   const slates = slateMeans(rows, (r) => l1Pred.get(r));
   for (const S of seasons) {
     const train = rows.filter((r) => r.g.season < S && l1Pred.has(r));
     const fits = {
       close: fitLayer2(train, l1Pred, "close", cfg.alpha2, cfg.edgeCap, slates),
       open: fitLayer2(train, l1Pred, "open", cfg.alpha2, cfg.edgeCap, slates),
+      move: fitLayer2(train, l1Pred, "open", cfg.alpha2, cfg.edgeCap, slates, "move"),
     };
     if (!fits.close && !fits.open) continue;
     l2Fits.set(S, fits);
@@ -380,11 +402,39 @@ export function walkForward(rows: SideRow[], cfg: T2Config, firstL1Train = 2021)
         row: r,
         l1,
         resid: { close: fits.close ? predictLayer2(fits.close, r, l1, slates) : null, open: fits.open ? predictLayer2(fits.open, r, l1, slates) : null },
+        move: fits.move ? predictLayer2(fits.move, r, l1, slates) : null,
       });
     }
   }
+  applyMarketSplit(preds);
   return { preds, l1Fits, l2Fits, slates };
 }
+
+// The home/away split of a game's residual is effectively a spread opinion, and it lost in every backtest season (47-49%
+// on team totals) while the shared, game-level part held up. So each team's number takes the GAME's residual, shared
+// evenly — the market decides how the points split between the teams; the model only says whether there are more or
+// fewer of them. Game totals are unchanged (the sum is the same).
+export function applyMarketSplit(preds: SidePred[]) {
+  const by = new Map<string, SidePred[]>();
+  for (const p of preds) by.set(p.row.g.id, [...(by.get(p.row.g.id) ?? []), p]);
+  for (const ps of by.values()) {
+    if (ps.length !== 2) continue;
+    const [a, b] = ps;
+    for (const line of ["close", "open"] as const) {
+      const x = a.resid[line];
+      const y = b.resid[line];
+      a.ownResid = { ...(a.ownResid ?? a.resid) };
+      b.ownResid = { ...(b.ownResid ?? b.resid) };
+      if (x == null || y == null) continue;
+      a.resid[line] = (x + y) / 2;
+      b.resid[line] = (x + y) / 2;
+    }
+    if (a.move != null && b.move != null) a.move = b.move = (a.move + b.move) / 2;
+  }
+}
+
+/** Predicted open → close move of the game total (both sides' expected moves added up). */
+export const predictedMove = (gp: GamePred) => (gp.home.move == null || gp.away.move == null ? null : gp.home.move + gp.away.move);
 
 // ------------------------------------------------------------------ game level
 export interface GamePred {

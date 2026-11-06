@@ -22,3 +22,11 @@ for (const a of TT_ARMS) {
 }
 const upcoming = d.gps.filter((x) => !x.g.completed).slice(0, 6);
 for (const x of upcoming) console.log(x.g.week, x.g.away, "@", x.g.home, "line", lineOf(x.mkt, "close")?.total, "v2", projectedTotal(x, "close")?.toFixed(1), "open-model", projectedTotal(x, "open")?.toFixed(1));
+const { predictedMove } = await import("../../src/lib/totals2/model");
+const { T2_MOVE_CUT_TOP10 } = await import("../../src/lib/totals2/frozen");
+const stars = d.gps.filter((x) => !x.g.completed && x.mkt.openTotal != null && Math.abs(predictedMove(x) ?? 0) >= T2_MOVE_CUT_TOP10);
+console.log(`\n★ line-move bets (|move| ≥ ${T2_MOVE_CUT_TOP10}):`);
+for (const x of stars) {
+  const mv = predictedMove(x)!;
+  console.log(`  wk${x.g.week} ${x.g.away} @ ${x.g.home}: ${mv > 0 ? "OVER" : "UNDER"} open ${x.mkt.openTotal} (now ${x.mkt.closeTotal}), expected move ${mv.toFixed(2)}`);
+}

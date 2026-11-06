@@ -6,11 +6,11 @@ import { impliedPoints, projectedTotal, type GamePred } from "./model";
 import type { TeamTotalLineLite } from "../api/totals2Data";
 import type { GameProjectionLockRow } from "../api/gameProjectionLocks";
 
-export const TT_ARMS = ["v2team", "v2mkt", "v2yc", "v1yc", "v1mkt", "stats"] as const;
+export const TT_ARMS = ["v2team", "v2own", "v2yc", "v1yc", "v1mkt", "stats"] as const;
 export type TTArmV2 = (typeof TT_ARMS)[number];
 export const TT_ARM_LABEL: Record<TTArmV2, string> = {
-  v2team: "v2 team model (its own team numbers)",
-  v2mkt: "v2 game total ÷ market spread",
+  v2team: "v2 (game residual, market split) = v2 total ÷ market spread",
+  v2own: "v2 with its own home/away split (retired: lost every season)",
   v2yc: "v2 game total ÷ YCPR spread",
   v1yc: "Current site: v1 total ÷ YCPR spread",
   v1mkt: "v1 total ÷ market spread",
@@ -53,7 +53,6 @@ export function buildTTSides(gps: GamePred[], locks: Record<string, GameProjecti
     const ycHome = lock?.my_away_spread != null ? -Number(lock.my_away_spread) : null;
     const v1 = lock?.my_total != null ? Number(lock.my_total) : null;
     const split = (total: number | null, spread: number | null) => (total == null || spread == null ? null : splitTeamTotal(total, spread));
-    const v2mkt = split(v2, S);
     const v2yc = split(v2, ycHome);
     const v1yc = split(v1, ycHome);
     const v1mkt = split(v1, S);
@@ -63,11 +62,12 @@ export function buildTTSides(gps: GamePred[], locks: Record<string, GameProjecti
       const derived = impliedPoints(T, S, side);
       const arms: Partial<Record<TTArmV2, number>> = { stats: p.l1 };
       if (p.resid.close != null) arms.v2team = derived + p.resid.close;
+      const own = p.ownResid?.close;
+      if (own != null) arms.v2own = derived + own;
       const pick = (sp: { home: number | null; away: number | null } | null) => (sp ? (side === "home" ? sp.home : sp.away) : null);
       const put = (k: TTArmV2, v: number | null) => {
         if (v != null && Number.isFinite(v)) arms[k] = v;
       };
-      put("v2mkt", pick(v2mkt));
       put("v2yc", pick(v2yc));
       put("v1yc", pick(v1yc));
       put("v1mkt", pick(v1mkt));

@@ -2,7 +2,7 @@
 // The headline number is the RESIDUAL R²: how much of (actual − market line) the model explains. 0 = no better than the
 // line itself; negative = worse than just using the line. Closing-line value (CLV) is scored for the opening-line model:
 // did the line move toward the side the model took?
-import { impliedPoints, lineOf, projectedTotal, sideImplied, type GamePred, type LineKind, type SidePred } from "./model";
+import { impliedPoints, lineOf, predictedMove, projectedTotal, sideImplied, type GamePred, type LineKind, type SidePred } from "./model";
 
 export const BREAK_EVEN = 52.38; // -110 both ways
 export const EDGE_THRESHOLDS = [0, 1, 2, 3, 4, 5];
@@ -27,7 +27,7 @@ export interface ScoreSummary {
   buckets: Bucket[];
 }
 
-interface Obs {
+export interface Obs {
   line: number; // the market number graded against
   model: number; // the model's number
   actual: number;
@@ -85,6 +85,10 @@ function summarize(obs: Obs[], thresholds = EDGE_THRESHOLDS): ScoreSummary {
 
 /** Game totals graded against `line` (open or close). */
 export function scoreGames(gps: GamePred[], line: LineKind, thresholds?: number[]): ScoreSummary {
+  return summarize(gameObs(gps, line), thresholds);
+}
+
+export function gameObs(gps: GamePred[], line: LineKind): Obs[] {
   const obs: Obs[] = [];
   for (const gp of gps) {
     if (!gp.g.completed) continue;
@@ -94,11 +98,15 @@ export function scoreGames(gps: GamePred[], line: LineKind, thresholds?: number[
     const move = line === "open" && gp.mkt.closeTotal != null ? gp.mkt.closeTotal - l.total : null;
     obs.push({ line: l.total, model: m, actual: (gp.g.homePts ?? 0) + (gp.g.awayPts ?? 0), move });
   }
-  return summarize(obs, thresholds);
+  return obs;
 }
 
 /** Team totals (each side of each game) graded against the market's implied team points from `line`. */
 export function scoreTeams(preds: SidePred[], line: LineKind, thresholds?: number[]): ScoreSummary {
+  return summarize(teamObs(preds, line), thresholds);
+}
+
+export function teamObs(preds: SidePred[], line: LineKind): Obs[] {
   const obs: Obs[] = [];
   for (const p of preds) {
     if (p.row.pts == null) continue;
@@ -110,8 +118,104 @@ export function scoreTeams(preds: SidePred[], line: LineKind, thresholds?: numbe
       line === "open" && m?.closeTotal != null && m.closeSpread != null ? impliedPoints(m.closeTotal, m.closeSpread, p.row.side) - imp : null;
     obs.push({ line: imp, model: imp + res, actual: p.row.pts, move });
   }
-  return summarize(obs, thresholds);
+  return obs;
+}
+
+// The model is shrunk hard toward the market, so its leans are small in points; ranking them is the fair way to ask
+// "how do its strongest opinions do?". Top fraction f = the f share of games with the largest |model − line|.
+export const TOP_FRACTIONS = [0.05, 0.1, 0.25, 0.5, 1];
+
+export interface TopBucket {
+  frac: number;
+  minEdge: number; // the smallest |lean| that made the cut
+  n: number;
+  w: number;
+  l: number;
+  p: number;
+  winPct: number | null;
+  clv: number | null;
+  units: number; // flat 1-unit bets at -110: +1 a win, -1.1 a loss
+}
+
+export function topBuckets(obs: Obs[], fractions = TOP_FRACTIONS): TopBucket[] {
+  const ranked = obs.filter((o) => o.model !== o.line).sort((a, b) => Math.abs(b.model - b.line) - Math.abs(a.model - a.line));
+  return fractions.map((frac) => {
+    const sub = ranked.slice(0, Math.max(1, Math.round(frac * ranked.length)));
+    let w = 0, l = 0, p = 0, mv = 0, mvn = 0;
+    for (const o of sub) {
+      const sgn = Math.sign(o.model - o.line);
+      const res = sgn * (o.actual - o.line);
+      if (res > 0) w++;
+      else if (res < 0) l++;
+      else p++;
+      if (o.move != null) {
+        mv += sgn * o.move;
+        mvn++;
+      }
+    }
+    const last = sub[sub.length - 1];
+    return { frac, minEdge: last ? Math.abs(last.model - last.line) : 0, n: sub.length, w, l, p, winPct: w + l ? (100 * w) / (w + l) : null, clv: mvn ? mv / mvn : null, units: w - 1.1 * l };
+  });
 }
 
 export const fmtPct = (v: number | null, d = 1) => (v == null ? "–" : `${v.toFixed(d)}%`);
 export const fmtNum = (v: number | null, d = 2) => (v == null ? "–" : v.toFixed(d));
+
+/** Line-move model, game totals: bet the OPENING total in the direction the model expects the line to move. */
+export function gameMoveObs(gps: GamePred[]): Obs[] {
+  const obs: Obs[] = [];
+  for (const gp of gps) {
+    if (!gp.g.completed || gp.mkt.openTotal == null) continue;
+    const mv = predictedMove(gp);
+    if (mv == null) continue;
+    obs.push({
+      line: gp.mkt.openTotal,
+      model: gp.mkt.openTotal + mv,
+      actual: (gp.g.homePts ?? 0) + (gp.g.awayPts ?? 0),
+      move: gp.mkt.closeTotal != null ? gp.mkt.closeTotal - gp.mkt.openTotal : null,
+    });
+  }
+  return obs;
+}
+
+/** Line-move model, team totals: each side's opening implied number, in the direction its expected move points. */
+export function teamMoveObs(preds: SidePred[]): Obs[] {
+  const obs: Obs[] = [];
+  for (const p of preds) {
+    if (p.row.pts == null || p.move == null) continue;
+    const imp = sideImplied(p.row, "open");
+    const m = p.row.mkt;
+    if (imp == null) continue;
+    const close = m?.closeTotal != null && m.closeSpread != null ? impliedPoints(m.closeTotal, m.closeSpread, p.row.side) : null;
+    obs.push({ line: imp, model: imp + p.move, actual: p.row.pts, move: close == null ? null : close - imp });
+  }
+  return obs;
+}
+
+export const scoreGameMoves = (gps: GamePred[], thresholds?: number[]) => summarize(gameMoveObs(gps), thresholds);
+
+export type AtsMarket = "game-move" | "game-open" | "game-close" | "team-move" | "team-open" | "team-close";
+export const ATS_MARKET_LABEL: Record<AtsMarket, string> = {
+  "game-move": "Game totals — line-move model, bet at the open",
+  "game-open": "Game totals — result model vs the open",
+  "game-close": "Game totals — result model vs the close",
+  "team-move": "Team totals — line-move model, bet at the open",
+  "team-open": "Team totals — result model vs the open",
+  "team-close": "Team totals — result model vs the close",
+};
+export function atsObs(market: AtsMarket, gps: GamePred[], preds: SidePred[]): Obs[] {
+  switch (market) {
+    case "game-move":
+      return gameMoveObs(gps);
+    case "game-open":
+      return gameObs(gps, "open");
+    case "game-close":
+      return gameObs(gps, "close");
+    case "team-move":
+      return teamMoveObs(preds);
+    case "team-open":
+      return teamObs(preds, "open");
+    case "team-close":
+      return teamObs(preds, "close");
+  }
+}

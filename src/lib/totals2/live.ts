@@ -8,9 +8,9 @@ import { fetchTeamVenues, fetchVenuesByIds } from "../api/gameWeather";
 import { fetchGameProjectionLocks, type GameProjectionLockRow } from "../api/gameProjectionLocks";
 import { fetchWeatherForKickoffs, summarizeGameWeather, type WeatherRequest } from "../weather";
 import { buildGames, type DGame } from "../drogba/dataset";
-import { buildMarkets, buildSideRows, buildT2Ratings, pairGames, predictLayer1, predictLayer2, slateMeans, type GamePred, type Market, type SidePred } from "./model";
+import { applyMarketSplit, buildMarkets, buildSideRows, buildT2Ratings, pairGames, predictLayer1, predictLayer2, slateMeans, type GamePred, type Market, type SidePred } from "./model";
 import { gameLocation, type GameWeatherInputs } from "./weatherFeatures";
-import { T2_CONFIG, T2_LAYER1, T2_LAYER2_CLOSE, T2_LAYER2_OPEN } from "./frozen";
+import { T2_CONFIG, T2_LAYER1, T2_LAYER2_CLOSE, T2_LAYER2_MOVE, T2_LAYER2_OPEN } from "./frozen";
 
 export interface Totals2State {
   loading: boolean;
@@ -80,7 +80,9 @@ export async function loadTotals2(season: number): Promise<Totals2Data> {
     row: r,
     l1: l1.get(r)!,
     resid: { close: predictLayer2(T2_LAYER2_CLOSE, r, l1.get(r)!, slates), open: predictLayer2(T2_LAYER2_OPEN, r, l1.get(r)!, slates) },
+    move: predictLayer2(T2_LAYER2_MOVE, r, l1.get(r)!, slates),
   }));
+  applyMarketSplit(preds);
   return { weatherNote: wx.note, games, markets, preds, gps: pairGames(preds), weather: wx.map, locks, picks, ttLines };
 }
 

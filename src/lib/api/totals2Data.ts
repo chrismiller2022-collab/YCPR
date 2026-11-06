@@ -54,6 +54,8 @@ export interface Totals2PickRow {
   stats_home_pts: number | null;
   stats_away_pts: number | null;
   yc_home_spread: number | null;
+  open_total: number | null; // opening total when saved
+  proj_move: number | null; // line-move model: expected open → close move of the total
   weather: Record<string, unknown> | null;
   created_at: string;
 }
@@ -72,6 +74,8 @@ export async function fetchTotals2Picks(season: number): Promise<Totals2PickRow[
       stats_home_pts: num(r.stats_home_pts),
       stats_away_pts: num(r.stats_away_pts),
       yc_home_spread: num(r.yc_home_spread),
+      open_total: num(r.open_total),
+      proj_move: num(r.proj_move),
     }));
   });
 }
