@@ -22,9 +22,10 @@ import { kickAverages, stValue, ST_CONFIG } from "../drogba/engine";
 import { buildPreseasonMap, earlyWeight, type PreseasonZ, type RawPreseasonRow } from "../drogba/preseason";
 import type { DGame, RawLineRow } from "../drogba/dataset";
 import { WEATHER_FEATURES, weatherFeatureVector, type GameWeatherInputs, type WeatherFeature } from "./weatherFeatures";
+import type { TempoAgg } from "./tempo";
 
 // ------------------------------------------------------------------ config
-export const T2_METRICS = ["ppa", "sr", "expl", "srf", "isof", "pts", "ppd", "drives", "plays"] as const;
+export const T2_METRICS = ["ppa", "sr", "expl", "srf", "isof", "pts", "ppd", "drives", "plays", "tempo"] as const;
 export type T2Metric = (typeof T2_METRICS)[number];
 
 export interface T2Config {
@@ -39,7 +40,7 @@ export interface T2Config {
 
 // Chosen by walk-forward tuning on 2023-24 only (scripts/totals_v2/train.ts --tune), then reported untouched on 2025-26.
 export const DEFAULT_T2_CONFIG: T2Config = {
-  lambda: { ppa: 3, sr: 2, expl: 4, srf: 2, isof: 4, pts: 3, ppd: 3, drives: 4, plays: 4 },
+  lambda: { ppa: 3, sr: 2, expl: 4, srf: 2, isof: 4, pts: 3, ppd: 3, drives: 4, plays: 4, tempo: 4 },
   rho: 0.7,
   retLambdaK: 1.0,
   retRhoK: 0.3,
@@ -99,6 +100,7 @@ export interface T2Inputs {
   adv: RawAdvRowT2[];
   plays: RawPlayAggRow[];
   preseason: RawPreseasonRow[];
+  tempo?: TempoAgg[]; // per team-game offensive tempo from the play-by-play (games with a usable clock only)
 }
 
 export interface T2Ratings {
@@ -122,6 +124,21 @@ function teamGames(inp: T2Inputs): TeamGameAdv[] {
     // Points are capped so one 70-point blowout doesn't define an offense.
     t.v.pts = pts == null ? null : Math.min(56, pts);
     t.v.ppd = pts != null && drives != null && drives >= 5 ? Math.min(7, pts / drives) : null;
+  }
+  // Tempo: game-clock seconds per snap, weighted by snaps. Only games whose clock CFBD recorded (see tempo.ts).
+  const tgBy = new Map(tg.map((t) => [`${t.gameId}|${t.team}`, t]));
+  for (const r of inp.tempo ?? []) {
+    if (r.tempo_n < 15) continue;
+    let t = tgBy.get(`${r.game_id}|${r.team}`);
+    if (!t) {
+      const g = gameBy.get(r.game_id);
+      if (!g) continue;
+      t = { gameId: r.game_id, team: r.team, season: g.season, week: g.week, v: {}, w: {} };
+      tg.push(t);
+      tgBy.set(`${r.game_id}|${r.team}`, t);
+    }
+    t.v.tempo = r.tempo_sec_sum / r.tempo_n;
+    t.w.tempo = r.tempo_n;
   }
   return tg;
 }
@@ -166,7 +183,7 @@ function snapAt<T>(snaps: Map<string, T>, season: number, week: number): T | und
 }
 
 // ------------------------------------------------------------------ team-side rows
-export const L1_FEATURES = [...T2_METRICS.filter((m) => m !== "drives" && m !== "plays"), "paceDrives", "pacePlays", "st", "home", "talentOff", "talentOpp"] as const;
+export const L1_FEATURES = [...T2_METRICS.filter((m) => m !== "drives" && m !== "plays" && m !== "tempo"), "paceDrives", "pacePlays", "paceTempo", "st", "home", "talentOff", "talentOpp"] as const;
 
 export interface SideRow {
   g: DGame;
@@ -199,6 +216,7 @@ export function buildSideRows(games: DGame[], r: T2Ratings, markets: Map<string,
     };
     const paceDrives = pace("drives");
     const pacePlays = pace("plays");
+    const paceTempo = pace("tempo");
     for (const side of ["home", "away"] as const) {
       const team = side === "home" ? g.home : g.away;
       const opp = side === "home" ? g.away : g.home;
@@ -209,6 +227,7 @@ export function buildSideRows(games: DGame[], r: T2Ratings, markets: Map<string,
           x.push(s ? (s.off.get(team) ?? 0) + (s.def.get(opp) ?? 0) : 0);
         } else if (f === "paceDrives") x.push(paceDrives);
         else if (f === "pacePlays") x.push(pacePlays);
+        else if (f === "paceTempo") x.push(paceTempo);
         else if (f === "st") x.push(st ? (st.ratings.get(team) ?? 0) - (st.ratings.get(opp) ?? 0) : 0);
         else if (f === "home") x.push(g.neutral ? 0 : side === "home" ? 1 : -1);
         else if (f === "talentOff") x.push((r.pre.get(`${g.season}|${team}`)?.[0] ?? 0) * ew);
