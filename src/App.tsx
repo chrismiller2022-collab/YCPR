@@ -39,6 +39,7 @@ const OverlayPage = lazy(() => import("./pages/OverlayPage"));
 const OverlayControlPage = lazy(() => import("./pages/OverlayControlPage"));
 const CalcuttaStagePage = lazy(() => import("./pages/CalcuttaStagePage"));
 const CalcuttaDeskPage = lazy(() => import("./pages/CalcuttaDeskPage"));
+const CalcuttaRoomPage = lazy(() => import("./pages/CalcuttaRoomPage"));
 import SurvivorPoolPublicPage from "./pages/SurvivorPoolPublicPage";
 import SurvivorPoolStandingsPage from "./pages/SurvivorPoolStandingsPage";
 import CfbSurvivorToolPage from "./pages/CfbSurvivorToolPage";
@@ -243,6 +244,8 @@ export default function App() {
       <Route path="/calcutta/stage/:id" element={<Suspense fallback={null}><CalcuttaStagePage /></Suspense>} />
       {/* Calcutta Desk — private model window (admin sign-in required); never screen-shared. */}
       <Route path="/calcutta/desk/:id" element={<Suspense fallback={null}><CalcuttaDeskPage /></Suspense>} />
+      {/* Calcutta live room — attendees bid from their own devices (name + 4-digit PIN). */}
+      <Route path="/calcutta/room/:id" element={<Suspense fallback={null}><CalcuttaRoomPage /></Suspense>} />
 
       <Route path="/survivor-pool/standings/:season/:viewerSlug" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />
       <Route path="/survivor-pool/standings/:season" element={<SurvivorPoolStandingsRoute onHome={() => navigate("/")} />} />

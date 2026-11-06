@@ -36,6 +36,7 @@ import {
 import { formatDef, roundSlots } from "../lib/calcutta/formats";
 import { dispatch as storeDispatch, fetchCloudAuction, readAuction, useAuction, useSyncState, writeAuction } from "../lib/calcutta/store";
 import { botMax, chooseBotBid } from "../lib/calcutta/bots";
+import { buildLiveState, fetchBidRequests, publishLive, useBidRequestPing, type RoomOutcome } from "../lib/calcutta/room";
 import type { CalcuttaAuction, PracticeStats } from "../lib/calcutta/types";
 import { LotLogos, TeamBadge, fmt$, fmtPayout, seedLabel } from "../lib/calcutta/ui";
 
@@ -576,6 +577,8 @@ function Stage({ auction: a }: { auction: CalcuttaAuction }) {
           })()}
         </div>
       )}
+      {a.room?.enabled && <RoomHost a={a} onRoomBid={(text, ok) => setFlash({ text, kind: ok ? "info" : "err", at: Date.now() })} />}
+      {a.room?.enabled && controls && <div className="cal-room-tag">📱 Live room open</div>}
       {a.practice?.enabled && <PracticeDriver a={a} now={now} call={call} setCall={setCall} bumpStats={bumpStats} />}
     </div>
   );
@@ -756,5 +759,72 @@ function PracticeDriver({
     else if (phase === "idle" && started && cur.status !== "complete" && inPhase > 2000) storeDispatch(a.id, (x, t) => openLot(x, null, t));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now]);
+  return null;
+}
+
+/**
+ * Live room host. Picks up bids people send from their own devices (in the
+ * order they arrived), runs each through the same rules as a keyboard bid,
+ * and publishes what the room sees after every change. Only the Stage does
+ * this, so there's exactly one judge of who bid first.
+ */
+function RoomHost({ a, onRoomBid }: { a: CalcuttaAuction; onRoomBid: (text: string, ok: boolean) => void }) {
+  const outcomes = useRef<RoomOutcome[]>([]);
+  const busy = useRef(false);
+  const [published, setPublished] = useState(0);
+
+  useBidRequestPing(a.id, true, async () => {
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      const after = readAuction(a.id)?.room?.lastRequestId ?? 0;
+      const reqs = await fetchBidRequests(a.id, after);
+      if (!reqs.length) return;
+      let last = after;
+      for (const r of reqs) {
+        last = Math.max(last, r.id);
+        const cur = readAuction(a.id);
+        if (!cur) break;
+        const name = participantById(cur, r.participant_id)?.name ?? "Someone";
+        let err: string | undefined;
+        if (r.lot_id && r.lot_id !== cur.live.lotId) err = "That team already closed";
+        else if (r.kind === "out") err = storeDispatch(a.id, (x, t) => toggleOut(x, r.participant_id, t));
+        else {
+          err = storeDispatch(a.id, (x, t) => placeBid(x, r.participant_id, r.amount, t));
+          if (err && /^Minimum bid is/.test(err)) err = `Too late — the next bid is ${fmt$(minNextBid(readAuction(a.id)!))}`;
+        }
+        const text = err ?? (r.kind === "out" ? `${name} ${cur.live.outIds?.includes(r.participant_id) ? "is back in" : "bowed out"}` : `📱 ${name} ${fmt$(r.amount ?? minNextBid(cur))}`);
+        outcomes.current = [...outcomes.current, { requestId: r.id, participantId: r.participant_id, ok: !err, text }].slice(-30);
+        if (err && r.kind === "bid") onRoomBid(`📱 ${name}: ${err}`, false);
+      }
+      storeDispatch(a.id, (x, t) => ({ auction: { ...x, room: { enabled: x.room?.enabled ?? true, lastRequestId: last }, updatedAt: t } }));
+      setPublished((n) => n + 1);
+    } catch {
+      // network hiccup — the next ping retries from the same request id
+    } finally {
+      busy.current = false;
+    }
+  });
+
+  // Publish after every change (throttled), and every 5s so late joiners and clocks stay fresh.
+  const lastSent = useRef(0);
+  const timer = useRef<number | null>(null);
+  useEffect(() => {
+    const send = () => {
+      timer.current = null;
+      lastSent.current = Date.now();
+      const cur = readAuction(a.id);
+      if (cur) publishLive(a.id, buildLiveState(cur, outcomes.current, Date.now())).catch(() => {});
+    };
+    const wait = Math.max(0, 150 - (Date.now() - lastSent.current));
+    if (timer.current == null) timer.current = window.setTimeout(send, wait);
+  }, [a.updatedAt, published, a.id]);
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const cur = readAuction(a.id);
+      if (cur) publishLive(a.id, buildLiveState(cur, outcomes.current, Date.now())).catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [a.id]);
   return null;
 }
