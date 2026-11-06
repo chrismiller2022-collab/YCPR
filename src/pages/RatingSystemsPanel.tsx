@@ -24,6 +24,7 @@ import { useWeeklyStats } from "../lib/api/weeklyStats";
 import { fetchGamesWithLines } from "../lib/api/gamesLines";
 import { buildRatingsByTeam, computeMultiSystemRow, aggregateSystemPerformance, winPct } from "../lib/multiRatingMatchups";
 import { runStandardizedStudy } from "../lib/standardizedStudy";
+import { clearStandardizedYcCache, computeStdHistory } from "../lib/standardizedYc";
 import { ATS_BREAKEVEN_PCT } from "../lib/matchupsCompute";
 import {
   fetchRatingPulls,
@@ -47,6 +48,8 @@ import {
   saveRatingWeek,
   fetchSavedRatingWeeks,
   fetchWeeklyPowerRatings,
+  fetchStdHistory,
+  saveStdHistory,
   pushYcToLiveRatings,
   frozenSkipNote,
   type RatingPullRow,
@@ -948,6 +951,61 @@ function SystemPerformanceSummary({ season, weights }: { season: number; weights
 }
 
 // ---------------------------------------------------------------------
+// Standardized history: every saved week's YC as the standardized build rates
+// it, saved as yc_std (lib/standardizedYc.ts). Spread / Moneyline History read
+// it. Save As Week adds each new week automatically; rebuild after changing
+// weights or the points-per-SD setting so the history matches them.
+// ---------------------------------------------------------------------
+function StdHistoryControl({ season }: { season: number }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [savedWeeks, setSavedWeeks] = useState<number[] | null>(null);
+
+  useEffect(() => {
+    fetchStdHistory(season)
+      .then((rows) => setSavedWeeks(Array.from(new Set(rows.map((r) => r.week))).sort((a, b) => a - b)))
+      .catch(() => setSavedWeeks([]));
+  }, [season, msg]);
+
+  async function rebuild() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { rows, weeks, multiplier } = await computeStdHistory(season);
+      const result = await saveStdHistory(season, rows);
+      clearStandardizedYcCache(season);
+      setMsg(`Saved ${result.saved} standardized ratings for weeks ${weeks.join(", ")} (× ${multiplier}, current saved weights).`);
+    } catch (err: any) {
+      setMsg(err.message ?? "Rebuild failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--hash)", borderRadius: 8, padding: "0.9rem 1rem", marginBottom: "1.25rem" }}>
+      <div className="section-label" style={{ marginBottom: "0.4rem" }}>
+        Standardized history ({season})
+      </div>
+      <p style={{ fontSize: "0.78rem", color: "var(--chalk-dim)", margin: "0 0 0.6rem", maxWidth: 820 }}>
+        What Spread History and Moneyline History grade with: each saved week's YC rebuilt from that week's rating systems with the{" "}
+        <b>saved</b> weights and points per SD. New weeks are added when you Save As Week. After you change and save weights, rebuild so
+        every past week matches. Your ratings as rated (the Archive pages) are never changed.
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={rebuild} disabled={busy}>
+          {busy ? "Rebuilding…" : "Rebuild standardized history"}
+        </button>
+        <span style={{ fontSize: "0.78rem", color: "var(--chalk-dim)" }}>
+          {savedWeeks == null ? "…" : savedWeeks.length ? `Saved for weeks ${savedWeeks.join(", ")}` : "Nothing saved yet."}
+        </span>
+      </div>
+      {msg && <p style={{ fontSize: "0.8rem", color: "var(--chalk-dim)", margin: "0.4rem 0 0" }}>{msg}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
 // Save As Week.
 // ---------------------------------------------------------------------
 function SaveAsWeekControl({ rows, season }: { rows: ConglomeratedRow[]; season: number }) {
@@ -1640,6 +1698,7 @@ export default function RatingSystemsPanel({ onBack }: { onBack: () => void }) {
             <>
               <SystemPerformanceSummary season={new Date().getFullYear()} weights={draftWeights ?? weights} />
               <WeightsEditor weights={weights} onDraftChange={setDraftWeights} onSave={async (w) => { await saveRatingWeights(w); loadAll(); }} />
+              <StdHistoryControl season={new Date().getFullYear()} />
             </>
           )}
         </>

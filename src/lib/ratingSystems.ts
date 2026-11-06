@@ -81,6 +81,9 @@ export const RATING_SYSTEMS: RatingSystemDef[] = [
 export const RATING_SYSTEMS_BY_KEY: Record<string, RatingSystemDef> = Object.fromEntries(
   RATING_SYSTEMS.map((s) => [s.key, s])
 );
+// Saved series that aren't systems (never inputs, not graded as one) but show
+// up in saved weeks — named here so history tables label them properly.
+RATING_SYSTEMS_BY_KEY.yc_std = { key: "yc_std", label: "YC (standardized history)", source: "computed" };
 
 // Nothing is excluded from YC or Consensus in code.
 // - YC is a weighted average: every system has a weight (system_key rows in

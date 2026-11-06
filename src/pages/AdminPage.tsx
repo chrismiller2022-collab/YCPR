@@ -283,6 +283,8 @@ type AdminView =
   | "publish"
   | "placedbets"
   | "mlbethistory"
+  | "bethistoryactual"
+  | "mlbethistoryactual"
   | "resumerating"
   | "gametotals"
   | "predictions"
@@ -616,6 +618,8 @@ const NAV_GROUPS: NavGroup[] = [
           { key: "placedbets", label: "Placed" },
           { key: "bethistory", label: "Spread history" },
           { key: "mlbethistory", label: "Moneyline history" },
+          { key: "bethistoryactual", label: "Archive: Actual spread" },
+          { key: "mlbethistoryactual", label: "Archive: Actual moneyline" },
         ],
       },
       { key: "pools", label: "Pools" },
@@ -1098,6 +1102,8 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "placedbets" && <PlacedBetsPanel onBack={() => setView("home")} />}
 
           {view === "mlbethistory" && <MoneylineBetHistoryPanel onBack={() => setView("home")} />}
+          {view === "bethistoryactual" && <BetHistoryAdminPanel key="actual" method="asRated" onBack={() => setView("home")} />}
+          {view === "mlbethistoryactual" && <MoneylineBetHistoryPanel key="actual" method="asRated" onBack={() => setView("home")} />}
 
           {view === "gameslines" && <GamesLinesPanel onBack={() => setView("home")} />}
 

@@ -98,7 +98,11 @@ export function conglomeratedRowsToSaveFormat(
       if (v != null) values[key] = v;
     }
     if (r.consensus != null) values.consensus = r.consensus;
-    if (r.yc != null) values.yc = r.yc;
+    if (r.yc != null) {
+      values.yc = r.yc;
+      // The standardized history series (see lib/standardizedYc.ts): from the switch on, it's the same as YC.
+      values.yc_std = r.yc;
+    }
     return { team: r.team, division: r.div, conference: r.conf, values };
   });
 }

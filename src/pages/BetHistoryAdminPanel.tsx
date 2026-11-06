@@ -4,7 +4,7 @@ import { availableConferences } from "../lib/survivor";
 import SortHeader from "../components/SortHeader";
 import TeamLink from "../components/TeamLink";
 import BetHistoryWindowCompare from "../components/BetHistoryWindowCompare";
-import RatingMethodToggle, { useRatingMethodPref } from "../components/RatingMethodToggle";
+import type { RatingMethod } from "../lib/standardizedYc";
 import { useBetHistoryRecords, BET_HISTORY_SEASONS } from "../lib/useBetHistoryRecords";
 import {
   aggregatePlain,
@@ -1302,7 +1302,10 @@ function FilterBar({
   );
 }
 
-export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void }) {
+// method "standardized" (the default Spread History): the current season graded as the
+// standardized YC rated each week (saved yc_std history), no locks. "asRated" is the
+// Archive's Actual Spread History: every week as it was really rated.
+export default function BetHistoryAdminPanel({ onBack, method = "standardized" }: { onBack: () => void; method?: RatingMethod }) {
   const allConfs = useMemo(() => availableConferences(), []);
   const [tab, setTab] = useState<"plain" | "custom" | "wfb" | "keynumbers" | "wkcompare">("custom");
 
@@ -1324,18 +1327,14 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   // static BET_HISTORY upload only ever carried the closing line, so
   // 2024/2025 always grades against close regardless of this toggle.
   const [lineMode, setLineMode] = useState<LineMode>("close");
-  // As rated (the real record) or the standardized-YC backtest — applies to every tab below.
-  const [ratingMethod, setRatingMethod] = useRatingMethodPref();
   const {
     records: allRecords,
     recordsLocked: allRecordsLocked,
-    asRatedRecords,
-    standardizedRecords,
+    loading: recordsLoading,
     standardizedSeason,
     standardizedLoading,
     standardizedError,
-    standardizedMultiplier,
-  } = useBetHistoryRecords(hfaMode, lineMode, ratingMethod);
+  } = useBetHistoryRecords(hfaMode, lineMode, method);
 
   function toggleYear(y: number) {
     setYears((prev) => {
@@ -1381,15 +1380,6 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   const keyNumberStudy = useMemo(() => computeKeyNumberStudy(filtered), [filtered]);
   const plainAgg = useMemo(() => aggregatePlain(filtered), [filtered]);
   const customAgg = useMemo(() => aggregateCustom(filtered, params), [filtered, params]);
-  // Side-by-side when the standardized backtest is on: same filters, same parameters, both ways.
-  const methodCompare = useMemo(() => {
-    if (!standardizedRecords) return null;
-    return {
-      asRated: aggregateCustom(filterRecords(asRatedRecords, filters), params).overall,
-      std: aggregateCustom(filterRecords(standardizedRecords, filters), params).overall,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asRatedRecords, standardizedRecords, params, filters.years.join(","), filters.week, filters.confFilters.join(","), filters.teamQuery, filters.division]);
   const plainGameRows: GameTableRow[] = useMemo(
     () =>
       filtered.map((r) => ({
@@ -1453,7 +1443,7 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
   return (
     <div>
 
-      <h2 style={{ marginTop: 0 }}>Bet History</h2>
+      <h2 style={{ marginTop: 0 }}>{method === "standardized" ? "Spread History" : "Actual Spread History"}</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
         <strong>Plain History</strong> shows the data exactly as uploaded — the actual
         historical record, unchanged. <strong>Custom</strong> ignores those precomputed
@@ -1515,47 +1505,15 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </div>
       )}
 
-      <RatingMethodToggle
-        method={ratingMethod}
-        setMethod={setRatingMethod}
-        season={standardizedSeason}
-        loading={standardizedLoading}
-        error={standardizedError}
-        multiplier={standardizedMultiplier}
-      />
-      {methodCompare && (
-        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", border: "1px solid var(--hash)", borderRadius: 8, padding: "0.6rem 0.9rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
-          {(
-            [
-              ["everyBet", "Every Bet"],
-              ["filteredBet", "Filtered"],
-              ["weightedFilteredBet", "WFB"],
-              ["nwfb", "NWFB"],
-            ] as const
-          ).map(([k, label]) => {
-            const a = methodCompare.asRated[k];
-            const b = methodCompare.std[k];
-            const d = a.w + a.l > 0 && b.w + b.l > 0 ? winPct(b) - winPct(a) : null;
-            return (
-              <div key={k}>
-                <div style={{ fontSize: "0.7rem", color: "var(--chalk-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
-                <div>
-                  As rated <b>{fmtRecord(a)}</b> ({fmtPct(a)}) → Standardized <b>{fmtRecord(b)}</b> ({fmtPct(b)})
-                  {d != null && (
-                    <span style={{ marginLeft: "0.35rem", fontWeight: 700, color: d > 0 ? "var(--c-ok)" : d < 0 ? "var(--c-err)" : undefined }}>
-                      {d > 0 ? "+" : ""}
-                      {d.toFixed(1)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          <div style={{ fontSize: "0.72rem", color: "var(--chalk-dim)", alignSelf: "center" }}>
-            Current filters and Custom parameters. As rated here re-projects every game from that week's ratings (no locks), so only the method differs.
-          </div>
-        </div>
-      )}
+      <p style={{ fontSize: "0.76rem", color: standardizedError ? "var(--c-err)" : "var(--chalk-dim)", marginTop: 0, marginBottom: "1rem" }}>
+        {standardizedError
+          ? `Couldn't load the standardized history: ${standardizedError}`
+          : method === "standardized"
+            ? standardizedLoading
+              ? "Loading the standardized history…"
+              : `${standardizedSeason} is graded with the standardized YC for every week (saved history, no locks). Earlier seasons have no saved rating systems, so they're as uploaded. The real record is under Archive → Actual spread history.`
+            : "Archive: every game graded on the ratings you actually had that week, before and after the switch to the standardized build."}
+      </p>
 
       {tab === "custom" && (
         <div style={{ marginBottom: "0.75rem", display: "flex", justifyContent: "flex-end" }}>
@@ -1565,7 +1523,9 @@ export default function BetHistoryAdminPanel({ onBack }: { onBack: () => void })
         </div>
       )}
 
-      {allRecords.length === 0 ? (
+      {recordsLoading ? (
+        <p style={{ color: "var(--chalk-dim)" }}>Loading…</p>
+      ) : allRecords.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No bet history data uploaded yet.</p>
       ) : filtered.length === 0 ? (
         <p style={{ color: "var(--chalk-dim)" }}>No games match those filters.</p>

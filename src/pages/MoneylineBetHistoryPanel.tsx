@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import TeamLogo from "../components/TeamLogo";
 import TeamLink from "../components/TeamLink";
 import SortHeader from "../components/SortHeader";
-import RatingMethodToggle, { useRatingMethodPref } from "../components/RatingMethodToggle";
 import { overlayStandardizedRatings, useStandardizedYc, type RatingMethod } from "../lib/standardizedYc";
 import { useWeekAccurateRatings } from "../lib/weekAccurateRatings";
 import { classOf } from "../lib/matchupsCompute";
@@ -104,7 +103,6 @@ function useSeasonMlRows(
     hasRatingsForSeason,
     stdLoading,
     stdError,
-    stdMultiplier: stdYc?.multiplier ?? null,
   };
 }
 
@@ -341,7 +339,10 @@ function AlsoBetSpreadBlock({
   );
 }
 
-export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => void }) {
+// method "standardized" (the default Moneyline History): the current season graded as the
+// standardized YC rated each week (saved yc_std history), no locks. "asRated" is the
+// Archive's Actual Moneyline History.
+export default function MoneylineBetHistoryPanel({ onBack, method = "standardized" }: { onBack: () => void; method?: RatingMethod }) {
   // Multi-selectable — Chris asked for this specifically so historical
   // seasons can be combined (e.g. 2024+2025), with the per-game table
   // and the spread-crossover block (both single-season-only concepts)
@@ -376,8 +377,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   // Fixed, unconditional calls — one per SEASONS entry, regardless of
   // selection (see useSeasonMlRows's doc comment for why this has to
   // be a fixed count rather than looping over selectedSeasons).
-  // As rated (the real record) or the standardized-YC backtest — one setting shared with Spread History.
-  const [ratingMethod, setRatingMethod] = useRatingMethodPref();
+  const ratingMethod = method;
   const season2024 = useSeasonMlRows(2024, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
   const season2025 = useSeasonMlRows(2025, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
   const season2026 = useSeasonMlRows(2026, conversionMethod, billRDivisor, hfaMode, currentSeason, ratingMethod);
@@ -588,7 +588,7 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
   return (
     <div>
 
-      <h2 style={{ marginTop: 0 }}>Moneyline Bet History</h2>
+      <h2 style={{ marginTop: 0 }}>{method === "standardized" ? "Moneyline History" : "Actual Moneyline History"}</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem" }}>
         Every game, both sides' moneyline converted to Vegas's implied win% (vig included, same convention as the
         Matchups pages' EV column), compared against my own fair win% from that game's projected spread. Whichever
@@ -727,14 +727,13 @@ export default function MoneylineBetHistoryPanel({ onBack }: { onBack: () => voi
         )}
       </div>
 
-      <RatingMethodToggle
-        method={ratingMethod}
-        setMethod={setRatingMethod}
-        season={currentSeason}
-        loading={currentSeasonData.stdLoading}
-        error={currentSeasonData.stdError}
-        multiplier={currentSeasonData.stdMultiplier}
-      />
+      <p style={{ fontSize: "0.76rem", color: currentSeasonData.stdError ? "var(--c-err)" : "var(--chalk-dim)", margin: "0 0 1rem" }}>
+        {currentSeasonData.stdError
+          ? `Couldn't load the standardized history: ${currentSeasonData.stdError}`
+          : method === "standardized"
+            ? `${currentSeason} uses the standardized YC for every week (saved history, no locks). Earlier seasons have no saved rating systems, so they're as rated. The real record is under Archive → Actual moneyline history.`
+            : "Archive: every game graded on the ratings you actually had that week, before and after the switch to the standardized build."}
+      </p>
 
       {!hasBetHistoryForSeason && conversionMethod === "old" && (
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>

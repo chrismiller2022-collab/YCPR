@@ -1104,6 +1104,50 @@ export default async function handler(req: any, res: any) {
   }
 
   // -----------------------------------------------------------------
+  // action: "stdHistorySave" — the standardized YC history (system_key
+  // "yc_std" in weekly_power_ratings): each saved week's YC rebuilt from that
+  // week's rating systems as SDs from the FBS average (computed in the
+  // browser, lib/standardizedYc.ts). Its own key, so it never touches the
+  // ratings as rated ("yc" etc.), and it isn't a projection input — so no
+  // Freeze Week skip here, unlike weekSave.
+  // -----------------------------------------------------------------
+  if (action === "stdHistorySave") {
+    const { season, rows } = req.body ?? {};
+    if (!season || typeof season !== "number" || !Array.isArray(rows) || rows.length === 0) {
+      res.status(400).json({ error: "Missing 'season' or empty 'rows'" });
+      return;
+    }
+    const now = new Date().toISOString();
+    const upsertRows = (rows as { week: number; team: string; division?: string | null; conference?: string | null; value: number }[])
+      .filter((r) => typeof r.week === "number" && r.team && typeof r.value === "number" && Number.isFinite(r.value))
+      .map((r) => ({
+        season,
+        week: r.week,
+        team: r.team,
+        division: r.division ?? null,
+        conference: r.conference ?? null,
+        system_key: "yc_std",
+        value: r.value,
+        saved_at: now,
+      }));
+    const deduped = dedupeByKey(upsertRows, (r) => `${r.week}::${r.team}`);
+    let saved = 0;
+    for (let i = 0; i < deduped.length; i += 1000) {
+      const chunk = deduped.slice(i, i + 1000);
+      const { error, count } = await supabaseAdmin
+        .from("weekly_power_ratings")
+        .upsert(chunk, { onConflict: "season,week,team,system_key", count: "exact" });
+      if (error) {
+        res.status(500).json({ error: error.message, saved });
+        return;
+      }
+      saved += count ?? chunk.length;
+    }
+    res.status(200).json({ ok: true, saved });
+    return;
+  }
+
+  // -----------------------------------------------------------------
   // actions: "logPullRun" / "getPullRuns" — the run log for rating pulls.
   // Rating Systems' Sync All / Fill gaps record one row per source here
   // (trigger "manual"); Fill gaps reads it to find sources not yet pulled
