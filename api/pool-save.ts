@@ -263,6 +263,44 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    // --- Calcutta auctions: the whole auction is one JSON doc (settings,
+    // attendees, lots, every bid, ownership splits, results). The browser
+    // keeps the live copy in localStorage; this just mirrors it. ---
+    if (pool === "calcutta") {
+      if (action === "save") {
+        const { doc } = req.body;
+        if (!doc || typeof doc.id !== "string" || !doc.id || typeof doc.name !== "string" || typeof doc.format !== "string") {
+          res.status(400).json({ error: "Missing auction doc" });
+          return;
+        }
+        const row = {
+          id: doc.id,
+          name: doc.name,
+          format: doc.format,
+          status: typeof doc.status === "string" ? doc.status : "setup",
+          doc,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabaseAdmin.from("calcutta_auctions").upsert(row, { onConflict: "id" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (action === "delete") {
+        const { id } = req.body;
+        if (typeof id !== "string" || !id) {
+          res.status(400).json({ error: "Missing id" });
+          return;
+        }
+        const { error } = await supabaseAdmin.from("calcutta_auctions").delete().eq("id", id);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for calcutta: ${action}` });
+      return;
+    }
+
     // --- Pool Balance Sheet: flat cost/winnings line items for pools
     // that don't otherwise track their own finances (Brit already does). ---
     if (pool === "ledger") {

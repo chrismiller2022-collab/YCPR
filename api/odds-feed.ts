@@ -23,7 +23,10 @@ import { createHmac as pkCreateHmac, timingSafeEqual as pkTimingSafeEqual } from
 //     Odds API's books AND ESPN's, not just one source.
 //   - mode=scoreboard&dates=YYYYMMDD[,YYYYMMDD…]: ESPN's free live
 //     scoreboard for the TV score bug (/overlay). No key, no credits.
-//     &league=nfl[&week=N] for the NFL (a whole week per request).
+//     &league=nfl[&week=N] for the NFL (a whole week per request);
+//     &seasontype=3 for the playoffs, &season=YYYY for a past season.
+//     &league=cfbpost[&season=YYYY]: every College Football Playoff game.
+//     &league=cbb&dates=…: NCAA men's tournament games on those days.
 //   - mode=sleeper-players: Sleeper's NFL player list trimmed to name /
 //     team / position / injury, edge-cached a day (fantasy view).
 //   - mode=team-totals-events: the free, non-metered upcoming-events list
@@ -210,6 +213,7 @@ async function handleEspnFutures(res: any) {
 // one upstream fetch instead of each polling ESPN on its own.
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard";
 const ESPN_NFL_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
+const ESPN_CBB_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard";
 
 async function espnEvents(url: string): Promise<any[]> {
   // One failed day/division shouldn't blank the rest of the board.
@@ -222,13 +226,34 @@ async function espnEvents(url: string): Promise<any[]> {
 }
 
 async function handleEspnScoreboard(req: any, res: any) {
-  const nfl = req.query?.league === "nfl";
+  const league = String(req.query?.league ?? "");
+  const nfl = league === "nfl";
   let events: any[];
   let week: number | null = null;
-  if (nfl) {
+  const seasonParam = /^\d{4}$/.test(String(req.query?.season ?? "")) ? `&dates=${req.query.season}` : "";
+  if (league === "cfbpost") {
+    // College Football Playoff: ESPN files every CFP game (first round →
+    // title) under postseason "week 999" of the season it belongs to.
+    events = await espnEvents(`${ESPN_SCOREBOARD}?seasontype=3&week=999&groups=80&limit=400${seasonParam}`);
+  } else if (league === "cbb") {
+    // NCAA men's tournament (groups=100): one day per request, so the
+    // caller passes the tournament's game days.
+    const dates = Array.from(new Set(String(req.query?.dates ?? "").split(",").map((d) => d.trim())))
+      .filter((d) => /^\d{8}$/.test(d))
+      .slice(0, 14);
+    if (!dates.length) {
+      res.status(400).json({ error: "dates must be one or more YYYYMMDD values, comma-separated" });
+      return;
+    }
+    events = (await Promise.all(dates.map((day) => espnEvents(`${ESPN_CBB_SCOREBOARD}?dates=${day}&groups=100&limit=200`)))).flat();
+  } else if (nfl) {
     // NFL: a whole week in one request. No week = ESPN's current week.
+    // &seasontype=3 = postseason (weeks 1 WC, 2 Div, 3 Conf, 5 Super Bowl);
+    // &season=YYYY picks a past season (the year it started).
     const wk = parseInt(String(req.query?.week ?? ""), 10);
-    const url = Number.isFinite(wk) && wk > 0 && wk < 30 ? `${ESPN_NFL_SCOREBOARD}?seasontype=2&week=${wk}` : ESPN_NFL_SCOREBOARD;
+    const stype = String(req.query?.seasontype ?? "") === "3" ? 3 : 2;
+    const season = /^\d{4}$/.test(String(req.query?.season ?? "")) ? `&dates=${req.query.season}` : "";
+    const url = Number.isFinite(wk) && wk > 0 && wk < 30 ? `${ESPN_NFL_SCOREBOARD}?seasontype=${stype}&week=${wk}${season}` : ESPN_NFL_SCOREBOARD;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`ESPN NFL scoreboard request failed (${r.status})`);
     const body = await r.json();
@@ -264,6 +289,8 @@ async function handleEspnScoreboard(req: any, res: any) {
         espnId: t.team?.id ?? null,
         abbrev: t.team?.abbreviation ?? null,
         name: t.team?.shortDisplayName ?? null,
+        location: t.team?.location ?? null,
+        displayName: t.team?.displayName ?? null,
         color: t.team?.color ?? null,
         logo: t.team?.logo ?? null,
         record: (t.records ?? []).find((r: any) => r.type === "total")?.summary ?? null,
@@ -275,6 +302,9 @@ async function handleEspnScoreboard(req: any, res: any) {
     games.push({
       id: e.id,
       start: e.date,
+      // "Men's Basketball Championship - East Region - Sweet 16", "College Football Playoff Quarterfinal at …"
+      note: c.notes?.[0]?.headline ?? null,
+      neutral: !!c.neutralSite,
       state: e.status?.type?.state ?? "pre", // pre | in | post
       detail: e.status?.type?.shortDetail ?? "",
       period: e.status?.period ?? 0,
@@ -307,6 +337,40 @@ async function handleEspnScoreboard(req: any, res: any) {
 
   res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=5");
   res.status(200).json({ games, week });
+}
+
+// NFL standings as ESPN has them right now, with each team's current
+// playoff seed (1–7 per conference, ESPN's tiebreakers) — for filling a
+// Calcutta field before the bracket is final. mode=standings[&season=YYYY].
+async function handleNflStandings(req: any, res: any) {
+  const season = /^\d{4}$/.test(String(req.query?.season ?? "")) ? `&season=${req.query.season}` : "";
+  const r = await fetch(`https://site.api.espn.com/apis/v2/sports/football/nfl/standings?seasontype=2&level=3${season}`);
+  if (!r.ok) throw new Error(`ESPN standings request failed (${r.status})`);
+  const body = await r.json();
+  const teams: any[] = [];
+  const walk = (n: any) => {
+    for (const e of n?.standings?.entries ?? []) {
+      const stat = (name: string) => (e.stats ?? []).find((s: any) => s.name === name);
+      const num = (name: string) => {
+        const s = stat(name);
+        const v = typeof s?.value === "number" ? s.value : parseFloat(s?.displayValue ?? "");
+        return Number.isFinite(v) ? v : null;
+      };
+      teams.push({
+        abbr: e.team?.abbreviation ?? null,
+        group: n.name ?? null,
+        seed: num("playoffSeed"),
+        wins: num("wins"),
+        losses: num("losses"),
+        ties: num("ties"),
+        clincher: stat("clincher")?.displayValue ?? null,
+      });
+    }
+    for (const c of n?.children ?? []) walk(c);
+  };
+  walk(body);
+  res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=60");
+  res.status(200).json({ season: body.seasons?.[0]?.year ?? null, teams });
 }
 
 // Sleeper's full player list is ~15 MB — far too much for the TV to pull.
@@ -662,6 +726,11 @@ export default async function handler(req: any, res: any) {
 
     if (req.query?.mode === "scoreboard") {
       await handleEspnScoreboard(req, res);
+      return;
+    }
+
+    if (req.query?.mode === "standings") {
+      await handleNflStandings(req, res);
       return;
     }
 
