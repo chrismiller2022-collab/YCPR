@@ -9,6 +9,7 @@ import { impliedHomeMargin, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueId } from "../venues";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
+import { errorLines, notifyErrors, notifyFailure } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 
 const MODE = "record";
@@ -169,12 +170,14 @@ export async function runRecord(): Promise<RecordTotals> {
     throw e;
   } finally {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: withEgress(totals) }).catch(() => {});
+    await notifyErrors("recorder", errorLines(totals));
     console.log(`record: games ${totals.games}, snaps ${totals.snaps}, trades ${totals.trades}, ladders ${JSON.stringify(totals.ladders)}`);
   }
   return totals;
 }
 
-if (process.argv[1]?.endsWith("record.ts")) runRecord().catch((e) => {
+if (process.argv[1]?.endsWith("record.ts")) runRecord().catch(async (e) => {
   console.error(e instanceof Error ? e.message.split(":")[0] : "record failed");
+  await notifyFailure("recorder", e);
   process.exit(1);
 });

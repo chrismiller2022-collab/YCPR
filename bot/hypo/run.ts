@@ -8,6 +8,7 @@ import { runMarkouts } from "../analysis/markouts";
 import { runReport } from "../analysis/report";
 import { shrinkFrom } from "../fairPrice/shrink";
 import { db, RUN_HOST, withEgress } from "../runner/io";
+import { notifyFailure } from "../runner/notify";
 import { makeAdapters, type VenueId } from "../venues";
 import {
   advance, annotateSteps, builtinMethods, emptyState, methodHash, strategyMethod, summarize, VENUE_SETS,
@@ -207,7 +208,8 @@ export async function customReplay(method: Method, set: VenueSet, gameIds: strin
   return { results, skipped };
 }
 
-if (process.argv[1]?.endsWith("run.ts")) runHypo(Number(process.env.BOT_HYPO_BUDGET_MS) || 20 * 60e3).catch((e) => {
+if (process.argv[1]?.endsWith("run.ts")) runHypo(Number(process.env.BOT_HYPO_BUDGET_MS) || 20 * 60e3).catch(async (e) => {
   console.error(e instanceof Error ? e.message.split(":")[0] : "hypo failed");
+  await notifyFailure("Hypotheticals", e);
   process.exit(1);
 });

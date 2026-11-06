@@ -56,6 +56,8 @@ export const db = {
   upsert: (table: string, rows: object[], onConflict: string): Promise<null> =>
     sb(`${table}?on_conflict=${onConflict}`, { method: "POST", headers: { Prefer: "return=minimal,resolution=merge-duplicates" }, body: JSON.stringify(rows) }),
   update: <T = any>(table: string, filter: string, patch: object): Promise<T[]> => sb(`${table}?${filter}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  /** Call a Postgres function (PostgREST RPC). */
+  rpc: <T = any>(fn: string, args: object): Promise<T> => sb(`rpc/${fn}`, { method: "POST", body: JSON.stringify(args) }),
 };
 
 const KALSHI = "https://external-api.kalshi.com/trade-api/v2";
