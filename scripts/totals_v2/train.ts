@@ -22,6 +22,7 @@ import {
 } from "../../src/lib/totals2/model";
 import { scoreGames, scoreTeams, fmtNum, fmtPct, atsObs, gameMoveObs, topBuckets, type ScoreSummary, type AtsMarket } from "../../src/lib/totals2/report";
 import type { GameWeatherInputs } from "../../src/lib/totals2/weatherFeatures";
+import { betObsFrom, gameBuckets, teamBuckets, strongest, BUCKET_FRACTIONS, type Approach } from "../../src/lib/totals2/buckets";
 
 const DIR = new URL("./data/", import.meta.url).pathname;
 const load = (n: string) => JSON.parse(readFileSync(`${DIR}${n}.json`, "utf8"));
@@ -178,6 +179,20 @@ if (args.includes("--export")) {
       });
     }
   }
+  // Breakdowns: every approach × game/team × period × amount-off level.
+  const buckets: any[] = [];
+  for (const seasons of [[2023, 2024], [2025, 2026], [2023, 2024, 2025, 2026]]) {
+    const gps = pairGames(wf.preds.filter((p) => seasons.includes(p.row.g.season)));
+    for (const approach of ["move", "open", "close"] as Approach[]) {
+      const obs = betObsFrom(gps, approach);
+      for (const frac of BUCKET_FRACTIONS) {
+        const g = strongest(obs.game, frac);
+        const t = strongest(obs.team, frac);
+        buckets.push({ seasons: seasons.join("+"), approach, scope: "game", frac, minEdge: Math.round(g.minEdge * 100) / 100, rows: gameBuckets(g.obs) });
+        buckets.push({ seasons: seasons.join("+"), approach, scope: "team", frac, minEdge: Math.round(t.minEdge * 100) / 100, rows: teamBuckets(t.obs) });
+      }
+    }
+  }
   // The live "bet" flag: the line-move lean that made the top 10% of games in the walk-forward seasons.
   const allMoves = wf.preds.filter((p) => p.row.g.season >= 2023);
   const mvAbs = gameMoveObs(pairGames(allMoves)).map((o) => Math.abs(o.model - o.line)).sort((a, b) => b - a);
@@ -200,6 +215,7 @@ if (args.includes("--export")) {
 // Trained on seasons before ${current}: layer 1 on every finished season, layer 2 on layer 1's walk-forward predictions.
 import type { Layer1Fit, Layer2Fit, T2Config } from "./model";
 import type { AtsMarket } from "./report";
+import type { Approach, BucketRow } from "./buckets";
 export const T2_VERSION = ${JSON.stringify(version)};
 export const T2_TRAINED_THROUGH = ${current - 1};
 export const T2_CONFIG: T2Config = ${JSON.stringify(cfg)};
@@ -211,6 +227,8 @@ export const T2_LAYER2_MOVE: Layer2Fit = ${JSON.stringify(l2move)};
 export const T2_MOVE_CUT_TOP10 = ${moveCutTop10};
 export interface T2AtsBucket { frac: number; minEdge: number; w: number; l: number; p: number; units: number; clv: number | null }
 export const T2_ATS: { seasons: string; market: AtsMarket; buckets: T2AtsBucket[] }[] = ${JSON.stringify(ats)};
+// Breakdowns (see buckets.ts), walk-forward: approach × game/team × period × amount-off level (frac = strongest share kept).
+export const T2_BUCKETS: { seasons: string; approach: Approach; scope: "game" | "team"; frac: number; minEdge: number; rows: BucketRow[] }[] = ${JSON.stringify(buckets)};
 // Walk-forward backtest (each season predicted by fits on earlier seasons only). r2 = residual R² in %, win = % of
 // every game/team side picked in the model's direction, clv = avg points the line moved our way open → close.
 export interface T2BacktestRow { season: number; scope: "game" | "team"; line: "close" | "open"; n: number; r2: number | null; corr: number | null; win: number | null; clv: number | null }
