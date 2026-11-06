@@ -170,5 +170,12 @@ describe("calcutta engine", () => {
     expect(get("Ethan").owed).toBe(50);
     expect(get("Ethan").net).toBe(-50);
   });
+
+  it("max teams defaults by format: NFL 4, CFB 12-team 3, none for CFB 24 / March Madness", () => {
+    expect(newAuction("x", "nfl_playoffs", 0).settings.maxTeams).toBe(4);
+    expect(newAuction("x", "cfb_playoff12", 0).settings.maxTeams).toBe(3);
+    expect(newAuction("x", "cfb_playoff24", 0).settings.maxTeams).toBe(0);
+    expect(newAuction("x", "march_madness", 0).settings.maxTeams).toBe(0);
+  });
 });
 

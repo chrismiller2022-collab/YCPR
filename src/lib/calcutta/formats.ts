@@ -34,6 +34,8 @@ export interface FormatDef {
   cinderellaMinSeed: number;
   /** Desk sim defaults. */
   sim: { hfa: number; marginSd: number; ratingNoise: number };
+  /** Default "max teams per person" for a new auction (0 = no limit). */
+  defaultMaxTeams?: number;
 }
 
 const prop = (kind: PropKind, label: string, pct: number, rule: string): PropEvent => ({ id: kind, kind, label, pct, teamIds: [], rule });
@@ -65,6 +67,7 @@ export const FORMATS: FormatDef[] = [
     sport: "nfl",
     rounds: NFL_PLAYOFF_ROUNDS,
     fieldSize: 14,
+    defaultMaxTeams: 4,
     byeCount: 1,
     cinderellaMinSeed: 5,
     sim: { hfa: 1.5, marginSd: 13.5, ratingNoise: 1.5 },
@@ -128,6 +131,7 @@ export const FORMATS: FormatDef[] = [
       { key: "title", label: "National title", slots: 1, game: "Title game", short: "Title" },
     ],
     fieldSize: 12,
+    defaultMaxTeams: 3,
     byeCount: 4,
     cinderellaMinSeed: 9,
     sim: { hfa: 2.5, marginSd: 15, ratingNoise: 2 },
