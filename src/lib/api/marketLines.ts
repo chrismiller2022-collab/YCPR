@@ -3,11 +3,15 @@ import { matchSchoolMascotName } from "../teamNameMatch";
 import { fetchGamesWithLines, type GameWithLines } from "./gamesLines";
 import { invalidateCache } from "./cache";
 import type { OddsGame } from "./oddsApi";
+import { EXCHANGE_PROVIDER, fetchExchangeLines } from "./exchangeLines";
+import { MARKET_MEDIAN } from "../linePick";
 
 // "Refresh Vegas lines": pulls every US sportsbook from The Odds API (one request), takes the median spread, total and
 // moneylines per game across books, matches each game to its CFBD game and saves it as betting_lines provider
 // "market_median" — the line every page prefers (see linePick.ts). The first median saved for a game also becomes
 // its opening line and is never overwritten.
+// Games the sportsbook feed doesn't carry (FCS vs FCS, mostly) then get an exchange-implied line from Kalshi / Novig,
+// saved as provider "exchange_implied" (lib/api/exchangeLines.ts).
 
 function median(xs: number[]): number | null {
   if (xs.length === 0) return null;
@@ -75,6 +79,20 @@ export interface MarketRefreshResult {
   matched: number;
   saved: number;
   unmatched: string[];
+  /** Exchange-implied lines (Kalshi / Novig) for games the sportsbook feed doesn't carry, mostly FCS. */
+  exchange: { needed: number; saved: number; fromKalshi: number; fromNovig: number; errors: string[] };
+}
+
+async function saveLines(rows: Record<string, unknown>[], provider: string): Promise<number> {
+  if (rows.length === 0) return 0;
+  const res = await fetch("/api/admin-bets-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: sessionStorage.getItem("admin_password") ?? "", action: "saveMarketLines", provider, rows }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error ?? `Saving lines failed (${res.status})`);
+  return out.saved ?? rows.length;
 }
 
 export async function refreshMarketLines(season: number): Promise<MarketRefreshResult> {
@@ -110,15 +128,28 @@ export async function refreshMarketLines(season: number): Promise<MarketRefreshR
     });
   }
 
-  const save = await fetch("/api/admin-bets-save", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: sessionStorage.getItem("admin_password") ?? "", action: "saveMarketLines", rows }),
-  });
-  const saved = await save.json().catch(() => ({}));
-  if (!save.ok) throw new Error(saved.error ?? `Saving lines failed (${save.status})`);
+  const saved = await saveLines(rows, MARKET_MEDIAN);
+
+  // Then the exchanges, for every not-yet-final game still without a sportsbook line (FCS vs FCS, mostly).
+  const pricedNow = new Set(rows.map((r) => String(r.game_id)));
+  const targets = games.filter(
+    (g) => !g.completed && !pricedNow.has(String(g.id)) && !g.lines.some((l) => l.provider === MARKET_MEDIAN && l.spread != null)
+  );
+  const ex = await fetchExchangeLines(targets);
+  let exSaved = 0;
+  try {
+    exSaved = await saveLines(ex.rows as unknown as Record<string, unknown>[], EXCHANGE_PROVIDER);
+  } catch (e: any) {
+    ex.errors.push(e.message ?? "Saving exchange lines failed");
+  }
   invalidateCache();
-  return { oddsGames: oddsGames.length, matched: rows.length, saved: saved.saved ?? rows.length, unmatched };
+  return {
+    oddsGames: oddsGames.length,
+    matched: rows.length,
+    saved,
+    unmatched,
+    exchange: { needed: ex.needed, saved: exSaved, fromKalshi: ex.fromKalshi, fromNovig: ex.fromNovig, errors: ex.errors },
+  };
 }
 
 /** When Refresh Vegas lines last saved anything this season (null if never). */

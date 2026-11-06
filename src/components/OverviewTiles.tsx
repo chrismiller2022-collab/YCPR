@@ -179,7 +179,13 @@ export function VegasLinesTile({ season }: { season: number }) {
     setError(false);
     try {
       const r = await refreshMarketLines(season);
-      setMsg(`${r.matched} of ${r.oddsGames} games saved${r.unmatched.length ? ` · ${r.unmatched.length} not matched` : ""}`);
+      const ex = r.exchange;
+      setMsg(
+        `${r.matched} of ${r.oddsGames} games saved${r.unmatched.length ? ` · ${r.unmatched.length} not matched` : ""}` +
+          (ex.needed ? ` · ${ex.saved} of ${ex.needed} other games from Kalshi/Novig` : "") +
+          (ex.errors.length ? ` · ${ex.errors.length} exchange issue${ex.errors.length === 1 ? "" : "s"}` : "")
+      );
+      if (ex.errors.length) console.info("Exchange lines:", ex.errors);
       if (r.unmatched.length) console.info("Vegas lines not matched:", r.unmatched);
       setLast(await fetchMarketLinesUpdatedAt(season).catch(() => new Date().toISOString()));
     } catch (e: any) {
