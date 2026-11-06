@@ -17,7 +17,9 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
 import { diffOrders, paperFills, type Trade } from "./paperFills";
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
+import { isQuietHours } from "./quietHours";
+import { errorLines, maybeUsageReport, notifyErrors, notifyFailure } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -132,6 +134,7 @@ interface Book {
 }
 
 export interface CycleTotals {
+  quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -181,7 +184,8 @@ function positionsFrom(fills: FillRow[]): { positions: Position[]; rungs: Pick<R
 }
 
 async function cancelAll(gameId?: string): Promise<number> {
-  const rows = await db.update("bot_orders", `mode=eq.${MODE}&status=eq.resting${gameId ? `&game_id=eq.${gameId}` : ""}`, { status: "cancelled", closed_at: iso() });
+  // Only the ids come back: the full rows are egress, and a cancel-all at the start of quiet hours can touch thousands.
+  const rows = await db.update("bot_orders", `mode=eq.${MODE}&status=eq.resting${gameId ? `&game_id=eq.${gameId}` : ""}&select=id`, { status: "cancelled", closed_at: iso() });
   return rows.length;
 }
 
@@ -199,6 +203,17 @@ async function snapshot(gameId: string, venue: VenueId, rungs: Rung[], fairOf: (
       return !p || num(p.bid) !== s.bid || num(p.ask) !== s.ask || Math.abs((num(p.fair) ?? -1) - s.fair) >= 0.002;
     });
   if (rows.length) await db.insert("bot_snapshots", rows);
+}
+
+/** Which of these games still have a fill without a result or a closing mid. */
+async function gamesWithOpenFills(gameIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < gameIds.length; i += 80) {
+    const ids = gameIds.slice(i, i + 80).join(",");
+    const rows = await db.select<{ game_id: string }>("bot_fills", `select=game_id&mode=eq.${MODE}&game_id=in.(${ids})&or=(result.is.null,close_mid.is.null)`);
+    for (const r of rows) out.add(String(r.game_id));
+  }
+  return out;
 }
 
 /**
@@ -251,9 +266,18 @@ export async function runCycle(): Promise<CycleTotals> {
     } catch (err) {
       (totals.gameErrors ??= []).push(`ESPN finals: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`);
     }
+    // Yesterday's usage to #usage, once a day after 9am Eastern (skips itself otherwise).
+    await maybeUsageReport().catch((err) => (totals.gameErrors ??= []).push(`usage report: ${String(err instanceof Error ? err.message : err).slice(0, 160)}`));
     if (state?.kill_switch) {
       totals.cancelled += await cancelAll();
       console.log(`kill switch on: cancelled ${totals.cancelled} resting paper orders`);
+      return totals;
+    }
+    // Overnight: nothing rests or trades (ESPN finals above still run, so late games get graded).
+    if (isQuietHours()) {
+      totals.cancelled += await cancelAll();
+      totals.quiet = true;
+      console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
       return totals;
     }
     if (state?.mode !== MODE) {
@@ -263,8 +287,11 @@ export async function runCycle(): Promise<CycleTotals> {
 
     const watch = await db.select<Watch>("bot_watchlist", "select=*&enabled=is.true");
     const strategies = await db.select<Strategy>("bot_strategies", "select=*&enabled=is.true&order=id");
-    // Paused or removed games aren't traded, but still get graded once they've kicked off.
-    for (const w of await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`)) {
+    // Paused or removed games aren't traded, but still get graded once they've kicked off. One query finds which of
+    // them still have an ungraded fill, so fully graded games (nearly all of them) cost nothing per cycle.
+    const paused = await db.select<Watch>("bot_watchlist", `select=*&enabled=is.false&kickoff=lt.${iso()}`);
+    const toSettle = await gamesWithOpenFills(paused.map((w) => String(w.game_id)));
+    for (const w of paused.filter((p) => toSettle.has(String(p.game_id)))) {
       try {
         await settle(w);
       } catch (err) {
@@ -644,15 +671,17 @@ export async function runCycle(): Promise<CycleTotals> {
     throw err;
   } finally {
     await db.update("bot_runs", `id=eq.${run.id}`, {
-      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: totals,
+      finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: withEgress(totals),
     }).catch(() => {});
+    await notifyErrors("paper", errorLines(totals));
     const perVenue = Object.entries(totals.venues).map(([v, x]) => `${v} ${x!.ladders}/${x!.fills}`).join(" ");
     console.log(`games ${totals.games}, skipped ${totals.skipped}, no-edge ${totals.noEdge}, placed ${totals.placed}, cancelled ${totals.cancelled}, fills ${totals.fills}, lab fills ${totals.labFills}, venues(ladders/fills) ${perVenue}`);
   }
   return totals;
 }
 
-if (process.argv[1]?.endsWith("paper.ts")) runCycle().catch((err) => {
+if (process.argv[1]?.endsWith("paper.ts")) runCycle().catch(async (err) => {
   console.error(err instanceof Error ? err.message.split(":")[0] : "run failed");
+  await notifyFailure("paper", err);
   process.exit(1);
 });

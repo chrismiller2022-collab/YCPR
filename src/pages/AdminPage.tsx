@@ -19,6 +19,7 @@ import WeeklyImageDumpAdminPanel from "./WeeklyImageDumpAdminPanel";
 import PollComparisonAdminPanel from "./PollComparisonAdminPanel";
 import PoolsMenuPanel, { POOL_LABELS } from "./PoolsMenuPanel";
 import NflDraftPoolAdminPanel from "./NflDraftPoolAdminPanel";
+import CalcuttaPanel from "./CalcuttaPanel";
 import BritPoolPanel from "./BritPoolPanel";
 import PeayPoolPanel from "./PeayPoolPanel";
 import WestgatePoolPanel from "./WestgatePoolPanel";
@@ -274,6 +275,7 @@ type AdminView =
   | "cfbdpickem"
   | "cbspickem"
   | "nfldraftpool"
+  | "calcutta"
   | "survivorpooladmin"
   | "bethistory"
   | "lockgames"
@@ -684,6 +686,7 @@ const POOL_SUBVIEWS: AdminView[] = [
   "cfbdpickem",
   "cbspickem",
   "nfldraftpool",
+  "calcutta",
 ];
 
 function activeNavKey(view: AdminView): AdminView {
@@ -1125,6 +1128,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "cbspickem" && <CbsPickemPanel onBack={() => setView("pools")} />}
 
           {view === "nfldraftpool" && <NflDraftPoolAdminPanel onBack={() => setView("pools")} />}
+          {view === "calcutta" && <CalcuttaPanel onBack={() => setView("pools")} />}
 
           {view === "montecarlo" && <MonteCarloPanel onBack={() => setView("home")} />}
 

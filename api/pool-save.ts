@@ -79,6 +79,15 @@ export default async function handler(req: any, res: any) {
   }
 
   const { password, pool, action } = req.body ?? {};
+
+  // Calcutta live room: attendees (not the admin) claim their name with a
+  // 4-digit PIN and send bids. Checked by a signed room token instead of the
+  // admin password; the host's Stage decides which bids count.
+  if (pool === "calcutta-room") {
+    await handleCalcuttaRoom(req, res, createClient(SUPABASE_URL, SERVICE_ROLE_KEY));
+    return;
+  }
+
   if (!(await isAdmin(password))) {
     res.status(401).json({ error: "Incorrect password" });
     return;
@@ -260,6 +269,71 @@ export default async function handler(req: any, res: any) {
         .upsert(cleanRows, { onConflict: "game_id", count: "exact" });
       if (error) throw error;
       res.status(200).json({ ok: true, saved: count ?? cleanRows.length });
+      return;
+    }
+
+    // --- Calcutta auctions: the whole auction is one JSON doc (settings,
+    // attendees, lots, every bid, ownership splits, results). The browser
+    // keeps the live copy in localStorage; this just mirrors it. ---
+    if (pool === "calcutta") {
+      if (action === "save") {
+        const { doc } = req.body;
+        if (!doc || typeof doc.id !== "string" || !doc.id || typeof doc.name !== "string" || typeof doc.format !== "string") {
+          res.status(400).json({ error: "Missing auction doc" });
+          return;
+        }
+        const row = {
+          id: doc.id,
+          name: doc.name,
+          format: doc.format,
+          status: typeof doc.status === "string" ? doc.status : "setup",
+          doc,
+          updated_at: new Date().toISOString(),
+        };
+        const { error } = await supabaseAdmin.from("calcutta_auctions").upsert(row, { onConflict: "id" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (action === "delete") {
+        const { id } = req.body;
+        if (typeof id !== "string" || !id) {
+          res.status(400).json({ error: "Missing id" });
+          return;
+        }
+        const { error } = await supabaseAdmin.from("calcutta_auctions").delete().eq("id", id);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      // Live room: the Stage publishes the compact live state room pages watch.
+      if (action === "live") {
+        const { auctionId, state } = req.body;
+        if (typeof auctionId !== "string" || !auctionId || !state || typeof state !== "object") {
+          res.status(400).json({ error: "Missing auctionId or state" });
+          return;
+        }
+        const { error } = await supabaseAdmin.from("calcutta_live").upsert({ auction_id: auctionId, state, updated_at: new Date().toISOString() }, { onConflict: "auction_id" });
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      // Who has claimed which attendee (no PINs), and resetting a forgotten PIN.
+      if (action === "roomMembers") {
+        const { auctionId } = req.body;
+        const { data, error } = await supabaseAdmin.from("calcutta_room_members").select("participant_id, claimed_at, locked_until").eq("auction_id", auctionId);
+        if (error) throw error;
+        res.status(200).json({ members: data ?? [] });
+        return;
+      }
+      if (action === "resetPin") {
+        const { auctionId, participantId } = req.body;
+        const { error } = await supabaseAdmin.from("calcutta_room_members").delete().eq("auction_id", auctionId).eq("participant_id", participantId);
+        if (error) throw error;
+        res.status(200).json({ ok: true });
+        return;
+      }
+      res.status(400).json({ error: `Unknown action for calcutta: ${action}` });
       return;
     }
 
@@ -649,5 +723,125 @@ export default async function handler(req: any, res: any) {
     res.status(400).json({ error: `Unknown action: ${action}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "Save failed" });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calcutta live room
+// ---------------------------------------------------------------------------
+
+const ROOM_TOKEN_DAYS = 30;
+const ROOM_ID_RE = /^[a-z0-9_]{3,64}$/;
+
+function roomKey(): string {
+  return `${ADMIN_PASSWORD}|calcutta-room`;
+}
+
+function pinHash(salt: string, pin: string): string {
+  return pkCreateHmac("sha256", roomKey()).update(`${salt}:${pin}`).digest("hex");
+}
+
+function signRoomToken(auctionId: string, participantId: string, claimedAt: string): string {
+  const exp = Date.now() + ROOM_TOKEN_DAYS * 86_400_000;
+  const claimed = new Date(claimedAt).getTime();
+  const body = `cr.${auctionId}.${participantId}.${claimed}.${exp}`;
+  const sig = pkCreateHmac("sha256", roomKey()).update(body).digest("hex");
+  return `${body}.${sig}`;
+}
+
+/** Returns { auctionId, participantId, claimed } for a valid, unexpired token, else null. */
+function readRoomToken(token: unknown): { auctionId: string; participantId: string; claimed: number } | null {
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 6 || parts[0] !== "cr") return null;
+  const [, auctionId, participantId, claimed, exp, sig] = parts;
+  if (!(Number(exp) > Date.now())) return null;
+  const want = pkCreateHmac("sha256", roomKey()).update(parts.slice(0, 5).join(".")).digest("hex");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(want);
+  if (a.length !== b.length || !pkTimingSafeEqual(a, b)) return null;
+  return { auctionId, participantId, claimed: Number(claimed) };
+}
+
+async function handleCalcuttaRoom(req: any, res: any, db: any) {
+  const { action } = req.body ?? {};
+  try {
+    // Which attendees are already claimed (so the join screen can say "sign in" vs "set a PIN").
+    if (action === "status") {
+      const { auctionId } = req.body;
+      if (!ROOM_ID_RE.test(String(auctionId))) return void res.status(400).json({ error: "Bad room" });
+      const { data, error } = await db.from("calcutta_room_members").select("participant_id").eq("auction_id", auctionId);
+      if (error) throw error;
+      res.status(200).json({ claimed: (data ?? []).map((r: any) => r.participant_id) });
+      return;
+    }
+
+    if (action === "claim" || action === "login") {
+      const { auctionId, participantId, pin } = req.body;
+      if (!ROOM_ID_RE.test(String(auctionId)) || !ROOM_ID_RE.test(String(participantId))) return void res.status(400).json({ error: "Bad room or name" });
+      if (!/^\d{4}$/.test(String(pin))) return void res.status(400).json({ error: "PIN must be 4 digits" });
+      // The attendee has to be in the auction (and not a practice bot).
+      const { data: auc, error: aErr } = await db.from("calcutta_auctions").select("doc").eq("id", auctionId).maybeSingle();
+      if (aErr) throw aErr;
+      const person = auc?.doc?.participants?.find((p: any) => p.id === participantId);
+      if (!person || person.bot) return void res.status(404).json({ error: "That name isn't in this auction" });
+      const { data: member, error: mErr } = await db.from("calcutta_room_members").select("*").eq("auction_id", auctionId).eq("participant_id", participantId).maybeSingle();
+      if (mErr) throw mErr;
+
+      if (action === "claim") {
+        if (member) return void res.status(409).json({ error: `${person.name} is already claimed — enter the PIN instead` });
+        const salt = pkCreateHmac("sha256", roomKey()).update(`${auctionId}:${participantId}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 16);
+        const claimed_at = new Date().toISOString();
+        const { error } = await db.from("calcutta_room_members").insert({ auction_id: auctionId, participant_id: participantId, pin_salt: salt, pin_hash: pinHash(salt, String(pin)), claimed_at });
+        if (error) {
+          if (String(error.code) === "23505") return void res.status(409).json({ error: `${person.name} was just claimed — enter the PIN instead` });
+          throw error;
+        }
+        res.status(200).json({ token: signRoomToken(auctionId, participantId, claimed_at), participantId, name: person.name });
+        return;
+      }
+
+      // login
+      if (!member) return void res.status(404).json({ error: `${person.name} hasn't set a PIN yet` });
+      if (member.locked_until && new Date(member.locked_until).getTime() > Date.now()) {
+        return void res.status(429).json({ error: "Too many wrong PINs — try again in a few minutes, or ask the host to reset it" });
+      }
+      if (pinHash(member.pin_salt, String(pin)) !== member.pin_hash) {
+        const failed = (member.failed_attempts ?? 0) + 1;
+        const locked = failed >= 5 ? new Date(Date.now() + 5 * 60_000).toISOString() : null;
+        await db.from("calcutta_room_members").update({ failed_attempts: locked ? 0 : failed, locked_until: locked }).eq("auction_id", auctionId).eq("participant_id", participantId);
+        return void res.status(401).json({ error: locked ? "Wrong PIN — locked for 5 minutes" : `Wrong PIN (${5 - failed} tries left)` });
+      }
+      await db.from("calcutta_room_members").update({ failed_attempts: 0, locked_until: null }).eq("auction_id", auctionId).eq("participant_id", participantId);
+      res.status(200).json({ token: signRoomToken(auctionId, participantId, member.claimed_at), participantId, name: person.name });
+      return;
+    }
+
+    // A bid (or bow-out) from the room. The host's Stage decides whether it counts.
+    if (action === "bid" || action === "out") {
+      const t = readRoomToken(req.body.token);
+      if (!t) return void res.status(401).json({ error: "Signed out — open the room link and sign in again" });
+      const { data: member, error: mErr } = await db.from("calcutta_room_members").select("claimed_at").eq("auction_id", t.auctionId).eq("participant_id", t.participantId).maybeSingle();
+      if (mErr) throw mErr;
+      if (!member || new Date(member.claimed_at).getTime() !== t.claimed) return void res.status(401).json({ error: "Your PIN was reset — sign in again" });
+      const { data: live, error: lErr } = await db.from("calcutta_live").select("open:state->roomOpen").eq("auction_id", t.auctionId).maybeSingle();
+      if (lErr) throw lErr;
+      if (!live?.open) return void res.status(409).json({ error: "The room isn't open for bidding right now" });
+      const amount = action === "bid" && req.body.amount != null ? Number(req.body.amount) : null;
+      if (amount != null && !(amount > 0 && amount < 10_000_000)) return void res.status(400).json({ error: "Bad amount" });
+      const lotId = typeof req.body.lotId === "string" ? req.body.lotId.slice(0, 64) : null;
+      const { data, error } = await db
+        .from("calcutta_bid_requests")
+        .insert({ auction_id: t.auctionId, participant_id: t.participantId, lot_id: lotId, kind: action, amount })
+        .select("id")
+        .single();
+      if (error) throw error;
+      res.status(200).json({ ok: true, requestId: data.id });
+      return;
+    }
+
+    res.status(400).json({ error: `Unknown action for calcutta-room: ${action}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Room request failed" });
   }
 }

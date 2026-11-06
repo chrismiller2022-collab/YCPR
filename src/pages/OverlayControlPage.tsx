@@ -4,7 +4,7 @@ import OverlayView from "../components/overlay/OverlayView";
 import { supabase } from "../lib/supabaseClient";
 import { passkeysSupported, restorePasskeySession, signInWithPasskey } from "../lib/adminAuth";
 import { espnDate, fetchScoreboard, needsFantasy, saveOverlayState, useOverlayData, useOverlayState, type OverlayState, type ScoreGame } from "../lib/overlay";
-import { POOLS, usePoolPicksForGames, usePoolsBoard } from "../lib/pools";
+import { activePools, fetchPicks, POOLS, usePoolPicksForGames, usePoolsBoard } from "../lib/pools";
 import { fetchSleeperLeagues, useSleeper, type SleeperLeagueInfo } from "../lib/sleeper";
 
 // Remote for the TV score bug — open on a laptop or phone. Every change
@@ -17,7 +17,9 @@ interface SlateGame {
   away_team: string;
   tv_outlet: string | null;
   bets: number;
+  planned: number; // placeholder bets sent from Matchups, not yet confirmed by a CSV import
   locked: boolean;
+  fcs: boolean; // either team outside FBS
 }
 
 const PASSWORD_KEY = "admin_password";
@@ -34,7 +36,7 @@ async function fetchSlate(day: string): Promise<SlateGame[]> {
   const to = new Date(from.getTime() + 24 * 3600_000);
   const { data: games, error } = await supabase
     .from("games")
-    .select("id, start_date, home_team, away_team, tv_outlet")
+    .select("id, start_date, home_team, away_team, tv_outlet, home_classification, away_classification")
     .gte("start_date", from.toISOString())
     .lt("start_date", to.toISOString())
     .order("start_date")
@@ -43,13 +45,51 @@ async function fetchSlate(day: string): Promise<SlateGame[]> {
   const ids = (games ?? []).map((g: any) => g.id);
   if (!ids.length) return [];
   const [bets, locks] = await Promise.all([
-    supabase.from("placed_bets").select("game_id").in("game_id", ids).neq("book", "placeholder"),
+    supabase.from("placed_bets").select("game_id, book").in("game_id", ids),
     supabase.from("game_projection_locks").select("game_id").in("game_id", ids),
   ]);
   const betCount: Record<string, number> = {};
-  for (const b of bets.data ?? []) betCount[b.game_id] = (betCount[b.game_id] ?? 0) + 1;
+  const plannedCount: Record<string, number> = {};
+  for (const b of bets.data ?? []) {
+    const m = b.book === "placeholder" ? plannedCount : betCount;
+    m[b.game_id] = (m[b.game_id] ?? 0) + 1;
+  }
   const locked = new Set((locks.data ?? []).map((l: any) => l.game_id));
-  return (games ?? []).map((g: any) => ({ ...g, bets: betCount[g.id] ?? 0, locked: locked.has(g.id) }));
+  const fbs = (c: string | null) => (c ?? "").toLowerCase() === "fbs";
+  return (games ?? []).map((g: any) => ({
+    id: g.id,
+    start_date: g.start_date,
+    home_team: g.home_team,
+    away_team: g.away_team,
+    tv_outlet: g.tv_outlet,
+    bets: betCount[g.id] ?? 0,
+    planned: plannedCount[g.id] ?? 0,
+    locked: locked.has(g.id),
+    fcs: !fbs(g.home_classification) || !fbs(g.away_classification),
+  }));
+}
+
+/** The college week the picked day belongs to: that day's games, or the next ones after it. */
+async function weekOf(day: string): Promise<{ season: number; week: number } | null> {
+  const { data, error } = await supabase
+    .from("games")
+    .select("season, week")
+    .gte("start_date", new Date(`${day}T09:00:00Z`).toISOString())
+    .order("start_date")
+    .limit(1);
+  if (error) throw error;
+  return data?.length ? { season: data[0].season, week: data[0].week } : null;
+}
+
+/** Every game this week with a bet on it, planned (placeholder) bets included. */
+async function betGameIdsForWeek(wk: { season: number; week: number }): Promise<string[]> {
+  const { data: games, error } = await supabase.from("games").select("id").eq("season", wk.season).eq("week", wk.week);
+  if (error) throw error;
+  const ids = (games ?? []).map((g: any) => g.id);
+  if (!ids.length) return [];
+  const { data: bets, error: e2 } = await supabase.from("placed_bets").select("game_id").in("game_id", ids);
+  if (e2) throw e2;
+  return Array.from(new Set((bets ?? []).map((b: any) => b.game_id as string)));
 }
 
 // NFL picker: one ESPN week at a time (no Supabase data for NFL). Changing
@@ -241,6 +281,7 @@ export default function OverlayControlPage() {
   const [slateErr, setSlateErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [onlyMine, setOnlyMine] = useState(false);
+  const [addMsg, setAddMsg] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const pending = useRef<Partial<OverlayState>>({});
   const saveTimer = useRef(0);
@@ -299,12 +340,46 @@ export default function OverlayControlPage() {
     update({ game_ids: next });
   };
 
+  // FCS games stay out of the list unless they're already on the TV; a
+  // search finds them, listed under the FBS games.
+  const q = query.trim().toLowerCase();
   const visibleSlate = useMemo(() => {
-    const q = query.trim().toLowerCase();
     return slate.filter(
-      (g) => (!onlyMine || g.bets > 0 || g.locked) && (!q || g.home_team.toLowerCase().includes(q) || g.away_team.toLowerCase().includes(q))
+      (g) =>
+        (!onlyMine || g.bets > 0 || g.planned > 0 || g.locked) &&
+        (!q || g.home_team.toLowerCase().includes(q) || g.away_team.toLowerCase().includes(q))
     );
-  }, [slate, query, onlyMine]);
+  }, [slate, q, onlyMine]);
+  const fbsSlate = visibleSlate.filter((g) => !g.fcs || selected.has(g.id));
+  const fcsSlate = q ? visibleSlate.filter((g) => g.fcs && !selected.has(g.id)) : [];
+  const fcsHidden = q ? 0 : slate.filter((g) => g.fcs && !selected.has(g.id)).length;
+
+  // "Add every game I bet / in my pools" covers the whole week of the
+  // picked day, not just that day.
+  const addForWeek = async (kind: "bets" | "pools") => {
+    if (!state) return;
+    setAddMsg("Looking…");
+    try {
+      const wk = await weekOf(day);
+      if (!wk) return setAddMsg("No college games on or after this date.");
+      const ids =
+        kind === "bets"
+          ? await betGameIdsForWeek(wk)
+          : Array.from(new Set((await fetchPicks(activePools(state.pool_keys), { col: "week", ...wk })).map((p) => p.gameId)));
+      const add = ids.filter((id) => !selected.has(id));
+      if (add.length) update({ game_ids: [...state.game_ids, ...add] });
+      const what = kind === "bets" ? "bets" : "pool picks";
+      setAddMsg(
+        !ids.length
+          ? `No ${what} found for week ${wk.week}.`
+          : add.length
+            ? `Added ${add.length} game${add.length > 1 ? "s" : ""} with ${what} (week ${wk.week}).`
+            : `All ${ids.length} week ${wk.week} games with ${what} are already on.`
+      );
+    } catch (e: any) {
+      setAddMsg(e.message ?? "Couldn't load games");
+    }
+  };
 
   if (!password) return <div className="page oc-page"><PasswordGate onOk={setPassword} /></div>;
   if (!state) return <div className="page oc-page"><div className="oc-gate">Loading…</div></div>;
@@ -506,15 +581,12 @@ export default function OverlayControlPage() {
             </label>
           </div>
           <div className="oc-row">
-            <button
-              onClick={() => {
-                const add = slate.filter((g) => g.bets > 0 && !selected.has(g.id)).map((g) => g.id);
-                update({ game_ids: [...state.game_ids, ...add] });
-              }}
-            >
-              Add every game I bet
-            </button>
+            <button onClick={() => addForWeek("bets")}>Add every game I bet</button>
+            <button onClick={() => addForWeek("pools")}>Add every game in my pools</button>
             <button onClick={() => update({ game_ids: [] })}>Clear all</button>
+          </div>
+          <div className="oc-hint">
+            {addMsg ?? "The add buttons cover the whole week. Bets include ones sent from Matchups that haven't been imported yet; pools use the ones ticked under Pools."}
           </div>
           {selectedOffSlate.length ? (
             <div className="oc-hint">
@@ -527,7 +599,7 @@ export default function OverlayControlPage() {
           {slateErr ? <div className="oc-error">{slateErr}</div> : null}
           {!slateErr && slate.length === 0 ? <div className="oc-hint">No games on this date.</div> : null}
           <ul className="oc-games">
-            {visibleSlate.map((g) => (
+            {fbsSlate.map((g) => (
               <li key={g.id} className={selected.has(g.id) ? "on" : ""} onClick={() => toggleGame(g.id)}>
                 <input type="checkbox" readOnly checked={selected.has(g.id)} />
                 <span className="oc-time">
@@ -538,12 +610,37 @@ export default function OverlayControlPage() {
                 </span>
                 <span className="oc-tags">
                   {g.bets ? <span className="oc-tag bet">{g.bets} bet{g.bets > 1 ? "s" : ""}</span> : null}
+                  {g.planned ? <span className="oc-tag bet">{g.planned} planned</span> : null}
+                  {g.fcs ? <span className="oc-tag">FCS</span> : null}
                   {g.locked ? <span className="oc-tag">locked</span> : null}
                   {g.tv_outlet ? <span className="oc-tag tv">{g.tv_outlet}</span> : null}
                 </span>
               </li>
             ))}
           </ul>
+          {fcsSlate.length ? (
+            <>
+              <div className="oc-label">FCS games matching “{query.trim()}”</div>
+              <ul className="oc-games">
+                {fcsSlate.map((g) => (
+                  <li key={g.id} onClick={() => toggleGame(g.id)}>
+                    <input type="checkbox" readOnly checked={false} />
+                    <span className="oc-time">
+                      {g.start_date ? new Date(g.start_date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "TBD"}
+                    </span>
+                    <span className="oc-match">
+                      {g.away_team} @ {g.home_team}
+                    </span>
+                    <span className="oc-tags">
+                      <span className="oc-tag">FCS</span>
+                      {g.bets || g.planned ? <span className="oc-tag bet">bet</span> : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {fcsHidden ? <div className="oc-hint">{fcsHidden} FCS game{fcsHidden > 1 ? "s" : ""} hidden. Search a team to add one.</div> : null}
         </section>
         )}
         {cfb ? (

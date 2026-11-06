@@ -52,7 +52,7 @@ export function activePools(poolKeys: string[]): PoolDef[] {
 
 type Filter = { col: "game_id"; ids: string[] } | { col: "week"; season: number; week: number };
 
-async function fetchPicks(pools: PoolDef[], f: Filter): Promise<PoolPick[]> {
+export async function fetchPicks(pools: PoolDef[], f: Filter): Promise<PoolPick[]> {
   const tables = Array.from(new Set(pools.map((p) => p.table)));
   const rows = await Promise.all(
     tables.map(async (table) => {

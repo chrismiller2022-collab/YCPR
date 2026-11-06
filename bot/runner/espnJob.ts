@@ -5,7 +5,7 @@
 // - otherwise → run a full paper cycle here instead (it saves finals too, and keeps trading).
 // Logged in bot_runs as mode 'espn' so the dashboard's health panel shows the backup ran.
 
-import { db, RUN_HOST } from "./io";
+import { db, RUN_HOST, withEgress } from "./io";
 import { syncEspnFinals } from "./espnFinals";
 import { runCycle } from "./paper";
 
@@ -46,6 +46,6 @@ export async function runEspnJob(opts: { onFailover?: () => void; now?: () => nu
     error = String(err instanceof Error ? err.message : err).slice(0, 2000);
     throw err;
   } finally {
-    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: new Date().toISOString(), games: result.saved, error, summary: result }).catch(() => {});
+    await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: new Date().toISOString(), games: result.saved, error, summary: withEgress(result) }).catch(() => {});
   }
 }
