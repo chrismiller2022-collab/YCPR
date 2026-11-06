@@ -57,10 +57,18 @@ export async function runRecord(): Promise<RecordTotals> {
   const err = (v: VenueId, e: unknown) => ((totals.venueErrors ??= {})[v] = String(e instanceof Error ? e.message : e).slice(0, 200));
   try {
     const now = new Date();
-    const games = await db.select<Game>(
-      "games",
-      `select=id,season,week,start_date,home_team,away_team,neutral_site&start_date=gte.${now.toISOString()}&start_date=lte.${new Date(now.getTime() + 8 * 86400e3).toISOString()}&or=(home_classification.eq.fbs,away_classification.eq.fbs)&order=start_date.asc&limit=300`
-    );
+    const window = `start_date=gte.${now.toISOString()}&start_date=lte.${new Date(now.getTime() + 8 * 86400e3).toISOString()}`;
+    const cols = "select=id,season,week,start_date,home_team,away_team,neutral_site";
+    const games = await db.select<Game>("games", `${cols}&${window}&or=(home_classification.eq.fbs,away_classification.eq.fbs)&order=start_date.asc&limit=300`);
+    // FCS vs FCS games are recorded only once they're on the watchlist: there are ~60 a week, and recording them all would
+    // roughly double this job's database reads for games nobody is trading.
+    const watched = await db.select<{ game_id: string }>("bot_watchlist", "select=game_id&enabled=is.true");
+    const have = new Set(games.map((g) => String(g.id)));
+    const extraIds = watched.map((w) => String(w.game_id)).filter((id) => !have.has(id));
+    if (extraIds.length) {
+      const fcs = await db.select<Game>("games", `${cols}&${window}&id=in.(${extraIds.join(",")})&home_classification=eq.fcs&away_classification=eq.fcs`);
+      games.push(...fcs);
+    }
     if (!games.length) return totals;
     let ycpr = new Map<string, number>();
     try {

@@ -47,7 +47,8 @@ async function picker(q, res) {
   const current = done.length ? Math.min(Math.max(...done) + 1, weeks.at(-1) ?? 1) : weeks[0] ?? 1;
   const week = Number(q.get("week")) || current;
   const games = await sb(
-    `games?select=id,season,week,start_date,home_team,away_team,neutral_site,home_conference,away_conference,home_classification,away_classification,completed&season=eq.${season}&week=eq.${week}&season_type=eq.regular&or=(home_classification.eq.fbs,away_classification.eq.fbs)&order=start_date.asc&limit=400`
+    // Every game with an FBS team, plus FCS vs FCS (spreads only, added one at a time).
+    `games?select=id,season,week,start_date,home_team,away_team,neutral_site,home_conference,away_conference,home_classification,away_classification,completed&season=eq.${season}&week=eq.${week}&season_type=eq.regular&or=(home_classification.eq.fbs,away_classification.eq.fbs,and(home_classification.eq.fcs,away_classification.eq.fcs))&order=start_date.asc&limit=400`
   );
   const ids = games.map((g) => g.id);
   const inIds = ids.length ? `in.(${ids.join(",")})` : "eq.__none__";
@@ -183,11 +184,11 @@ export default async function handler(req, res) {
     const latest = {};
     for (const s of snaps) if (!latest[s.ticker]) latest[s.ticker] = s;
 
-    // Upcoming FBS games (next 8 days) with the current market spread, for the "add game" form.
+    // Upcoming FBS vs FBS and FCS vs FCS games (next 8 days) with the current market spread, for the "add game" form.
     const nowIso = new Date().toISOString();
     const soonIso = new Date(Date.now() + 8 * 86400e3).toISOString();
     const games = await sb(
-      `games?select=id,season,week,start_date,home_team,away_team,neutral_site&start_date=gte.${nowIso}&start_date=lte.${soonIso}&home_classification=eq.fbs&away_classification=eq.fbs&order=start_date.asc&limit=200`
+      `games?select=id,season,week,start_date,home_team,away_team,neutral_site&start_date=gte.${nowIso}&start_date=lte.${soonIso}&or=(and(home_classification.eq.fbs,away_classification.eq.fbs),and(home_classification.eq.fcs,away_classification.eq.fcs))&order=start_date.asc&limit=300`
     );
     const lines = games.length ? await sb(`betting_lines?select=game_id,provider,spread&game_id=in.(${games.map((g) => g.id).join(",")})&spread=not.is.null`) : [];
     const rank = (p) => (p === "market_median" ? 0 : p === "consensus" ? 1 : 2);

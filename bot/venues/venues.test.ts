@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { impliedHomeMargin, ladderOrders, DEFAULT_LADDER_CONFIG, exposureSummary, pnlByMargin } from "../ladder/engine";
 import { marginPmf } from "../fairPrice/marginDistribution";
+import { eventTeams } from "./kalshi";
 import { codeScore, novigRungs, novigTeams, resolveFirstIsHome, type NovigBook, type NovigMarket } from "./novig";
 import { bestPerOutcome, isGameSpread, oddsToProb, prophetxRungs, prophetxStrikeMap } from "./prophetx";
 import { asPrint, unwrap } from "../runner/pxtape";
@@ -143,5 +144,13 @@ describe("cross-venue loss cap", () => {
     }
     const pnl = pnlByMargin(rungs, [...fill.values()]).map((v, i) => v + otherPnl[i]);
     expect(exposureSummary(pnl, pmf).worst).toBeGreaterThanOrEqual(-3 - 1e-9);
+  });
+});
+
+describe("Kalshi event titles", () => {
+  it("splits on vs first, so a name with 'at' in it stays whole", () => {
+    expect(eventTeams("University at Albany vs Bryant: Spread")).toEqual(["University at Albany", "Bryant"]);
+    expect(eventTeams("Montana St. vs Montana")).toEqual(["Montana St.", "Montana"]);
+    expect(eventTeams("Georgia at Florida")).toEqual(["Georgia", "Florida"]);
   });
 });
