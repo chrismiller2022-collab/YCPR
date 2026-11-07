@@ -107,12 +107,26 @@ export interface HypoTotals {
   restarted: number;
   deferred?: number;
   overlapped?: boolean;
+  notDue?: boolean; // skipped: not the daily replay hour (see hypoDue)
+}
+
+// When to replay: once a day by default (each replay re-reads every game's saved state, and a strategy edit replays a
+// game's whole history), at the Eastern hours in BOT_HYPO_HOURS ("4" = 4am; "any" = every time it's started, the old
+// hourly behaviour). It also runs whenever the last replay ran out of time (until it catches up) or none has finished
+// in 26 hours (the tower was off at 4am).
+export function hypoDue(nowMs: number, last: { finishedMs: number; deferred: number } | null, hours: string = process.env.BOT_HYPO_HOURS ?? "4"): boolean {
+  if (hours.trim().toLowerCase() === "any") return true;
+  if (!last || nowMs - last.finishedMs > 26 * 3600e3 || last.deferred > 0) return true;
+  const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" }).format(new Date(nowMs)));
+  return hours.split(",").map((x) => Number(x.trim())).includes(h);
 }
 
 /** Bring every game × method × venue set up to date. */
 export async function runHypo(budgetMs = 200e3): Promise<HypoTotals> {
   const started = Date.now();
   const totals: HypoTotals = { games: 0, combos: 0, steps: 0, restarted: 0 };
+  const [prev] = await db.select<{ finished_at: string; deferred: number | null }>("bot_runs", `select=finished_at,deferred:summary->deferred&mode=eq.${MODE}&finished_at=not.is.null&error=is.null&order=finished_at.desc&limit=1`);
+  if (!hypoDue(Date.now(), prev ? { finishedMs: Date.parse(prev.finished_at), deferred: Number(prev.deferred ?? 0) } : null)) return { ...totals, notDue: true };
   // The GitHub backup may run up to ~20 min; a run killed at a platform limit is closed after 25.
   const recent = await db.select("bot_runs", `select=id&mode=eq.${MODE}&finished_at=is.null&started_at=gte.${new Date(Date.now() - 25 * 60e3).toISOString()}`);
   if (recent.length) return { ...totals, overlapped: true };

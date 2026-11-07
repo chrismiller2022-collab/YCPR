@@ -149,3 +149,18 @@ describe("Hypotheticals replay · target-position strategies", () => {
     expect(summarize(flat, game, "all").contracts).toBeLessThanOrEqual(summarize(advance(emptyState(), steps, game, m, "all", rules, now), game, "all").contracts);
   });
 });
+
+describe("daily replay schedule", () => {
+  // November: Eastern = UTC-5.
+  const at = (hourEt: number) => Date.UTC(2026, 10, 7, hourEt + 5, 10);
+  it("runs at 4am Eastern, or to catch up, and otherwise waits", async () => {
+    const { hypoDue } = await import("./run");
+    const recent = { finishedMs: at(4) - 3600e3, deferred: 0 };
+    expect(hypoDue(at(4), recent, "4")).toBe(true);
+    expect(hypoDue(at(10), recent, "4")).toBe(false);
+    expect(hypoDue(at(10), { ...recent, deferred: 3 }, "4")).toBe(true); // still catching up
+    expect(hypoDue(at(10), { finishedMs: at(10) - 27 * 3600e3, deferred: 0 }, "4")).toBe(true); // missed a day
+    expect(hypoDue(at(10), null, "4")).toBe(true); // never run
+    expect(hypoDue(at(10), recent, "any")).toBe(true);
+  });
+});

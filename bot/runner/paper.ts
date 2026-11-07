@@ -19,6 +19,7 @@ import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder
 import { capTakes, diffOrders, paperFills, type Trade } from "./paperFills";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
+import { PaperLedger } from "./ledger";
 import { errorLines, maybeUsageReport, notifyErrors, notifyFailure, notifyOncePerDay } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
@@ -136,6 +137,7 @@ interface Book {
 export interface CycleTotals {
   quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
   dailyStop?: boolean; // the daily loss stop had tripped (Settings → Risk)
+  ledger?: "full" | "incremental"; // how the ledger was loaded this cycle
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -191,30 +193,44 @@ export function dailyStopAmount(state: { bankroll?: number | null; daily_loss_pc
   return bank != null && pct != null && bank > 0 && pct > 0 ? bank * pct : null;
 }
 
+// This cycle's ledger of its own fills, resting orders and snapshot prices (bot/runner/ledger.ts); set by runCycle.
+let ledger: PaperLedger | null = null;
+
 async function cancelAll(gameId?: string): Promise<number> {
   // Only the ids come back: the full rows are egress, and a cancel-all at the start of quiet hours can touch thousands.
   const rows = await db.update("bot_orders", `mode=eq.${MODE}&status=eq.resting${gameId ? `&game_id=eq.${gameId}` : ""}&select=id`, { status: "cancelled", closed_at: iso() });
+  ledger?.clearOrders(gameId);
   return rows.length;
 }
 
 async function snapshot(gameId: string, venue: VenueId, rungs: Rung[], fairOf: (r: Rung) => number) {
-  const last = await db.select<{ ticker: string; bid: number | null; ask: number | null; fair: number | null }>(
-    "bot_snapshots",
-    `select=ticker,bid,ask,fair&game_id=eq.${gameId}&venue=eq.${venue}&order=taken_at.desc&limit=${rungs.length * 3}`
-  );
-  const prev = new Map<string, (typeof last)[number]>();
-  for (const s of last) if (!prev.has(s.ticker)) prev.set(s.ticker, s);
+  // The last saved price per rung: from the ledger, read from the database only the first time a game/venue is seen.
+  let prev = ledger?.lastSnaps(gameId, venue) ?? null;
+  if (!prev) {
+    const last = await db.select<{ ticker: string; bid: number | null; ask: number | null; fair: number | null }>(
+      "bot_snapshots",
+      `select=ticker,bid,ask,fair&game_id=eq.${gameId}&venue=eq.${venue}&order=taken_at.desc&limit=${rungs.length * 3}`
+    );
+    const newest = new Map<string, (typeof last)[number]>();
+    for (const s of last) if (!newest.has(s.ticker)) newest.set(s.ticker, s);
+    ledger?.setSnaps(gameId, venue, [...newest.values()], true);
+    prev = newest;
+  }
   const rows = rungs
     .map((r) => ({ game_id: gameId, venue, ticker: r.ticker, side: r.side, strike: r.strike, bid: r.bid, ask: r.ask, fair: Math.round(fairOf(r) * 1000) / 1000 }))
     .filter((s) => {
       const p = prev.get(s.ticker);
       return !p || num(p.bid) !== s.bid || num(p.ask) !== s.ask || Math.abs((num(p.fair) ?? -1) - s.fair) >= 0.002;
     });
-  if (rows.length) await db.insert("bot_snapshots", rows);
+  if (rows.length) {
+    await db.insertQuiet("bot_snapshots", rows);
+    ledger?.setSnaps(gameId, venue, rows);
+  }
 }
 
 /** Which of these games still have a fill without a result or a closing mid. */
 async function gamesWithOpenFills(gameIds: string[]): Promise<Set<string>> {
+  if (ledger) return ledger.gamesWithOpenFills(gameIds);
   const out = new Set<string>();
   for (let i = 0; i < gameIds.length; i += 80) {
     const ids = gameIds.slice(i, i + 80).join(",");
@@ -229,6 +245,8 @@ async function gamesWithOpenFills(gameIds: string[]): Promise<Set<string>> {
  * is "side wins by over strike") and record the last pregame mid on its venue for CLV.
  */
 async function settle(w: Watch) {
+  // Nothing to grade (the ledger knows every fill's state): no database calls.
+  if (ledger && !ledger.gamesWithOpenFills([String(w.game_id)]).size) return;
   const open = await db.select<{ id: number; venue: VenueId; ticker: string; side: string; strike: number; result: number | null; close_mid: number | null }>(
     "bot_fills",
     `select=id,venue,ticker,side,strike,result,close_mid&mode=eq.${MODE}&game_id=eq.${w.game_id}&or=(result.is.null,close_mid.is.null)`
@@ -248,7 +266,10 @@ async function settle(w: Watch) {
       if (s?.bid == null || s?.ask == null) [s] = await db.select<{ bid: number | null; ask: number | null }>("bot_mkt_snaps", q);
       if (s?.bid != null && s?.ask != null) patch.close_mid = (Number(s.bid) + Number(s.ask)) / 2;
     }
-    if (Object.keys(patch).length) await db.update("bot_fills", `id=eq.${f.id}`, patch);
+    if (Object.keys(patch).length) {
+      await db.update("bot_fills", `id=eq.${f.id}`, patch);
+      ledger?.patchFill(f.id, patch);
+    }
   }
 }
 
@@ -264,7 +285,10 @@ export async function runCycle(): Promise<CycleTotals> {
   // Runs the platform killed at its time limit never reach `finally`; close them out.
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
+  ledger = null;
   try {
+    ledger = await PaperLedger.load(MODE);
+    totals.ledger = ledger.synced;
     const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null; daily_loss_pct: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode,daily_loss_pct&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
@@ -363,10 +387,7 @@ export async function runCycle(): Promise<CycleTotals> {
     const targetIds = strategies.filter((s) => s.method === "target").map((s) => s.id);
     const risk = new Map<number, Map<string, RiskEntry>>();
     if (targetIds.length) {
-      const open = await db.selectAll<FillRow & { game_id: string; strategy_id: number }>(
-        "bot_fills",
-        `select=game_id,strategy_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&strategy_id=in.(${targetIds.join(",")})&result=is.null&order=id`
-      );
+      const open = ledger!.allFills().filter((f) => f.strategy_id != null && targetIds.includes(f.strategy_id) && f.result == null) as unknown as (FillRow & { game_id: string; strategy_id: number })[];
       for (const id of targetIds) {
         const m = new Map<string, RiskEntry>();
         for (const w of watch) {
@@ -451,14 +472,8 @@ export async function runCycle(): Promise<CycleTotals> {
 
         // Everything below is shared by the Board and every lab strategy: one read of resting
         // orders, fills and trades per game, then each book simulates and quotes on each venue.
-        const allResting = await db.select<RestingRow>(
-          "bot_orders",
-          `select=id,strategy_id,venue,ticker,action,price,count,kind,fair,created_at&mode=eq.${MODE}&status=eq.resting&game_id=eq.${w.game_id}`
-        );
-        const allFills = await db.select<FillRow>(
-          "bot_fills",
-          `select=strategy_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&game_id=eq.${w.game_id}`
-        );
+        const allResting = ledger!.restingFor(String(w.game_id)) as unknown as RestingRow[];
+        const allFills = ledger!.fillsFor(String(w.game_id)) as unknown as FillRow[];
         const trades = new Map<VenueId, Trade[]>();
         for (const [v] of ladders) {
           const rv = allResting.filter((r) => r.venue === v);
@@ -572,7 +587,8 @@ export async function runCycle(): Promise<CycleTotals> {
                   ycpr_at_fill: ours, market_at_fill: pm, shrunk_at_fill: sh.fair, hours_to_kickoff: Math.round(hours * 1000) / 1000, is_maker: false,
                 };
               });
-              await db.insert("bot_fills", fillRows);
+              await db.insertQuiet("bot_fills", fillRows);
+              ledger!.addFills(fillRows as any);
               bookFills.push(...(fillRows as unknown as FillRow[]));
               totals.labFills += fillRows.length;
             }
@@ -621,10 +637,18 @@ export async function runCycle(): Promise<CycleTotals> {
             );
             if (filled.length) {
               const done = filled.filter((f) => f.remaining <= 0);
-              if (done.length) await db.update("bot_orders", `id=in.(${done.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              if (done.length) {
+                await db.update("bot_orders", `id=in.(${done.map((f) => f.id).join(",")})&select=id`, { status: "filled", closed_at: iso() });
+                ledger!.removeOrders(done.map((f) => f.id));
+              }
               // Partly filled: the rest stays resting at the same price.
-              for (const f of filled.filter((x) => x.remaining > 0)) await db.update("bot_orders", `id=eq.${f.id}`, { count: f.remaining });
-              await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
+              for (const f of filled.filter((x) => x.remaining > 0)) {
+                await db.update("bot_orders", `id=eq.${f.id}&select=id`, { count: f.remaining });
+                ledger!.setOrderCount(f.id, f.remaining);
+              }
+              const newFills = filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair));
+              await db.insertQuiet("bot_fills", newFills);
+              ledger!.addFills(newFills as any);
             }
             resting = resting
               .map((r) => {
@@ -634,7 +658,8 @@ export async function runCycle(): Promise<CycleTotals> {
               .filter((r) => r.count > 0);
             const cancel = async (rows: RestingRow[]) => {
               if (!rows.length) return;
-              await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
+              await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})&select=id`, { status: "cancelled", closed_at: iso() });
+              ledger!.removeOrders(rows.map((r) => r.id));
               if (sid == null) totals.cancelled += rows.length;
             };
 
@@ -687,8 +712,12 @@ export async function runCycle(): Promise<CycleTotals> {
                 }))
               );
               plan.place.forEach(() => count(v, "placed"));
+              ledger!.addOrders(rows.filter((r: any) => r.status === "resting"));
               const takes = plan.place.map((o, i) => (o.kind === "take" ? fillRow(rows[i].id, o, false, fulls[i].fair) : null)).filter((x) => x != null);
-              if (takes.length) await db.insert("bot_fills", takes);
+              if (takes.length) {
+                await db.insertQuiet("bot_fills", takes);
+                ledger!.addFills(takes as any);
+              }
             }
           }
         }
@@ -701,15 +730,15 @@ export async function runCycle(): Promise<CycleTotals> {
     // A snapshot that fails to build never fails the cycle; the dashboard just shows no change for this run.
     try {
       const all = await db.select<SnapWatch>("bot_watchlist", "select=game_id,my_home_margin,ycpr_home_margin,kalshi_home_margin,venue_margins");
-      const fills = all.length
-        ? await db.selectAll<SnapFill>("bot_fills", `select=game_id,venue,ticker,side,strike,action,price,count,fee&mode=eq.${MODE}&strategy_id=is.null&game_id=in.(${all.map((w) => w.game_id).join(",")})&order=id`)
-        : [];
+      const ids = new Set(all.map((w) => String(w.game_id)));
+      const fills = ledger!.allFills().filter((f) => f.strategy_id == null && ids.has(f.game_id)) as unknown as SnapFill[];
       totals.board = boardSnapshot(all, fills);
     } catch {}
   } catch (err) {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(err).slice(0, 2000) });
     throw err;
   } finally {
+    ledger?.save();
     await db.update("bot_runs", `id=eq.${run.id}`, {
       finished_at: iso(), games: totals.games, orders_placed: totals.placed, orders_cancelled: totals.cancelled, fills: totals.fills, summary: withEgress(totals),
     }).catch(() => {});
