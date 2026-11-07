@@ -6,7 +6,7 @@
 
 let picker = null; // /api/data?part=picker payload
 let pickerBusy = false;
-const PK_DEF = { search: "", conf: "", day: "", minEdge: "", venues: [], hideWatched: true, hideStarted: true, sort: "edge" };
+const PK_DEF = { search: "", conf: "", day: "", division: "", minEdge: "", venues: [], hideWatched: true, hideStarted: true, sort: "edge" };
 let pk = (() => { try { return { ...PK_DEF, ...JSON.parse(localStorage.getItem("botpicker") || "{}") }; } catch { return { ...PK_DEF }; } })();
 const savePk = () => { try { localStorage.setItem("botpicker", JSON.stringify(pk)); } catch {} };
 let pkWeek = null; // { season, week } being shown; null = current
@@ -129,6 +129,8 @@ function workflowPanel() {
       <button class="btn primary" type="button" id="wfRun" ${wfBusy ? "disabled" : ""}>${wfBusy ? "Running…" : `Run for week ${picker.week}`}</button>
     </div>${out}</div>`;
 }
+/** "fbs" = a game with an FBS team (FBS vs FBS or vs FCS); "fcs" = FCS vs FCS. */
+const divisionOf = (g) => (g.home_classification === "fcs" && g.away_classification === "fcs" ? "fcs" : "fbs");
 const dayOf = (g) => (g.start_date ? new Date(g.start_date).toLocaleDateString([], { weekday: "short" }) : "TBD");
 const started = (g) => g.start_date && new Date(g.start_date).getTime() <= Date.now();
 
@@ -141,6 +143,7 @@ function pickerRows() {
     if (s && !`${g.away_team} ${g.home_team}`.toLowerCase().includes(s)) return false;
     if (pk.conf && g.home_conference !== pk.conf && g.away_conference !== pk.conf) return false;
     if (pk.day && dayOf(g) !== pk.day) return false;
+    if (pk.division && divisionOf(g) !== pk.division) return false;
     if (min != null && !(edgeOf(g) >= min)) return false;
     if (pk.venues.length && !pk.venues.every((v) => (g.venue_margins?.[v] ?? g.ro_margins?.[v]) != null)) return false;
     return true;
@@ -175,6 +178,7 @@ function renderAdd() {
         <label class="field">Week<select id="pkWeek">${picker.weeks.map((w) => opt(w, `Week ${w}${w === picker.current ? " (current)" : ""}`, picker.week)).join("")}</select></label>
         <label class="field">Search<input id="pkSearch" value="${esc(pk.search)}" placeholder="Team"></label>
         <label class="field">Conference<select id="pkConf">${opt("", "All", pk.conf)}${confs.map((c) => opt(c, c, pk.conf)).join("")}</select></label>
+        <label class="field">Division<select id="pkDiv">${opt("", "All", pk.division)}${opt("fbs", "FBS", pk.division)}${opt("fcs", "FCS vs FCS", pk.division)}</select></label>
         <label class="field">Day<select id="pkDay">${opt("", "Any", pk.day)}${days.map((d) => opt(d, d, pk.day)).join("")}</select></label>
         <label class="field">Min edge (pts)<input id="pkMin" type="number" step="0.5" min="0" value="${esc(pk.minEdge)}" placeholder="any"></label>
         <label class="field">Sort<select id="pkSort">${opt("edge", "Biggest edge", pk.sort)}${opt("kickoff", "Kickoff", pk.sort)}${opt("yc", "Closest YC line", pk.sort)}</select></label>
@@ -246,7 +250,7 @@ addPane.addEventListener("change", (e) => {
   if (t.id === "pkWeek") { pkWeek = { season: picker.season, week: Number(t.value) }; pkSel.clear(); picker = null; renderAdd(); loadPicker(); return; }
   if (t.id === "pkPreset") { fillBlock("pk", t.value); renderAdd.block = snapBlock("pk"); return; }
   if (t.closest("#pkForm")) { renderAdd.block = snapBlock("pk"); return; }
-  const map = { pkConf: "conf", pkDay: "day", pkSort: "sort" };
+  const map = { pkConf: "conf", pkDay: "day", pkDiv: "division", pkSort: "sort" };
   if (map[t.id]) pk[map[t.id]] = t.value;
   if (t.id === "pkHideW") pk.hideWatched = t.checked;
   if (t.id === "pkHideS") pk.hideStarted = t.checked;
