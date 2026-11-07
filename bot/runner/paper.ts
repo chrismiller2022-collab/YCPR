@@ -16,7 +16,7 @@ import { modelWith, pmMedian, shrinkFrom, shrunkHomeMargin } from "../fairPrice/
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
-import { diffOrders, paperFills, type Trade } from "./paperFills";
+import { capTakes, diffOrders, paperFills, type Trade } from "./paperFills";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
 import { errorLines, maybeUsageReport, notifyErrors, notifyFailure } from "./notify";
@@ -513,7 +513,7 @@ export async function runCycle(): Promise<CycleTotals> {
             if (kickoff != null && now() >= kickoff - bk.stopMinutes * 60) continue;
             if (sh.fair == null || pm == null) continue;
             const names = namesOf(w);
-            const decision = decideTarget({
+            const rawDecision = decideTarget({
               books: [...ladders].map(([v, L]) => ({ venue: v, rungs: L.rungs, fee: adapters[v].fee(hours, L.eventKey) })),
               fills: bookFills as FillLike[],
               fair: sh.fair,
@@ -524,6 +524,14 @@ export async function runCycle(): Promise<CycleTotals> {
               others: [...(risk.get(st.id)?.values() ?? [])].filter((r) => r.gameId !== String(w.game_id)),
               game: names,
             });
+            // Takes only get what's shown at the price they cross, per venue.
+            const decision = {
+              ...rawDecision,
+              orders: [...ladders].flatMap(([v, L]) => {
+                const rungOf = new Map(L.rungs.map((r) => [r.ticker, r]));
+                return capTakes(rawDecision.orders.filter((o) => o.venue === v), (t) => rungOf.get(t));
+              }),
+            };
             if (decision.orders.length) {
               const rows = await db.insert<{ id: number }>(
                 "bot_orders",
@@ -567,7 +575,7 @@ export async function runCycle(): Promise<CycleTotals> {
           for (const [v, L] of ladders) {
             const adapter: VenueAdapter = adapters[v];
             const fee = adapter.fee(hours, L.eventKey);
-            const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
+            const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask, bidSize: r.bidSize, askSize: r.askSize }]));
             let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
             const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
               const r = L.rungs.find((x) => x.ticker === o.ticker);
@@ -590,10 +598,18 @@ export async function runCycle(): Promise<CycleTotals> {
               books
             );
             if (filled.length) {
-              await db.update("bot_orders", `id=in.(${filled.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              const done = filled.filter((f) => f.remaining <= 0);
+              if (done.length) await db.update("bot_orders", `id=in.(${done.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              // Partly filled: the rest stays resting at the same price.
+              for (const f of filled.filter((x) => x.remaining > 0)) await db.update("bot_orders", `id=eq.${f.id}`, { count: f.remaining });
               await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
             }
-            resting = resting.filter((r) => !filled.some((f) => f.id === r.id));
+            resting = resting
+              .map((r) => {
+                const f = filled.find((x) => x.id === r.id);
+                return f ? { ...r, count: f.remaining } : r;
+              })
+              .filter((r) => r.count > 0);
             const cancel = async (rows: RestingRow[]) => {
               if (!rows.length) return;
               await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
@@ -634,7 +650,9 @@ export async function runCycle(): Promise<CycleTotals> {
             const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
             const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
             const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl, marketHomeMargin: shrunk ? market : market ?? sportsbook ?? center });
-            const plan = diffOrders(resting, orders, adapter.tick);
+            // A take only gets what's shown at the price it crosses; the rest of it isn't filled.
+            const rungOf = new Map(L.rungs.map((r) => [r.ticker, r]));
+            const plan = diffOrders(resting, capTakes(orders.filter((o) => o.kind === "take"), (t) => rungOf.get(t)).concat(orders.filter((o) => o.kind !== "take")), adapter.tick);
             await cancel(plan.cancel);
             // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.
             if (plan.place.length) {

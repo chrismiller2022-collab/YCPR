@@ -24,6 +24,9 @@ export interface Rung {
   /** Best YES bid/ask (null = none). */
   bid: number | null;
   ask: number | null;
+  /** Contracts shown at the best bid / ask, when the venue reports it (paper fills are capped by it). */
+  bidSize?: number | null;
+  askSize?: number | null;
 }
 
 export interface Position {

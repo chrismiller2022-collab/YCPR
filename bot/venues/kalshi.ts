@@ -16,7 +16,11 @@ export function kalshiRungs(game: Pick<VenueGame, "home_team" | "away_team">, ev
     if (!side || m.status !== "active") continue;
     const bid = Number(m.yes_bid_dollars);
     const ask = Number(m.yes_ask_dollars);
-    rungs.push({ ticker: m.ticker, side, strike: Number(m.floor_strike), bid: bid > 0 ? bid : null, ask: ask > 0 && ask < 1 ? ask : null });
+    const size = (v: string | undefined) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    rungs.push({
+      ticker: m.ticker, side, strike: Number(m.floor_strike), bid: bid > 0 ? bid : null, ask: ask > 0 && ask < 1 ? ask : null,
+      bidSize: size(m.yes_bid_size_fp), askSize: size(m.yes_ask_size_fp),
+    });
   }
   return rungs;
 }
