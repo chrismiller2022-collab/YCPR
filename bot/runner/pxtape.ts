@@ -108,7 +108,7 @@ export async function runPxTape(budgetMs = 280e3): Promise<TapeTotals> {
     const flush = async () => {
       if (!pending.length) return;
       const rows = pending.splice(0);
-      await db.insert("bot_mkt_trades", rows);
+      await db.insertQuiet("bot_mkt_trades", rows);
       totals.trades += rows.length;
     };
     const flusher = setInterval(() => flush().catch(() => {}), 15e3);

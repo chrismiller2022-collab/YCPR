@@ -9,6 +9,9 @@ vi.hoisted(() => {
   process.env.BOT_QUIET_HOURS = "off"; // these tests trade whatever the time of day; the quiet-hours test turns it on
 });
 
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { marginPmf } from "../fairPrice/marginDistribution";
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { kalshiFeeWith } from "../venues/fees";
@@ -59,6 +62,8 @@ const strat = (id: number, name: string, fair_mode: string): Row => ({
 });
 
 beforeEach(() => {
+  vi.resetModules(); // a fresh ledger (bot/runner/ledger.ts) and state folder per test
+  process.env.BOT_CACHE_DIR = mkdtempSync(join(tmpdir(), "cycle-test-"));
   mids.kalshi = 0;
   mids.novig = 1.2;
   mids.withNovig = false;
@@ -332,5 +337,45 @@ describe("daily loss stop", () => {
     const t = await runCycle();
     expect(t.dailyStop).toBeUndefined();
     expect(t.placed).toBeGreaterThan(0);
+  });
+});
+
+describe("ledger across cycles", () => {
+  const ledgerFile = () => JSON.parse(readFileSync(join(process.env.BOT_CACHE_DIR!, "paper-ledger.json"), "utf8"));
+  const dbResting = () => db.bot_orders.filter((o) => o.status === "resting").map((o) => o.id).sort((a, b) => a - b);
+
+  it("fetches only new rows after the first cycle and stays in step with the database", async () => {
+    const stub = pgStub(db);
+    vi.stubGlobal("fetch", stub.fetchStub);
+    const { runCycle } = await import("./paper");
+    const t1 = await runCycle();
+    expect(t1.ledger).toBe("full");
+    expect(dbResting().length).toBeGreaterThan(0); // the scenario leaves quotes resting, so the comparison means something
+    expect(ledgerFile().orders.map((o: any) => o.id).sort((a: number, b: number) => a - b)).toEqual(dbResting());
+
+    stub.calls.length = 0;
+    db.bot_runs.forEach((r) => (r.finished_at ??= new Date().toISOString()));
+    const t2 = await runCycle();
+    expect(t2.ledger).toBe("incremental");
+    const fillReads = stub.calls.filter((c) => c.startsWith("bot_fills?select"));
+    const orderReads = stub.calls.filter((c) => c.startsWith("bot_orders?select"));
+    expect(fillReads.length).toBeGreaterThan(0);
+    expect(fillReads.every((c) => c.includes("id=gt."))).toBe(true);
+    expect(orderReads.every((c) => c.includes("id=gt."))).toBe(true);
+    expect(ledgerFile().dirty).toBe(false);
+    expect(ledgerFile().orders.map((o: any) => o.id).sort((a: number, b: number) => a - b)).toEqual(dbResting());
+    // Nothing placed twice: every resting order is a distinct quote.
+    const keys = db.bot_orders.filter((o) => o.status === "resting").map((o) => `${o.strategy_id}|${o.venue}|${o.ticker}|${o.action}|${o.price}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("re-reads everything after a cycle that was cut off", async () => {
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    db.bot_runs.forEach((r) => (r.finished_at ??= new Date().toISOString()));
+    const { writeState } = await import("./localState");
+    writeState("paper-ledger.json", { ...ledgerFile(), dirty: true });
+    const t = await runCycle();
+    expect(t.ledger).toBe("full");
   });
 });

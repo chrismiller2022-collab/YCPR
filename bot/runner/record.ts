@@ -9,11 +9,14 @@ import { impliedHomeMargin, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueId } from "../venues";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
+import { readState, writeState } from "./localState";
 import { errorLines, notifyErrors, notifyFailure } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 
 const MODE = "record";
 const BUDGET_MS = Number(process.env.BOT_RECORD_BUDGET_MS) || 200e3;
+const LAST_FILE = "mkt-last.json";
+const LAST_RESYNC_MS = 6 * 3600e3;
 const iso = () => new Date().toISOString();
 
 interface Game extends YcprGame {
@@ -55,6 +58,7 @@ export async function runRecord(): Promise<RecordTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   const err = (v: VenueId, e: unknown) => ((totals.venueErrors ??= {})[v] = String(e instanceof Error ? e.message : e).slice(0, 200));
+  let saveLast: (() => void) | null = null; // set once the last-price copy is loaded; saved however the run ends
   try {
     const now = new Date();
     const window = `start_date=gte.${now.toISOString()}&start_date=lte.${new Date(now.getTime() + 8 * 86400e3).toISOString()}`;
@@ -98,8 +102,18 @@ export async function runRecord(): Promise<RecordTotals> {
         err(v, e);
       }
     }
+    // Every market's last price, volume and newest trade time, to skip unchanged prices and fetch only new trades. The tower
+    // is the only writer, so it keeps its own copy (LAST_FILE) instead of downloading all ~17,000 rows every run; the copy
+    // is refreshed from the database at least every LAST_RESYNC_MS.
+    // A run that was cut off (still marked dirty) may have written rows its copy doesn't know about: reload then.
+    const cached = readState<{ at: number; dirty?: boolean; rows: Last[] }>(LAST_FILE);
+    const fresh = cached && !cached.dirty && Date.now() - cached.at < LAST_RESYNC_MS;
+    const lastRowsAll = fresh ? cached.rows : await db.selectAll<Last>("bot_mkt_last", "select=*&order=venue,ticker");
+    const lastAt = fresh ? cached.at : Date.now();
     const last = new Map<string, Last>();
-    for (const r of await db.selectAll<Last>("bot_mkt_last", "select=*&order=venue,ticker")) last.set(`${r.venue}|${r.ticker}`, r);
+    for (const r of lastRowsAll) last.set(`${r.venue}|${r.ticker}`, r);
+    writeState(LAST_FILE, { at: lastAt, dirty: true, rows: lastRowsAll });
+    saveLast = () => writeState(LAST_FILE, { at: lastAt, dirty: false, rows: [...last.values()] });
 
     await pool(games, 4, async (g) => {
       if (Date.now() > started + BUDGET_MS) {
@@ -162,9 +176,12 @@ export async function runRecord(): Promise<RecordTotals> {
           }
         }
       }
-      if (snaps.length) await db.insert("bot_mkt_snaps", snaps);
-      if (trades.length) await db.insert("bot_mkt_trades", trades);
-      if (lastRows.length) await db.upsert("bot_mkt_last", lastRows, "venue,ticker");
+      if (snaps.length) await db.insertQuiet("bot_mkt_snaps", snaps);
+      if (trades.length) await db.insertQuiet("bot_mkt_trades", trades);
+      if (lastRows.length) {
+        await db.upsert("bot_mkt_last", lastRows, "venue,ticker");
+        for (const r of lastRows) last.set(`${r.venue}|${r.ticker}`, r);
+      }
       await db.upsert("bot_mkt_games", [{
         game_id: gid, season: g.season, week: g.week, kickoff: g.start_date, home_team: g.home_team, away_team: g.away_team,
         ycpr_home_margin: ycpr.get(gid) ?? null, book_home_margin: book.get(gid) ?? null, venue_events: events, venue_margins: margins, ro_margins: ro, updated_at: iso(),
@@ -177,6 +194,7 @@ export async function runRecord(): Promise<RecordTotals> {
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), error: String(e).slice(0, 2000) });
     throw e;
   } finally {
+    saveLast?.();
     await db.update("bot_runs", `id=eq.${run.id}`, { finished_at: iso(), games: totals.games, summary: withEgress(totals) }).catch(() => {});
     await notifyErrors("recorder", errorLines(totals));
     console.log(`record: games ${totals.games}, snaps ${totals.snaps}, trades ${totals.trades}, ladders ${JSON.stringify(totals.ladders)}`);
