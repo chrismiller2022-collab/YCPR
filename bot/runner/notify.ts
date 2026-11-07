@@ -66,6 +66,17 @@ export async function notifyFailure(job: string, err: unknown): Promise<void> {
   await notifyErrors(job, [`run failed: ${String(err instanceof Error ? err.message : err).slice(0, 300)}`]).catch(() => 0);
 }
 
+/** Post a message to #bot at most once per key per Eastern day (e.g. "the daily loss stop tripped"). */
+export async function notifyOncePerDay(key: string, content: string, nowMs: number = Date.now()): Promise<boolean> {
+  if (!webhookFor("bot")) return false;
+  const day = etDate(nowMs);
+  const sent = readState<Record<string, string>>("daily-alerts.json") ?? {};
+  if (sent[key] === day) return false;
+  const ok = await postDiscord("bot", content);
+  if (ok) writeState("daily-alerts.json", { ...sent, [key]: day });
+  return ok;
+}
+
 // ------------------------------------------------------------------ daily usage report
 
 const etDate = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));

@@ -27,6 +27,8 @@ export interface VenueTrade {
   t: number;
   /** Trade price expressed as the YES price of `ticker`. */
   yesPrice: number;
+  /** Contracts traded, when the venue reports it (paper fills are capped by it). */
+  count?: number;
 }
 
 export interface VenueAdapter {

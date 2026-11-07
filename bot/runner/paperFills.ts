@@ -1,9 +1,15 @@
-// Paper-trading fill rules. Conservative on purpose: a resting quote only
-// counts as filled if the market traded THROUGH our price (not just at it,
-// where we'd have been behind other orders in the queue), or if the book
-// itself moved through it.
+// Paper-trading fill rules. Conservative on purpose:
+//  - a resting quote only fills if the market traded THROUGH our price (not just at it, where we'd have been behind
+//    other orders in the queue), or if the book itself moved through it;
+//  - and only for as many contracts as actually traded through it (or were shown at the crossing price). The rest stays
+//    resting. Several of our orders on one contract share the same trades, best-priced first, so no trade is counted
+//    twice. Without this, a large paper order "filled" off a 3-contract trade and big sizes looked far better than any
+//    real market could give.
+// A venue that doesn't report a size counts each trade (and each displayed price) as UNKNOWN_SIZE contracts.
 
 import { kalshiFee } from "../fairPrice/kalshi";
+
+export const UNKNOWN_SIZE = 1;
 
 export interface RestingOrder {
   id: number;
@@ -20,23 +26,79 @@ export interface Trade {
   /** Unix seconds. */
   t: number;
   yesPrice: number;
+  /** Contracts traded (undefined when the venue doesn't say). */
+  count?: number;
 }
 
 export interface Top {
   bid: number | null;
   ask: number | null;
+  /** Contracts shown at the best bid / ask (undefined when the venue doesn't say). */
+  bidSize?: number | null;
+  askSize?: number | null;
 }
 
-/** Which resting orders filled since they were placed. */
-export function paperFills(orders: RestingOrder[], trades: Trade[], books: Map<string, Top>): RestingOrder[] {
-  return orders.filter((o) => {
+export interface PaperFill extends RestingOrder {
+  /** Contracts filled (count) and still resting after this fill. */
+  remaining: number;
+}
+
+const sizeOf = (n: number | null | undefined) => (n != null && Number.isFinite(n) && n >= 0 ? n : UNKNOWN_SIZE);
+
+/** Which resting orders filled since they were placed, and for how many contracts (count). */
+export function paperFills(orders: RestingOrder[], trades: Trade[], books: Map<string, Top>): PaperFill[] {
+  const usedTrade = new Map<Trade, number>();
+  const usedBook = new Map<string, number>();
+  // Most aggressive first: the highest bid and the lowest offer get the volume before ours further back.
+  const queue = [...orders].sort((a, b) => (a.action === b.action ? (a.action === "buy" ? b.price - a.price : a.price - b.price) : 0));
+  const out: PaperFill[] = [];
+  for (const o of queue) {
+    let got = 0;
+    const want = o.count;
     const book = books.get(o.ticker);
     if (book) {
-      if (o.action === "buy" && book.ask != null && book.ask < o.price) return true;
-      if (o.action === "sell" && book.bid != null && book.bid > o.price) return true;
+      const crossed = o.action === "buy" ? book.ask != null && book.ask < o.price : book.bid != null && book.bid > o.price;
+      if (crossed) {
+        const key = `${o.ticker}|${o.action}`;
+        const avail = sizeOf(o.action === "buy" ? book.askSize : book.bidSize) - (usedBook.get(key) ?? 0);
+        const take = Math.max(0, Math.min(want, avail));
+        usedBook.set(key, (usedBook.get(key) ?? 0) + take);
+        got += take;
+      }
     }
-    return trades.some((t) => t.ticker === o.ticker && t.t > o.placedAt && (o.action === "buy" ? t.yesPrice < o.price : t.yesPrice > o.price));
-  });
+    for (const t of trades) {
+      if (got >= want) break;
+      if (t.ticker !== o.ticker || t.t <= o.placedAt) continue;
+      if (!(o.action === "buy" ? t.yesPrice < o.price : t.yesPrice > o.price)) continue;
+      const avail = sizeOf(t.count) - (usedTrade.get(t) ?? 0);
+      if (avail <= 0) continue;
+      const take = Math.min(want - got, avail);
+      usedTrade.set(t, (usedTrade.get(t) ?? 0) + take);
+      got += take;
+    }
+    const n = Math.floor(got + 1e-9);
+    if (n >= 1) out.push({ ...o, count: n, remaining: o.count - n });
+  }
+  return out;
+}
+
+/** Contracts a take can get right now: what's shown at the best price on the other side (UNKNOWN_SIZE if not shown). */
+export function capTakes<O extends { ticker: string; action: "buy" | "sell"; count: number }>(
+  orders: O[],
+  topOf: (ticker: string) => Top | undefined
+): O[] {
+  const used = new Map<string, number>();
+  const out: O[] = [];
+  for (const o of orders) {
+    const top = topOf(o.ticker);
+    const key = `${o.ticker}|${o.action}`;
+    const shown = sizeOf(o.action === "buy" ? top?.askSize : top?.bidSize);
+    const n = Math.floor(Math.min(o.count, shown - (used.get(key) ?? 0)) + 1e-9);
+    if (n < 1) continue;
+    used.set(key, (used.get(key) ?? 0) + n);
+    out.push(n === o.count ? o : { ...o, count: n });
+  }
+  return out;
 }
 
 /** Fee on a fill: makers for resting quotes, takers for takes. */

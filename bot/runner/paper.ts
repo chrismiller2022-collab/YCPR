@@ -16,10 +16,10 @@ import { modelWith, pmMedian, shrinkFrom, shrunkHomeMargin } from "../fairPrice/
 import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { blendedHomeMargin, impliedHomeMargin, ladderOrders, pnlByMargin, type LadderConfig, type Position, type Rung } from "../ladder/engine";
 import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder } from "../venues";
-import { diffOrders, paperFills, type Trade } from "./paperFills";
+import { capTakes, diffOrders, paperFills, type Trade } from "./paperFills";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
-import { errorLines, maybeUsageReport, notifyErrors, notifyFailure } from "./notify";
+import { errorLines, maybeUsageReport, notifyErrors, notifyFailure, notifyOncePerDay } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -135,6 +135,7 @@ interface Book {
 
 export interface CycleTotals {
   quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
+  dailyStop?: boolean; // the daily loss stop had tripped (Settings → Risk)
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -181,6 +182,13 @@ function positionsFrom(fills: FillRow[]): { positions: Position[]; rungs: Pick<R
     rungs.set(f.ticker, { ticker: f.ticker, side: f.side, strike: Number(f.strike) });
   }
   return { positions: [...m.values()], rungs: [...rungs.values()] };
+}
+
+/** The daily loss stop in dollars (bankroll × daily_loss_pct), or null when it's off. */
+export function dailyStopAmount(state: { bankroll?: number | null; daily_loss_pct?: number | null } | undefined): number | null {
+  const bank = num(state?.bankroll);
+  const pct = num(state?.daily_loss_pct);
+  return bank != null && pct != null && bank > 0 && pct > 0 ? bank * pct : null;
 }
 
 async function cancelAll(gameId?: string): Promise<number> {
@@ -257,7 +265,7 @@ export async function runCycle(): Promise<CycleTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null; daily_loss_pct: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode,daily_loss_pct&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
     try {
@@ -279,6 +287,20 @@ export async function runCycle(): Promise<CycleTotals> {
       totals.quiet = true;
       console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
       return totals;
+    }
+    // Daily loss stop (Settings → Risk): once today's settled paper P&L, every book together, is down more than the set share
+    // of the bankroll, nothing new is opened today; resting orders are pulled and held positions ride to settlement.
+    const stop = dailyStopAmount(state);
+    if (stop != null) {
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const pnl = Number(await db.rpc<number>("bot_daily_pnl", { p_day: today }));
+      if (Number.isFinite(pnl) && pnl <= -stop) {
+        totals.cancelled += await cancelAll();
+        totals.dailyStop = true;
+        console.log(`daily loss stop: ${pnl.toFixed(2)} settled today (limit -${stop.toFixed(2)}); cancelled ${totals.cancelled} resting paper orders`);
+        await notifyOncePerDay("daily-stop", `🛑 **Daily loss stop hit:** settled paper P&L today is $${pnl.toFixed(2)} (limit −$${stop.toFixed(2)}). No new positions until tomorrow; open ones ride to settlement.`);
+        return totals;
+      }
     }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
@@ -513,7 +535,7 @@ export async function runCycle(): Promise<CycleTotals> {
             if (kickoff != null && now() >= kickoff - bk.stopMinutes * 60) continue;
             if (sh.fair == null || pm == null) continue;
             const names = namesOf(w);
-            const decision = decideTarget({
+            const rawDecision = decideTarget({
               books: [...ladders].map(([v, L]) => ({ venue: v, rungs: L.rungs, fee: adapters[v].fee(hours, L.eventKey) })),
               fills: bookFills as FillLike[],
               fair: sh.fair,
@@ -524,6 +546,14 @@ export async function runCycle(): Promise<CycleTotals> {
               others: [...(risk.get(st.id)?.values() ?? [])].filter((r) => r.gameId !== String(w.game_id)),
               game: names,
             });
+            // Takes only get what's shown at the price they cross, per venue.
+            const decision = {
+              ...rawDecision,
+              orders: [...ladders].flatMap(([v, L]) => {
+                const rungOf = new Map(L.rungs.map((r) => [r.ticker, r]));
+                return capTakes(rawDecision.orders.filter((o) => o.venue === v), (t) => rungOf.get(t));
+              }),
+            };
             if (decision.orders.length) {
               const rows = await db.insert<{ id: number }>(
                 "bot_orders",
@@ -567,7 +597,7 @@ export async function runCycle(): Promise<CycleTotals> {
           for (const [v, L] of ladders) {
             const adapter: VenueAdapter = adapters[v];
             const fee = adapter.fee(hours, L.eventKey);
-            const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask }]));
+            const books = new Map(L.rungs.map((r) => [r.ticker, { bid: r.bid, ask: r.ask, bidSize: r.bidSize, askSize: r.askSize }]));
             let resting = allResting.filter((r) => (r.strategy_id ?? null) === sid && r.venue === v);
             const fillRow = (orderId: number, o: { ticker: string; action: "buy" | "sell"; price: number; count: number }, maker: boolean, fair: number | null) => {
               const r = L.rungs.find((x) => x.ticker === o.ticker);
@@ -590,10 +620,18 @@ export async function runCycle(): Promise<CycleTotals> {
               books
             );
             if (filled.length) {
-              await db.update("bot_orders", `id=in.(${filled.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              const done = filled.filter((f) => f.remaining <= 0);
+              if (done.length) await db.update("bot_orders", `id=in.(${done.map((f) => f.id).join(",")})`, { status: "filled", closed_at: iso() });
+              // Partly filled: the rest stays resting at the same price.
+              for (const f of filled.filter((x) => x.remaining > 0)) await db.update("bot_orders", `id=eq.${f.id}`, { count: f.remaining });
               await db.insert("bot_fills", filled.map((f) => fillRow(f.id, f, true, resting.find((x) => x.id === f.id)!.fair)));
             }
-            resting = resting.filter((r) => !filled.some((f) => f.id === r.id));
+            resting = resting
+              .map((r) => {
+                const f = filled.find((x) => x.id === r.id);
+                return f ? { ...r, count: f.remaining } : r;
+              })
+              .filter((r) => r.count > 0);
             const cancel = async (rows: RestingRow[]) => {
               if (!rows.length) return;
               await db.update("bot_orders", `id=in.(${rows.map((r) => r.id).join(",")})`, { status: "cancelled", closed_at: iso() });
@@ -634,7 +672,9 @@ export async function runCycle(): Promise<CycleTotals> {
             const there = positionsFrom(bookFills.filter((f) => f.venue !== v));
             const otherPnl = there.positions.length ? pnlByMargin(there.rungs, there.positions, pmf.maxMargin) : undefined;
             const { orders } = ladderOrders(L.rungs, here.positions, pmf, { ...bk.cfg, tick: adapter.tick, fee }, { otherPnl, marketHomeMargin: shrunk ? market : market ?? sportsbook ?? center });
-            const plan = diffOrders(resting, orders, adapter.tick);
+            // A take only gets what's shown at the price it crosses; the rest of it isn't filled.
+            const rungOf = new Map(L.rungs.map((r) => [r.ticker, r]));
+            const plan = diffOrders(resting, capTakes(orders.filter((o) => o.kind === "take"), (t) => rungOf.get(t)).concat(orders.filter((o) => o.kind !== "take")), adapter.tick);
             await cancel(plan.cancel);
             // One insert for every new order (PostgREST returns rows in order), one for the takes' fills.
             if (plan.place.length) {

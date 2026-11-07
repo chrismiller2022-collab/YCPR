@@ -81,6 +81,8 @@ export interface LiveMarket {
   floor_strike: number;
   yes_bid_dollars: string;
   yes_ask_dollars: string;
+  yes_bid_size_fp?: string;
+  yes_ask_size_fp?: string;
   result: string;
   status: string;
   volume_fp?: string;
@@ -108,14 +110,17 @@ export async function eventMarkets(eventTicker: string): Promise<LiveMarket[]> {
   return d.markets;
 }
 
-export async function tradesSince(ticker: string, minTs: number): Promise<{ t: number; yesPrice: number }[]> {
-  const out: { t: number; yesPrice: number }[] = [];
+export async function tradesSince(ticker: string, minTs: number): Promise<{ t: number; yesPrice: number; count?: number }[]> {
+  const out: { t: number; yesPrice: number; count?: number }[] = [];
   let cursor = "";
   for (let page = 0; page < 5; page++) {
-    const d = await kalshi<{ trades: { created_time: string; yes_price_dollars: string }[]; cursor?: string }>(
+    const d = await kalshi<{ trades: { created_time: string; yes_price_dollars: string; count_fp?: string }[]; cursor?: string }>(
       `/markets/trades?ticker=${ticker}&min_ts=${minTs}&limit=1000${cursor ? `&cursor=${cursor}` : ""}`
     );
-    for (const tr of d.trades) out.push({ t: Math.floor(new Date(tr.created_time).getTime() / 1000), yesPrice: Number(tr.yes_price_dollars) });
+    for (const tr of d.trades) {
+      const count = tr.count_fp != null ? Number(tr.count_fp) : undefined;
+      out.push({ t: Math.floor(new Date(tr.created_time).getTime() / 1000), yesPrice: Number(tr.yes_price_dollars), ...(count != null && Number.isFinite(count) ? { count } : {}) });
+    }
     cursor = d.cursor ?? "";
     if (!cursor) break;
   }

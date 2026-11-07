@@ -14,7 +14,7 @@ import { kalshiSpreadYesProb } from "../fairPrice/lines";
 import { kalshiFeeWith } from "../venues/fees";
 import { pgStub, type Row } from "./pgStub";
 
-const mids = { kalshi: 0, novig: 1.2, poly: 6, withNovig: false, withPoly: false };
+const mids = { kalshi: 0, novig: 1.2, poly: 6, withNovig: false, withPoly: false, trades: [] as { ticker: string; t: number; yesPrice: number; count?: number }[] };
 const ladder = (mid: number, tag: string) => {
   const pmf = marginPmf(mid);
   const rungs = [];
@@ -33,7 +33,7 @@ vi.mock("../venues", () => {
   return {
     VENUES: ["kalshi", "novig", "prophetx", "polymarket"],
     makeAdapters: () => ({
-      kalshi: { id: "kalshi", label: "Kalshi", tick: 0.01, available: () => true, prepare: async () => {}, ladder: async () => ladder(mids.kalshi, "K"), trades: async () => [], fee: () => kalshiFeeWith("quadratic_with_maker_fees", 1) },
+      kalshi: { id: "kalshi", label: "Kalshi", tick: 0.01, available: () => true, prepare: async () => {}, ladder: async () => ladder(mids.kalshi, "K"), trades: async () => mids.trades, fee: () => kalshiFeeWith("quadratic_with_maker_fees", 1) },
       novig,
       prophetx: off,
       polymarket: { ...off, id: "polymarket", label: "Polymarket", tick: 0.005, available: () => mids.withPoly, ladder: async () => ladder(mids.poly, "PM"), fee: () => (p: number, o: { count?: number; maker?: boolean } = {}) => (o.maker ? 0 : 0.0695 * (o.count ?? 1) * p * (1 - p)) },
@@ -64,6 +64,7 @@ beforeEach(() => {
   mids.withNovig = false;
   mids.withPoly = false;
   mids.poly = 6;
+  mids.trades = [];
   db = {
     bot_state: [{ id: 1, mode: "paper", kill_switch: false, default_ycpr_weight: 1, beta: 0.1, hump_cap: 5.5, hump_fall: 0, sigma: 15, bankroll: 1000, kelly_frac: 0.25, team_cap: 10, conf_cap: 30, portfolio_cap: 100 }],
     bot_watchlist: [watch()],
@@ -288,5 +289,48 @@ describe("quiet hours", () => {
     } finally {
       process.env.BOT_QUIET_HOURS = "off";
     }
+  });
+});
+
+describe("paper fill sizes in a cycle", () => {
+  it("fills a resting order only for what traded through it", async () => {
+    db.bot_orders.push({
+      id: 55, mode: "paper", status: "resting", strategy_id: null, game_id: "G1", venue: "kalshi", ticker: "K-H3.5", action: "buy",
+      price: 0.3, count: 5, kind: "quote", fair: 0.5, // below the ask (~0.41), so only the trade can fill it created_at: new Date(Date.now() - 600e3).toISOString(),
+    });
+    mids.trades = [{ ticker: "K-H3.5", t: Math.floor(Date.now() / 1000) - 60, yesPrice: 0.25, count: 2 }];
+    const { runCycle } = await import("./paper");
+    await runCycle();
+    const fills = db.bot_fills.filter((f) => f.order_id === 55);
+    expect(fills.map((f) => f.count)).toEqual([2]);
+  });
+});
+
+describe("daily loss stop", () => {
+  const withPnl = (pnl: number) => {
+    const sb = pgStub(db).fetchStub;
+    vi.stubGlobal("fetch", async (url: string, init: any = {}) =>
+      url.includes("/rpc/bot_daily_pnl") ? { ok: true, status: 200, text: async () => JSON.stringify(pnl) } : sb(url, init)
+    );
+  };
+
+  it("opens nothing once today's settled loss passes the limit, and pulls resting orders", async () => {
+    Object.assign(db.bot_state[0], { bankroll: 1000, daily_loss_pct: 0.05 }); // limit $50
+    db.bot_orders.push({ id: 91, mode: "paper", status: "resting", strategy_id: null, game_id: "G1", venue: "kalshi", ticker: "K-H3.5", action: "buy", price: 0.3, count: 1, kind: "quote", fair: 0.5, created_at: new Date().toISOString() });
+    withPnl(-60);
+    const { runCycle } = await import("./paper");
+    const t = await runCycle();
+    expect(t.dailyStop).toBe(true);
+    expect(t.placed).toBe(0);
+    expect(db.bot_orders.find((o) => o.id === 91)?.status).toBe("cancelled");
+  });
+
+  it("keeps trading while the loss is inside the limit", async () => {
+    Object.assign(db.bot_state[0], { bankroll: 1000, daily_loss_pct: 0.05 });
+    withPnl(-40);
+    const { runCycle } = await import("./paper");
+    const t = await runCycle();
+    expect(t.dailyStop).toBeUndefined();
+    expect(t.placed).toBeGreaterThan(0);
   });
 });
