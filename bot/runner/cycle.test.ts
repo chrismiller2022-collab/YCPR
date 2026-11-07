@@ -305,3 +305,32 @@ describe("paper fill sizes in a cycle", () => {
     expect(fills.map((f) => f.count)).toEqual([2]);
   });
 });
+
+describe("daily loss stop", () => {
+  const withPnl = (pnl: number) => {
+    const sb = pgStub(db).fetchStub;
+    vi.stubGlobal("fetch", async (url: string, init: any = {}) =>
+      url.includes("/rpc/bot_daily_pnl") ? { ok: true, status: 200, text: async () => JSON.stringify(pnl) } : sb(url, init)
+    );
+  };
+
+  it("opens nothing once today's settled loss passes the limit, and pulls resting orders", async () => {
+    Object.assign(db.bot_state[0], { bankroll: 1000, daily_loss_pct: 0.05 }); // limit $50
+    db.bot_orders.push({ id: 91, mode: "paper", status: "resting", strategy_id: null, game_id: "G1", venue: "kalshi", ticker: "K-H3.5", action: "buy", price: 0.3, count: 1, kind: "quote", fair: 0.5, created_at: new Date().toISOString() });
+    withPnl(-60);
+    const { runCycle } = await import("./paper");
+    const t = await runCycle();
+    expect(t.dailyStop).toBe(true);
+    expect(t.placed).toBe(0);
+    expect(db.bot_orders.find((o) => o.id === 91)?.status).toBe("cancelled");
+  });
+
+  it("keeps trading while the loss is inside the limit", async () => {
+    Object.assign(db.bot_state[0], { bankroll: 1000, daily_loss_pct: 0.05 });
+    withPnl(-40);
+    const { runCycle } = await import("./paper");
+    const t = await runCycle();
+    expect(t.dailyStop).toBeUndefined();
+    expect(t.placed).toBeGreaterThan(0);
+  });
+});

@@ -33,15 +33,16 @@ function presetLabel(w) {
   return PRESET_KEYS.every((k) => same(pv(w, k), pv(BOT_DEFAULTS, k))) ? "Bot defaults" : "Custom";
 }
 
-/** One settings block (Add games bar, Manage games bar): a strategy select plus the fields it fills. Blank = unchanged when `keepBlank`. */
-function settingsBlock(prefix, keepBlank) {
+/** One settings block (Add games bar, Manage games bar): a strategy select plus the fields it fills. Blank = unchanged when `keepBlank`.
+ * `advancedOnly`: the fields without the strategy select and the size ones (Add games shows those up front). */
+function settingsBlock(prefix, keepBlank, advancedOnly = false) {
   const opt = (v, l) => `<option value="${esc(v)}">${esc(l)}</option>`;
   const def = Math.round((num(data?.state?.default_ycpr_weight) ?? 1) * 100);
   return `<div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
-    <label class="field" style="grid-column:span 2">Strategy<select id="${prefix}Preset">${keepBlank ? opt("keep", "Keep each game's") : ""}${presets().map((p) => opt(p.id, p.name + (p.enabled === false ? " (off in lab)" : ""))).join("")}${opt("custom", "Custom")}</select></label>
+    ${advancedOnly ? "" : `<label class="field" style="grid-column:span 2">Strategy<select id="${prefix}Preset">${keepBlank ? opt("keep", "Keep each game's") : ""}${presets().map((p) => opt(p.id, p.name + (p.enabled === false ? " (off in lab)" : ""))).join("")}${opt("custom", "Custom")}</select></label>`}
     <label class="field">Trust<select id="${prefix}Trust">${keepBlank ? opt("keep", "Keep") : ""}${opt("", `Use default (${def}%)`)}${opt("1", "100%")}${opt("0.75", "75%")}${opt("0.5", "50%")}${opt("0.25", "25%")}</select></label>
-    <label class="field">Max loss ($)<input id="${prefix}Max" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
-    <label class="field">Contracts / number<input id="${prefix}Cap" type="number" step="1" ${keepBlank ? 'placeholder="keep"' : ""}></label>
+    <label class="field" ${advancedOnly ? "hidden" : ""}>Max loss ($)<input id="${prefix}Max" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
+    <label class="field" ${advancedOnly ? "hidden" : ""}>Contracts / number<input id="${prefix}Cap" type="number" step="1" ${keepBlank ? 'placeholder="keep"' : ""}></label>
     <label class="field">Pro-pick edge (¢)<input id="${prefix}Pro" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
     <label class="field">Sell-back edge (¢)<input id="${prefix}Anti" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
     <label class="field">Take edge (¢)<input id="${prefix}Take" type="number" step="0.5" ${keepBlank ? 'placeholder="keep"' : ""}></label>
@@ -86,7 +87,36 @@ function readBlock(prefix) {
   return out;
 }
 
-// ---------- Add games
+// ---------- Add games: side (each game's lean), size and method
+
+/** The Risk card's per-game size in dollars: the "Normal" size. */
+const normalSize = () => {
+  const st = data?.state || {};
+  return (num(st.bankroll) ?? 1000) * (num(st.game_pct) ?? 0.01);
+};
+const SIZES = [["small", "Small", 0.5], ["normal", "Normal", 1], ["large", "Large", 2]];
+let pkSize = { key: "normal", dollars: null }; // dollars set when typed (Custom)
+const sizeDollars = () => (pkSize.dollars != null ? pkSize.dollars : normalSize() * SIZES.find(([k]) => k === pkSize.key)[2]);
+/** A size's ladder depth: one contract per number for every $10 of size, orders about a quarter of that. */
+const sizeCaps = (dollars) => {
+  const perNumber = Math.max(1, Math.round(dollars / 10));
+  return { per_rung_cap: perNumber, order_size: Math.max(1, Math.round(perNumber / 4)) };
+};
+function sizeBlock() {
+  const d = sizeDollars();
+  const p = presetById($("pkPreset")?.value ?? "") ?? BOT_DEFAULTS;
+  const edge = num(p.pro_edge) ?? 0.02;
+  const caps = sizeCaps(d);
+  const opt = (pr) => `<option value="${esc(pr.id)}">${esc(pr.name + (pr.enabled === false ? " (off in lab)" : ""))}</option>`;
+  return `<div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+      <label class="field">Method<select id="pkPreset">${presets().map(opt).join("")}<option value="custom">Custom (Advanced)</option></select><span class="muted" style="font-weight:400;font-size:.72rem">the edge settings: how picky the bot is about price</span></label>
+      <div class="field">Size
+        <div class="seg" id="pkSizeSeg">${SIZES.map(([k, l, m]) => `<button type="button" data-size="${k}" class="${pkSize.dollars == null && pkSize.key === k ? "on" : ""}">${l} ${usd(normalSize() * m)}</button>`).join("")}</div>
+        <input id="pkSizeUsd" type="number" step="any" min="1" value="${Math.round(d * 100) / 100}" aria-label="Max loss per game ($)" style="margin-top:6px">
+        <span class="muted" style="font-weight:400;font-size:.72rem">max loss on each game · type any amount</span></div>
+    </div>
+    <p id="pkSizeNote" class="muted" style="font-size:.8rem;margin:8px 0 0">Up to ${usd(d)} at risk per game, ${caps.per_rung_cap} contract${caps.per_rung_cap === 1 ? "" : "s"} per number, ${caps.order_size} per order. If it trades at this method's ${(edge * 100).toFixed(1)}¢ edge, expect roughly ${usd((d * edge) / 0.45)} per game. Fills are capped at what the market really trades, so very large sizes may not fill. The lab strategies trade these games at their own sizes; this size is the game's own book.</p>`;
+}
 
 async function loadPicker() {
   if (pickerBusy) return;
@@ -217,8 +247,12 @@ function renderAdd() {
       }).join("") || '<tr><td colspan="12" class="muted">No games match these filters.</td></tr>'}
     </table></div></div>
     <form class="panel pk-bar" id="pkForm">
-      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px"><h3 style="margin:0">Settings for ${sel.length || "the selected"} game${sel.length === 1 ? "" : "s"}</h3><span class="muted" style="font-size:.78rem">Pick a strategy to fill these in; change any field to make it custom.</span></div>
-      <div ${sel.length ? "" : "hidden"}>${settingsBlock("pk", false)}</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px"><h3 style="margin:0">Side, size and method for ${sel.length || "the selected"} game${sel.length === 1 ? "" : "s"}</h3></div>
+      <div ${sel.length ? "" : "hidden"}>
+        <p class="muted" style="font-size:.8rem;margin:0 0 8px">Side: pick each game's lean in the table above.</p>
+        ${sizeBlock()}
+        <details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:.82rem">Advanced: the method's individual edge settings</summary><div style="margin-top:8px">${settingsBlock("pk", false, true)}</div></details>
+      </div>
       ${sel.length ? "" : '<p class="muted" style="margin:0">Tick games above to add them.</p>'}
       ${needLine.length ? `<p class="err" style="margin:10px 0 0">${needLine.length} selected game${needLine.length > 1 ? "s have" : " has"} no YC number: enter your line to add ${needLine.length > 1 ? "them" : "it"}.</p>` : ""}
       ${noEdge.length ? `<div class="callout" style="margin:10px 0 0">${noEdge.map((g) => esc(`${g.away_team} @ ${g.home_team}`)).join(", ")}: your number isn't better than the market for the lean you picked, so the bot won't add exposure there until it is.</div>` : ""}
@@ -230,7 +264,8 @@ function renderAdd() {
     </form>`;
   // Keep the settings the user typed across redraws.
   const prev = renderAdd.block;
-  if (prev) { for (const [id, v] of Object.entries(prev)) if ($(id)) $(id).value = v; }
+  // The size box always shows the chosen size (pkSize), not what it held before a Small/Normal/Large click.
+  if (prev) { for (const [id, v] of Object.entries(prev)) if ($(id) && id !== "pkSizeUsd") $(id).value = v; }
   else fillBlock("pk", "");
   if (keepFocus && $(keepFocus)) { const el = $(keepFocus); el.focus(); if (el.setSelectionRange && el.type === "text") el.setSelectionRange(el.value.length, el.value.length); }
 }
@@ -240,15 +275,29 @@ const snapBlock = (prefix) => Object.fromEntries([...document.querySelectorAll(`
 const addPane = document.querySelector('[data-pane="add"]');
 addPane.addEventListener("input", (e) => {
   const t = e.target;
+  if (t.id === "pkSizeUsd") {
+    const v = Number(t.value);
+    pkSize = { key: "custom", dollars: Number.isFinite(v) && v > 0 ? v : null };
+    renderAdd.block = snapBlock("pk");
+    renderAdd();
+    return;
+  }
   if (t.id === "pkSearch") { pk.search = t.value; savePk(); renderAdd(); }
   else if (t.id === "pkMin") { pk.minEdge = t.value; savePk(); renderAdd(); }
   else if (t.classList.contains("pkOverride")) { pkSel.get(t.closest("[data-pk]").dataset.pk).override = t.value; }
   else if (t.closest("#pkForm") && t.id !== "pkPreset") { if ($("pkPreset").value !== "custom") $("pkPreset").value = "custom"; renderAdd.block = snapBlock("pk"); }
 });
+addPane.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-size]");
+  if (!b) return;
+  pkSize = { key: b.dataset.size, dollars: null };
+  renderAdd.block = snapBlock("pk");
+  renderAdd();
+});
 addPane.addEventListener("change", (e) => {
   const t = e.target;
   if (t.id === "pkWeek") { pkWeek = { season: picker.season, week: Number(t.value) }; pkSel.clear(); picker = null; renderAdd(); loadPicker(); return; }
-  if (t.id === "pkPreset") { fillBlock("pk", t.value); renderAdd.block = snapBlock("pk"); return; }
+  if (t.id === "pkPreset") { fillBlock("pk", t.value); renderAdd.block = snapBlock("pk"); renderAdd(); return; }
   if (t.closest("#pkForm")) { renderAdd.block = snapBlock("pk"); return; }
   const map = { pkConf: "conf", pkDay: "day", pkDiv: "division", pkSort: "sort" };
   if (map[t.id]) pk[map[t.id]] = t.value;
@@ -290,7 +339,7 @@ async function runWorkflow() {
 addPane.addEventListener("submit", async (e) => {
   if (e.target.id !== "pkForm") return;
   e.preventDefault();
-  const settings = readBlock("pk");
+  const settings = { ...readBlock("pk"), max_worst_case_loss: sizeDollars(), ...sizeCaps(sizeDollars()) };
   const games = [...pkSel.entries()].map(([game_id, s]) => ({ game_id, pick: s.pick, my_home_margin: s.override === "" || s.override == null ? null : Number(s.override) }));
   try {
     pkMsg = "Saving…";

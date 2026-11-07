@@ -336,6 +336,7 @@ function renderSettings() {
         <p class="muted" style="font-size:.82rem;margin:8px 0 0">The tower runs the paper cycle about every 90 seconds, the market recorder every 5 minutes, the ProphetX listener continuously and Hypotheticals hourly. Backups: GitHub Actions (a cycle every few hours) and /api/espn (cron-job.org), which saves ESPN finals and trades in the tower's place if no cycle has finished for 10 minutes. The kill switch cancels every resting order on the next cycle.</p>
       </div>
     </div>
+    ${riskPanel()}
     ${rebuildPanel()}
     <div class="panel" id="healthPanel" style="margin-top:16px">
       <h3>Health</h3>
@@ -355,6 +356,40 @@ function renderSettings() {
       </div>
     </div>`;
   if (runsList == null && runsMode !== "paper") loadRuns(true);
+}
+
+// ---------- Settings → Risk (everything as a share of the paper bankroll)
+
+const RISK_LEVELS = [["0.1", "Cautious (0.1 Kelly)"], ["0.25", "Standard (¼ Kelly)"], ["0.5", "Bold (½ Kelly)"]];
+/** The Risk card's numbers, from the form when it's on screen, else from the saved state. */
+function riskValues() {
+  const st = data.state || {};
+  const pick = (id, k, d, scale = 1) => ($(id) ? Number($(id).value) / scale : st[k] == null ? d : Number(st[k]));
+  return { bankroll: pick("rkBank", "bankroll", 1000), kelly: pick("rkLevel", "kelly_frac", 0.25), gamePct: pick("rkGame", "game_pct", 0.01, 100), openPct: pick("rkOpen", "open_pct", 0.1, 100), dailyPct: pick("rkDaily", "daily_loss_pct", 0.05, 100) };
+}
+/** What the Risk card's settings mean in dollars. */
+function riskSummary(r) {
+  const game = r.bankroll * r.gamePct;
+  return `Normal size: up to ${usd(game)} lost on a game (Small ${usd(game / 2)}, Large ${usd(game * 2)}). Up to ${usd(r.bankroll * r.openPct)} at risk across every game at once. ${r.dailyPct > 0 ? `Stops opening new positions for the day once settled losses reach ${usd(r.bankroll * r.dailyPct)}.` : "No daily loss stop."}`;
+}
+function riskPanel() {
+  const r = riskValues();
+  const level = RISK_LEVELS.some(([v]) => Number(v) === r.kelly) ? String(r.kelly) : "custom";
+  return `<div class="panel" id="riskPanel" style="margin-top:16px">
+    <h3>Risk</h3>
+    <p class="muted" style="font-size:.82rem;margin:0 0 10px">Everything sizes from the paper bankroll. To take more risk, raise the bankroll or the risk level; the per-game, open-at-once and daily limits move with it. Team and conference caps are under Rebuild. Paper only.</p>
+    <form id="riskForm">
+      <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        <label class="field">Paper bankroll ($)<input id="rkBank" type="number" step="50" min="10" value="${r.bankroll}" required></label>
+        <label class="field">Risk level<select id="rkLevel">${RISK_LEVELS.map(([v, l]) => `<option value="${v}" ${level === v ? "selected" : ""}>${l}</option>`).join("")}${level === "custom" ? `<option value="${r.kelly}" selected>Custom (${r.kelly} Kelly)</option>` : ""}</select><span class="muted" style="font-weight:400;font-size:.72rem">how hard the Target book sizes into an edge</span></label>
+        <label class="field">Per-game size (% of bankroll)<input id="rkGame" type="number" step="0.5" min="0.1" max="50" value="${+(r.gamePct * 100).toFixed(2)}" required><span class="muted" style="font-weight:400;font-size:.72rem">the "Normal" size on Add games</span></label>
+        <label class="field">Open at once (% of bankroll)<input id="rkOpen" type="number" step="1" min="1" max="100" value="${+(r.openPct * 100).toFixed(2)}" required><span class="muted" style="font-weight:400;font-size:.72rem">every game together</span></label>
+        <label class="field">Daily loss stop (% of bankroll)<input id="rkDaily" type="number" step="1" min="0" max="100" value="${+(r.dailyPct * 100).toFixed(2)}" required><span class="muted" style="font-weight:400;font-size:.72rem">0 = off · counts every book</span></label>
+      </div>
+      <p id="rkSummary" style="font-size:.86rem;margin:10px 0 0">${esc(riskSummary(r))}</p>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap"><button class="btn primary">Save</button><span id="rkMsg" class="muted"></span></div>
+    </form>
+  </div>`;
 }
 
 // ---------- Settings → Rebuild (shrunk fair value, target books, caps)
@@ -1164,6 +1199,24 @@ document.querySelector('[data-pane="settings"]').addEventListener("change", (e) 
 });
 document.querySelector('[data-pane="settings"]').addEventListener("click", (e) => {
   if (e.target.id === "runsMore") { e.target.disabled = true; e.target.textContent = "Loading…"; loadRuns(); }
+});
+
+// Settings → Risk
+document.querySelector('[data-pane="settings"]').addEventListener("input", (e) => {
+  if (e.target.closest?.("#riskForm") && $("rkSummary")) $("rkSummary").textContent = riskSummary(riskValues());
+});
+document.querySelector('[data-pane="settings"]').addEventListener("submit", async (e) => {
+  if (e.target.id !== "riskForm") return;
+  e.preventDefault();
+  const r = riskValues();
+  try {
+    await api("/api/admin", { action: "riskSettings", bankroll: r.bankroll, kelly_frac: r.kelly, game_pct: r.gamePct, open_pct: r.openPct, daily_loss_pct: r.dailyPct });
+    document.activeElement?.blur?.();
+    await load();
+    $("rkMsg") && ($("rkMsg").textContent = "Saved. Applies from the next cycle.");
+  } catch (err) {
+    $("rkMsg").textContent = err.message;
+  }
 });
 
 // Settings → Rebuild

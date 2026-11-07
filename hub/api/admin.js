@@ -22,6 +22,8 @@ async function enableBooks() {
 
 const NUMERIC = ["ycpr_weight", "beta", "my_home_margin", "max_worst_case_loss", "pro_edge", "anti_edge", "take_edge", "edge_step", "profit_target"];
 const INTS = ["per_rung_cap", "order_size", "stop_minutes_before"];
+// Paper sizes go well past the old $1,000 for scale tests; the Risk card's bankroll is the real guide.
+const MAX_GAME_LOSS = 100000;
 const SHAPE_NUMERIC = ["market_floor", "against_limit", "blowout_margin"];
 
 /** Shaped positions (§21): on/off plus three limits; blank = the default in code. */
@@ -44,7 +46,7 @@ function cleanWatch(body) {
   for (const k of NUMERIC) if (body[k] !== undefined) w[k] = body[k] === "" || body[k] === null ? null : Number(body[k]);
   for (const k of INTS) if (body[k] !== undefined) w[k] = Math.round(Number(body[k]));
   for (const [k, v] of Object.entries(w)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
-  if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
+  if (w.max_worst_case_loss != null && (w.max_worst_case_loss <= 0 || w.max_worst_case_loss > MAX_GAME_LOSS)) throw new Error(`max loss must be between 0 and ${MAX_GAME_LOSS}`);
   if (w.ycpr_weight != null && (w.ycpr_weight < 0 || w.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
   if (w.beta != null && (w.beta < 0 || w.beta > 1)) throw new Error("beta must be between 0 and 1");
   cleanShape(body, w);
@@ -88,6 +90,30 @@ export default async function handler(req, res) {
           if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${k} must be between ${lo} and ${hi}`);
           patch[k] = v;
         }
+        const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify(patch) });
+        return send(res, 200, { state: row });
+      }
+      case "riskSettings": {
+        // Settings → Risk: everything as a share of the paper bankroll. Writes the portfolio cap the bot already reads from
+        // the open-at-once share; the team and conference caps stay as set under Rebuild.
+        const bankroll = Number(body.bankroll);
+        const kelly = Number(body.kelly_frac);
+        const gamePct = Number(body.game_pct);
+        const openPct = Number(body.open_pct);
+        const dailyPct = Number(body.daily_loss_pct);
+        const check = (v, lo, hi, what) => {
+          if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${what} must be between ${lo} and ${hi}`);
+        };
+        check(bankroll, 10, 1e7, "bankroll");
+        check(kelly, 0.01, 1, "Kelly fraction");
+        check(gamePct, 0.001, 0.5, "per-game size");
+        check(openPct, 0.01, 1, "open at once");
+        check(dailyPct, 0, 1, "daily loss stop");
+        const patch = {
+          bankroll, kelly_frac: kelly, game_pct: gamePct, open_pct: openPct, daily_loss_pct: dailyPct,
+          portfolio_cap: Math.round(bankroll * openPct * 100) / 100,
+          updated_at: new Date().toISOString(),
+        };
         const [row] = await sb("bot_state?id=eq.1", { method: "PATCH", body: JSON.stringify(patch) });
         return send(res, 200, { state: row });
       }
@@ -186,7 +212,7 @@ export default async function handler(req, res) {
         cleanShape(body, st);
         for (const [k, v] of Object.entries(st)) if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`${k} must be a number`);
         if (st.ycpr_weight != null && (st.ycpr_weight < 0 || st.ycpr_weight > 1)) throw new Error("trust must be between 0 and 1");
-        if (st.max_worst_case_loss != null && (st.max_worst_case_loss <= 0 || st.max_worst_case_loss > 1000)) throw new Error("max loss must be between 0 and 1000");
+        if (st.max_worst_case_loss != null && (st.max_worst_case_loss <= 0 || st.max_worst_case_loss > MAX_GAME_LOSS)) throw new Error(`max loss must be between 0 and ${MAX_GAME_LOSS}`);
         const [saved] = body.id
           ? await sb(`bot_strategies?id=eq.${Number(body.id)}`, { method: "PATCH", body: JSON.stringify(st) })
           : await sb("bot_strategies", { method: "POST", body: JSON.stringify(st) });

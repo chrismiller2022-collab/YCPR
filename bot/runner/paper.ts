@@ -19,7 +19,7 @@ import { makeAdapters, VENUES, type VenueAdapter, type VenueId, type VenueLadder
 import { capTakes, diffOrders, paperFills, type Trade } from "./paperFills";
 import { db, RUN_HOST, withEgress } from "./io";
 import { isQuietHours } from "./quietHours";
-import { errorLines, maybeUsageReport, notifyErrors, notifyFailure } from "./notify";
+import { errorLines, maybeUsageReport, notifyErrors, notifyFailure, notifyOncePerDay } from "./notify";
 import { ycprAwaySpreads, type YcprGame } from "./ycpr";
 import { syncEspnFinals } from "./espnFinals";
 import { boardSnapshot, type BoardSnapshot, type SnapFill, type SnapWatch } from "./boardSnapshot";
@@ -135,6 +135,7 @@ interface Book {
 
 export interface CycleTotals {
   quiet?: boolean; // skipped for overnight quiet hours (see quietHours.ts)
+  dailyStop?: boolean; // the daily loss stop had tripped (Settings → Risk)
   /** Which generation of the runner wrote this run: 3 = shrunk fair value, target-position books and the legacy flag (the dashboard checks this before enabling those strategies). */
   codeVersion?: number;
   games: number;
@@ -181,6 +182,13 @@ function positionsFrom(fills: FillRow[]): { positions: Position[]; rungs: Pick<R
     rungs.set(f.ticker, { ticker: f.ticker, side: f.side, strike: Number(f.strike) });
   }
   return { positions: [...m.values()], rungs: [...rungs.values()] };
+}
+
+/** The daily loss stop in dollars (bankroll × daily_loss_pct), or null when it's off. */
+export function dailyStopAmount(state: { bankroll?: number | null; daily_loss_pct?: number | null } | undefined): number | null {
+  const bank = num(state?.bankroll);
+  const pct = num(state?.daily_loss_pct);
+  return bank != null && pct != null && bank > 0 && pct > 0 ? bank * pct : null;
 }
 
 async function cancelAll(gameId?: string): Promise<number> {
@@ -257,7 +265,7 @@ export async function runCycle(): Promise<CycleTotals> {
   await db.update("bot_runs", `mode=eq.${MODE}&finished_at=is.null&started_at=lt.${new Date(Date.now() - 6 * 60e3).toISOString()}`, { finished_at: iso(), error: "timed out" });
   const [run] = await db.insert<{ id: number }>("bot_runs", { mode: MODE, host: RUN_HOST });
   try {
-    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode&id=eq.1");
+    const [state] = await db.select<{ mode: string; kill_switch: boolean; default_ycpr_weight: number; beta: number | null; hump_cap: number | null; hump_fall: number | null; sigma: number | null; bankroll: number | null; kelly_frac: number | null; team_cap: number | null; conf_cap: number | null; portfolio_cap: number | null; polymarket_mode: string | null; daily_loss_pct: number | null }>("bot_state", "select=mode,kill_switch,default_ycpr_weight,beta,hump_cap,hump_fall,sigma,bankroll,kelly_frac,team_cap,conf_cap,portfolio_cap,polymarket_mode,daily_loss_pct&id=eq.1");
     const defaultTrust = num(state?.default_ycpr_weight) ?? 1;
     // Final scores from ESPN for games that should be over, so they grade without waiting for a CFBD sync.
     try {
@@ -279,6 +287,20 @@ export async function runCycle(): Promise<CycleTotals> {
       totals.quiet = true;
       console.log(`quiet hours: cancelled ${totals.cancelled} resting paper orders`);
       return totals;
+    }
+    // Daily loss stop (Settings → Risk): once today's settled paper P&L, every book together, is down more than the set share
+    // of the bankroll, nothing new is opened today; resting orders are pulled and held positions ride to settlement.
+    const stop = dailyStopAmount(state);
+    if (stop != null) {
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const pnl = Number(await db.rpc<number>("bot_daily_pnl", { p_day: today }));
+      if (Number.isFinite(pnl) && pnl <= -stop) {
+        totals.cancelled += await cancelAll();
+        totals.dailyStop = true;
+        console.log(`daily loss stop: ${pnl.toFixed(2)} settled today (limit -${stop.toFixed(2)}); cancelled ${totals.cancelled} resting paper orders`);
+        await notifyOncePerDay("daily-stop", `🛑 **Daily loss stop hit:** settled paper P&L today is $${pnl.toFixed(2)} (limit −$${stop.toFixed(2)}). No new positions until tomorrow; open ones ride to settlement.`);
+        return totals;
+      }
     }
     if (state?.mode !== MODE) {
       console.log(`mode is ${state?.mode}; only paper is implemented, nothing to do`);
