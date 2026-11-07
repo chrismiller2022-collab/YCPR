@@ -1,4 +1,9 @@
 import { T2_MOVE_CUT_TOP10 } from "../lib/totals2/frozen";
+import { betsForGame, bucketStatsFor, obsFromStored, plainLabel, type BetObs, type BucketRow } from "../lib/totals2/buckets";
+import { consensusLines, gradeItems, type GradeItem, type GradedBet, type PeriodLineRowLite } from "../lib/periodGrading";
+import { buildPeriodDistribution, summarize } from "../lib/periodSim";
+import { supabase } from "../lib/supabaseClient";
+import type { Totals2ProjectionRow } from "../lib/api/totals2Projections";
 import { fetchPlacedBets, type PlacedBetRow } from "../lib/api/placedBets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -54,6 +59,33 @@ const TOTAL_WATCH_MARGIN_STDDEV = 0.5;
 // totals" complaint. This caps it to a move that's actually plausible.
 const TOTAL_WATCH_MAX_MOVEMENT_POINTS = 2.5;
 const MONEYLINE_EV_THRESHOLD = 8; // percent — per Chris, only flag a moneyline bet once EV clears this bar
+const MONEYLINE_WATCH_MARGIN = 4; // percent — "to watch" = EV within this much below the bar
+// Totals v2 "to watch": games whose expected line move is just under the ★ cutoff (at least this share of it).
+const V2_WATCH_SHARE = 0.75;
+// Period bets (1H / 2H spread and total): at least this many points off the period line — the Period Projections page's
+// own "Filtered" default.
+const PERIOD_BET_MIN_OFF = 1.5;
+const LEVEL_SHORT: Record<number, string> = { 0.1: "★ top 10%", 0.25: "top 25%", 0.5: "top 50%", 1: "every bet" };
+
+// Bucket record for a Totals v2 bet (game or team): its own bucket at the amount-off level it reaches, the same bucket
+// at every bet, and every bet of its kind at that level — each as 2023-26 backtest · this season (stored pre-kickoff
+// numbers, so always current).
+function ReportBucketCell({ o, seasonObs }: { o: BetObs; seasonObs: BetObs[] }) {
+  const st = bucketStatsFor(o, seasonObs);
+  const fmt = (r: BucketRow | null) => (r && r.w + r.l ? `${r.w}-${r.l} (${Math.round((100 * r.w) / (r.w + r.l))}%)` : "–");
+  const line = (label: string, b: { backtest: BucketRow | null; season: BucketRow | null }, strong = false) => (
+    <div style={{ color: strong ? undefined : "var(--chalk-dim)", whiteSpace: "nowrap" }}>
+      {strong ? <strong>{label}</strong> : label}: {fmt(b.backtest)} 2023–26 · {fmt(b.season)} {CURRENT_SEASON}
+    </div>
+  );
+  return (
+    <div style={{ fontSize: "0.7rem", lineHeight: 1.45, textAlign: "left" }}>
+      {line(`${plainLabel(o)}, ${LEVEL_SHORT[st.own.level]}`, st.own, true)}
+      {st.own.level !== 1 && line(`${plainLabel(o)}, every bet`, st.ownAll)}
+      {line(`all ${o.kind} totals, ${LEVEL_SHORT[st.main.level]}`, st.main)}
+    </div>
+  );
+}
 const CURRENT_SEASON = new Date().getFullYear();
 
 type Division = "FBS" | "FCS" | "Cross";
@@ -214,6 +246,7 @@ interface TotalBetRow {
   // that expected move (points); vegasTotal is then the opening total. Null for a game with no stored v2 number (the
   // archived v1 std-dev rule applies).
   v2Move?: number | null;
+  v2Row?: Totals2ProjectionRow | null;
 }
 
 // Sort weight: v2 ★ edges (points of expected line move) and v1 std devs on one scale — a ★ at the cutoff ≈ the 1.5 SD bar.
@@ -918,6 +951,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
             stdDevOff: r.stdDevOff!,
             call: (v2Move != null ? v2Move > 0 : r.stdDevOff! > 0) ? ("Over" as const) : ("Under" as const),
             v2Move,
+            v2Row: r.v2,
           };
         }),
     [totalGames, computedGames]
@@ -1074,6 +1108,104 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
       .sort((a, b) => (b.row.betEv ?? -Infinity) - (a.row.betEv ?? -Infinity));
   }, [divisionFilteredGames, ratingsByWeek, projTotalByGame, week, computedGames, lockedWinPctByGameId]);
 
+  // Moneyline "to watch": EV just under the bar.
+  const moneylineWatch: MoneylineBetRow[] = useMemo(() => {
+    const mlRows = buildMlRowsFromLiveRatingsBillR(divisionFilteredGames, ratingsByWeek, undefined, lockedWinPctByGameId);
+    return mlRows
+      .filter((r) => r.betSide != null && r.betEv != null && r.betEv > MONEYLINE_EV_THRESHOLD - MONEYLINE_WATCH_MARGIN && r.betEv <= MONEYLINE_EV_THRESHOLD)
+      .map((r) => {
+        const myTotal = projTotalByGame.get(`${week}|${r.game.home_team}|${r.game.away_team}`) ?? null;
+        const spread = computedGames.find((c) => c.game.id === r.game.id)?.computed.projAwaySpread ?? null;
+        const split = projScoreSplit(myTotal, spread);
+        return { row: r, awayScore: split.awayScore, homeScore: split.homeScore };
+      })
+      .sort((a, b) => (b.row.betEv ?? -Infinity) - (a.row.betEv ?? -Infinity));
+  }, [divisionFilteredGames, ratingsByWeek, projTotalByGame, week, computedGames, lockedWinPctByGameId]);
+
+  // Totals v2: this season's line-move bets on played games (stored pre-kickoff numbers) — the "2026" in bucket stats.
+  const v2SeasonObs: BetObs[] = useMemo(
+    () =>
+      obsFromStored(
+        totalsEngineRowsRaw.filter((r) => r.v2 && r.game.completed).map((r) => ({ v2: r.v2!, homePts: r.game.homePoints ?? null, awayPts: r.game.awayPoints ?? null }))
+      ),
+    [totalsEngineRowsRaw]
+  );
+
+  // Totals v2 "to watch": games (and their teams) just under the ★ bar.
+  const v2WatchGames = useMemo(() => {
+    if (!showTotals) return [];
+    const keys = new Set(divisionFilteredGames.map((g) => `${g.week}|${g.home_team}|${g.away_team}`));
+    return totalsEngineRows
+      .filter(
+        (r) =>
+          r.game.week === week &&
+          keys.has(`${r.game.week}|${r.game.homeTeam}|${r.game.awayTeam}`) &&
+          (effectiveHideCompleted ? !r.game.completed : true) &&
+          r.v2?.move != null &&
+          !r.v2.star &&
+          Math.abs(r.v2.move) >= V2_WATCH_SHARE * T2_MOVE_CUT_TOP10
+      )
+      .sort((a, b) => Math.abs(b.v2!.move!) - Math.abs(a.v2!.move!));
+  }, [totalsEngineRows, divisionFilteredGames, week, effectiveHideCompleted, showTotals]);
+
+  // Period bets: 1H / 2H spread and total, from my spread + total through the period model, against the books' period lines.
+  const [periodLines, setPeriodLines] = useState<Map<string, PeriodLineRowLite[]>>(new Map());
+  const weekGameIds = useMemo(() => divisionFilteredGames.filter((g) => g.week === week).map((g) => g.id), [divisionFilteredGames, week]);
+  useEffect(() => {
+    let cancelled = false;
+    if (weekGameIds.length === 0) {
+      setPeriodLines(new Map());
+      return;
+    }
+    (async () => {
+      const out = new Map<string, PeriodLineRowLite[]>();
+      for (let i = 0; i < weekGameIds.length; i += 100) {
+        const { data } = await supabase
+          .from("period_market_lines")
+          .select("game_id, period, market_type, provider, point, pulled_at")
+          .in("game_id", weekGameIds.slice(i, i + 100))
+          .in("period", ["h1", "h2"]);
+        for (const r of (data ?? []) as PeriodLineRowLite[]) out.set(r.game_id, [...(out.get(r.game_id) ?? []), r]);
+      }
+      if (!cancelled) setPeriodLines(out);
+    })().catch(() => !cancelled && setPeriodLines(new Map()));
+    return () => {
+      cancelled = true;
+    };
+  }, [weekGameIds.join(",")]);
+  const periodBets: (GradedBet & { game: GameWithLines })[] = useMemo(() => {
+    const items: (GradeItem & { game: GameWithLines })[] = [];
+    for (const g of divisionFilteredGames) {
+      if (g.week !== week) continue;
+      if (effectiveHideCompleted && g.completed) continue;
+      const lines = periodLines.get(g.id);
+      if (!lines?.length) continue;
+      const total = projTotalByGame.get(`${week}|${g.home_team}|${g.away_team}`) ?? null;
+      const awaySpread = computedGames.find((c) => c.game.id === g.id)?.computed.projAwaySpread ?? null;
+      if (total == null || awaySpread == null) continue;
+      const dist = buildPeriodDistribution({ homeSpread: -awaySpread, total, neutralSite: !!g.neutral_site });
+      const one = (k: "h1" | "h2") => {
+        const sm = summarize(dist, k);
+        return { awaySpread: sm.meanAwaySpread, total: sm.meanTotal };
+      };
+      const none = { awaySpread: null, total: null };
+      items.push({
+        game: g,
+        gameId: g.id,
+        label: `${g.away_team} @ ${g.home_team}`,
+        mine: { h1: one("h1"), h2: one("h2"), q1: none, q2: none, q3: none, q4: none },
+        lines: consensusLines(lines),
+        awayLineScores: (g as any).away_line_scores,
+        homeLineScores: (g as any).home_line_scores,
+      });
+    }
+    const byId = new Map(items.map((it) => [it.gameId, it.game]));
+    return gradeItems(items)
+      .filter((b) => (b.period === "h1" || b.period === "h2") && b.off >= PERIOD_BET_MIN_OFF)
+      .map((b) => ({ ...b, game: byId.get(b.gameId)! }))
+      .sort((a, b) => a.period.localeCompare(b.period) || a.market.localeCompare(b.market) || b.off - a.off);
+  }, [divisionFilteredGames, week, periodLines, projTotalByGame, computedGames, effectiveHideCompleted]);
+
   return (
     <div>
       <div ref={exportRef}>
@@ -1089,9 +1221,11 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           showTweet={false}
           checkboxModes={[
             { label: "Spread Bets", sections: ["spread"] },
-            { label: "Total Bets", sections: ["total"] },
-            { label: "Team Total Bets", sections: ["teamtotal"] },
-            { label: "To Watch (All)", sections: ["watch-spread", "watch-total", "watch-teamtotal"] },
+            { label: "Moneyline Bets", sections: ["moneyline"] },
+            { label: "Totals", sections: ["total"] },
+            { label: "Team Totals", sections: ["teamtotal"] },
+            { label: "To Watch (All)", sections: ["watch-spread", "watch-moneyline", "watch-v2", "watch-total", "watch-teamtotal"] },
+            { label: "Period Bets", sections: ["period"] },
           ]}
         />
         <ExportPdfButton targetRef={exportRef} filename={() => `weekly-betting-report-${season}-wk${week}`} />
@@ -1227,130 +1361,6 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           )}
           </div>
 
-          {showTotals && (
-            <>
-              <div data-report-section="total">
-              <div className="section-label">Total Bets ({totalBetsAll.length})</div>
-              {totalBetsAll.length === 0 ? (
-                <p style={{ color: "var(--chalk-dim)" }}>No total bets flagged this week.</p>
-              ) : (
-                <>
-                  {[
-                    { label: "Overs", rows: totalBetsOver },
-                    { label: "Unders", rows: totalBetsUnder },
-                  ].map(
-                    ({ label, rows }) =>
-                      rows.length > 0 && (
-                        <div key={label} style={{ marginBottom: "1rem" }}>
-                          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>{label}</div>
-                          <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
-                            <thead>
-                              <tr>
-                                <th className="th">Game</th>
-                                <th className="th th-right">Vegas Total</th>
-                                <th className="th th-right">My Total</th>
-                                <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
-                                <th className="th">Bet</th>
-                                <th className="th th-right" title="★ = Totals v2 line-move bet: expected points the total moves after it opens. Otherwise std devs off (v1).">
-                                  Edge
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rows.map((r) => (
-                                <tr key={r.game.id} style={isMade(r.game, "total", r.call) ? madeStyle : undefined}>
-                                  <td
-                                    style={{ ...cellStyle, cursor: "pointer" }}
-                                    title="View handicapping preview"
-                                    onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
-                                  >
-                                    <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
-                                  </td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTotal)}</td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTotal)}</td>
-                                  <td style={centerCellStyle}>
-                                    <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.awayScore} homeScore={r.homeScore} />
-                                  </td>
-                                  <td style={{ ...cellStyle, fontWeight: 700 }}>
-                                    {r.v2Move != null ? "★ " : ""}
-                                    {r.call} {fmtTotal(r.vegasTotal)}
-                                    {r.v2Move != null ? <span style={{ fontWeight: 400, color: "var(--chalk-dim)", fontSize: "0.72rem" }}> (open)</span> : null}
-                                  </td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.v2Move != null ? `${r.v2Move > 0 ? "+" : ""}${r.v2Move.toFixed(2)} pts` : `${r.stdDevOff.toFixed(2)} SD`}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )
-                  )}
-                </>
-              )}
-              </div>
-
-              <div data-report-section="teamtotal">
-              <div className="section-label">Team Total Bets ({teamTotalBetsAllRaw.length})</div>
-              {teamTotalBetsAllRaw.length === 0 ? (
-                <p style={{ color: "var(--chalk-dim)" }}>No team total bets flagged this week.</p>
-              ) : (
-                <>
-                  {[
-                    { label: "Overs", rows: teamTotalBetsOver },
-                    { label: "Unders", rows: teamTotalBetsUnder },
-                  ].map(
-                    ({ label, rows }) =>
-                      rows.length > 0 && (
-                        <div key={label} style={{ marginBottom: "1rem" }}>
-                          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>{label}</div>
-                          <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
-                            <thead>
-                              <tr>
-                                <th className="th">Bet</th>
-                                <th className="th">Opponent</th>
-                                <th className="th th-right">Vegas TT</th>
-                                <th className="th th-right">My TT</th>
-                                <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
-                                <th className="th th-right">Std Dev Off</th>
-                                <th className="th th-right" title="Season-to-date filtered-bet record for this bucket (Home/Away x Favorite/Underdog x Over/Under)">
-                                  Bucket
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rows.map((r) => (
-                                <tr key={`${r.row.game.id}-${r.team}`} style={isMade(r.row.game, "team_total", null) ? madeStyle : undefined}>
-                                  <td
-                                    style={{ ...cellStyle, cursor: "pointer" }}
-                                    title="View handicapping preview"
-                                    onClick={() => setHandicapGame({ awayTeam: r.row.game.awayTeam, homeTeam: r.row.game.homeTeam })}
-                                  >
-                                    <TeamTotalCell team={r.team} call={r.call} total={r.vegasTeamTotal} />
-                                  </td>
-                                  <td style={cellStyle}>
-                                    <OpponentCell team={r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam} />
-                                  </td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTeamTotal)}</td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTeamTotal)}</td>
-                                  <td style={centerCellStyle}>
-                                    <ProjScoreCell awayTeam={r.row.game.awayTeam} homeTeam={r.row.game.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
-                                  </td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.stdDevOff?.toFixed(2) ?? "–"}</td>
-                                  <td style={{ ...cellStyle, textAlign: "right" }}>
-                                    <TeamTotalSegmentBadge segment={teamTotalSegmentFor(r)} />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )
-                  )}
-                </>
-              )}
-              </div>
-            </>
-          )}
-
           <div data-report-section="moneyline">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
             <div className="section-label">Moneyline Bets ({moneylineBets.length})</div>
@@ -1393,6 +1403,141 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
             </table>
           )}
           </div>
+
+          {showTotals && (
+            <>
+              <div data-report-section="total">
+              <div className="section-label">Totals ({totalBetsAll.length})</div>
+              {totalBetsAll.length === 0 ? (
+                <p style={{ color: "var(--chalk-dim)" }}>No total bets flagged this week.</p>
+              ) : (
+                <>
+                  {[
+                    { label: "Overs", rows: totalBetsOver },
+                    { label: "Unders", rows: totalBetsUnder },
+                  ].map(
+                    ({ label, rows }) =>
+                      rows.length > 0 && (
+                        <div key={label} style={{ marginBottom: "1rem" }}>
+                          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>{label}</div>
+                          <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                            <thead>
+                              <tr>
+                                <th className="th">Game</th>
+                                <th className="th th-right">Vegas Total</th>
+                                <th className="th th-right">My Total</th>
+                                <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
+                                <th className="th">Bet</th>
+                                <th className="th th-right" title="★ = Totals v2 line-move bet: expected points the total moves after it opens. Otherwise std devs off (v1).">
+                                  Edge
+                                </th>
+                                <th className="th" title="This bet's bucket record: 2023-26 backtest · this season so far">Bucket record</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r) => (
+                                <tr key={r.game.id} style={isMade(r.game, "total", r.call) ? madeStyle : undefined}>
+                                  <td
+                                    style={{ ...cellStyle, cursor: "pointer" }}
+                                    title="View handicapping preview"
+                                    onClick={() => setHandicapGame({ awayTeam: r.game.away_team, homeTeam: r.game.home_team })}
+                                  >
+                                    <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTotal)}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTotal)}</td>
+                                  <td style={centerCellStyle}>
+                                    <ProjScoreCell awayTeam={r.game.away_team} homeTeam={r.game.home_team} awayScore={r.awayScore} homeScore={r.homeScore} />
+                                  </td>
+                                  <td style={{ ...cellStyle, fontWeight: 700 }}>
+                                    {r.v2Move != null ? "★ " : ""}
+                                    {r.call} {fmtTotal(r.vegasTotal)}
+                                    {r.v2Move != null ? <span style={{ fontWeight: 400, color: "var(--chalk-dim)", fontSize: "0.72rem" }}> (open)</span> : null}
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{r.v2Move != null ? `${Math.abs(r.v2Move).toFixed(2)} pts` : `${r.stdDevOff.toFixed(2)} SD`}</td>
+                                  <td style={cellStyle}>
+                                    {(() => {
+                                      const o = r.v2Row ? betsForGame(r.v2Row).game : null;
+                                      return o ? <ReportBucketCell o={o} seasonObs={v2SeasonObs} /> : <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+                                    })()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                  )}
+                </>
+              )}
+              </div>
+
+              <div data-report-section="teamtotal">
+              <div className="section-label">Team Totals ({teamTotalBetsAllRaw.length})</div>
+              {teamTotalBetsAllRaw.length === 0 ? (
+                <p style={{ color: "var(--chalk-dim)" }}>No team total bets flagged this week.</p>
+              ) : (
+                <>
+                  {[
+                    { label: "Overs", rows: teamTotalBetsOver },
+                    { label: "Unders", rows: teamTotalBetsUnder },
+                  ].map(
+                    ({ label, rows }) =>
+                      rows.length > 0 && (
+                        <div key={label} style={{ marginBottom: "1rem" }}>
+                          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--chalk-dim)", marginBottom: "0.3rem" }}>{label}</div>
+                          <table style={{ borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                            <thead>
+                              <tr>
+                                <th className="th">Bet</th>
+                                <th className="th">Opponent</th>
+                                <th className="th th-right" title="The market's team number right now (the bet line is the team's share of the OPENING total)">Vegas TT now</th>
+                                <th className="th th-right">My TT</th>
+                                <th className="th" style={{ textAlign: "center" }}>My Proj Score</th>
+                                <th className="th th-right" title="★ Totals v2: expected move of this team's share of the total (points). Otherwise std devs off (v1).">Edge</th>
+                                <th className="th" title="This bet's bucket record (home/away × favorite/underdog × over/under): 2023-26 backtest · this season so far">
+                                  Bucket record
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r) => {
+                                const o = r.row.v2 ? betsForGame(r.row.v2)[r.isHome ? "home" : "away"] : null;
+                                return (
+                                <tr key={`${r.row.game.id}-${r.team}`} style={isMade(r.row.game, "team_total", null) ? madeStyle : undefined}>
+                                  <td
+                                    style={{ ...cellStyle, cursor: "pointer" }}
+                                    title="View handicapping preview"
+                                    onClick={() => setHandicapGame({ awayTeam: r.row.game.awayTeam, homeTeam: r.row.game.homeTeam })}
+                                  >
+                                    <TeamTotalCell team={r.team} call={r.call} total={o ? o.line : r.vegasTeamTotal} />
+                                    {o && <span style={{ fontSize: "0.68rem", color: "var(--chalk-dim)" }}> ★ open</span>}
+                                  </td>
+                                  <td style={cellStyle}>
+                                    <OpponentCell team={r.isHome ? r.row.game.awayTeam : r.row.game.homeTeam} />
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.vegasTeamTotal)}</td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{fmtTotal(r.myTeamTotal)}</td>
+                                  <td style={centerCellStyle}>
+                                    <ProjScoreCell awayTeam={r.row.game.awayTeam} homeTeam={r.row.game.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
+                                  </td>
+                                  <td style={{ ...cellStyle, textAlign: "right" }}>{o ? `${Math.abs(o.edge).toFixed(2)} pts` : `${r.stdDevOff?.toFixed(2) ?? "–"} SD`}</td>
+                                  <td style={cellStyle}>
+                                    {o ? <ReportBucketCell o={o} seasonObs={v2SeasonObs} /> : <TeamTotalSegmentBadge segment={teamTotalSegmentFor(r)} />}
+                                  </td>
+                                </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                  )}
+                </>
+              )}
+              </div>
+            </>
+          )}
 
           <div data-report-section="watch-spread">
           <div className="section-label">To Watch — Spreads ({spreadWatch.length})</div>
@@ -1443,9 +1588,84 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
           )}
           </div>
 
+          <div data-report-section="watch-moneyline">
+          <div className="section-label">To Watch — Moneylines ({moneylineWatch.length})</div>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+            EV between {MONEYLINE_EV_THRESHOLD - MONEYLINE_WATCH_MARGIN}% and {MONEYLINE_EV_THRESHOLD}% — a better price would make it a bet.
+          </p>
+          {moneylineWatch.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)" }}>Nothing close this week.</p>
+          ) : (
+            <table style={{ borderCollapse: "collapse", fontSize: "0.82rem", marginBottom: "1.5rem" }}>
+              <thead>
+                <tr>
+                  <th className="th">Game</th>
+                  <th className="th">Side</th>
+                  <th className="th th-right">EV</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moneylineWatch.map(({ row: r }) => (
+                  <tr key={r.game.id}>
+                    <td style={cellStyle}>
+                      <TeamLogo team={r.game.away_team} size={16} /> {r.game.away_team} @ <TeamLogo team={r.game.home_team} size={16} /> {r.game.home_team}
+                    </td>
+                    <td style={cellStyle}>
+                      <MoneylineBetCell team={r.betSide === "away" ? r.game.away_team : r.game.home_team} ml={r.betSide === "away" ? r.vegasAwayMoneyline : r.vegasHomeMoneyline} />
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{r.betEv != null ? `${r.betEv.toFixed(1)}%` : "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          </div>
+
           {showTotals && (
             <>
-              <div data-report-section="watch-total">
+              <div data-report-section="watch-v2">
+              <div className="section-label">To Watch — Totals & Team Totals ({v2WatchGames.length} games)</div>
+              <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+                Expected line move just under the ★ bar ({(V2_WATCH_SHARE * T2_MOVE_CUT_TOP10).toFixed(2)}–{T2_MOVE_CUT_TOP10} pts). The game total and both teams lean the
+                same way; check the bucket records before acting on a team total.
+              </p>
+              {v2WatchGames.length === 0 ? (
+                <p style={{ color: "var(--chalk-dim)" }}>Nothing close this week.</p>
+              ) : (
+                <table style={{ borderCollapse: "collapse", fontSize: "0.82rem", marginBottom: "1.5rem" }}>
+                  <thead>
+                    <tr>
+                      <th className="th">Game</th>
+                      <th className="th">Lean (opening total)</th>
+                      <th className="th th-right">Edge</th>
+                      <th className="th">Team totals (share of the open)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {v2WatchGames.map((r) => {
+                      const b = betsForGame(r.v2!);
+                      const tt = (o: BetObs | null, team: string) => (o ? `${team} ${o.dir === 1 ? "o" : "u"}${o.line.toFixed(1)} (${plainLabel(o)})` : null);
+                      return (
+                        <tr key={r.game.id}>
+                          <td style={cellStyle}>
+                            <TeamLogo team={r.game.awayTeam} size={16} /> {r.game.awayTeam} @ <TeamLogo team={r.game.homeTeam} size={16} /> {r.game.homeTeam}
+                          </td>
+                          <td style={{ ...cellStyle, fontWeight: 700 }}>
+                            {r.v2!.move! > 0 ? "Over" : "Under"} {fmtTotal(r.v2!.open_total)}
+                          </td>
+                          <td style={{ ...cellStyle, textAlign: "right" }}>{Math.abs(r.v2!.move!).toFixed(2)} pts</td>
+                          <td style={{ ...cellStyle, fontSize: "0.75rem" }}>
+                            {[tt(b.away, r.game.awayTeam), tt(b.home, r.game.homeTeam)].filter(Boolean).join(" · ")}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              </div>
+
+              <div data-report-section="watch-total" style={{ display: totalWatch.length ? undefined : "none" }}>
               <div className="section-label">To Watch — Totals ({totalWatch.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
                 Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold AND under{" "}
@@ -1495,7 +1715,7 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               )}
               </div>
 
-              <div data-report-section="watch-teamtotal">
+              <div data-report-section="watch-teamtotal" style={{ display: teamTotalWatchAll.length ? undefined : "none" }}>
               <div className="section-label">To Watch — Team Totals ({teamTotalWatchAll.length})</div>
               <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
                 Within {TOTAL_WATCH_MARGIN_STDDEV} std dev of the {TOTAL_BET_THRESHOLD_STDDEV}-std-dev threshold AND
@@ -1563,6 +1783,52 @@ export default function WeeklyBettingReportPanel({ onBack }: { onBack: () => voi
               </div>
             </>
           )}
+
+          <div data-report-section="period">
+          <div className="section-label">Period Bets — 1H / 2H Spreads & Totals ({periodBets.length})</div>
+          <p style={{ color: "var(--chalk-dim)", fontSize: "0.78rem", marginTop: 0 }}>
+            My spread and total run through the period model, against the books' period lines (median), at least {PERIOD_BET_MIN_OFF} points off. Lines appear once
+            they're pulled on the Period Projections page.
+          </p>
+          {periodBets.length === 0 ? (
+            <p style={{ color: "var(--chalk-dim)" }}>No period bets this week (or no period lines pulled yet).</p>
+          ) : (
+            <table style={{ borderCollapse: "collapse", fontSize: "0.82rem", marginBottom: "1.5rem" }}>
+              <thead>
+                <tr>
+                  <th className="th">Game</th>
+                  <th className="th">Period</th>
+                  <th className="th">Bet</th>
+                  <th className="th th-right">Mine</th>
+                  <th className="th th-right">Line</th>
+                  <th className="th th-right">Off</th>
+                  <th className="th">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {periodBets.map((b) => {
+                  const team = b.pick === "away" ? b.game.away_team : b.pick === "home" ? b.game.home_team : null;
+                  const betLine = b.market === "spread" ? (b.pick === "away" ? b.line : -b.line) : b.line;
+                  return (
+                    <tr key={`${b.gameId}-${b.period}-${b.market}`}>
+                      <td style={cellStyle}>
+                        <TeamLogo team={b.game.away_team} size={16} /> {b.game.away_team} @ <TeamLogo team={b.game.home_team} size={16} /> {b.game.home_team}
+                      </td>
+                      <td style={cellStyle}>{b.period === "h1" ? "1H" : "2H"} {b.market === "spread" ? "spread" : "total"}</td>
+                      <td style={{ ...cellStyle, fontWeight: 700 }}>
+                        {b.market === "spread" ? `${team} ${betLine > 0 ? "+" : ""}${betLine.toFixed(1)}` : `${b.pick === "over" ? "Over" : "Under"} ${b.line.toFixed(1)}`}
+                      </td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{b.mine.toFixed(1)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{b.line.toFixed(1)}</td>
+                      <td style={{ ...cellStyle, textAlign: "right" }}>{b.off.toFixed(1)}</td>
+                      <td style={cellStyle}>{b.result === "pending" ? "" : b.result === "win" ? "W" : b.result === "loss" ? "L" : "P"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          </div>
         </>
       )}
       </div>

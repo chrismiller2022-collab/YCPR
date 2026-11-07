@@ -261,6 +261,7 @@ type AdminView =
   | "drogba"
   | "totalshistory"
   | "totals2"
+  | "totals2history"
   | "gameslines"
   | "matchups"
   | "pools"
@@ -575,8 +576,9 @@ const NAV_GROUPS: NavGroup[] = [
         label: "Totals",
         tabs: [
           { key: "totals2", label: "Model" },
-          { key: "totalshistory", label: "History" },
+          { key: "totals2history", label: "History" },
           { key: "gametotals", label: "v1 (archived)" },
+          { key: "totalshistory", label: "v1 History (archived)" },
         ],
       },
       { key: "montecarlo", label: "Monte Carlo" },
@@ -1166,6 +1168,7 @@ export default function AdminPage({ onHome, onGoToRatings, onGoToResume, onGoToS
           {view === "periodgrading" && <PeriodGradingPanel onBack={() => setView("home")} />}
           {view === "totalshistory" && <TotalsHistoryPanel onBack={() => setView("home")} />}
           {view === "totals2" && <Totals2Panel />}
+          {view === "totals2history" && <TotalsHistoryPanel model="v2" onBack={() => setView("home")} />}
           {view === "linemovement" && <LineMovementAdminPanel onBack={() => setView("home")} />}
           {view === "odds" && <OddsDashboardAdminPanel onBack={() => setView("home")} />}
           {view === "imagedump" && <WeeklyImageDumpAdminPanel onBack={() => setView("home")} />}

@@ -203,7 +203,9 @@ export function useGameTotalsEngine(season: number) {
 // Totals History doesn't let you edit settings, it just needs SOME
 // filterThresholdMultiplier for the isFiltered/performance math, and
 // picking one consistent season for that beats an undefined blend.
-export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
+// opts.applyLocks = false: skip game_projection_locks (the v2 History page grades v2's own numbers, not v1's locks).
+export function useMultiSeasonGameTotalsEngine(seasons: number[], opts: { applyLocks?: boolean } = {}) {
+  const applyLocks = opts.applyLocks !== false;
   // Raw per-season fetch results only — liveByTeam is deliberately NOT a
   // dependency of the fetch effect below. useWeeklyStats's byTeam is a
   // plain object rebuilt every render (not memoized), so making it an
@@ -285,10 +287,10 @@ export function useMultiSeasonGameTotalsEngine(seasons: number[]) {
         if (lock?.my_total != null) lockedTotalByKey.set(`${g.week}|${g.homeTeam}|${g.awayTeam}`, lock.my_total);
         if (lock?.my_away_spread != null) lockedAwaySpreadByKey.set(`${g.week}|${g.homeTeam}|${g.awayTeam}`, lock.my_away_spread);
       }
-      allRows.push(...applyLockedSpreadToRows(applyLockedTotals(enriched, lockedTotalByKey), lockedAwaySpreadByKey));
+      allRows.push(...(applyLocks ? applyLockedSpreadToRows(applyLockedTotals(enriched, lockedTotalByKey), lockedAwaySpreadByKey) : enriched));
     }
     return allRows;
-  }, [perSeasonRaw, liveByTeam]);
+  }, [perSeasonRaw, liveByTeam, applyLocks]);
 
   return { rows, settings, loading, error };
 }
