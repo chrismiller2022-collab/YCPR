@@ -181,7 +181,7 @@ if (args.includes("--export")) {
   }
   // Breakdowns: every approach × game/team × period × amount-off level.
   const buckets: any[] = [];
-  for (const seasons of [[2023, 2024], [2025, 2026], [2023, 2024, 2025, 2026]]) {
+  for (const seasons of [[2023, 2024], [2025, 2026], [2026], [2023, 2024, 2025, 2026]]) {
     const gps = pairGames(wf.preds.filter((p) => seasons.includes(p.row.g.season)));
     for (const approach of ["move", "open", "close"] as Approach[]) {
       const obs = betObsFrom(gps, approach);
@@ -235,6 +235,22 @@ export interface T2BacktestRow { season: number; scope: "game" | "team"; line: "
 export const T2_BACKTEST: T2BacktestRow[] = ${JSON.stringify(backtest)};
 `;
   writeFileSync(new URL("../../src/lib/totals2/frozen.ts", import.meta.url).pathname, ts);
+  // Per-game walk-forward numbers for the v2 History page (lazy-loaded): [game id, expected open→close move,
+  // close-model residual, open-model residual, open total, open spread, close total, close spread], each season
+  // predicted only by fits on earlier seasons.
+  const r2 = (v: number | null) => (v == null ? null : Math.round(v * 100) / 100);
+  const wfGames = pairGames(wf.preds.filter((p) => p.row.g.season >= 2023)).map((gp) => [
+    gp.g.id,
+    r2(gp.home.move != null && gp.away.move != null ? gp.home.move + gp.away.move : null),
+    r2(gp.home.resid.close != null && gp.away.resid.close != null ? gp.home.resid.close + gp.away.resid.close : null),
+    r2(gp.home.resid.open != null && gp.away.resid.open != null ? gp.home.resid.open + gp.away.resid.open : null),
+    // the exact lines those numbers were built against (open total, open home spread, close total, close home spread)
+    gp.mkt.openTotal,
+    gp.mkt.openSpread,
+    gp.mkt.closeTotal,
+    gp.mkt.closeSpread,
+  ]);
+  writeFileSync(new URL("../../src/data/totals2WalkForward.json", import.meta.url).pathname, JSON.stringify({ version, games: wfGames }));
   writeFileSync(new URL("./last_report.txt", import.meta.url).pathname, rep + "\n\nlayer1 " + JSON.stringify(l1) + "\nlayer2 close " + JSON.stringify(l2close) + "\nlayer2 open " + JSON.stringify(l2open) + "\n");
   console.log("wrote frozen.ts", version);
 }

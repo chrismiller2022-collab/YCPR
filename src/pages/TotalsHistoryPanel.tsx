@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   DivisionPicker,
   filterRowsByDivision,
@@ -20,6 +20,7 @@ import {
 import { WeekSeasonToggle, filterByViewMode, type ViewMode } from "./PerformanceView";
 import { winPctColor, isSmallSample, MIN_RELIABLE_SAMPLE } from "../lib/winPctColor";
 import TotalsWindowCompare from "../components/TotalsWindowCompare";
+import { loadWalkForward, toV2HistoryRows, type WalkForwardGame } from "../lib/totals2/walkForward";
 
 const KEY_NUMBER_MIN_SEASON = 2026;
 
@@ -372,11 +373,20 @@ function MultiSeasonPicker({ seasons, setSeasons }: { seasons: number[]; setSeas
   );
 }
 
-export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
+// model "v2" (the site's totals model): same tabs and layout, graded on Totals v2's numbers — walk-forward for 2023-25,
+// stored pre-kickoff numbers for 2026 — never on v1's locked totals. Default grading line is the OPEN, where v2 bets.
+export default function TotalsHistoryPanel({ onBack, model = "v1" }: { onBack: () => void; model?: "v1" | "v2" }) {
+  const isV2 = model === "v2";
+  const [wf, setWf] = useState<Map<string, WalkForwardGame> | null>(null);
+  useEffect(() => {
+    if (isV2) loadWalkForward().then(setWf);
+  }, [isV2]);
   const [seasons, setSeasons] = useState<number[]>([new Date().getFullYear()]);
   const [division, setDivision] = useState("FBS");
-  const [gradeLine, setGradeLine] = useState<"close" | "open">("close");
-  const { rows: allRowsRaw, settings: liveSettings, loading, error } = useMultiSeasonGameTotalsEngine(seasons);
+  const [gradeLine, setGradeLine] = useState<"close" | "open">(isV2 ? "open" : "close");
+  const { rows: allRowsEngine, settings: liveSettings, loading: engineLoading, error } = useMultiSeasonGameTotalsEngine(seasons, { applyLocks: !isV2 });
+  const allRowsRaw = useMemo(() => (isV2 ? (wf ? toV2HistoryRows(allRowsEngine, wf, gradeLine) : []) : allRowsEngine), [isV2, wf, allRowsEngine, gradeLine]);
+  const loading = engineLoading || (isV2 && !wf);
   const allRows = useMemo(() => (gradeLine === "open" ? applyOpeningLine(allRowsRaw) : allRowsRaw), [allRowsRaw, gradeLine]);
   const rows = filterRowsByDivision(allRows, division);
   // "Filtered bets" here should mean the same thing it does in the Weekly
@@ -402,17 +412,31 @@ export default function TotalsHistoryPanel({ onBack }: { onBack: () => void }) {
   // rows after the fact (EnrichedGameRow doesn't carry a season field to
   // filter on once seasons are merged).
   const keyNumberSeasons = useMemo(() => seasons.filter((s) => s >= KEY_NUMBER_MIN_SEASON), [seasons]);
-  const { rows: keyNumberAllRowsRaw, loading: keyNumberLoading } = useMultiSeasonGameTotalsEngine(keyNumberSeasons);
+  const { rows: keyNumberRowsEngine, loading: keyNumberEngineLoading } = useMultiSeasonGameTotalsEngine(keyNumberSeasons, { applyLocks: !isV2 });
+  const keyNumberAllRowsRaw = useMemo(
+    () => (isV2 ? (wf ? toV2HistoryRows(keyNumberRowsEngine, wf, gradeLine) : []) : keyNumberRowsEngine),
+    [isV2, wf, keyNumberRowsEngine, gradeLine]
+  );
+  const keyNumberLoading = keyNumberEngineLoading || (isV2 && !wf);
   const keyNumberAllRows = useMemo(() => (gradeLine === "open" ? applyOpeningLine(keyNumberAllRowsRaw) : keyNumberAllRowsRaw), [keyNumberAllRowsRaw, gradeLine]);
   const keyNumberRows = useMemo(() => filterRowsByDivision(keyNumberAllRows, division), [keyNumberAllRows, division]);
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Totals History</h2>
+      <h2 style={{ marginTop: 0 }}>{isV2 ? "Totals History" : "Totals History — v1 (archived)"}</h2>
       <p style={{ color: "var(--chalk-dim)", fontSize: "0.85rem", marginTop: 0 }}>
-        How the Totals model has actually performed — for the live per-game working view, see
-        Totals or Matchups instead. Pick one season to also see that season's game-by-game data below;
-        multiple seasons shows performance across all of them, without the game-level breakdown.
+        {isV2 ? (
+          <>
+            How the Totals model (v2) has performed. 2023–25 are walk-forward (each season predicted only by a model built on earlier seasons); {new Date().getFullYear()} uses
+            the numbers stored before each kickoff. Graded at the <strong>opening</strong> line by default — v2's number there is the opening total plus the expected line
+            move, so "amount off" is the bet's edge and "filtered" is close to the ★ bets. Switch to the closing line to see the score model near kickoff.
+          </>
+        ) : (
+          <>
+            The archived v1 model's record, graded on its locked totals. Pick one season to also see that season's game-by-game data below; multiple seasons shows
+            performance across all of them, without the game-level breakdown.
+          </>
+        )}
       </p>
 
       <MultiSeasonPicker seasons={seasons} setSeasons={setSeasons} />

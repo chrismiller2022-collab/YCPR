@@ -17,6 +17,11 @@ import {
   KEY_NUMBERS_USED,
   gameBuckets,
   strongest,
+  betsForGame,
+  bucketStatsFor,
+  levelFor,
+  obsFromStored,
+  plainLabel,
   teamBuckets,
   type Approach,
   type BetObs,
@@ -125,6 +130,7 @@ export default function Totals2Panel() {
   const s = useTotals2Fast(season);
   const [tab, setTab] = useState<Tab>("bets");
   const views = useMemo(() => buildViews(s), [s]);
+  const seasonObsAll = useSeasonObs(s, views);
   const weeks = useMemo(() => Array.from(new Set(views.map((v) => v.p.week))).sort((a, b) => a - b), [views]);
   const nextWeek = useMemo(() => views.filter((v) => !v.started).map((v) => v.p.week).sort((a, b) => a - b)[0] ?? weeks[weeks.length - 1] ?? 1, [views, weeks]);
   const [week, setWeek] = useState<number | null>(null);
@@ -159,7 +165,7 @@ export default function Totals2Panel() {
       </div>
       {s.error && <p style={{ color: "crimson" }}>{s.error}</p>}
       {tab === "backtest" ? (
-        <BacktestTab />
+        <BacktestTab seasonObs={seasonObsAll} season={season} />
       ) : tab === "how" ? (
         <HowItWorks />
       ) : s.loading ? (
@@ -168,7 +174,7 @@ export default function Totals2Panel() {
         <div className="empty">No stored numbers yet — the scheduled job (GitHub Actions → "Totals v2") writes them every 3 hours; it can also be run by hand from there.</div>
       ) : (
         <>
-          {tab === "bets" && <BetsTab s={s} views={views.filter((v) => v.p.week === wk)} season={season} />}
+          {tab === "bets" && <BetsTab s={s} views={views.filter((v) => v.p.week === wk)} allViews={views} season={season} />}
           {tab === "games" && <GamesTab s={s} views={views.filter((v) => v.p.week === wk)} />}
           {tab === "record" && <RecordTab s={s} views={views} />}
         </>
@@ -178,10 +184,85 @@ export default function Totals2Panel() {
 }
 
 // ------------------------------------------------------------------ Bets
+// Over/under is a direction, not a verdict, so it is never shown in green/red: the bet reads "▲ OVER" / "▼ UNDER" in plain
+// text, and strength is shown by ★ and gold, not by color of the side.
+const GOLD = "#e8c66a";
+function DirText({ dir, line, star, note }: { dir: 1 | -1 | null; line: number | null; star: boolean; note?: string }) {
+  if (dir == null) return <span style={{ color: "var(--chalk-dim)" }}>–</span>;
+  return (
+    <span style={{ fontWeight: star ? 700 : 400, color: star ? "var(--chalk)" : "var(--chalk-dim)" }}>
+      {star && <span style={{ color: GOLD }}>★ </span>}
+      {dir === 1 ? "▲ OVER" : "▼ UNDER"} {f1(line)}
+      {note && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--chalk-dim)" }}> {note}</span>}
+    </span>
+  );
+}
+const edgeStyle = (star: boolean): CSSProperties => ({ ...NUM, fontWeight: star ? 700 : 400, color: star ? GOLD : "var(--chalk-dim)" });
+const LEVEL_SHORT: Record<number, string> = { 0.1: "★ top 10%", 0.25: "top 25%", 0.5: "top 50%", 1: "every bet" };
+
+function rec(r: BucketRow | null): string {
+  if (!r || r.w + r.l === 0) return "–";
+  return `${r.w}-${r.l} (${((100 * r.w) / (r.w + r.l)).toFixed(0)}%)`;
+}
+function RecSpan({ r }: { r: BucketRow | null }) {
+  const n = r ? r.w + r.l : 0;
+  const p = r && n ? (100 * r.w) / n : null;
+  return <span style={winStyle(p, n)}>{rec(r)}</span>;
+}
+/** One line per bucket: this bucket at its amount-off level, the same bucket at every bet, and all bets of its kind at that level. */
+function BucketStatsLine({ o, seasonObs, season }: { o: BetObs; seasonObs: BetObs[]; season: number }) {
+  const st = bucketStatsFor(o, seasonObs);
+  const item = (title: string, b: { backtest: BucketRow | null; season: BucketRow | null }) => (
+    <span style={{ marginRight: "1.1rem", whiteSpace: "nowrap" }}>
+      <span style={{ color: "var(--chalk-dim)" }}>{title}: </span>
+      <RecSpan r={b.backtest} /> <span style={{ color: "var(--chalk-dim)" }}>2023–26 ·</span> <RecSpan r={b.season} />{" "}
+      <span style={{ color: "var(--chalk-dim)" }}>{season}</span>
+    </span>
+  );
+  return (
+    <div style={{ fontSize: "0.72rem", lineHeight: 1.6, whiteSpace: "normal" }}>
+      {item(`${plainLabel(o)}, ${LEVEL_SHORT[st.own.level]}`, st.own)}
+      {st.own.level !== 1 && item(`${plainLabel(o)}, every bet`, st.ownAll)}
+      {item(`all ${o.kind === "game" ? "game" : "team"} totals, ${LEVEL_SHORT[st.main.level]}`, st.main)}
+    </div>
+  );
+}
+
+function useSeasonObs(s: Totals2Fast, views: GameView[]): BetObs[] {
+  return useMemo(
+    () =>
+      obsFromStored(
+        views
+          .filter((v) => v.final != null)
+          .map((v) => {
+            const g = s.games.get(v.p.game_id);
+            return { v2: v.p, homePts: g?.home_points ?? null, awayPts: g?.away_points ?? null };
+          })
+      ),
+    [s, views]
+  );
+}
+
 type BetKey = "edge" | "game" | "kick" | "open" | "now" | "moved";
-function BetsTab({ s, views, season }: { s: Totals2Fast; views: GameView[]; season: number }) {
+function BetsTab({ s, views, allViews, season }: { s: Totals2Fast; views: GameView[]; allViews: GameView[]; season: number }) {
   const sort = useSort<BetKey>("edge");
   const [onlyStars, setOnlyStars] = useState(false);
+  const [showStats, setShowStats] = useState(() => {
+    try {
+      return localStorage.getItem("t2-show-stats") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleStats = (v: boolean) => {
+    setShowStats(v);
+    try {
+      localStorage.setItem("t2-show-stats", v ? "1" : "0");
+    } catch {
+      // not critical
+    }
+  };
+  const seasonObs = useSeasonObs(s, allViews);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const rows = sortRows(
@@ -238,15 +319,18 @@ function BetsTab({ s, views, season }: { s: Totals2Fast; views: GameView[]; seas
       setBusy(false);
     }
   }
-
+  const COLS = 9;
   return (
     <div>
-      <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "0.9rem", alignItems: "center", flexWrap: "wrap" }}>
         <strong style={{ fontSize: "0.95rem" }}>
-          {stars} ★ bet{stars === 1 ? "" : "s"} open this week
+          <span style={{ color: GOLD }}>★</span> {stars} bet{stars === 1 ? "" : "s"} open this week
         </strong>
         <label style={{ fontSize: "0.82rem" }}>
           <input type="checkbox" checked={onlyStars} onChange={(e) => setOnlyStars(e.target.checked)} /> Only ★
+        </label>
+        <label style={{ fontSize: "0.82rem" }} title="Under each bet: its bucket's record in the backtest and this season">
+          <input type="checkbox" checked={showStats} onChange={(e) => toggleStats(e.target.checked)} /> Show bucket stats
         </label>
         <button className="mode-btn" disabled={busy} onClick={saveNow} title="Games are logged automatically; this just does it now">
           Log now
@@ -255,8 +339,8 @@ function BetsTab({ s, views, season }: { s: Totals2Fast; views: GameView[]; seas
       {msg && <p style={DIM}>{msg}</p>}
       <h3 style={H3}>Game totals</h3>
       <p style={{ ...DIM, marginTop: 0 }}>
-        Sorted by edge = how far the model expects the total to move after it opens. ★ = the top 10% of edges (≥ {T2_MOVE_CUT_TOP10} pts), the only ones worth
-        betting. "Moved" = how much of that has already happened (green = toward the bet); once a line has moved past the edge, the value is gone.
+        Sorted by edge = how far the model expects the total to move after it opens. <span style={{ color: GOLD }}>★</span> = the top 10% of edges (≥{" "}
+        {T2_MOVE_CUT_TOP10} pts), the ones worth betting. "Moved" = how much of that has already happened; once the line has moved the full edge, the value is gone.
       </p>
       <div className="table-scroll">
         <table>
@@ -264,65 +348,87 @@ function BetsTab({ s, views, season }: { s: Totals2Fast; views: GameView[]; seas
             <tr>
               <th style={HEADL} onClick={() => sort.click("game")}>Game{sort.arrow("game")}</th>
               <th style={HEADL} onClick={() => sort.click("kick")}>Kickoff{sort.arrow("kick")}</th>
-              <th style={{ ...HEADL, cursor: "default" }}>Bet</th>
+              <th style={{ ...HEADL, cursor: "default" }}>Bet (opening total)</th>
               <th style={HEAD} onClick={() => sort.click("edge")}>Edge{sort.arrow("edge")}</th>
               <th style={HEAD} onClick={() => sort.click("open")}>Open{sort.arrow("open")}</th>
               <th style={HEAD} onClick={() => sort.click("now")}>Now{sort.arrow("now")}</th>
               <th style={HEAD} onClick={() => sort.click("moved")}>Moved{sort.arrow("moved")}</th>
+              <th style={{ ...HEADL, cursor: "default" }}>Bucket</th>
               <th style={{ ...HEAD, cursor: "default" }}>Logged</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((v) => {
               const gone = v.moved != null && v.move != null && v.moved >= Math.abs(v.move);
-              return (
+              const o = betsForGame(v.p).game;
+              return [
                 <tr key={v.p.game_id} style={{ background: v.star ? STAR_BG : undefined, opacity: v.started ? 0.5 : 1 }}>
                   <td style={CELL}>
                     {v.p.away_team} @ {v.p.home_team}
                   </td>
                   <td style={{ ...CELL, color: "var(--chalk-dim)" }}>{v.started ? "started" : kick(v.p.start_date)}</td>
-                  <td style={{ ...CELL, fontWeight: v.star ? 700 : 400, color: v.star ? leanColor(v.move) : "var(--chalk-dim)" }}>
-                    {v.star ? "★ " : ""}
-                    {v.dir} {f1(v.open)}
+                  <td style={CELL}>
+                    <DirText dir={v.move == null ? null : v.move > 0 ? 1 : -1} line={v.open} star={v.star} />
                   </td>
-                  <td style={{ ...NUM, fontWeight: 600, color: leanColor(v.move) }}>{sgn(v.move, 2)}</td>
+                  <td style={edgeStyle(v.star)}>{f1(Math.abs(v.move ?? 0), 2)}</td>
                   <td style={NUM}>{f1(v.open)}</td>
                   <td style={NUM}>{f1(v.now)}</td>
-                  <td style={{ ...NUM, color: leanColor(v.moved) }} title={gone ? "Already moved past the edge" : undefined}>
-                    {sgn(v.moved)}
+                  <td style={{ ...NUM, color: v.moved == null || v.moved === 0 ? "var(--chalk-dim)" : undefined, fontStyle: v.moved != null && v.moved < 0 ? "italic" : undefined }}>
+                    {v.moved == null || v.moved === 0 ? "–" : `${f1(Math.abs(v.moved))} ${v.moved > 0 ? "toward" : "against"}`}
                     {gone ? " (gone)" : ""}
                   </td>
+                  <td style={{ ...CELL, color: "var(--chalk-dim)", fontSize: "0.75rem" }}>{o ? plainLabel(o) : "–"}</td>
                   <td style={{ ...NUM, color: "var(--chalk-dim)" }}>{v.logged ? "✓" : ""}</td>
-                </tr>
-              );
+                </tr>,
+                showStats && o ? (
+                  <tr key={`${v.p.game_id}-s`} style={{ background: v.star ? STAR_BG : undefined }}>
+                    <td colSpan={COLS} style={{ ...CELL, paddingTop: 0, paddingLeft: "1.2rem" }}>
+                      <BucketStatsLine o={o} seasonObs={seasonObs} season={season} />
+                    </td>
+                  </tr>
+                ) : null,
+              ];
             })}
           </tbody>
         </table>
       </div>
-      <TeamTotalBets s={s} views={views} season={season} />
+      <TeamTotalBets s={s} views={views} season={season} showStats={showStats} seasonObs={seasonObs} onlyStars={onlyStars} />
     </div>
   );
 }
 
 type TTKey = "edge" | "team" | "line";
-function TeamTotalBets({ s, views, season }: { s: Totals2Fast; views: GameView[]; season: number }) {
+function TeamTotalBets({
+  s,
+  views,
+  season,
+  showStats,
+  seasonObs,
+  onlyStars,
+}: {
+  s: Totals2Fast;
+  views: GameView[];
+  season: number;
+  showStats: boolean;
+  seasonObs: BetObs[];
+  onlyStars: boolean;
+}) {
   const sort = useSort<TTKey>("edge");
   const [msg, setMsg] = useState<string | null>(null);
   const real = useMemo(() => latestTeamLines(s.ttLines), [s.ttLines]);
-  const rows: { v: GameView; team: string; line: number; mine: number; edge: number }[] = [];
+  const rows: { v: GameView; team: string; opp: string; o: BetObs; posted: number | null; star: boolean }[] = [];
   for (const v of views) {
-    if (v.now == null || v.nowSpread == null || v.p.line_total == null || v.p.line_spread == null) continue;
+    const b = betsForGame(v.p);
     for (const side of ["away", "home"] as const) {
+      const o = side === "home" ? b.home : b.away;
+      if (!o) continue;
       const team = side === "home" ? v.p.home_team : v.p.away_team;
-      const line = real.get(`${v.p.game_id}|${team}`);
-      const stored = side === "home" ? v.p.proj_home_pts : v.p.proj_away_pts;
-      if (line == null || stored == null) continue;
-      const resid = stored - impliedPoints(v.p.line_total, v.p.line_spread, side);
-      const mine = impliedPoints(v.now, v.nowSpread, side) + resid;
-      rows.push({ v, team, line, mine, edge: mine - line });
+      const star = levelFor(o) === 0.1;
+      if (onlyStars && !star) continue;
+      rows.push({ v, team, opp: side === "home" ? v.p.away_team : v.p.home_team, o, posted: real.get(`${v.p.game_id}|${team}`) ?? null, star });
     }
   }
-  const sorted = sortRows(rows, (r) => (sort.key === "edge" ? Math.abs(r.edge) : sort.key === "team" ? r.team : r.line), sort.dir);
+  const sorted = sortRows(rows, (r) => (sort.key === "edge" ? Math.abs(r.o.edge) : sort.key === "team" ? r.team : r.o.line), sort.dir);
   async function pull() {
     setMsg(null);
     try {
@@ -336,49 +442,53 @@ function TeamTotalBets({ s, views, season }: { s: Totals2Fast; views: GameView[]
   }
   return (
     <>
-      <h3 style={H3}>
-        Team totals <span style={{ fontWeight: 400, fontSize: "0.8rem", color: "var(--chalk-dim)" }}>· unproven — tracking only</span>
-      </h3>
+      <h3 style={H3}>Team totals</h3>
       <p style={{ ...DIM, marginTop: 0 }}>
-        The model's team number against the real posted team total, sorted by the gap. In the backtest team totals ran about break-even, so treat these as
-        leads to check, not bets, until the Track record says otherwise.{" "}
+        The same line-move signal, applied to each team's share of the opening total (the market's team number). Team totals as a whole ran about break-even in the
+        backtest, but some buckets did much better — turn on <strong>Show bucket stats</strong> to see each one's record before betting. "Posted" = a real team-total
+        line, when pulled.{" "}
         <button className="mode-btn" onClick={pull} style={{ fontSize: "0.75rem" }} title="The Odds API: 1 credit per game">
           Pull team-total lines
         </button>
       </p>
       {msg && <p style={DIM}>{msg}</p>}
-      {sorted.length === 0 ? (
-        <p style={DIM}>No team-total lines pulled for this week yet.</p>
-      ) : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th style={HEADL} onClick={() => sort.click("team")}>Team{sort.arrow("team")}</th>
-                <th style={{ ...HEADL, cursor: "default" }}>Lean</th>
-                <th style={HEAD} onClick={() => sort.click("edge")}>Edge{sort.arrow("edge")}</th>
-                <th style={HEAD} onClick={() => sort.click("line")}>Team total{sort.arrow("line")}</th>
-                <th style={{ ...HEAD, cursor: "default" }}>Model</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((r) => (
-                <tr key={`${r.v.p.game_id}|${r.team}`} style={{ opacity: r.v.started ? 0.5 : 1 }}>
-                  <td style={CELL}>
-                    {r.team} <span style={{ color: "var(--chalk-dim)", fontSize: "0.72rem" }}>vs {r.team === r.v.p.home_team ? r.v.p.away_team : r.v.p.home_team}</span>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style={HEADL} onClick={() => sort.click("team")}>Team{sort.arrow("team")}</th>
+              <th style={{ ...HEADL, cursor: "default" }}>Bet (team's share of the open)</th>
+              <th style={HEAD} onClick={() => sort.click("edge")}>Edge{sort.arrow("edge")}</th>
+              <th style={HEAD} onClick={() => sort.click("line")}>Market #{sort.arrow("line")}</th>
+              <th style={{ ...HEAD, cursor: "default" }}>Posted</th>
+              <th style={{ ...HEADL, cursor: "default" }}>Bucket</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => [
+              <tr key={`${r.v.p.game_id}|${r.team}`} style={{ background: r.star ? STAR_BG : undefined, opacity: r.v.started ? 0.5 : 1 }}>
+                <td style={CELL}>
+                  {r.team} <span style={{ color: "var(--chalk-dim)", fontSize: "0.72rem" }}>vs {r.opp}</span>
+                </td>
+                <td style={CELL}>
+                  <DirText dir={r.o.dir} line={r.o.line} star={r.star} />
+                </td>
+                <td style={edgeStyle(r.star)}>{f1(Math.abs(r.o.edge), 2)}</td>
+                <td style={NUM}>{f1(r.o.line)}</td>
+                <td style={NUM}>{f1(r.posted)}</td>
+                <td style={{ ...CELL, color: "var(--chalk-dim)", fontSize: "0.75rem" }}>{plainLabel(r.o)}</td>
+              </tr>,
+              showStats ? (
+                <tr key={`${r.v.p.game_id}|${r.team}-s`} style={{ background: r.star ? STAR_BG : undefined }}>
+                  <td colSpan={6} style={{ ...CELL, paddingTop: 0, paddingLeft: "1.2rem" }}>
+                    <BucketStatsLine o={r.o} seasonObs={seasonObs} season={season} />
                   </td>
-                  <td style={{ ...CELL, color: leanColor(r.edge) }}>
-                    {r.edge > 0 ? "OVER" : "UNDER"} {f1(r.line)}
-                  </td>
-                  <td style={{ ...NUM, fontWeight: 600, color: leanColor(r.edge) }}>{sgn(r.edge)}</td>
-                  <td style={NUM}>{f1(r.line)}</td>
-                  <td style={NUM}>{f1(r.mine)}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              ) : null,
+            ])}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -443,14 +553,14 @@ function GamesTab({ s, views }: { s: Totals2Fast; views: GameView[] }) {
                   </td>
                   <td style={{ ...CELL, color: "var(--chalk-dim)" }}>{v.final != null ? "final" : kick(v.p.start_date)}</td>
                   <td style={NUM}>{w?.dome ? "dome" : w?.avgWind != null ? `${f1(w.avgWind, 0)} mph${(w.precip ?? 0) >= 0.1 ? " · rain" : ""}${w.snow ? " · snow" : ""}` : "–"}</td>
-                  <td style={{ ...NUM, color: leanColor(v.move), fontWeight: v.star ? 700 : 400 }}>
+                  <td style={edgeStyle(v.star)}>
                     {v.star ? "★ " : ""}
-                    {sgn(v.move, 2)}
+                    {v.move == null ? "–" : `${v.move > 0 ? "▲" : "▼"} ${f1(Math.abs(v.move), 2)}`}
                   </td>
                   <td style={NUM}>{f1(v.open)}</td>
                   <td style={NUM}>{f1(v.now)}</td>
                   <td style={{ ...NUM, fontWeight: 600 }}>{f1(v.v2Total)}</td>
-                  <td style={{ ...NUM, color: leanColor(lean) }}>{sgn(lean, 2)}</td>
+                  <td style={{ ...NUM, color: "var(--chalk-dim)" }}>{lean == null ? "–" : `${lean > 0 ? "▲" : lean < 0 ? "▼" : ""} ${f1(Math.abs(lean), 2)}`}</td>
                   <td style={NUM}>{tt ? `${f1(tt.away)} / ${f1(tt.home)}` : "–"}</td>
                   <td style={NUM}>{yc ? `${f1(yc.away)} / ${f1(yc.home)}` : "–"}</td>
                   <td style={NUM}>{lock?.my_total != null ? f1(Number(lock.my_total)) : "–"}</td>
@@ -730,7 +840,7 @@ const BUCKET_INTRO = (
   </>
 );
 
-function BacktestBreakdowns() {
+function BacktestBreakdowns({ seasonObs, season }: { seasonObs: BetObs[]; season: number }) {
   const [scope, setScope] = useState<"game" | "team">("game");
   const [approach, setApproach] = useState<Approach>("move");
   const [frac, setFrac] = useState(0.1);
@@ -742,6 +852,13 @@ function BacktestBreakdowns() {
   const pick = (seasons: string) => T2_BUCKETS.find((b) => b.seasons === seasons && b.approach === approach && b.scope === scope && b.frac === frac);
   const cols = PERIODS.map(([k]) => pick(k));
   const minEdge = cols[2]?.minEdge;
+  // This season so far, live: the stored pre-kickoff numbers for every played game (line-move approach only — the stored
+  // rows carry the move), at the same amount-off cutoff as the backtest.
+  const live = useMemo(() => {
+    if (approach !== "move") return null;
+    const kept = seasonObs.filter((o) => o.kind === scope && (frac === 1 || Math.abs(o.edge) >= (minEdge ?? 0)));
+    return scope === "game" ? gameBuckets(kept) : teamBuckets(kept);
+  }, [seasonObs, scope, frac, minEdge, approach]);
   return (
     <>
       <h2 style={{ ...H3, fontSize: "1.1rem" }}>Breakdowns</h2>
@@ -752,7 +869,10 @@ function BacktestBreakdowns() {
         <Seg<number> value={frac} onChange={setFrac} options={BUCKET_FRACTIONS.map((f) => [f, `Amount off: ${BUCKET_FRACTION_LABEL[f]}`] as [number, string])} />
       </div>
       {frac < 1 && minEdge != null && <p style={{ ...DIM, marginTop: 0 }}>At this level the amount off is at least {minEdge} points (all 2023–26).</p>}
-      <BucketTable rows={cols.map((c) => c?.rows ?? [])} columns={PERIODS.map(([, l]) => l)} />
+      <BucketTable
+        rows={[...cols.slice(0, 2).map((c) => c?.rows ?? []), live ?? pick(String(season))?.rows ?? [], cols[2]?.rows ?? []]}
+        columns={[PERIODS[0][1], PERIODS[1][1], live ? `${season} only (live)` : `${season} only`, PERIODS[2][1]]}
+      />
     </>
   );
 }
@@ -870,7 +990,7 @@ const APPROACHES: { scope: "game" | "team"; market: (typeof T2_ATS)[number]["mar
   },
 ];
 
-function BacktestTab() {
+function BacktestTab({ seasonObs, season }: { seasonObs: BetObs[]; season: number }) {
   const [frac, setFrac] = useState(0.1);
   const PERIODS: [string, string][] = [
     ["2023+2024", "Tuning seasons (2023–24)"],
@@ -896,7 +1016,7 @@ function BacktestTab() {
           </button>
         ))}
       </div>
-      <BacktestBreakdowns />
+      <BacktestBreakdowns seasonObs={seasonObs} season={season} />
       <h2 style={{ ...H3, fontSize: "1.1rem", marginTop: "2rem" }}>Overall record by approach</h2>
       {(["game", "team"] as const).map((scope) => (
         <div key={scope}>
